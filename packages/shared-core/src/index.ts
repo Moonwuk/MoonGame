@@ -76,3 +76,7 @@ export {
 
 // Utilities
 export { deepClone, deepFreeze } from './util/clone';
+
+// Base modules (plugins) — opt-in via the manifest passed to createKernel.
+export { economyModule } from './modules/economy';
+export { movementModule } from './modules/movement';
