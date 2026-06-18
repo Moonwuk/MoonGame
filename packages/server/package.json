@@ -1,0 +1,12 @@
+{
+  "name": "@void/server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Authoritative game server (Stage 3 — see docs/roadmap.md). Placeholder.",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}

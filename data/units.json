@@ -1,0 +1,30 @@
+{
+  "scout_drone": {
+    "faction": "vanguard",
+    "stats": { "attack": 2, "defense": 1, "speed": 12 },
+    "traits": [],
+    "abilities": ["long_range_scan"],
+    "cost": { "metal": 40 }
+  },
+  "cruiser": {
+    "faction": "vanguard",
+    "stats": { "attack": 10, "defense": 8, "speed": 6 },
+    "traits": [],
+    "abilities": [],
+    "cost": { "metal": 220, "credits": 80 }
+  },
+  "infected_cruiser": {
+    "faction": "swarm",
+    "stats": { "attack": 12, "defense": 4, "speed": 6 },
+    "traits": ["infect_planet", "no_food_cost"],
+    "abilities": ["spread_biomass"],
+    "cost": { "biomass": 200, "dark_matter": 50 }
+  },
+  "reanimated_drone": {
+    "faction": "necromancer",
+    "stats": { "attack": 5, "defense": 3, "speed": 5 },
+    "traits": ["reanimate_on_kill"],
+    "abilities": [],
+    "cost": { "dark_matter": 30 }
+  }
+}

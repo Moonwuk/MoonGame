@@ -1,0 +1,12 @@
+{
+  "name": "@void/client",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "React Native mobile client (Stage 4 — see docs/roadmap.md). Placeholder.",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}

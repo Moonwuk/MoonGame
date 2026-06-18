@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+*.tsbuildinfo
+
+# Test / coverage
+coverage/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Env / secrets (never commit — see docs/architecture.md A04)
+.env
+.env.*
+!.env.example
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Tooling caches
+.turbo/
+.eslintcache

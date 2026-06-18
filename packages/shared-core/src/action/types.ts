@@ -1,0 +1,88 @@
+import type { GameState, PlayerId } from '../state/gameState';
+import type { GameData } from '../data/schemas';
+
+/**
+ * The action contract: the client sends an *intention*, never state
+ * (docs/architecture.md §5). Authorization, input validation and deduplication
+ * live in the action layer (Stage 2); the core reducer assumes an action has
+ * already cleared those gates and focuses on applying the rules.
+ */
+export interface Action {
+  /**
+   * Idempotency key, formatted `session:player:sequence` (e.g. `kepler:alice:47`).
+   * Uniqueness is local to a session+player; dedup is short-lived (minutes).
+   * See docs/architecture.md §5 (Idempotency).
+   */
+  id: string;
+  /** Action type, routed to a single module handler (e.g. `fleet.move`). */
+  type: string;
+  /** The requesting player. */
+  playerId: PlayerId;
+  /** Type-specific payload, validated by the action layer before it gets here. */
+  payload: unknown;
+  /** Client-claimed timestamp — recorded, never trusted for logic. */
+  issuedAt: number;
+}
+
+/**
+ * Everything the reducer is allowed to read besides the state itself. Time is
+ * passed in (never Date.now() — docs/architecture.md §4.2), and game data is
+ * the validated, data-driven content.
+ */
+export interface Context {
+  /** Authoritative current time (ms). */
+  now: number;
+  /** Validated, immutable game data. */
+  data: GameData;
+}
+
+/** A fact the simulation announces; modules may react, or it harmlessly fades
+ *  if nobody listens (docs/modulesystem.md — graceful degradation). */
+export interface DomainEvent {
+  type: string;
+  payload: unknown;
+}
+
+/**
+ * Result of applying an action. Fail-secure (OWASP A10): on any failure the
+ * caller gets an error code only — never partial state, never error details.
+ */
+export type ApplyResult =
+  | { ok: true; state: GameState; events: DomainEvent[] }
+  | { ok: false; code: string };
+
+/**
+ * Thrown by a handler to abort the current action safely. Carries a stable
+ * error code; details stay server-side (docs/architecture.md §6, A10).
+ */
+export class Rejection extends Error {
+  readonly code: string;
+  constructor(code: string) {
+    super(code);
+    this.name = 'Rejection';
+    this.code = code;
+  }
+}
+
+export interface ActionIdParts {
+  session: string;
+  player: string;
+  sequence: number;
+}
+
+/** Parses and validates an action id of the form `session:player:sequence`. */
+export function parseActionId(id: string): ActionIdParts | null {
+  const parts = id.split(':');
+  if (parts.length !== 3) {
+    return null;
+  }
+  const [session, player, seqRaw] = parts;
+  if (!session || !player || !seqRaw || !/^\d+$/.test(seqRaw)) {
+    return null;
+  }
+  const sequence = Number(seqRaw);
+  if (!Number.isSafeInteger(sequence)) {
+    return null;
+  }
+  return { session, player, sequence };
+}

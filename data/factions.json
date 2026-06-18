@@ -1,0 +1,20 @@
+{
+  "vanguard": {
+    "name": "Vanguard Coalition",
+    "description": "The last organized remnant of humanity, holding the line with disciplined fleets.",
+    "traits": [],
+    "abilities": []
+  },
+  "swarm": {
+    "name": "The Swarm",
+    "description": "A ravenous bio-collective that converts captured worlds into biomass.",
+    "traits": ["consume_biomass"],
+    "abilities": []
+  },
+  "necromancer": {
+    "name": "Void Necromancers",
+    "description": "Cult fleets that raise the fallen from the wreckage of battle.",
+    "traits": [],
+    "abilities": ["raise_fallen"]
+  }
+}

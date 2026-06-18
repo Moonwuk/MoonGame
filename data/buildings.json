@@ -1,0 +1,30 @@
+{
+  "mine_t1": {
+    "name": "Metal Extractor I",
+    "cost": { "metal": 100 },
+    "buildTimeHours": 6,
+    "produces": { "metal": 20 },
+    "traits": []
+  },
+  "mine_t2": {
+    "name": "Metal Extractor II",
+    "cost": { "metal": 300, "credits": 120 },
+    "buildTimeHours": 18,
+    "produces": { "metal": 55 },
+    "traits": []
+  },
+  "shipyard": {
+    "name": "Orbital Shipyard",
+    "cost": { "metal": 400, "credits": 200 },
+    "buildTimeHours": 24,
+    "produces": {},
+    "traits": []
+  },
+  "biomass_pit": {
+    "name": "Biomass Pit",
+    "cost": { "metal": 150 },
+    "buildTimeHours": 8,
+    "produces": { "biomass": 30 },
+    "traits": ["infected"]
+  }
+}
