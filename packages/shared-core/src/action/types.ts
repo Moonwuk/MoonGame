@@ -51,6 +51,25 @@ export type ApplyResult =
   | { ok: true; state: GameState; events: DomainEvent[] }
   | { ok: false; code: string };
 
+/** A scheduled event whose handler failed while the world was advanced. The
+ *  event is dropped (dead-lettered) so the timeline never gets stuck; details
+ *  stay server-side (docs/architecture.md §7). */
+export interface AdvanceFailure {
+  at: number;
+  type: string;
+  code: string;
+}
+
+/**
+ * Result of advancing the world clock. Advancing itself only fails when asked
+ * to move backwards (`E_TIME_BACKWARDS`) or on a runaway schedule
+ * (`E_ADVANCE_OVERFLOW`); individual misbehaving events are dead-lettered into
+ * `failures` and do not abort the advance.
+ */
+export type AdvanceResult =
+  | { ok: true; state: GameState; events: DomainEvent[]; failures: AdvanceFailure[] }
+  | { ok: false; code: string };
+
 /**
  * Thrown by a handler to abort the current action safely. Carries a stable
  * error code; details stay server-side (docs/architecture.md §6, A10).

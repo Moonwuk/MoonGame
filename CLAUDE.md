@@ -5,9 +5,12 @@ this file is the short, operational version plus the non-obvious invariants.
 
 ## What this is
 
-Void Dominion — a mobile, asynchronous, massively-multiplayer space grand
-strategy (Bytro-style genre, original everything). The whole bet is a **flexible,
-extensible core**: add mechanics/units/factions through data, not by rewriting logic.
+Void Dominion — a mobile, **real-time**, massively-multiplayer space grand strategy
+(Bytro-style genre, original everything). Real-time means continuous wall-clock time
+that runs 24/7 even while the player is offline — **not turn-based**; "asynchronous"
+describes the play pattern (drop in, issue orders that take real hours, drop out). The
+whole bet is a **flexible, extensible core**: add mechanics/units/factions through data,
+not by rewriting logic.
 
 Monorepo (pnpm workspaces):
 
@@ -62,12 +65,21 @@ These come straight from the design docs. Breaking them is a bug, not a style ch
 
 ## Architecture quick map
 
-`createKernel(modules)` compiles an immutable kernel from an ordered module list, then
-`kernel.applyAction(state, action, ctx)` runs it. A module's `setup(api)` registers:
-`onAction(type, h)` (one handler per type), `on(event, h)`, `hook(name, fn)`,
-`provideCapability(name, impl)`. Handlers receive a `HandlerContext` with the draft
-`state`, `ctx` (now + validated game data), the `rng`, `emit`, `hook`, `capability`,
-and `reject`.
+`createKernel(modules)` compiles an immutable kernel from an ordered module list. It
+exposes two pure entry points:
+
+- `applyAction(state, action, ctx)` — apply a player's intent at `ctx.now`.
+- `advanceTo(state, ctx)` — move the world clock to `ctx.now`, firing due scheduled
+  events in `(at, seq)` order and emitting a contiguous `time.advanced` { from, to }
+  event for each continuous span (so modules accrue resources by formula, not ticks).
+  Real-time server flow: `advanceTo` to the present, then `applyAction`.
+
+A module's `setup(api)` registers: `onAction(type, h)` (one handler per type),
+`on(event, h)`, `hook(name, fn)`, `provideCapability(name, impl)`. Handlers receive a
+`HandlerContext` with the draft `state`, `ctx` (now + validated game data), the `rng`,
+`emit`, `schedule(at, type, payload)` (express a future occurrence / real-time
+duration), `hook`, `capability`, and `reject`. A scheduled event whose handler throws is
+dead-lettered (dropped, recorded in `failures`) so the timeline never gets stuck.
 
 New game mechanic = new module (subscribe to events + register hooks) + maybe new JSON
 data. You should not need to touch the kernel.

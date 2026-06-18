@@ -17,6 +17,7 @@ export {
   type Planet,
   type Fleet,
   type FleetMovement,
+  type ScheduledEvent,
   type UnitStack,
   type ResourceBag,
   type PlayerId,
@@ -36,6 +37,8 @@ export {
   type Context,
   type DomainEvent,
   type ApplyResult,
+  type AdvanceResult,
+  type AdvanceFailure,
   type ActionIdParts,
 } from './action/types';
 

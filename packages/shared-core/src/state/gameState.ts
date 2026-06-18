@@ -64,6 +64,30 @@ export interface Fleet {
 }
 
 /**
+ * A future occurrence on the world timeline: fleet arrival, construction
+ * complete, a recurring combat tick, a dark event, ... The game is real-time
+ * (continuous wall-clock time, like the Bytro titles), so durations are
+ * expressed by scheduling an event at a future `at` and letting `advanceTo`
+ * fire it when the world reaches that instant (docs/architecture.md §4.1).
+ *
+ * The schedule lives inside the state so it is serializable, deterministic and
+ * survives a server restart (the server also mirrors it as delayed jobs to know
+ * *when to wake up*, but the source of truth is here).
+ */
+export interface ScheduledEvent {
+  /** Stable id, e.g. `evt:42`. */
+  id: string;
+  /** When it fires (ms, server-authoritative). */
+  at: number;
+  /** Domain event type dispatched to module subscribers when it fires. */
+  type: string;
+  /** Event payload. */
+  payload: unknown;
+  /** Deterministic tiebreaker among events sharing the same `at`. */
+  seq: number;
+}
+
+/**
  * Versions pinned to a match. Rules and the active module set are frozen per
  * match (docs/architecture.md §4.4, docs/modulesystem.md) — in-flight matches
  * keep their original rules, integrity-relevant for OWASP A08.
@@ -83,6 +107,10 @@ export interface GameState {
   players: Record<PlayerId, Player>;
   planets: Record<PlanetId, Planet>;
   fleets: Record<FleetId, Fleet>;
+  /** Pending timeline, processed in (at, seq) order by `advanceTo`. */
+  scheduled: ScheduledEvent[];
+  /** Monotonic counter handing each scheduled event its deterministic `seq`. */
+  scheduleSeq: number;
 }
 
 /** Creates an empty, deterministically-seeded initial state. */
@@ -98,5 +126,7 @@ export function createInitialState(params: {
     players: {},
     planets: {},
     fleets: {},
+    scheduled: [],
+    scheduleSeq: 0,
   };
 }

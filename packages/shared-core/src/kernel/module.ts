@@ -23,6 +23,13 @@ export interface HandlerContext {
   readonly rng: Rng;
   /** Emit a domain event. Subscribers run in fixed module order. */
   emit(type: string, payload?: unknown): void;
+  /**
+   * Schedule a domain event to fire at server time `at` (clamped so it is never
+   * in the past). This is how real-time durations are expressed — a `fleet.move`
+   * handler schedules `fleet.arrive` at `ctx.now + travelTime`, then `advanceTo`
+   * fires it when the world reaches that instant (docs/architecture.md §4.1).
+   */
+  schedule(at: number, type: string, payload?: unknown): void;
   /** Run a hook pipeline over `base`; returns `base` unchanged if no module contributes. */
   hook<T>(name: string, base: T, args?: unknown): T;
   /** Look up an optional capability; undefined if no module provides it. */
