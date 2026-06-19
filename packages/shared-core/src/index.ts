@@ -18,6 +18,8 @@ export {
   type Fleet,
   type FleetMovement,
   type Battle,
+  type BattleSide,
+  type CombatantRef,
   type ScheduledEvent,
   type UnitStack,
   type ResourceBag,

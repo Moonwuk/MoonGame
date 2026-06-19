@@ -26,6 +26,8 @@ const data: GameData = parseGameData({
       line: 'rear',
       traits: ['artillery'],
     },
+    marine: { faction: 'x', stats: { attack: 10, defense: 0, speed: 1, hp: 20 }, line: 'front' },
+    militia: { faction: 'x', stats: { attack: 3, defense: 0, speed: 1, hp: 10 }, line: 'front' },
   },
   factions: {},
   buildings: {},
@@ -44,11 +46,34 @@ function fleet(
   owner: string,
   location: string | null,
   list: Array<[string, number]>,
+  landing?: Array<[string, number]>,
 ): Fleet {
-  return { id, owner, location, movement: null, units: stacks(list), traits: [] };
+  return {
+    id,
+    owner,
+    location,
+    movement: null,
+    units: stacks(list),
+    landing: landing ? stacks(landing) : undefined,
+    traits: [],
+  };
 }
-function planet(id: string, owner: string | null, x = 0, y = 0): Planet {
-  return { id, owner, position: { x, y }, resources: {}, buildings: [], garrison: [], traits: [] };
+function planet(
+  id: string,
+  owner: string | null,
+  x = 0,
+  y = 0,
+  garrison?: Array<[string, number]>,
+): Planet {
+  return {
+    id,
+    owner,
+    position: { x, y },
+    resources: {},
+    buildings: [],
+    garrison: garrison ? stacks(garrison) : [],
+    traits: [],
+  };
 }
 function baseState(fleets: Fleet[], planets: Planet[] = []): GameState {
   const s = createInitialState({ seed: 'cmb', version: { data: '0.1.0', manifest: '1' } });
@@ -134,7 +159,7 @@ describe('combat — resolution over real hours', () => {
     const r = okAdvance(kernel.advanceTo(started.state, ctx(2 * HOUR)));
 
     const resolved = r.events.find((e) => e.type === 'battle.resolved');
-    expect((resolved?.payload as { winner: string | null }).winner).toBe('A');
+    expect((resolved?.payload as { winner: string | null }).winner).toBe('p1'); // attacker's owner
     expect(types(r.events)).toContain('unit.died');
     expect(r.state.fleets.D).toBeUndefined(); // destroyed & removed
     expect(r.state.fleets.A?.battleId).toBe(null); // survivor released
@@ -207,7 +232,7 @@ describe('combat — hooks & graceful degradation', () => {
       setup(api) {
         api.hook<number>('combat.damage', (cur, args) => {
           const a = args as { attacker?: string } | null;
-          return a?.attacker === 'A' ? cur * 2 : cur;
+          return a?.attacker === 'p1' ? cur * 2 : cur; // boost the p1 admiral's fleet
         });
       },
     };
@@ -264,8 +289,81 @@ describe('combat — integration with movement', () => {
     expect(r.state.fleets.A?.location).toBe('P');
     expect(r.state.fleets.A?.battleId).toBe(null);
     expect(r.state.fleets.D).toBeUndefined();
+    expect(r.state.planets.P?.owner).toBe('p1'); // undefended after the fight → captured
     expect(types(r.events)).toEqual(
-      expect.arrayContaining(['fleet.arrived', 'battle.started', 'battle.resolved']),
+      expect.arrayContaining([
+        'fleet.arrived',
+        'battle.started',
+        'battle.resolved',
+        'planet.captured',
+      ]),
     );
+  });
+});
+
+describe('combat — two-phase planet capture (GDD §7.4)', () => {
+  it('occupies an undefended hostile world without a fight', () => {
+    const kernel = createKernel([combatModule, arrivalModule]);
+    const st = baseState([fleet('A', 'p1', 'P', [['fighter', 1]])], [planet('P', 'p2')]);
+    const r = okApply(kernel.applyAction(st, arrive('A'), ctx(0)));
+
+    expect(r.state.planets.P?.owner).toBe('p1');
+    expect(types(r.events)).toContain('planet.captured');
+    expect(types(r.events)).not.toContain('battle.started');
+    expect(Object.keys(r.state.battles)).toHaveLength(0);
+  });
+
+  it('storms a garrison with landing troops and captures the planet', () => {
+    const kernel = createKernel([combatModule, arrivalModule]);
+    const st = baseState(
+      [fleet('A', 'p1', 'P', [['fighter', 1]], [['marine', 2]])], // 2 marines as landing
+      [planet('P', 'p2', 0, 0, [['militia', 1]])], // 1 militia garrison
+    );
+    const started = okApply(kernel.applyAction(st, arrive('A'), ctx(0)));
+    const r = okAdvance(kernel.advanceTo(started.state, ctx(2 * HOUR)));
+
+    expect(r.state.planets.P?.owner).toBe('p1');
+    expect(types(r.events)).toContain('planet.captured');
+    // Surviving marines become the new garrison; the fleet keeps its ships.
+    const garrisonMarine = (r.state.planets.P?.garrison ?? []).find((s) => s.unit === 'marine');
+    expect(garrisonMarine?.count).toBe(2);
+    expect(r.state.fleets.A?.battleId).toBe(null);
+    expect(r.state.fleets.A?.units[0]?.unit).toBe('fighter');
+  });
+
+  it('cannot take a defended world without landing troops', () => {
+    const kernel = createKernel([combatModule, arrivalModule]);
+    const st = baseState(
+      [fleet('A', 'p1', 'P', [['fighter', 1]])], // no landing troops
+      [planet('P', 'p2', 0, 0, [['militia', 1]])],
+    );
+    const r = okApply(kernel.applyAction(st, arrive('A'), ctx(0)));
+
+    expect(r.state.planets.P?.owner).toBe('p2'); // holds
+    expect(types(r.events)).not.toContain('planet.captured');
+    expect(Object.keys(r.state.battles)).toHaveLength(0);
+  });
+
+  it('runs both phases: clear orbit, then land and capture', () => {
+    const kernel = createKernel([combatModule, arrivalModule]);
+    const st = baseState(
+      [
+        fleet('A', 'p1', 'P', [['fighter', 3]], [['marine', 2]]),
+        fleet('D', 'p2', 'P', [['fighter', 1]]),
+      ],
+      [planet('P', 'p2', 0, 0, [['militia', 1]])],
+    );
+    const started = okApply(kernel.applyAction(st, arrive('A'), ctx(0)));
+    const r = okAdvance(kernel.advanceTo(started.state, ctx(5 * HOUR)));
+    // Orbital battle starts at arrival (applyAction), ground battle later (advanceTo).
+    const allEvents = [...started.events, ...r.events];
+
+    expect(r.state.fleets.D).toBeUndefined(); // orbital phase destroyed the defender
+    expect(r.state.planets.P?.owner).toBe('p1'); // ground phase captured the world
+    const phases = allEvents
+      .filter((e) => e.type === 'battle.started')
+      .map((e) => (e.payload as { phase: string }).phase);
+    expect(phases).toEqual(['orbital', 'ground']);
+    expect(types(allEvents)).toContain('planet.captured');
   });
 });

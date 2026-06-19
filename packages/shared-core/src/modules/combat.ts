@@ -1,5 +1,5 @@
 import type { GameModule, HandlerContext } from '../kernel/module';
-import type { Battle, Fleet } from '../state/gameState';
+import type { Battle, CombatantRef, Fleet, GameState, UnitStack } from '../state/gameState';
 import type { GameData, UnitDef } from '../data/schemas';
 import { timeScaleOf, type Context } from '../action/types';
 
@@ -23,14 +23,53 @@ function unitTier(def: UnitDef): Tier {
   return def.traits.includes('artillery') ? 'artillery' : def.line;
 }
 
-function isAlive(fleet: Fleet): boolean {
-  return fleet.units.some((s) => s.count > 0);
+// --- combatant side access (ships / landing troops / planet garrison) --------
+
+function sideUnits(state: GameState, ref: CombatantRef): UnitStack[] | null {
+  switch (ref.kind) {
+    case 'fleet':
+      return state.fleets[ref.fleetId]?.units ?? null;
+    case 'landing': {
+      const f = state.fleets[ref.fleetId];
+      return f ? (f.landing ?? []) : null;
+    }
+    case 'garrison':
+      return state.planets[ref.planetId]?.garrison ?? null;
+  }
 }
 
-/** Raw damage a fleet deals in one round = Σ count × attack. */
-function fleetAttack(fleet: Fleet, data: GameData): number {
+function setSideUnits(state: GameState, ref: CombatantRef, units: UnitStack[]): void {
+  switch (ref.kind) {
+    case 'fleet': {
+      const f = state.fleets[ref.fleetId];
+      if (f) f.units = units;
+      return;
+    }
+    case 'landing': {
+      const f = state.fleets[ref.fleetId];
+      if (f) f.landing = units;
+      return;
+    }
+    case 'garrison': {
+      const p = state.planets[ref.planetId];
+      if (p) p.garrison = units;
+      return;
+    }
+  }
+}
+
+function sideAlive(state: GameState, ref: CombatantRef): boolean {
+  const units = sideUnits(state, ref);
+  return !!units && units.some((s) => s.count > 0);
+}
+
+function sideAttack(state: GameState, ref: CombatantRef, data: GameData): number {
+  const units = sideUnits(state, ref);
+  if (!units) {
+    return 0;
+  }
   let dmg = 0;
-  for (const stack of fleet.units) {
+  for (const stack of units) {
     const def = data.units[stack.unit];
     if (def) {
       dmg += stack.count * def.stats.attack;
@@ -39,19 +78,36 @@ function fleetAttack(fleet: Fleet, data: GameData): number {
   return dmg;
 }
 
+function isHostile(h: HandlerContext, a: string, b: string): boolean {
+  if (a === b) {
+    return false;
+  }
+  const diplomacy = h.capability<Diplomacy>('diplomacy');
+  return (diplomacy?.getRelation(a, b) ?? 'hostile') === 'hostile';
+}
+
+// --- damage ------------------------------------------------------------------
+
 /**
- * Applies `totalDamage` to a fleet, filling the receiving lines in tier order.
- * Tracks each stack's remaining HP pool so partial damage persists across
- * rounds; whole ships are lost as the pool drops, each loss announced via
- * `unit.died` (the bus hook the necromancer-style modules listen on).
+ * Applies `totalDamage` to a unit list, filling the receiving lines in tier
+ * order. Tracks each stack's remaining HP pool so partial damage persists
+ * across rounds; whole ships/troops are lost as the pool drops, each loss
+ * announced via `unit.died` (the bus hook reanimation-style modules listen on).
+ * Returns the surviving stacks.
  */
-function applyDamage(h: HandlerContext, fleet: Fleet, totalDamage: number, data: GameData): void {
+function applyDamage(
+  h: HandlerContext,
+  units: UnitStack[],
+  totalDamage: number,
+  data: GameData,
+  source: Record<string, string>,
+): UnitStack[] {
   let remaining = totalDamage;
   for (const tier of TIER_ORDER) {
     if (remaining <= 0) {
       break;
     }
-    const stacks = fleet.units
+    const stacks = units
       .filter((s) => {
         const def = data.units[s.unit];
         return def ? unitTier(def) === tier : false;
@@ -75,28 +131,47 @@ function applyDamage(h: HandlerContext, fleet: Fleet, totalDamage: number, data:
       const newCount = pool <= 0 ? 0 : Math.ceil(pool / perShip);
       const lost = stack.count - newCount;
       if (lost > 0) {
-        h.emit('unit.died', { fleetId: fleet.id, unit: stack.unit, count: lost });
+        h.emit('unit.died', { unit: stack.unit, count: lost, ...source });
       }
       stack.count = newCount;
       stack.hp = newCount > 0 ? pool : 0;
     }
   }
-  fleet.units = fleet.units.filter((s) => s.count > 0);
+  return units.filter((s) => s.count > 0);
+}
+
+function applyDamageToSide(
+  h: HandlerContext,
+  ref: CombatantRef,
+  dmg: number,
+  data: GameData,
+  location: string,
+): void {
+  const units = sideUnits(h.state, ref);
+  if (!units) {
+    return;
+  }
+  const source: Record<string, string> =
+    ref.kind === 'garrison'
+      ? { at: location, planetId: ref.planetId }
+      : { at: location, fleetId: ref.fleetId };
+  setSideUnits(h.state, ref, applyDamage(h, units, dmg, data, source));
+}
+
+// --- battle lifecycle --------------------------------------------------------
+
+function scheduleTick(h: HandlerContext, battleId: string): void {
+  h.schedule(h.ctx.now + roundIntervalMs(h.ctx), 'combat.tick', { battleId });
 }
 
 function findEnemyFleet(h: HandlerContext, arriver: Fleet): Fleet | null {
-  const diplomacy = h.capability<Diplomacy>('diplomacy');
   let best: Fleet | null = null;
   for (const id of Object.keys(h.state.fleets)) {
     const f = h.state.fleets[id];
-    if (!f || f.id === arriver.id || f.location !== arriver.location) {
+    if (!f || f.id === arriver.id || f.location !== arriver.location || f.battleId) {
       continue;
     }
-    if (f.battleId || f.owner === arriver.owner || !isAlive(f)) {
-      continue;
-    }
-    const rel = diplomacy?.getRelation(arriver.owner, f.owner) ?? 'hostile';
-    if (rel !== 'hostile') {
+    if (!f.units.some((s) => s.count > 0) || !isHostile(h, arriver.owner, f.owner)) {
       continue;
     }
     if (best === null || f.id < best.id) {
@@ -106,80 +181,178 @@ function findEnemyFleet(h: HandlerContext, arriver: Fleet): Fleet | null {
   return best;
 }
 
-function startBattle(
+function startBattle(h: HandlerContext, battle: Battle): void {
+  h.state.battles[battle.id] = battle;
+  for (const side of [battle.attacker, battle.defender]) {
+    if (side.ref.kind !== 'garrison') {
+      const f = h.state.fleets[side.ref.fleetId];
+      if (f) f.battleId = battle.id;
+    }
+  }
+  h.emit('battle.started', {
+    battleId: battle.id,
+    location: battle.location,
+    phase: battle.phase,
+    attacker: battle.attacker.owner,
+    defender: battle.defender.owner,
+  });
+  scheduleTick(h, battle.id);
+}
+
+/**
+ * Drives the capture pipeline for a fleet sitting at `location` (GDD §7.4):
+ * clear orbital defenders one by one, then assault the planet's garrison, then
+ * take an undefended hostile/neutral world. Each step is a separate battle or
+ * an instant occupation; nothing runs in parallel.
+ */
+function engage(h: HandlerContext, fleetId: string, location: string): void {
+  const fleet = h.state.fleets[fleetId];
+  if (!fleet || fleet.battleId || fleet.location !== location) {
+    return;
+  }
+
+  // 1. Orbital: fight a hostile defending fleet if one is present.
+  const enemy = findEnemyFleet(h, fleet);
+  if (enemy) {
+    startBattle(h, {
+      id: `battle:${h.state.battleSeq++}`,
+      location,
+      phase: 'orbital',
+      attacker: { ref: { kind: 'fleet', fleetId: fleet.id }, owner: fleet.owner },
+      defender: { ref: { kind: 'fleet', fleetId: enemy.id }, owner: enemy.owner },
+      round: 0,
+    });
+    return;
+  }
+
+  // 2. Orbit is clear — try to take the planet (if it is hostile/neutral).
+  const planet = h.state.planets[location];
+  if (!planet || planet.owner === fleet.owner) {
+    return;
+  }
+  if (planet.owner !== null && !isHostile(h, fleet.owner, planet.owner)) {
+    return; // ally's planet — left alone
+  }
+
+  const defended = (planet.garrison ?? []).some((s) => s.count > 0);
+  if (defended) {
+    // A defended world requires landing troops to take.
+    if ((fleet.landing ?? []).some((s) => s.count > 0)) {
+      startBattle(h, {
+        id: `battle:${h.state.battleSeq++}`,
+        location,
+        phase: 'ground',
+        attacker: { ref: { kind: 'landing', fleetId: fleet.id }, owner: fleet.owner },
+        defender: { ref: { kind: 'garrison', planetId: location }, owner: planet.owner },
+        round: 0,
+      });
+    }
+    return;
+  }
+
+  // 3. Undefended hostile/neutral world — occupy immediately.
+  capturePlanet(h, location, fleet.id, planet.owner);
+}
+
+function capturePlanet(
   h: HandlerContext,
   location: string,
-  attackerId: string,
-  defenderId: string,
+  fleetId: string,
+  previousOwner: string | null,
 ): void {
-  const id = `battle:${h.state.battleSeq++}`;
-  h.state.battles[id] = { id, location, attacker: attackerId, defender: defenderId, round: 0 };
-  const attacker = h.state.fleets[attackerId];
-  const defender = h.state.fleets[defenderId];
-  if (attacker) attacker.battleId = id;
-  if (defender) defender.battleId = id;
-  h.emit('battle.started', { battleId: id, location, attacker: attackerId, defender: defenderId });
-  h.schedule(h.ctx.now + roundIntervalMs(h.ctx), 'combat.tick', { battleId: id });
+  const planet = h.state.planets[location];
+  const fleet = h.state.fleets[fleetId];
+  if (!planet || !fleet) {
+    return;
+  }
+  planet.owner = fleet.owner;
+  // Landing troops left behind become the new garrison.
+  const landing = fleet.landing ?? [];
+  if (landing.some((s) => s.count > 0)) {
+    planet.garrison = landing;
+    fleet.landing = [];
+  }
+  h.emit('planet.captured', {
+    planetId: location,
+    owner: fleet.owner,
+    by: fleetId,
+    from: previousOwner,
+  });
+}
+
+function releaseOrDestroyFleet(h: HandlerContext, ref: CombatantRef): void {
+  if (ref.kind === 'garrison') {
+    return;
+  }
+  const fleet = h.state.fleets[ref.fleetId];
+  if (!fleet) {
+    return;
+  }
+  // A fleet is lost only when its ships are gone; losing landing troops alone
+  // leaves the fleet intact in orbit.
+  if (fleet.units.length === 0) {
+    h.emit('fleet.destroyed', { fleetId: fleet.id, owner: fleet.owner });
+    delete h.state.fleets[fleet.id];
+  } else {
+    fleet.battleId = null;
+  }
 }
 
 function finishBattle(h: HandlerContext, battle: Battle, stalemate = false): void {
-  const attacker = h.state.fleets[battle.attacker];
-  const defender = h.state.fleets[battle.defender];
-  const aAlive = !!attacker && isAlive(attacker);
-  const dAlive = !!defender && isAlive(defender);
+  const aAlive = sideAlive(h.state, battle.attacker.ref);
+  const dAlive = sideAlive(h.state, battle.defender.ref);
   const winner = stalemate
     ? null
     : aAlive && !dAlive
-      ? battle.attacker
+      ? battle.attacker.owner
       : dAlive && !aAlive
-        ? battle.defender
+        ? battle.defender.owner
         : null;
 
-  for (const fleet of [attacker, defender]) {
-    if (!fleet) {
-      continue;
-    }
-    if (isAlive(fleet)) {
-      fleet.battleId = null; // released, free to move again
-    } else {
-      h.emit('fleet.destroyed', { fleetId: fleet.id, owner: fleet.owner });
-      delete h.state.fleets[fleet.id];
-    }
-  }
+  releaseOrDestroyFleet(h, battle.attacker.ref);
+  releaseOrDestroyFleet(h, battle.defender.ref);
   delete h.state.battles[battle.id];
   h.emit('battle.resolved', {
     battleId: battle.id,
     location: battle.location,
+    phase: battle.phase,
     winner,
     rounds: battle.round,
   });
+
+  if (battle.phase === 'orbital') {
+    // Attacker cleared this defender → continue the capture pipeline.
+    if (battle.attacker.ref.kind === 'fleet' && aAlive) {
+      engage(h, battle.attacker.ref.fleetId, battle.location);
+    }
+  } else if (aAlive && !dAlive && battle.attacker.ref.kind === 'landing') {
+    // Ground assault succeeded → take the planet.
+    capturePlanet(h, battle.location, battle.attacker.ref.fleetId, battle.defender.owner);
+  }
 }
 
 /**
- * Combat — a base module (GDD §7). First increment: orbital battle, fleet vs
- * fleet, resolved over real hours (one round per `combat.tick`). Damage runs
- * through the `combat.damage` hook (admiral / tactic / curse extension point);
- * deaths publish `unit.died`; resolution publishes `battle.resolved`. Ground
- * phase, planet capture and heroes build on top of this in the next increments.
+ * Combat — a base module (GDD §7). Battles are stateful entities resolved over
+ * real hours, one round per `combat.tick`. Capturing a planet is two sequential
+ * phases — orbital (fleet vs fleet) then ground (landing vs garrison, §7.4) —
+ * driven by one round engine. Damage runs through the `combat.damage` hook
+ * (admiral / tactic / orbital-bombardment extension point, with `phase` in its
+ * args); deaths publish `unit.died`; outcomes publish `battle.resolved` and
+ * `planet.captured`.
  */
 export const combatModule: GameModule = {
   id: 'combat',
   version: '1.0.0',
   setup(api) {
-    // A fleet arriving where a hostile fleet sits triggers an engagement.
     api.on('fleet.arrived', (event, h) => {
       const { fleetId } = event.payload as { fleetId: string };
-      const arriver = h.state.fleets[fleetId];
-      if (!arriver || arriver.location === null || arriver.battleId) {
+      const fleet = h.state.fleets[fleetId];
+      if (!fleet || fleet.location === null || fleet.battleId) {
         return;
       }
-      const enemy = findEnemyFleet(h, arriver);
-      if (enemy) {
-        startBattle(h, arriver.location, arriver.id, enemy.id);
-      }
+      engage(h, fleetId, fleet.location);
     });
 
-    // One battle round per hourly tick.
     api.on('combat.tick', (event, h) => {
       const { battleId } = event.payload as { battleId: string };
       const battle = h.state.battles[battleId];
@@ -187,9 +360,7 @@ export const combatModule: GameModule = {
         return; // already resolved
       }
       const data = h.ctx.data;
-      const attacker = h.state.fleets[battle.attacker];
-      const defender = h.state.fleets[battle.defender];
-      if (!attacker || !defender || !isAlive(attacker) || !isAlive(defender)) {
+      if (!sideAlive(h.state, battle.attacker.ref) || !sideAlive(h.state, battle.defender.ref)) {
         finishBattle(h, battle);
         return;
       }
@@ -201,22 +372,38 @@ export const combatModule: GameModule = {
       }
 
       // Simultaneous round: both sides fire from the pre-round state.
-      const dmgToDefender = h.hook<number>('combat.damage', fleetAttack(attacker, data), {
+      const dmgToDefender = h.hook<number>(
+        'combat.damage',
+        sideAttack(h.state, battle.attacker.ref, data),
+        {
+          battleId,
+          phase: battle.phase,
+          attacker: battle.attacker.owner,
+          defender: battle.defender.owner,
+        },
+      );
+      const dmgToAttacker = h.hook<number>(
+        'combat.damage',
+        sideAttack(h.state, battle.defender.ref, data),
+        {
+          battleId,
+          phase: battle.phase,
+          attacker: battle.defender.owner,
+          defender: battle.attacker.owner,
+        },
+      );
+      applyDamageToSide(h, battle.defender.ref, dmgToDefender, data, battle.location);
+      applyDamageToSide(h, battle.attacker.ref, dmgToAttacker, data, battle.location);
+      h.emit('combat.round', {
         battleId,
-        attacker: attacker.id,
-        defender: defender.id,
+        round: battle.round,
+        phase: battle.phase,
+        dmgToAttacker,
+        dmgToDefender,
       });
-      const dmgToAttacker = h.hook<number>('combat.damage', fleetAttack(defender, data), {
-        battleId,
-        attacker: defender.id,
-        defender: attacker.id,
-      });
-      applyDamage(h, defender, dmgToDefender, data);
-      applyDamage(h, attacker, dmgToAttacker, data);
-      h.emit('combat.round', { battleId, round: battle.round, dmgToAttacker, dmgToDefender });
 
-      if (isAlive(attacker) && isAlive(defender)) {
-        h.schedule(h.ctx.now + roundIntervalMs(h.ctx), 'combat.tick', { battleId });
+      if (sideAlive(h.state, battle.attacker.ref) && sideAlive(h.state, battle.defender.ref)) {
+        scheduleTick(h, battleId);
       } else {
         finishBattle(h, battle);
       }

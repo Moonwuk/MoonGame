@@ -64,21 +64,41 @@ export interface Fleet {
   location: PlanetId | null;
   movement: FleetMovement | null;
   units: UnitStack[];
+  /** Landing troops carried for ground assault (separate from ship `units`). */
+  landing?: UnitStack[];
   traits: TraitId[];
   /** Id of the battle this fleet is engaged in; absent/null when free to move. */
   battleId?: BattleId | null;
 }
 
 /**
+ * A combatant in a battle — the ship units of a fleet (orbital), the landing
+ * troops a fleet carries (ground assault), or a planet's garrison (ground
+ * defense). One round engine drives all three (GDD §7.3).
+ */
+export type CombatantRef =
+  | { kind: 'fleet'; fleetId: FleetId }
+  | { kind: 'landing'; fleetId: FleetId }
+  | { kind: 'garrison'; planetId: PlanetId };
+
+export interface BattleSide {
+  ref: CombatantRef;
+  /** Owner of this side (for victory / planet ownership). */
+  owner: PlayerId | null;
+}
+
+/**
  * An ongoing battle — a stateful entity that resolves over real hours, one
- * round per `combat.tick` (GDD §7). First increment: orbital, fleet vs fleet.
+ * round per `combat.tick` (GDD §7). Capturing a planet is two sequential
+ * battles: `orbital` (fleet vs fleet) then `ground` (landing vs garrison) — §7.4.
  */
 export interface Battle {
   id: BattleId;
   /** Contested planet where the engagement happens. */
   location: PlanetId;
-  attacker: FleetId;
-  defender: FleetId;
+  phase: 'orbital' | 'ground';
+  attacker: BattleSide;
+  defender: BattleSide;
   /** Rounds resolved so far. */
   round: number;
 }
