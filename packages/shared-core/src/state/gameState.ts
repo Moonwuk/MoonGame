@@ -43,6 +43,9 @@ export interface Planet {
   /** Owning player, or null for a neutral / unclaimed sector. */
   owner: PlayerId | null;
   position: { x: number; y: number };
+  /** Star lanes: ids of directly-connected planets. The map is this graph;
+   *  fleets travel along lanes (GDD §1 — секторная структура, узлы-планеты). */
+  links?: PlanetId[];
   resources: ResourceBag;
   buildings: BuildingId[];
   garrison: UnitStack[];
@@ -50,11 +53,17 @@ export interface Planet {
 }
 
 export interface FleetMovement {
+  /** Origin of the current leg. */
   from: PlanetId;
+  /** Next hop (the planet this leg ends at). */
   to: PlanetId;
   /** Server-authoritative timestamps (ms). */
   departedAt: number;
   arrivesAt: number;
+  /** Remaining hops after `to`, in order, ending at `destination`. */
+  path?: PlanetId[];
+  /** Final destination of the whole journey. */
+  destination?: PlanetId;
 }
 
 export interface Fleet {

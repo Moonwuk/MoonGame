@@ -3,17 +3,18 @@ import { createKernel } from '../kernel/kernel';
 import type { GameModule } from '../kernel/module';
 import { movementModule } from './movement';
 import { economyModule } from './economy';
+import { combatModule } from './combat';
 import { createInitialState, type Fleet, type GameState, type Planet } from '../state/gameState';
 import { parseGameData, type GameData } from '../data/schemas';
-import type { Action, ApplyResult, Context } from '../action/types';
+import type { Action, AdvanceResult, ApplyResult, Context } from '../action/types';
 import { deepFreeze } from '../util/clone';
 
 const data: GameData = parseGameData({
   version: '0.1.0',
   resources: ['metal'],
   units: {
-    scout: { faction: 'x', stats: { attack: 1, defense: 1, speed: 10 } },
-    cruiser: { faction: 'x', stats: { attack: 5, defense: 5, speed: 5 } },
+    scout: { faction: 'x', stats: { attack: 1, defense: 1, speed: 10, hp: 6 } },
+    cruiser: { faction: 'x', stats: { attack: 5, defense: 5, speed: 5, hp: 40 } },
   },
   factions: {},
   buildings: { mine: { name: 'Mine', produces: { metal: 10 }, buildTimeHours: 0 } },
@@ -70,13 +71,34 @@ function okApply(r: ApplyResult) {
   if (!r.ok) throw new Error(`apply failed: ${r.code}`);
   return r;
 }
+function okAdvance(r: AdvanceResult) {
+  if (!r.ok) throw new Error(`advance failed: ${r.code}`);
+  return r;
+}
 function errCode(r: ApplyResult): string {
   if (r.ok) throw new Error('expected rejection, got ok');
   return r.code;
 }
 
-// A→B is 30 units apart; scout speed 10 → 3h.
-const fieldAB = () => [planet('A', 'p1', 0, 0, ['mine']), planet('B', 'p1', 30, 0)];
+// A→B is 30 units apart and lane-connected; scout speed 10 → 3h.
+const fieldAB = () => {
+  const a = planet('A', 'p1', 0, 0, ['mine']);
+  const b = planet('B', 'p1', 30, 0);
+  a.links = ['B'];
+  b.links = ['A'];
+  return [a, b];
+};
+
+// A(0,0) — B(30,0) — C(60,0), a straight 3-node lane; scout speed 10 → 3h/hop.
+function chainABC(): Planet[] {
+  const a = planet('A', 'p1', 0, 0);
+  const b = planet('B', null, 30, 0);
+  const c = planet('C', null, 60, 0);
+  a.links = ['B'];
+  b.links = ['A', 'C'];
+  c.links = ['B'];
+  return [a, b, c];
+}
 
 describe('movement module — orders & validation (OWASP A01)', () => {
   it('departs a fleet and schedules its arrival', () => {
@@ -168,5 +190,50 @@ describe('movement + economy — real-time end to end', () => {
     expect(arrived.events.map((e) => e.type)).toContain('fleet.arrived');
     // Planet A produced 10 metal/h for the full 3h the journey took.
     expect(arrived.state.planets.A?.resources.metal).toBe(30);
+  });
+});
+
+describe('movement — routing along lanes (the map graph)', () => {
+  it('routes hop by hop along the shortest lane path to a distant planet', () => {
+    const kernel = createKernel([movementModule]);
+    const st = baseState(chainABC(), [fleet('F', 'p1', 'A', ['scout'])]);
+    const ordered = okApply(kernel.applyAction(st, move('F', 'C'), ctx(0)));
+    expect(ordered.state.fleets.F?.movement?.to).toBe('B'); // first hop
+
+    const atB = okAdvance(kernel.advanceTo(ordered.state, ctx(3 * HOUR)));
+    expect(atB.state.fleets.F?.movement?.to).toBe('C'); // continued to the next hop
+    expect(atB.events.map((e) => e.type)).toContain('fleet.transit');
+
+    const atC = okAdvance(kernel.advanceTo(atB.state, ctx(6 * HOUR)));
+    expect(atC.state.fleets.F?.location).toBe('C');
+    expect(atC.state.fleets.F?.movement).toBe(null);
+  });
+
+  it('rejects a destination with no lane route', () => {
+    const kernel = createKernel([movementModule]);
+    const a = planet('A', 'p1', 0, 0);
+    const island = planet('Z', null, 99, 99); // no links
+    a.links = [];
+    const st = baseState([a, island], [fleet('F', 'p1', 'A', ['scout'])]);
+    expect(errCode(kernel.applyAction(st, move('F', 'Z'), ctx(0)))).toBe('E_NO_ROUTE');
+  });
+});
+
+describe('movement + combat — collision on a lane triggers battle', () => {
+  it('halts mid-journey and fights an enemy fleet blocking the path', () => {
+    const kernel = createKernel([combatModule, movementModule]);
+    const st = baseState(chainABC(), [
+      fleet('F', 'p1', 'A', ['scout', 'scout', 'scout', 'scout', 'scout', 'scout']),
+      fleet('E', 'p2', 'B', ['scout']), // lone enemy holding node B
+    ]);
+    const ordered = okApply(kernel.applyAction(st, move('F', 'C'), ctx(0)));
+    const r = okAdvance(kernel.advanceTo(ordered.state, ctx(12 * HOUR)));
+
+    // F reached B, collided with E, fought — it never continued to C.
+    expect(r.state.fleets.F?.location).toBe('B');
+    expect(r.state.fleets.E).toBeUndefined(); // destroyed in the clash
+    expect(r.events.map((e) => e.type)).toEqual(
+      expect.arrayContaining(['fleet.transit', 'battle.started', 'battle.resolved']),
+    );
   });
 });

@@ -164,14 +164,20 @@ function scheduleTick(h: HandlerContext, battleId: string): void {
   h.schedule(h.ctx.now + roundIntervalMs(h.ctx), 'combat.tick', { battleId });
 }
 
-function findEnemyFleet(h: HandlerContext, arriver: Fleet): Fleet | null {
+/** Lowest-id hostile, alive, unengaged fleet sitting at node `at`. */
+function findEnemyFleetAt(
+  h: HandlerContext,
+  at: string,
+  owner: string,
+  excludeId: string,
+): Fleet | null {
   let best: Fleet | null = null;
   for (const id of Object.keys(h.state.fleets)) {
     const f = h.state.fleets[id];
-    if (!f || f.id === arriver.id || f.location !== arriver.location || f.battleId) {
+    if (!f || f.id === excludeId || f.location !== at || f.battleId) {
       continue;
     }
-    if (!f.units.some((s) => s.count > 0) || !isHostile(h, arriver.owner, f.owner)) {
+    if (!f.units.some((s) => s.count > 0) || !isHostile(h, owner, f.owner)) {
       continue;
     }
     if (best === null || f.id < best.id) {
@@ -181,12 +187,21 @@ function findEnemyFleet(h: HandlerContext, arriver: Fleet): Fleet | null {
   return best;
 }
 
+/** Pulls a fleet out of transit and pins it at a node (it now fights/holds). */
+function pinToNode(fleet: Fleet, at: string): void {
+  fleet.location = at;
+  fleet.movement = null;
+}
+
 function startBattle(h: HandlerContext, battle: Battle): void {
   h.state.battles[battle.id] = battle;
   for (const side of [battle.attacker, battle.defender]) {
     if (side.ref.kind !== 'garrison') {
       const f = h.state.fleets[side.ref.fleetId];
-      if (f) f.battleId = battle.id;
+      if (f) {
+        f.battleId = battle.id;
+        f.movement = null; // engaging stops a moving fleet
+      }
     }
   }
   h.emit('battle.started', {
@@ -200,23 +215,25 @@ function startBattle(h: HandlerContext, battle: Battle): void {
 }
 
 /**
- * Drives the capture pipeline for a fleet sitting at `location` (GDD §7.4):
- * clear orbital defenders one by one, then assault the planet's garrison, then
- * take an undefended hostile/neutral world. Each step is a separate battle or
- * an instant occupation; nothing runs in parallel.
+ * Resolves what a fleet does on reaching node `at` (GDD §7.4). A collision with
+ * a hostile fleet always triggers an orbital battle (even mid-journey — it
+ * cancels the rest of the move). On a clean *arrival* (`allowCapture`) it then
+ * tries to take the planet: storm a defended garrison with landing troops, or
+ * occupy an undefended hostile/neutral world. Passing *through* a node
+ * (transit) only fights — it never captures.
  */
-function engage(h: HandlerContext, fleetId: string, location: string): void {
+function engage(h: HandlerContext, fleetId: string, at: string, allowCapture: boolean): void {
   const fleet = h.state.fleets[fleetId];
-  if (!fleet || fleet.battleId || fleet.location !== location) {
+  if (!fleet || fleet.battleId) {
     return;
   }
 
-  // 1. Orbital: fight a hostile defending fleet if one is present.
-  const enemy = findEnemyFleet(h, fleet);
+  const enemy = findEnemyFleetAt(h, at, fleet.owner, fleetId);
   if (enemy) {
+    pinToNode(fleet, at);
     startBattle(h, {
       id: `battle:${h.state.battleSeq++}`,
-      location,
+      location: at,
       phase: 'orbital',
       attacker: { ref: { kind: 'fleet', fleetId: fleet.id }, owner: fleet.owner },
       defender: { ref: { kind: 'fleet', fleetId: enemy.id }, owner: enemy.owner },
@@ -225,8 +242,12 @@ function engage(h: HandlerContext, fleetId: string, location: string): void {
     return;
   }
 
-  // 2. Orbit is clear — try to take the planet (if it is hostile/neutral).
-  const planet = h.state.planets[location];
+  if (!allowCapture) {
+    return; // just passing through, orbit clear
+  }
+
+  pinToNode(fleet, at);
+  const planet = h.state.planets[at];
   if (!planet || planet.owner === fleet.owner) {
     return;
   }
@@ -236,22 +257,20 @@ function engage(h: HandlerContext, fleetId: string, location: string): void {
 
   const defended = (planet.garrison ?? []).some((s) => s.count > 0);
   if (defended) {
-    // A defended world requires landing troops to take.
     if ((fleet.landing ?? []).some((s) => s.count > 0)) {
       startBattle(h, {
         id: `battle:${h.state.battleSeq++}`,
-        location,
+        location: at,
         phase: 'ground',
         attacker: { ref: { kind: 'landing', fleetId: fleet.id }, owner: fleet.owner },
-        defender: { ref: { kind: 'garrison', planetId: location }, owner: planet.owner },
+        defender: { ref: { kind: 'garrison', planetId: at }, owner: planet.owner },
         round: 0,
       });
     }
-    return;
+    return; // defended but no troops → planet holds
   }
 
-  // 3. Undefended hostile/neutral world — occupy immediately.
-  capturePlanet(h, location, fleet.id, planet.owner);
+  capturePlanet(h, at, fleet.id, planet.owner, false); // occupy, keep troops aboard
 }
 
 function capturePlanet(
@@ -259,6 +278,7 @@ function capturePlanet(
   location: string,
   fleetId: string,
   previousOwner: string | null,
+  depositLanding: boolean,
 ): void {
   const planet = h.state.planets[location];
   const fleet = h.state.fleets[fleetId];
@@ -266,11 +286,14 @@ function capturePlanet(
     return;
   }
   planet.owner = fleet.owner;
-  // Landing troops left behind become the new garrison.
-  const landing = fleet.landing ?? [];
-  if (landing.some((s) => s.count > 0)) {
-    planet.garrison = landing;
-    fleet.landing = [];
+  // Only a successful ground assault leaves troops behind to garrison; a fleet
+  // simply occupying an undefended world keeps its landing troops aboard.
+  if (depositLanding) {
+    const landing = fleet.landing ?? [];
+    if (landing.some((s) => s.count > 0)) {
+      planet.garrison = landing;
+      fleet.landing = [];
+    }
   }
   h.emit('planet.captured', {
     planetId: location,
@@ -288,13 +311,11 @@ function releaseOrDestroyFleet(h: HandlerContext, ref: CombatantRef): void {
   if (!fleet) {
     return;
   }
-  // A fleet is lost only when its ships are gone; losing landing troops alone
-  // leaves the fleet intact in orbit.
   if (fleet.units.length === 0) {
     h.emit('fleet.destroyed', { fleetId: fleet.id, owner: fleet.owner });
     delete h.state.fleets[fleet.id];
   } else {
-    fleet.battleId = null;
+    fleet.battleId = null; // released, free to move again
   }
 }
 
@@ -321,36 +342,35 @@ function finishBattle(h: HandlerContext, battle: Battle, stalemate = false): voi
   });
 
   if (battle.phase === 'orbital') {
-    // Attacker cleared this defender → continue the capture pipeline.
     if (battle.attacker.ref.kind === 'fleet' && aAlive) {
-      engage(h, battle.attacker.ref.fleetId, battle.location);
+      engage(h, battle.attacker.ref.fleetId, battle.location, true); // clear next defender / take planet
     }
   } else if (aAlive && !dAlive && battle.attacker.ref.kind === 'landing') {
-    // Ground assault succeeded → take the planet.
-    capturePlanet(h, battle.location, battle.attacker.ref.fleetId, battle.defender.owner);
+    capturePlanet(h, battle.location, battle.attacker.ref.fleetId, battle.defender.owner, true);
   }
 }
 
 /**
  * Combat — a base module (GDD §7). Battles are stateful entities resolved over
- * real hours, one round per `combat.tick`. Capturing a planet is two sequential
- * phases — orbital (fleet vs fleet) then ground (landing vs garrison, §7.4) —
- * driven by one round engine. Damage runs through the `combat.damage` hook
- * (admiral / tactic / orbital-bombardment extension point, with `phase` in its
- * args); deaths publish `unit.died`; outcomes publish `battle.resolved` and
- * `planet.captured`.
+ * real hours, one round per `combat.tick`. Fleets collide at map nodes (a
+ * `fleet.transit` mid-journey or a `fleet.arrived` at the destination); capture
+ * is two sequential phases — orbital then ground (§7.4). Damage runs through the
+ * `combat.damage` hook (admiral / tactic / bombardment extension point, with
+ * `phase` in its args); deaths publish `unit.died`; outcomes publish
+ * `battle.resolved` and `planet.captured`.
  */
 export const combatModule: GameModule = {
   id: 'combat',
   version: '1.0.0',
   setup(api) {
     api.on('fleet.arrived', (event, h) => {
-      const { fleetId } = event.payload as { fleetId: string };
-      const fleet = h.state.fleets[fleetId];
-      if (!fleet || fleet.location === null || fleet.battleId) {
-        return;
-      }
-      engage(h, fleetId, fleet.location);
+      const { fleetId, at } = event.payload as { fleetId: string; at: string };
+      engage(h, fleetId, at, true);
+    });
+
+    api.on('fleet.transit', (event, h) => {
+      const { fleetId, at } = event.payload as { fleetId: string; at: string };
+      engage(h, fleetId, at, false);
     });
 
     api.on('combat.tick', (event, h) => {

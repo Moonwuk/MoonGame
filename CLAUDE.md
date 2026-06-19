@@ -104,3 +104,24 @@ data. You should not need to touch the kernel.
 - When you finish a roadmap milestone, update the "Статус реализации" section in
   `docs/roadmap.md`.
 - Development happens on the feature branch; open a PR (draft) after pushing.
+
+## Behavioral guidelines
+
+Accepted team rules (guards against common LLM coding mistakes). They bias toward
+caution over speed; use judgment on trivial tasks.
+
+1. **Think before coding.** State assumptions. If multiple interpretations exist,
+   surface them instead of picking silently. If a simpler approach exists, say so.
+   If something is unclear, stop and ask.
+2. **Simplicity first.** Minimum code that solves the problem — nothing speculative:
+   no abstractions for single-use code, no unrequested configurability, no error
+   handling for impossible cases. _Project nuance:_ the architecture's extensibility
+   (data-driven content, modules, hooks) is an explicit requirement — those designed
+   extension points are "asked for"; the rule bars speculative complexity _within_ a
+   unit, not the planned seams.
+3. **Surgical changes.** Touch only what the task requires. Don't refactor or
+   reformat unrelated code; match existing style; mention unrelated dead code rather
+   than deleting it. Remove only orphans your own change created.
+4. **Goal-driven execution.** Turn the task into a verifiable goal and loop until it
+   passes — usually: write/extend tests, then make them green. `pnpm run check` is the
+   gate.

@@ -90,7 +90,8 @@ const arrivalModule: GameModule = {
   version: '1.0.0',
   setup(api) {
     api.onAction('arrive', (a, h) => {
-      h.emit('fleet.arrived', { fleetId: (a.payload as { fleetId: string }).fleetId });
+      const fleetId = (a.payload as { fleetId: string }).fleetId;
+      h.emit('fleet.arrived', { fleetId, at: h.state.fleets[fleetId]?.location });
     });
   },
 };
@@ -279,9 +280,13 @@ describe('combat — hooks & graceful degradation', () => {
 describe('combat — integration with movement', () => {
   it('a fleet flies to a hostile planet and fights on arrival', () => {
     const kernel = createKernel([movementModule, combatModule]);
+    const q = planet('Q', 'p1', 0, 0);
+    const p = planet('P', 'p2', 10, 0); // 10 apart, fighter speed 10 → 1h
+    q.links = ['P'];
+    p.links = ['Q'];
     const st = baseState(
       [fleet('A', 'p1', 'Q', [['fighter', 3]]), fleet('D', 'p2', 'P', [['fighter', 1]])],
-      [planet('Q', 'p1', 0, 0), planet('P', 'p2', 10, 0)], // 10 apart, fighter speed 10 → 1h
+      [q, p],
     );
     const ordered = okApply(kernel.applyAction(st, move('A', 'P'), ctx(0)));
     const r = okAdvance(kernel.advanceTo(ordered.state, ctx(3 * HOUR)));
