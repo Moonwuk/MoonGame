@@ -20,8 +20,9 @@
 - **Fail-secure** — любая ошибка ведёт к безопасному отказу, не к пропуску.
 - **TypeScript везде** — `shared-core` пишется один раз и работает и на сервере, и на клиенте.
 
-Подробности — в [`docs/`](./docs): [`architecture.md`](./docs/architecture.md),
-[`modulesystem.md`](./docs/modulesystem.md), [`roadmap.md`](./docs/roadmap.md).
+Подробности — в [`docs/`](./docs): [`gdd.md`](./docs/gdd.md) (игровой дизайн),
+[`architecture.md`](./docs/architecture.md), [`modulesystem.md`](./docs/modulesystem.md),
+[`roadmap.md`](./docs/roadmap.md).
 
 ## Структура монорепы
 
