@@ -46,6 +46,9 @@ export interface Planet {
   /** Star lanes: ids of directly-connected planets. The map is this graph;
    *  fleets travel along lanes (GDD §1 — секторная структура, узлы-планеты). */
   links?: PlanetId[];
+  /** Sector terrain type id (resolved against game data `sectors`); its buffs
+   *  /debuffs are applied through hooks. Undefined = plain space, no modifier. */
+  sectorType?: string;
   resources: ResourceBag;
   buildings: BuildingId[];
   garrison: UnitStack[];

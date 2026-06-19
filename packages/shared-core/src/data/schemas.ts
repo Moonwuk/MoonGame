@@ -61,6 +61,18 @@ export const EffectRuleSchema = z.object({
   chance: z.number().min(0).max(1).default(1),
 });
 
+/**
+ * A sector type — terrain of a map node (GDD §1: секторная структура). Carries
+ * buffs/debuffs applied through hooks, never hard-coded in the core.
+ */
+export const SectorTypeDefSchema = z.object({
+  name: z.string().optional(),
+  /** Fleet speed change for a leg entering this sector, e.g. -0.25 = −25%. */
+  speedBonus: z.number().default(0),
+  /** Effective fleet HP change for battles in this sector, e.g. 0.1 = +10%. */
+  hpBonus: z.number().default(0),
+});
+
 export const GameDataSchema = z.object({
   version: z.string(),
   resources: z.array(z.string()).min(1),
@@ -68,6 +80,7 @@ export const GameDataSchema = z.object({
   factions: z.record(z.string(), FactionDefSchema),
   buildings: z.record(z.string(), BuildingDefSchema),
   events: z.record(z.string(), EffectRuleSchema),
+  sectors: z.record(z.string(), SectorTypeDefSchema).default({}),
 });
 
 export type ResourceBag = z.infer<typeof ResourceBagSchema>;
@@ -76,6 +89,7 @@ export type UnitDef = z.infer<typeof UnitDefSchema>;
 export type FactionDef = z.infer<typeof FactionDefSchema>;
 export type BuildingDef = z.infer<typeof BuildingDefSchema>;
 export type EffectRule = z.infer<typeof EffectRuleSchema>;
+export type SectorTypeDef = z.infer<typeof SectorTypeDefSchema>;
 export type GameData = z.infer<typeof GameDataSchema>;
 
 /** Parses and validates a full game-data bundle, throwing on invalid input. */

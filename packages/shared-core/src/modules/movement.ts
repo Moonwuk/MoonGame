@@ -98,6 +98,8 @@ function beginLeg(h: HandlerContext, fleet: Fleet, originId: PlanetId, hops: Pla
   }
   const speed = h.hook<number>('fleet.speed', fleetBaseSpeed(fleet, h.ctx.data), {
     fleetId: fleet.id,
+    from: originId,
+    to: nextHop,
   });
   if (speed <= 0) {
     return false;

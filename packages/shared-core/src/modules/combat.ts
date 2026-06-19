@@ -398,6 +398,7 @@ export const combatModule: GameModule = {
         {
           battleId,
           phase: battle.phase,
+          location: battle.location,
           attacker: battle.attacker.owner,
           defender: battle.defender.owner,
         },
@@ -408,6 +409,7 @@ export const combatModule: GameModule = {
         {
           battleId,
           phase: battle.phase,
+          location: battle.location,
           attacker: battle.defender.owner,
           defender: battle.attacker.owner,
         },

@@ -9,6 +9,7 @@ import type { Action, Context, DomainEvent } from '../action/types';
 import { economyModule } from '../modules/economy';
 import { movementModule } from '../modules/movement';
 import { combatModule } from '../modules/combat';
+import { sectorModule } from '../modules/sector';
 
 /**
  * Playable skirmish demo — wires the real base modules over the map and prints a
@@ -35,6 +36,11 @@ const data: GameData = parseGameData({
   factions: {},
   buildings: { mine: { name: 'Mine', produces: { metal: 10 }, buildTimeHours: 0 } },
   events: {},
+  sectors: {
+    empty_space: { name: 'Empty Space', speedBonus: 0.15 },
+    asteroid_field: { name: 'Asteroid Field', speedBonus: -0.25, hpBonus: 0.1 },
+    nebula: { name: 'Nebula', speedBonus: -0.1, hpBonus: 0.05 },
+  },
 });
 
 const ctx = (now: number): Context => ({ now, data });
@@ -45,17 +51,47 @@ interface Node {
   x: number;
   y: number;
   links: string[];
+  sectorType?: string;
   garrison?: Array<[string, number]>;
   buildings?: string[];
 }
 
-// The map: nodes (planets) joined by star lanes.
+// The map: nodes (planets) joined by star lanes, each with a sector terrain.
 const MAP: Node[] = [
-  { id: 'HOME', owner: 'p1', x: 15, y: 35, links: ['FORGE', 'RELAY'], buildings: ['mine'] },
-  { id: 'FORGE', owner: null, x: 40, y: 18, links: ['HOME', 'NEXUS'] },
-  { id: 'RELAY', owner: null, x: 40, y: 52, links: ['HOME', 'NEXUS'] },
-  { id: 'NEXUS', owner: null, x: 65, y: 35, links: ['FORGE', 'RELAY', 'BASTION', 'OUTPOST'] },
-  { id: 'OUTPOST', owner: 'p2', x: 95, y: 18, links: ['NEXUS', 'BASTION'] },
+  {
+    id: 'HOME',
+    owner: 'p1',
+    x: 15,
+    y: 35,
+    links: ['FORGE', 'RELAY'],
+    sectorType: 'empty_space',
+    buildings: ['mine'],
+  },
+  {
+    id: 'FORGE',
+    owner: null,
+    x: 40,
+    y: 18,
+    links: ['HOME', 'NEXUS'],
+    sectorType: 'asteroid_field',
+  },
+  { id: 'RELAY', owner: null, x: 40, y: 52, links: ['HOME', 'NEXUS'], sectorType: 'empty_space' },
+  {
+    id: 'NEXUS',
+    owner: null,
+    x: 65,
+    y: 35,
+    links: ['FORGE', 'RELAY', 'BASTION', 'OUTPOST'],
+    sectorType: 'nebula',
+  },
+  {
+    id: 'OUTPOST',
+    owner: 'p2',
+    x: 95,
+    y: 18,
+    links: ['NEXUS', 'BASTION'],
+    sectorType: 'asteroid_field',
+  },
   {
     id: 'BASTION',
     owner: 'p2',
@@ -73,6 +109,7 @@ function planet(n: Node): Planet {
     owner: n.owner,
     position: { x: n.x, y: n.y },
     links: n.links,
+    sectorType: n.sectorType,
     resources: {},
     buildings: n.buildings ?? [],
     garrison: (n.garrison ?? []).map(([unit, count]) => ({ unit, count })),
@@ -151,7 +188,7 @@ interface Frame {
 }
 
 function runSkirmish(): { timeline: string[]; frames: Frame[]; final: GameState } {
-  const kernel = createKernel([economyModule, movementModule, combatModule]);
+  const kernel = createKernel([economyModule, movementModule, combatModule, sectorModule]);
   let state = buildState();
   const timeline: string[] = [];
   const frames: Frame[] = [];
@@ -175,7 +212,7 @@ function runSkirmish(): { timeline: string[]; frames: Frame[]; final: GameState 
   apply(move('RED', 'NEXUS', 'p2'), 0);
   frames.push({ hour: 0, state });
 
-  const END = 28;
+  const END = 34;
   let pushedOn = false;
   for (let hour = 1; hour <= END; hour++) {
     const r = kernel.advanceTo(state, ctx(hour * HOUR));
@@ -193,7 +230,7 @@ function runSkirmish(): { timeline: string[]; frames: Frame[]; final: GameState 
       }
     }
 
-    if ([6, 9, 14, 20, 27].includes(hour)) frames.push({ hour, state });
+    if ([8, 12, 16, 22, 32].includes(hour)) frames.push({ hour, state });
   }
 
   return { timeline, frames, final: state };
@@ -252,6 +289,12 @@ function renderFrame(frame: Frame, dx: number, dy: number): string {
     parts.push(
       `<text x="${sx(p.position.x)}" y="${sy(p.position.y) - 13}" fill="#94a3b8" font-size="10" font-family="monospace" text-anchor="middle">${p.id}</text>`,
     );
+    if (p.sectorType) {
+      const label = p.sectorType.replace('_field', '').replace('_space', '');
+      parts.push(
+        `<text x="${sx(p.position.x)}" y="${sy(p.position.y) + 20}" fill="#64748b" font-size="9" font-family="monospace" text-anchor="middle">${label}</text>`,
+      );
+    }
   }
   for (const f of Object.values(state.fleets)) {
     const pos = fleetPos(state, f, frame.hour * HOUR);

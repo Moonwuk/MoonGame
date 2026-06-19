@@ -70,6 +70,7 @@ export {
   FactionDefSchema,
   BuildingDefSchema,
   EffectRuleSchema,
+  SectorTypeDefSchema,
   ResourceBagSchema,
   UnitStatsSchema,
   type GameData,
@@ -77,6 +78,7 @@ export {
   type FactionDef,
   type BuildingDef,
   type EffectRule,
+  type SectorTypeDef,
   type UnitStats,
 } from './data/schemas';
 
@@ -87,3 +89,4 @@ export { deepClone, deepFreeze } from './util/clone';
 export { economyModule } from './modules/economy';
 export { movementModule } from './modules/movement';
 export { combatModule } from './modules/combat';
+export { sectorModule } from './modules/sector';
