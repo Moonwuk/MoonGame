@@ -36,6 +36,9 @@ export const UnitDefSchema = z.object({
   traits: z.array(z.string()).default([]),
   abilities: z.array(z.string()).default([]),
   cost: ResourceBagSchema.default({}),
+  /** Build time in hours to produce the unit at a planet (real-time,
+   *  timeScale-scaled). Mirrors BuildingDef.buildTimeHours. */
+  buildTimeHours: z.number().nonnegative().default(0),
   /** Daily upkeep paid to keep the unit (per day). */
   upkeep: ResourceBagSchema.default({}),
 });
