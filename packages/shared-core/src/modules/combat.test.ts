@@ -28,6 +28,12 @@ const data: GameData = parseGameData({
     },
     marine: { faction: 'x', stats: { attack: 10, defense: 0, speed: 1, hp: 20 }, line: 'front' },
     militia: { faction: 'x', stats: { attack: 3, defense: 0, speed: 1, hp: 10 }, line: 'front' },
+    aggressor: {
+      faction: 'x',
+      stats: { attack: 30, defense: 5, speed: 5, hp: 100 },
+      line: 'front',
+    },
+    guardian: { faction: 'x', stats: { attack: 7, defense: 20, speed: 5, hp: 100 }, line: 'front' },
   },
   factions: {},
   buildings: {},
@@ -370,5 +376,22 @@ describe('combat — two-phase planet capture (GDD §7.4)', () => {
       .map((e) => (e.payload as { phase: string }).phase);
     expect(phases).toEqual(['orbital', 'ground']);
     expect(types(allEvents)).toContain('planet.captured');
+  });
+});
+
+describe('combat — attack vs defense stats (return-fire mechanic)', () => {
+  it('the aggressor uses attack; the standing defender answers with defense only', () => {
+    const kernel = createKernel([combatModule, arrivalModule]);
+    const st = baseState(
+      [fleet('A', 'p1', 'P', [['aggressor', 1]]), fleet('D', 'p2', 'P', [['guardian', 1]])],
+      [planet('P', null)],
+    );
+    const started = okApply(kernel.applyAction(st, arrive('A'), ctx(0)));
+    const r = okAdvance(kernel.advanceTo(started.state, ctx(HOUR))); // one round
+    const round = r.events.find((e) => e.type === 'combat.round');
+    const p = round?.payload as { dmgToDefender: number; dmgToAttacker: number };
+
+    expect(p.dmgToDefender).toBe(30); // A (aggressor) strikes with its attack stat
+    expect(p.dmgToAttacker).toBe(20); // D (standing) returns defense, not its attack (7)
   });
 });

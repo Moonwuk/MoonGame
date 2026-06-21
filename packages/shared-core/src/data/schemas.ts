@@ -16,11 +16,15 @@ export const ResourceBagSchema = z.record(z.string(), z.number());
 /** Combat/movement stats. Extra numeric stats are allowed (data-driven). */
 export const UnitStatsSchema = z
   .object({
+    /** Damage dealt when attacking. */
     attack: z.number(),
+    /** Damage dealt when defending (return fire of a standing fleet). */
     defense: z.number(),
     speed: z.number(),
     /** Hit points per ship — aggregate fleet HP = Σ count × hp (GDD §7.1). */
     hp: z.number().nonnegative().default(1),
+    /** Firing range — only meaningful for artillery units (reserved). */
+    range: z.number().nonnegative().default(0),
   })
   .catchall(z.number());
 
@@ -32,6 +36,8 @@ export const UnitDefSchema = z.object({
   traits: z.array(z.string()).default([]),
   abilities: z.array(z.string()).default([]),
   cost: ResourceBagSchema.default({}),
+  /** Daily upkeep paid to keep the unit (per day). */
+  upkeep: ResourceBagSchema.default({}),
 });
 
 export const FactionDefSchema = z.object({

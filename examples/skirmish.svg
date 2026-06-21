@@ -126,7 +126,7 @@
 <circle cx="337" cy="172.79999999999998" r="9" fill="#ef4444" stroke="#0b1020" stroke-width="2"/>
 <text x="337" y="159.79999999999998" fill="#94a3b8" font-size="10" font-family="monospace" text-anchor="middle">BASTION</text>
 <rect x="212" y="109" width="12" height="12" rx="2" fill="#3b82f6" stroke="#e2e8f0" stroke-width="1.5"/>
-<text x="228" y="119" fill="#e2e8f0" font-size="10" font-family="monospace">BLUE·2</text>
+<text x="228" y="119" fill="#e2e8f0" font-size="10" font-family="monospace">BLUE·3</text>
 <rect x="212" y="109" width="12" height="12" rx="2" fill="#ef4444" stroke="#e2e8f0" stroke-width="1.5"/>
 <text x="228" y="119" fill="#e2e8f0" font-size="10" font-family="monospace">RED·1</text>
 </g>

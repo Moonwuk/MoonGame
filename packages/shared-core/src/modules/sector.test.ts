@@ -12,7 +12,7 @@ const data: GameData = parseGameData({
   version: '0.1.0',
   resources: ['metal'],
   units: {
-    cruiser: { faction: 'x', stats: { attack: 20, defense: 0, speed: 10, hp: 40 }, line: 'front' },
+    cruiser: { faction: 'x', stats: { attack: 20, defense: 20, speed: 10, hp: 40 }, line: 'front' },
   },
   factions: {},
   buildings: {},

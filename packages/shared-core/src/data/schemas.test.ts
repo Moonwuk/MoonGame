@@ -31,6 +31,8 @@ describe('game data schema (docs/architecture.md §2)', () => {
     expect(data.version).toBe('0.1.0');
     expect(data.resources).toContain('dark_matter');
     expect(data.units.infected_cruiser?.stats.attack).toBe(12);
+    expect(data.units.siege_lance?.stats.range).toBe(3); // artillery firing range
+    expect(data.units.cruiser?.upkeep.credits).toBe(8); // daily upkeep
     expect(data.events.reanimate_on_kill?.trigger).toBe('unit_dies_in_battle');
     expect(data.sectors.asteroid_field?.speedBonus).toBeCloseTo(-0.25);
     expect(data.sectors.asteroid_field?.hpBonus).toBeCloseTo(0.1);

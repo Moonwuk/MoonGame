@@ -29,9 +29,9 @@ const data: GameData = parseGameData({
   version: '0.1.0',
   resources: ['metal'],
   units: {
-    cruiser: { faction: 'x', stats: { attack: 20, defense: 0, speed: 5, hp: 40 }, line: 'front' },
-    marine: { faction: 'x', stats: { attack: 20, defense: 0, speed: 5, hp: 40 }, line: 'front' },
-    militia: { faction: 'x', stats: { attack: 5, defense: 0, speed: 1, hp: 15 }, line: 'front' },
+    cruiser: { faction: 'x', stats: { attack: 20, defense: 12, speed: 5, hp: 40 }, line: 'front' },
+    marine: { faction: 'x', stats: { attack: 20, defense: 10, speed: 5, hp: 40 }, line: 'front' },
+    militia: { faction: 'x', stats: { attack: 5, defense: 8, speed: 1, hp: 15 }, line: 'front' },
   },
   factions: {},
   buildings: { mine: { name: 'Mine', produces: { metal: 10 }, buildTimeHours: 0 } },

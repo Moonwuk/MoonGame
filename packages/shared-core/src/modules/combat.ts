@@ -63,7 +63,17 @@ function sideAlive(state: GameState, ref: CombatantRef): boolean {
   return !!units && units.some((s) => s.count > 0);
 }
 
-function sideAttack(state: GameState, ref: CombatantRef, data: GameData): number {
+/**
+ * Damage a side deals in one round = Σ count × stat. The aggressor uses its
+ * `attack` stat; a standing fleet that is attacked (the defender) answers with
+ * its `defense` stat only — the return-fire mechanic (no separate attack order).
+ */
+function sideDamage(
+  state: GameState,
+  ref: CombatantRef,
+  data: GameData,
+  stat: 'attack' | 'defense',
+): number {
   const units = sideUnits(state, ref);
   if (!units) {
     return 0;
@@ -72,7 +82,7 @@ function sideAttack(state: GameState, ref: CombatantRef, data: GameData): number
   for (const stack of units) {
     const def = data.units[stack.unit];
     if (def) {
-      dmg += stack.count * def.stats.attack;
+      dmg += stack.count * def.stats[stat];
     }
   }
   return dmg;
@@ -391,10 +401,11 @@ export const combatModule: GameModule = {
         return;
       }
 
-      // Simultaneous round: both sides fire from the pre-round state.
+      // Simultaneous round, from the pre-round state: the aggressor strikes with
+      // its attack stat, the defender returns fire with its defense stat only.
       const dmgToDefender = h.hook<number>(
         'combat.damage',
-        sideAttack(h.state, battle.attacker.ref, data),
+        sideDamage(h.state, battle.attacker.ref, data, 'attack'),
         {
           battleId,
           phase: battle.phase,
@@ -405,7 +416,7 @@ export const combatModule: GameModule = {
       );
       const dmgToAttacker = h.hook<number>(
         'combat.damage',
-        sideAttack(h.state, battle.defender.ref, data),
+        sideDamage(h.state, battle.defender.ref, data, 'defense'),
         {
           battleId,
           phase: battle.phase,

@@ -5,7 +5,8 @@
     "line": "rear",
     "traits": [],
     "abilities": ["long_range_scan"],
-    "cost": { "metal": 40 }
+    "cost": { "metal": 40 },
+    "upkeep": { "credits": 2 }
   },
   "cruiser": {
     "faction": "vanguard",
@@ -13,15 +14,17 @@
     "line": "front",
     "traits": [],
     "abilities": [],
-    "cost": { "metal": 220, "credits": 80 }
+    "cost": { "metal": 220, "credits": 80 },
+    "upkeep": { "credits": 8 }
   },
   "siege_lance": {
     "faction": "vanguard",
-    "stats": { "attack": 18, "defense": 2, "speed": 5, "hp": 14 },
+    "stats": { "attack": 18, "defense": 2, "speed": 5, "hp": 14, "range": 3 },
     "line": "rear",
     "traits": ["artillery"],
     "abilities": [],
-    "cost": { "metal": 260, "credits": 140 }
+    "cost": { "metal": 260, "credits": 140 },
+    "upkeep": { "credits": 12 }
   },
   "infected_cruiser": {
     "faction": "swarm",
@@ -29,7 +32,8 @@
     "line": "front",
     "traits": ["infect_planet", "no_food_cost"],
     "abilities": ["spread_biomass"],
-    "cost": { "biomass": 200, "dark_matter": 50 }
+    "cost": { "biomass": 200, "dark_matter": 50 },
+    "upkeep": { "biomass": 6 }
   },
   "reanimated_drone": {
     "faction": "necromancer",
@@ -37,6 +41,7 @@
     "line": "mid",
     "traits": ["reanimate_on_kill"],
     "abilities": [],
-    "cost": { "dark_matter": 30 }
+    "cost": { "dark_matter": 30 },
+    "upkeep": { "dark_matter": 2 }
   }
 }
