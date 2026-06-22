@@ -57,10 +57,24 @@ body::before{content:"";position:fixed;inset:0;z-index:1;pointer-events:none;mix
 .res .rv b{color:#eafffb;font-weight:700;font-size:13px;font-variant-numeric:tabular-nums;}
 .res .rv em{font-style:normal;font-size:9px;font-weight:700;}
 .res em.up{color:var(--up);}.res em.dn{color:var(--dn);}
-.spd{display:flex;align-items:center;gap:4px;padding:0 10px;flex:0 0 auto;height:100%;}
+#speedbar{position:fixed;right:14px;bottom:14px;z-index:24;display:flex;align-items:center;gap:4px;
+  padding:5px 7px;background:rgba(3,12,16,.78);border:1px solid var(--line-hi);border-radius:3px;
+  box-shadow:0 0 16px rgba(40,200,210,.10);}
 .spd button{min-width:30px;height:26px;padding:0 5px;border-radius:2px;cursor:pointer;font:11px ui-monospace,monospace;
   background:transparent;color:var(--cyan-dim);border:1px solid var(--line-hi);}
 .spd button.on{background:rgba(53,214,230,.16);color:var(--cyan);border-color:var(--cyan);box-shadow:0 0 10px rgba(53,214,230,.4);}
+#cmdbar{position:fixed;left:50%;transform:translateX(-50%);bottom:14px;z-index:26;display:none;align-items:center;
+  gap:6px;padding:6px 8px;background:rgba(3,12,16,.88);border:1px solid var(--line-hi);border-radius:3px;
+  box-shadow:0 0 22px rgba(40,200,210,.14);}
+#cmdbar.show{display:flex;}
+#cmdbar .cmdlabel{color:var(--cyan-dim);font-size:9px;letter-spacing:1.5px;padding-right:4px;white-space:nowrap;}
+#cmdbar button{min-width:50px;height:32px;padding:0 11px;cursor:pointer;font:700 11px ui-monospace,monospace;
+  letter-spacing:.5px;background:transparent;color:var(--cyan);border:1px solid var(--cyan-dim);border-radius:2px;}
+#cmdbar button:hover:not(:disabled){background:rgba(53,214,230,.14);box-shadow:0 0 10px rgba(53,214,230,.35);}
+#cmdbar button:disabled{opacity:.3;cursor:not-allowed;color:var(--dim);border-color:var(--line);}
+#cmdbar button.on{background:rgba(53,214,230,.18);border-color:var(--cyan);}
+#cmdbar button.danger{color:var(--red);border-color:#7a2a22;}
+#cmdbar button.danger:hover:not(:disabled){background:rgba(255,90,77,.12);box-shadow:0 0 10px rgba(255,90,77,.3);}
 
 #devline{position:fixed;top:46px;left:0;right:0;height:18px;z-index:24;display:flex;align-items:center;gap:12px;
   padding:0 14px;background:rgba(2,8,11,.5);color:var(--cyan-dim);font-size:10px;letter-spacing:1px;
@@ -135,6 +149,10 @@ body.sheet-open #log{display:none;}
   #banner{font-size:16px;padding:14px 20px;letter-spacing:2px;}
   body.sheet-open #log,body.sheet-open #botleft{display:none;}
   button.b{padding:7px 12px;font-size:12px;}
+  #speedbar{bottom:auto;top:48px;right:6px;padding:3px 5px;}
+  body.sheet-open #speedbar{display:none;}
+  #cmdbar{bottom:10px;}
+  body.sheet-open #cmdbar{bottom:calc(56vh + 8px);}
 }
 @media (max-width:430px){
   .res .rv em{display:none;}
@@ -153,9 +171,6 @@ const html = `<!doctype html>
     <div class="who"><b>VOID DOMINION</b><span>SECTOR COMMAND</span></div>
   </div>
   <div id="purse"></div>
-  <div class="spd">
-    <button data-speed="0">‖</button><button data-speed="2" class="on">▶</button><button data-speed="6">▶▶</button>
-  </div>
 </header>
 <div id="devline">VOID CORE v0.1 · SESSION skirmish-1 · GRID sector-7 · <span id="clock">Day 1</span></div>
 <nav id="rail">
@@ -172,6 +187,10 @@ const html = `<!doctype html>
 <aside id="side"></aside>
 <footer id="botleft"><button class="chat" title="Comms">◈</button><span id="daytimer">Day 1</span></footer>
 <div id="log"></div>
+<div id="speedbar" class="spd">
+  <button data-speed="0">‖</button><button data-speed="2" class="on">▶</button><button data-speed="6">▶▶</button>
+</div>
+<div id="cmdbar"></div>
 <div id="banner"></div>
 <script>${js}</script>
 </body></html>`;

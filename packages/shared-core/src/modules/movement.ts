@@ -165,6 +165,28 @@ export const movementModule: GameModule = {
       h.emit('fleet.departed', { fleetId: fleet.id, from: origin, to: payload.to, path });
     });
 
+    api.onAction('fleet.stop', (action, h) => {
+      const { fleetId } = action.payload as { fleetId?: string };
+      if (typeof fleetId !== 'string') {
+        return h.reject('E_BAD_PAYLOAD');
+      }
+      const fleet = h.state.fleets[fleetId];
+      if (!fleet) {
+        return h.reject('E_NO_FLEET');
+      }
+      if (fleet.owner !== action.playerId) {
+        return h.reject('E_FORBIDDEN');
+      }
+      if (!fleet.movement || fleet.battleId) {
+        return h.reject('E_FLEET_BUSY'); // not under way (or in a battle) → nothing to halt
+      }
+      // A fleet can't halt in deep space — it stops at the next node it reaches:
+      // drop the remaining hops so the current leg becomes the final one.
+      fleet.movement.path = [];
+      fleet.movement.destination = fleet.movement.to;
+      h.emit('fleet.stopped', { fleetId, at: fleet.movement.to });
+    });
+
     api.on('fleet.arrival', (event, h) => {
       const { fleetId } = event.payload as { fleetId: string };
       const fleet = h.state.fleets[fleetId];

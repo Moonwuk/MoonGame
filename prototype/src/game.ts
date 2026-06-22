@@ -479,6 +479,8 @@ const act = (playerId: string, type: string, payload: unknown): Action => ({
 
 export const moveFleet = (playerId: string, fleetId: string, to: string) =>
   act(playerId, 'fleet.move', { fleetId, to });
+export const stopFleet = (playerId: string, fleetId: string) =>
+  act(playerId, 'fleet.stop', { fleetId });
 export const orbitFleet = (playerId: string, fleetId: string, orbit: 'near' | 'far') =>
   act(playerId, 'fleet.orbit', { fleetId, orbit });
 export const assaultFleet = (playerId: string, fleetId: string) =>

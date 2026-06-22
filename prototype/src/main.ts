@@ -16,6 +16,7 @@ import {
   hpOfLevel,
   netIncome,
   moveFleet,
+  stopFleet,
   orbitFleet,
   assaultFleet,
   bombardFleet,
@@ -74,9 +75,12 @@ let banner: string | null = null;
 let selFleet: string | null = null;
 let selPlanet: string | null = null;
 let selFleets = new Set<string>();
+let aiming = false; // "Move" command armed → next world tap orders the move
+let aimPointer: { x: number; y: number } | null = null; // last canvas pointer (for the move preview)
 const logLines: string[] = [];
 let lastAiAt = 0;
 let lastPanelHtml = '';
+let lastCmdHtml = '';
 let lastHudHtml = '';
 let lastClockText = '';
 let lastDayTimerText = '';
@@ -95,6 +99,7 @@ const purse = $('purse');
 const bannerEl = $('banner');
 const dayTimer = $('daytimer');
 const alertBadge = $('alertbadge');
+const cmdbar = $('cmdbar');
 
 // --- viewport, galaxy backdrop & map projection ------------------------------
 
@@ -271,6 +276,49 @@ function fleetPos(f: Fleet): { x: number; y: number } | null {
   if (!a || !b) return null;
   const t = Math.min(1, Math.max(0, (s.time - m.departedAt) / (m.arrivesAt - m.departedAt)));
   return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+}
+/** The fleets the command bar / move order currently act on (mine only). */
+function selectedFleetIds(): string[] {
+  if (selFleets.size) return [...selFleets].filter((id) => s.fleets[id]?.owner === ME);
+  return selFleet && s.fleets[selFleet]?.owner === ME ? [selFleet] : [];
+}
+
+const ORBIT_R: Record<'near' | 'far', number> = { near: 26, far: 46 };
+
+/** Screen anchor (+ heading) for a fleet's chevron: the interpolated lane
+ *  position while moving, or a slot on its near/far orbit ring while stationed
+ *  (fleets sharing a ring are fanned out so they don't overlap). */
+function fleetAnchor(f: Fleet): { x: number; y: number; ang: number } | null {
+  if (f.movement || !f.location) {
+    const mp = fleetPos(f);
+    if (!mp) return null;
+    const c = world(mp);
+    let ang = -Math.PI / 2;
+    if (f.movement) {
+      const a = s.planets[f.movement.from]?.position;
+      const b = s.planets[f.movement.to]?.position;
+      if (a && b) {
+        const wa = world(a);
+        const wb = world(b);
+        ang = Math.atan2(wb.y - wa.y, wb.x - wa.x);
+      }
+    }
+    return { x: c.x, y: c.y, ang };
+  }
+  const pl = s.planets[f.location];
+  if (!pl) return null;
+  const pc = world(pl.position);
+  const orbit = f.orbit ?? 'far';
+  const peers = Object.values(s.fleets).filter(
+    (g) => g.location === f.location && !g.movement && (g.orbit ?? 'far') === orbit,
+  );
+  const idx = Math.max(
+    0,
+    peers.findIndex((g) => g.id === f.id),
+  );
+  const a0 = -Math.PI / 2 + (idx - (peers.length - 1) / 2) * 0.55;
+  const r = ORBIT_R[orbit];
+  return { x: pc.x + Math.cos(a0) * r, y: pc.y + Math.sin(a0) * r, ang: a0 };
 }
 function note(msg: string) {
   const d = floor(s.time / DAY) + 1;
@@ -512,6 +560,81 @@ function drawBattlePulse(x: number, y: number, pulse: number) {
   cx.restore();
 }
 
+/** The planned route of every moving fleet of mine — dashed, brighter if selected. */
+function drawFleetRoutes(now: number) {
+  for (const f of Object.values(s.fleets)) {
+    if (f.owner !== ME || !f.movement) continue;
+    const start = fleetAnchor(f);
+    if (!start) continue;
+    const sel = selFleet === f.id || selFleets.has(f.id);
+    const pts = [{ x: start.x, y: start.y }];
+    for (const id of [f.movement.to, ...(f.movement.path ?? [])]) {
+      const pl = s.planets[id];
+      if (pl) pts.push(world(pl.position));
+    }
+    if (pts.length < 2) continue;
+    cx.save();
+    cx.setLineDash([4, 6]);
+    cx.lineDashOffset = -now / 40;
+    cx.strokeStyle = rgba(LOCK, sel ? 0.85 : 0.32);
+    cx.lineWidth = sel ? 1.8 : 1.1;
+    cx.shadowColor = LOCK;
+    cx.shadowBlur = sel ? 8 : 2;
+    cx.beginPath();
+    cx.moveTo(pts[0]!.x, pts[0]!.y);
+    for (let i = 1; i < pts.length; i++) cx.lineTo(pts[i]!.x, pts[i]!.y);
+    cx.stroke();
+    const d = pts[pts.length - 1]!;
+    cx.setLineDash([]);
+    cx.beginPath();
+    cx.arc(d.x, d.y, 4, 0, TAU);
+    cx.stroke();
+    cx.restore();
+  }
+}
+
+/** While "Move" is armed: a dashed line from each selected fleet to the world
+ *  under the pointer (snaps to the nearest blip) — preview before committing. */
+function drawAimPreview() {
+  if (!aiming || !aimPointer) return;
+  const ids = selectedFleetIds();
+  if (!ids.length) return;
+  let target: { x: number; y: number } | null = null;
+  let best = 30;
+  for (const n of MAP) {
+    const c = world(n);
+    const d = Math.hypot(aimPointer.x - c.x, aimPointer.y - c.y);
+    if (d < best) {
+      best = d;
+      target = c;
+    }
+  }
+  const tip = target ?? aimPointer;
+  cx.save();
+  cx.strokeStyle = rgba(LOCK, 0.6);
+  cx.lineWidth = 1.4;
+  cx.setLineDash([3, 5]);
+  cx.shadowColor = LOCK;
+  cx.shadowBlur = 6;
+  for (const id of ids) {
+    const f = s.fleets[id];
+    if (!f) continue;
+    const a = fleetAnchor(f);
+    if (!a) continue;
+    cx.beginPath();
+    cx.moveTo(a.x, a.y);
+    cx.lineTo(tip.x, tip.y);
+    cx.stroke();
+  }
+  if (target) {
+    cx.setLineDash([]);
+    cx.beginPath();
+    cx.arc(tip.x, tip.y, 16, 0, TAU);
+    cx.stroke();
+  }
+  cx.restore();
+}
+
 let selectionBox: { x1: number; y1: number; x2: number; y2: number } | null = null;
 
 function render(now: number) {
@@ -528,6 +651,8 @@ function render(now: number) {
     if (!visible(a, 120) && !visible(b, 120)) continue;
     drawWarpLane(a, b, now);
   }
+
+  drawFleetRoutes(now);
 
   // battles — pulsing red contact ring
   const wave = (now / 900) % 1;
@@ -653,31 +778,39 @@ function render(now: number) {
     cx.restore();
   }
 
-  // fleets — glowing chevrons oriented to heading, with a fading contact trail
+  // orbit rings around any planet that holds a stationed fleet (near vs far)
+  const stationed: Record<string, Fleet[]> = {};
+  for (const f of Object.values(s.fleets))
+    if (f.location && !f.movement) (stationed[f.location] ??= []).push(f);
+  for (const pid of Object.keys(stationed)) {
+    const pl = s.planets[pid];
+    if (!pl) continue;
+    const pc = world(pl.position);
+    if (!visible(pc, 80)) continue;
+    for (const orb of ['far', 'near'] as const) {
+      cx.save();
+      cx.setLineDash([2, 6]);
+      cx.lineDashOffset = orb === 'near' ? now / 220 : -now / 260;
+      cx.strokeStyle = rgba('#7df0d0', orb === 'near' ? 0.24 : 0.13);
+      cx.lineWidth = 1;
+      cx.beginPath();
+      cx.arc(pc.x, pc.y, ORBIT_R[orb], 0, TAU);
+      cx.stroke();
+      cx.restore();
+    }
+  }
+
+  // fleets — glowing chevrons on their orbit ring (stationed) or along the lane
   cx.textAlign = 'center';
   for (const f of Object.values(s.fleets)) {
-    const mp = fleetPos(f);
-    if (!mp) continue;
-    const c = world(mp);
-    if (!visible(c, 120)) continue;
+    const A = fleetAnchor(f);
+    if (!A || !visible(A, 120)) continue;
     const col = COLOR[f.owner];
     const ships = f.units.reduce((a, st) => a + st.count, 0);
     const troops = (f.landing ?? []).reduce((a, st) => a + st.count, 0);
     const engine = 0.55 + 0.45 * Math.sin(now / 120 + f.id.length);
 
-    // heading from the movement vector (default: pointing up)
-    let ang = -Math.PI / 2;
-    if (f.movement) {
-      const a = s.planets[f.movement.from]?.position;
-      const b = s.planets[f.movement.to]?.position;
-      if (a && b) {
-        const wa = world(a);
-        const wb = world(b);
-        ang = Math.atan2(wb.y - wa.y, wb.x - wa.x);
-      }
-    }
-    const lift = f.location ? 22 : 0; // lift off the node when stationed in orbit
-
+    // bombardment beam down to the planet
     if (f.bombarding && f.location) {
       const target = s.planets[f.location];
       if (target) {
@@ -689,7 +822,7 @@ function render(now: number) {
         cx.shadowColor = '#ffb15f';
         cx.shadowBlur = 12;
         cx.beginPath();
-        cx.moveTo(c.x, c.y - lift);
+        cx.moveTo(A.x, A.y);
         cx.lineTo(pc.x, pc.y);
         cx.stroke();
         cx.restore();
@@ -702,8 +835,8 @@ function render(now: number) {
         cx.fillStyle = rgba(col, 0.33 - 0.055 * i);
         cx.beginPath();
         cx.arc(
-          c.x - Math.cos(ang) * i * (8 + engine * 2),
-          c.y - Math.sin(ang) * i * (8 + engine * 2),
+          A.x - Math.cos(A.ang) * i * (8 + engine * 2),
+          A.y - Math.sin(A.ang) * i * (8 + engine * 2),
           2.8 - 0.35 * i,
           0,
           TAU,
@@ -713,8 +846,8 @@ function render(now: number) {
     }
 
     cx.save();
-    cx.translate(c.x, c.y - lift);
-    cx.rotate(ang + Math.PI / 2);
+    cx.translate(A.x, A.y);
+    cx.rotate(A.ang + Math.PI / 2);
     cx.shadowColor = col;
     cx.shadowBlur = 9 + 8 * engine;
     cx.fillStyle = rgba(col, 0.1 + 0.12 * engine);
@@ -734,11 +867,18 @@ function render(now: number) {
     cx.fill();
     cx.restore();
 
-    if (selFleet === f.id || selFleets.has(f.id)) targetBrackets(c.x, c.y - lift, 12, now);
+    if (selFleet === f.id || selFleets.has(f.id)) targetBrackets(A.x, A.y, 12, now);
 
     cx.fillStyle = rgba(col, 0.95);
     cx.font = '700 10px ui-monospace,Menlo,monospace';
-    cx.fillText(`${ships}${troops ? '+' + troops : ''}`, c.x, c.y - lift + 20);
+    cx.fillText(`${ships}${troops ? '+' + troops : ''}`, A.x, A.y + 20);
+
+    // orbit tag for a stationed fleet (N = near / F = far)
+    if (f.location && !f.movement) {
+      cx.fillStyle = rgba(f.orbit === 'near' ? '#ffb15f' : '#7df0d0', 0.9);
+      cx.font = '700 8px ui-monospace,Menlo,monospace';
+      cx.fillText(f.orbit === 'near' ? 'N' : 'F', A.x, A.y - 12);
+    }
   }
 
   if (selectionBox) {
@@ -755,6 +895,7 @@ function render(now: number) {
     cx.strokeRect(x, y, w, h);
     cx.restore();
   }
+  drawAimPreview();
 }
 
 // --- side panel --------------------------------------------------------------
@@ -957,6 +1098,42 @@ function renderPanel() {
   }
 }
 
+function cmdBtn(cmd: string, label: string, cls: string, disabled: boolean): string {
+  return `<button data-cmd="${cmd}" class="${cls}" ${disabled ? 'disabled' : ''}>${label}</button>`;
+}
+
+/** Horizontal fleet command bar — Move (arm) / Stop / Attack / orbit change —
+ *  acting on the current fleet selection, buttons enabled by context. */
+function renderCmdBar() {
+  const ids = selectedFleetIds();
+  if (ids.length === 0) {
+    if (aiming) aiming = false;
+    cmdbar.classList.remove('show');
+    lastCmdHtml = '';
+    return;
+  }
+  const fleets = ids.map((id) => s.fleets[id]).filter((f): f is Fleet => !!f);
+  const anyMoving = fleets.some((f) => f.movement);
+  const docked = fleets.filter((f) => f.location && !f.movement && !f.battleId);
+  const anyDocked = docked.length > 0;
+  const anyFar = docked.some((f) => (f.orbit ?? 'far') === 'far');
+  const canAssault = docked.some(
+    (f) => f.orbit === 'near' && f.location && s.planets[f.location]?.owner !== f.owner,
+  );
+  const descend = anyFar; // at least one far → primary orbit action is descend to near
+  const html =
+    `<span class="cmdlabel">${ids.length > 1 ? ids.length + ' FLEETS' : 'FLEET'}</span>` +
+    cmdBtn('move', '⤳ Move', aiming ? 'on' : '', false) +
+    cmdBtn('stop', '■ Stop', 'danger', !anyMoving) +
+    cmdBtn('attack', '⚔ Attack', '', !canAssault) +
+    cmdBtn(descend ? 'near' : 'far', descend ? '▼ Near' : '▲ Far', '', !anyDocked);
+  if (html !== lastCmdHtml) {
+    cmdbar.innerHTML = html;
+    lastCmdHtml = html;
+  }
+  cmdbar.classList.add('show');
+}
+
 side.addEventListener('click', (ev) => {
   const t = (ev.target as HTMLElement).closest('button') as HTMLButtonElement | null;
   if (!t || t.disabled) return;
@@ -992,31 +1169,58 @@ side.addEventListener('click', (ev) => {
   renderPanel();
 });
 
+cmdbar.addEventListener('click', (ev) => {
+  const t = (ev.target as HTMLElement).closest('button') as HTMLButtonElement | null;
+  if (!t || t.disabled) return;
+  const cmd = t.dataset.cmd;
+  const ids = selectedFleetIds();
+  if (cmd === 'move') {
+    aiming = !aiming; // arm / disarm the move order
+  } else if (cmd === 'stop') {
+    for (const id of ids) if (s.fleets[id]?.movement) playerOrder(stopFleet(ME, id));
+  } else if (cmd === 'attack') {
+    for (const id of ids) if (s.fleets[id]?.orbit === 'near') playerOrder(assaultFleet(ME, id));
+    aiming = false;
+  } else if (cmd === 'near' || cmd === 'far') {
+    for (const id of ids) {
+      const f = s.fleets[id];
+      if (f?.location && !f.movement) playerOrder(orbitFleet(ME, id, cmd));
+    }
+    aiming = false;
+  }
+  lastCmdHtml = '';
+  lastPanelHtml = '';
+  renderCmdBar();
+  renderPanel();
+});
+
 // --- canvas input ------------------------------------------------------------
 
 // Tap/click selection at a screen point (drag-aware — see the pointer handlers).
 function selectAt(mx: number, my: number) {
+  // a friendly fleet under the cursor → select it
   for (const f of Object.values(s.fleets)) {
-    const mp = fleetPos(f);
-    if (!mp) continue;
-    const c = world(mp);
-    const fy = c.y - (f.location ? 22 : 0);
-    if (Math.hypot(mx - c.x, my - fy) < 16 && f.owner === ME) {
+    if (f.owner !== ME) continue;
+    const a = fleetAnchor(f);
+    if (a && Math.hypot(mx - a.x, my - a.y) < 16) {
       setFleetSelection([f.id]);
+      aiming = false;
       return;
     }
   }
+  // a world under the cursor → order the selected fleets there, else open its dossier
   for (const n of MAP) {
     const c = world(n);
     if (Math.hypot(mx - c.x, my - c.y) < 24) {
-      const moving = selFleets.size ? [...selFleets] : selFleet ? [selFleet] : [];
+      const moving = selectedFleetIds();
       if (moving.length) {
         for (const fleetId of moving) {
           const f = s.fleets[fleetId];
-          if (f && f.location !== n.id) apply(order(s, moveFleet(ME, fleetId, n.id), s.time));
+          if (f && f.location !== n.id) playerOrder(moveFleet(ME, fleetId, n.id));
         }
-        selFleet = null;
-        selFleets = new Set();
+        aiming = false;
+        lastPanelHtml = ''; // keep the fleet(s) selected → route + command bar stay up
+        return;
       }
       selPlanet = n.id;
       lastPanelHtml = '';
@@ -1082,11 +1286,8 @@ function endPointer(ev: PointerEvent) {
     const picked: string[] = [];
     for (const f of Object.values(s.fleets)) {
       if (f.owner !== ME) continue;
-      const mp = fleetPos(f);
-      if (!mp) continue;
-      const c = world(mp);
-      const fy = c.y - (f.location ? 22 : 0);
-      if (c.x >= x1 && c.x <= x2 && fy >= y1 && fy <= y2) picked.push(f.id);
+      const a = fleetAnchor(f);
+      if (a && a.x >= x1 && a.x <= x2 && a.y >= y1 && a.y <= y2) picked.push(f.id);
     }
     if (picked.length) setFleetSelection(picked);
     else {
@@ -1124,6 +1325,10 @@ canvas.addEventListener('dblclick', () => {
   cam.x = 0;
   cam.y = 0;
 });
+// track the pointer for the "Move" preview line (hover on desktop, drag on touch)
+canvas.addEventListener('pointermove', (ev) => {
+  aimPointer = ptXY(ev);
+});
 
 // --- top bar / speed ---------------------------------------------------------
 
@@ -1150,6 +1355,7 @@ function frame(nowReal: number) {
   }
   render(nowReal);
   renderPanel();
+  renderCmdBar();
   // top bar (Iron Order-style resource readouts with +/h deltas)
   const d = floor(s.time / DAY) + 1;
   const h = floor((s.time % DAY) / HOUR);
