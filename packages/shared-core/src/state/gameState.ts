@@ -49,6 +49,28 @@ export interface Player {
   resources: ResourceBag;
 }
 
+export type MatchStatus = 'ongoing' | 'ended';
+export type MatchEndReason = 'domination' | 'elimination' | 'score' | 'timeout';
+
+export interface MatchScore {
+  /** Map control: owned planet/sectors. */
+  controlledPlanets: number;
+  /** Standing fleets the player still commands. */
+  fleets: number;
+  /** Ships, carried ground troops and planetary garrisons. */
+  units: number;
+  /** Aggregate score used by score-limit and timeout victories. */
+  total: number;
+}
+
+export interface MatchState {
+  status: MatchStatus;
+  winner: PlayerId | null;
+  endedAt?: number;
+  reason?: MatchEndReason;
+  scores: Record<PlayerId, MatchScore>;
+}
+
 export interface Planet {
   id: PlanetId;
   /** Owning player, or null for a neutral / unclaimed sector. */
@@ -178,6 +200,8 @@ export interface GameState {
   version: GameVersion;
   /** Current simulation time (ms), server-authoritative. */
   time: number;
+  /** Terminal match state and the latest scoreboard. */
+  match: MatchState;
   rng: RngState;
   players: Record<PlayerId, Player>;
   planets: Record<PlanetId, Planet>;
@@ -200,6 +224,7 @@ export function createInitialState(params: {
   return {
     version: params.version,
     time: params.time ?? 0,
+    match: { status: 'ongoing', winner: null, scores: {} },
     rng: seedRng(params.seed),
     players: {},
     planets: {},

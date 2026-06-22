@@ -32,6 +32,10 @@ export {
   type UnitId,
   type BuildingId,
   type TraitId,
+  type MatchStatus,
+  type MatchEndReason,
+  type MatchScore,
+  type MatchState,
 } from './state/gameState';
 export { isBombarded } from './state/orbit';
 
@@ -43,6 +47,7 @@ export {
   type Action,
   type Context,
   type MatchConfig,
+  type VictoryConfig,
   type DomainEvent,
   type ApplyResult,
   type AdvanceResult,
@@ -101,3 +106,4 @@ export { sectorModule } from './modules/sector';
 export { planetTypeModule } from './modules/planetType';
 export { constructionModule } from './modules/construction';
 export { armyModule } from './modules/army';
+export { victoryModule } from './modules/victory';
