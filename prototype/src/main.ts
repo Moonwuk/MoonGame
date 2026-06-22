@@ -50,6 +50,11 @@ const RAIL = 50; // left-rail width
 const BUILDABLE = ['mine', 'refinery', 'barracks', 'fort'];
 const BUILD_UNITS = ['marine', 'orbital_aa', 'cruiser', 'scout', 'siege'];
 const BUILD_ICON: Record<string, string> = { mine: '⬢', refinery: '◇', barracks: '▤', fort: '⬡' };
+const SECTOR_GLOW: Record<string, string> = {
+  asteroid_field: '#d6a645',
+  nebula: '#8f6dff',
+  empty_space: '#35d6e6',
+};
 const ME = 'p1';
 
 /** hex `#rrggbb` → `rgba()` with alpha — for tinted rings, ticks and trails. */
@@ -72,6 +77,11 @@ let selFleets = new Set<string>();
 const logLines: string[] = [];
 let lastAiAt = 0;
 let lastPanelHtml = '';
+let lastHudHtml = '';
+let lastClockText = '';
+let lastDayTimerText = '';
+let lastLogHtml = '';
+let lastAlertText = '';
 
 // --- dom ---------------------------------------------------------------------
 
@@ -116,16 +126,45 @@ const STARS = Array.from({ length: 280 }, (_, i) => {
   const r1 = (Math.sin(i * 12.9898) * 43758.5453) % 1;
   const r2 = (Math.sin(i * 78.233) * 12543.1234) % 1;
   const r3 = (Math.sin(i * 3.71) * 9281.77) % 1;
-  return { x: (r1 + 1) % 1, y: (r2 + 1) % 1, b: 0.12 + ((r3 + 1) % 1) * 0.45 };
+  return {
+    x: (r1 + 1) % 1,
+    y: (r2 + 1) % 1,
+    b: 0.12 + ((r3 + 1) % 1) * 0.45,
+    phase: i * 0.37,
+  };
+});
+const NEBULAE = Array.from({ length: 5 }, (_, i) => {
+  const r1 = (Math.sin(i * 21.771) * 36137.13) % 1;
+  const r2 = (Math.sin(i * 9.317) * 21891.41) % 1;
+  const r3 = (Math.sin(i * 15.913) * 11923.71) % 1;
+  return {
+    x: (r1 + 1) % 1,
+    y: (r2 + 1) % 1,
+    r: 160 + ((r3 + 1) % 1) * 180,
+    color: i % 2 ? '#8f6dff' : '#35d6e6',
+    phase: i * 1.7,
+  };
 });
 
 // The map is a radar plotting table: a coordinate grid that pans and scales with
 // the camera, plus faint star ticks.
-function drawScope() {
+function drawScope(now: number) {
   const w = VW;
   const h = VH;
   cx.fillStyle = '#02060c';
   cx.fillRect(0, 0, w, h);
+
+  // slow background clouds, drawn before the tactical grid
+  for (const n of NEBULAE) {
+    const breathe = 0.75 + 0.25 * Math.sin(now / 2400 + n.phase);
+    const r = n.r * breathe * (MOBILE ? 0.7 : 1);
+    const g = cx.createRadialGradient(n.x * w, n.y * h, 0, n.x * w, n.y * h, r);
+    g.addColorStop(0, rgba(n.color, 0.055));
+    g.addColorStop(0.45, rgba(n.color, 0.022));
+    g.addColorStop(1, 'rgba(2,6,12,0)');
+    cx.fillStyle = g;
+    cx.fillRect(0, 0, w, h);
+  }
 
   // panning / zooming coordinate grid
   const gap = Math.max(28, 56 * cam.scale);
@@ -146,7 +185,8 @@ function drawScope() {
 
   // star ticks
   for (const st of STARS) {
-    cx.fillStyle = rgba('#9fe6e0', st.b);
+    const twinkle = 0.65 + 0.35 * Math.sin(now / 900 + st.phase);
+    cx.fillStyle = rgba('#9fe6e0', st.b * twinkle);
     cx.fillRect(st.x * w, st.y * h, 1, 1);
   }
 }
@@ -179,9 +219,15 @@ function projBase(p: { x: number; y: number }): { x: number; y: number } {
 // in screen pixels; only positions transform (a node-graph style zoom).
 const cam = { scale: 1, x: 0, y: 0 };
 const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
+const MAP_LINKS = MAP.flatMap((n) =>
+  n.links.filter((l) => n.id < l).map((l) => [n.id, l] as const),
+);
 function world(p: { x: number; y: number }): { x: number; y: number } {
   const b = projBase(p);
   return { x: b.x * cam.scale + cam.x, y: b.y * cam.scale + cam.y };
+}
+function visible(c: { x: number; y: number }, pad = 80): boolean {
+  return c.x >= -pad && c.x <= VW + pad && c.y >= -pad && c.y <= VH + pad;
 }
 function zoomAt(fx: number, fy: number, factor: number) {
   const bx = (fx - cam.x) / cam.scale;
@@ -405,47 +451,93 @@ function targetBrackets(x: number, y: number, r: number, t: number) {
   cx.restore();
 }
 
-let selectionBox: { x1: number; y1: number; x2: number; y2: number } | null = null;
+function glowRing(x: number, y: number, r: number, color: string, alpha: number) {
+  cx.save();
+  cx.shadowColor = color;
+  cx.shadowBlur = 14;
+  cx.strokeStyle = rgba(color, alpha);
+  cx.lineWidth = 1.2;
+  cx.beginPath();
+  cx.arc(x, y, r, 0, TAU);
+  cx.stroke();
+  cx.restore();
+}
 
-function render() {
-  cx.setTransform(DPR, 0, 0, DPR, 0, 0); // draw in CSS pixels, crisp on hi-DPI
-  drawScope();
-
-  // jump lanes — thin glowing vectors
+function drawWarpLane(a: { x: number; y: number }, b: { x: number; y: number }, now: number) {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const len = Math.hypot(dx, dy);
+  if (len <= 0) return;
+  const ux = dx / len;
+  const uy = dy / len;
   cx.save();
   cx.strokeStyle = LANE;
   cx.lineWidth = 1;
   cx.shadowColor = 'rgba(53,214,230,0.5)';
   cx.shadowBlur = 4;
-  for (const n of MAP) {
-    for (const l of n.links) {
-      if (n.id < l && s.planets[l]) {
-        const a = world(n);
-        const q = world(s.planets[l]!.position);
-        cx.beginPath();
-        cx.moveTo(a.x, a.y);
-        cx.lineTo(q.x, q.y);
-        cx.stroke();
-      }
-    }
+  cx.beginPath();
+  cx.moveTo(a.x, a.y);
+  cx.lineTo(b.x, b.y);
+  cx.stroke();
+  cx.setLineDash([10, 18]);
+  cx.lineDashOffset = -(now / 55) % 28;
+  cx.strokeStyle = 'rgba(125,240,208,0.18)';
+  cx.lineWidth = 1.1;
+  cx.beginPath();
+  cx.moveTo(a.x, a.y);
+  cx.lineTo(b.x, b.y);
+  cx.stroke();
+  const t = (((now / 2200) % 1) + ((a.x + b.y) % 97) / 97) % 1;
+  cx.fillStyle = 'rgba(125,240,208,0.72)';
+  cx.shadowColor = LOCK;
+  cx.shadowBlur = 8;
+  cx.beginPath();
+  cx.arc(a.x + dx * t, a.y + dy * t, 1.8 + 0.8 * Math.sin(now / 180), 0, TAU);
+  cx.fill();
+  cx.restore();
+}
+
+function drawBattlePulse(x: number, y: number, pulse: number) {
+  cx.save();
+  cx.shadowColor = '#ff5a4d';
+  cx.shadowBlur = 12;
+  for (let i = 0; i < 3; i++) {
+    const k = (pulse + i / 3) % 1;
+    cx.strokeStyle = rgba('#ff5a4d', 0.55 * (1 - k));
+    cx.lineWidth = 1.2 + i * 0.25;
+    cx.beginPath();
+    cx.arc(x, y, 18 + k * 24, 0, TAU);
+    cx.stroke();
   }
   cx.restore();
+}
+
+let selectionBox: { x1: number; y1: number; x2: number; y2: number } | null = null;
+
+function render(now: number) {
+  cx.setTransform(DPR, 0, 0, DPR, 0, 0); // draw in CSS pixels, crisp on hi-DPI
+  drawScope(now);
+
+  // jump lanes — cached links with animated energy packets
+  for (const [from, to] of MAP_LINKS) {
+    const aPlanet = s.planets[from];
+    const bPlanet = s.planets[to];
+    if (!aPlanet || !bPlanet) continue;
+    const a = world(aPlanet.position);
+    const b = world(bPlanet.position);
+    if (!visible(a, 120) && !visible(b, 120)) continue;
+    drawWarpLane(a, b, now);
+  }
 
   // battles — pulsing red contact ring
-  const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 180);
+  const wave = (now / 900) % 1;
+  const pulse = 0.5 + 0.5 * Math.sin(now / 180);
   for (const b of Object.values(s.battles)) {
     const pp = s.planets[b.location];
     if (!pp) continue;
     const c = world(pp.position);
-    cx.save();
-    cx.strokeStyle = rgba('#ff5a4d', 0.4 + 0.45 * pulse);
-    cx.lineWidth = 1.6;
-    cx.shadowColor = '#ff5a4d';
-    cx.shadowBlur = 10;
-    cx.beginPath();
-    cx.arc(c.x, c.y, 24 + 7 * pulse, 0, TAU);
-    cx.stroke();
-    cx.restore();
+    if (!visible(c, 120)) continue;
+    drawBattlePulse(c.x, c.y, wave);
   }
 
   // planets — wireframe blips with sensor rings + monospace callouts
@@ -455,15 +547,28 @@ function render() {
     const p = s.planets[n.id];
     if (!p) continue;
     const c = world(n);
+    if (!visible(c, 110)) continue;
     const col = COLOR[p.owner ?? 'null'];
+    const sector = SECTOR_GLOW[n.sector] ?? SECTOR_GLOW.empty_space;
+    const ownerPulse = 0.64 + 0.36 * Math.sin(now / 620 + n.x * 0.011 + n.y * 0.017);
+
+    const aura = cx.createRadialGradient(c.x, c.y, 0, c.x, c.y, R + 34);
+    aura.addColorStop(0, rgba(col, p.owner ? 0.18 : 0.08));
+    aura.addColorStop(0.55, rgba(sector, 0.06 + 0.04 * ownerPulse));
+    aura.addColorStop(1, 'rgba(2,6,12,0)');
+    cx.fillStyle = aura;
+    cx.beginPath();
+    cx.arc(c.x, c.y, R + 35, 0, TAU);
+    cx.fill();
 
     // sensor-range ring (dashed, faint)
     cx.save();
     cx.setLineDash([3, 5]);
-    cx.strokeStyle = rgba(col, 0.22);
+    cx.lineDashOffset = -now / 180;
+    cx.strokeStyle = rgba(col, 0.18 + 0.13 * ownerPulse);
     cx.lineWidth = 1;
     cx.beginPath();
-    cx.arc(c.x, c.y, R + 14, 0, TAU);
+    cx.arc(c.x, c.y, R + 14 + 2 * ownerPulse, 0, TAU);
     cx.stroke();
     cx.restore();
 
@@ -502,17 +607,19 @@ function render() {
     // wireframe body + glow + bright core
     cx.save();
     cx.shadowColor = col;
-    cx.shadowBlur = 12;
+    cx.shadowBlur = 10 + 7 * ownerPulse;
     cx.strokeStyle = col;
     cx.lineWidth = 2;
     cx.beginPath();
     cx.arc(c.x, c.y, R, 0, TAU);
     cx.stroke();
-    cx.fillStyle = col;
+    cx.fillStyle = rgba(col, 0.72 + 0.28 * ownerPulse);
     cx.beginPath();
-    cx.arc(c.x, c.y, 2.4, 0, TAU);
+    cx.arc(c.x, c.y, 2.6 + 1.2 * ownerPulse, 0, TAU);
     cx.fill();
     cx.restore();
+
+    glowRing(c.x, c.y, R + 5 + 3 * ownerPulse, col, p.owner ? 0.16 : 0.08);
 
     // N/E/S/W crosshair ticks
     cx.strokeStyle = rgba(col, 0.7);
@@ -529,7 +636,7 @@ function render() {
     }
     cx.stroke();
 
-    if (selPlanet === n.id) targetBrackets(c.x, c.y, R + 10, performance.now());
+    if (selPlanet === n.id) targetBrackets(c.x, c.y, R + 10, now);
 
     // callout: id + garrison/buildings, monospace
     cx.save();
@@ -552,9 +659,11 @@ function render() {
     const mp = fleetPos(f);
     if (!mp) continue;
     const c = world(mp);
+    if (!visible(c, 120)) continue;
     const col = COLOR[f.owner];
     const ships = f.units.reduce((a, st) => a + st.count, 0);
     const troops = (f.landing ?? []).reduce((a, st) => a + st.count, 0);
+    const engine = 0.55 + 0.45 * Math.sin(now / 120 + f.id.length);
 
     // heading from the movement vector (default: pointing up)
     let ang = -Math.PI / 2;
@@ -569,12 +678,36 @@ function render() {
     }
     const lift = f.location ? 22 : 0; // lift off the node when stationed in orbit
 
+    if (f.bombarding && f.location) {
+      const target = s.planets[f.location];
+      if (target) {
+        const pc = world(target.position);
+        const spark = 0.45 + 0.55 * Math.sin(now / 90);
+        cx.save();
+        cx.strokeStyle = rgba('#ffb15f', 0.3 + 0.3 * spark);
+        cx.lineWidth = 1.2 + spark;
+        cx.shadowColor = '#ffb15f';
+        cx.shadowBlur = 12;
+        cx.beginPath();
+        cx.moveTo(c.x, c.y - lift);
+        cx.lineTo(pc.x, pc.y);
+        cx.stroke();
+        cx.restore();
+      }
+    }
+
     // contact trail while moving
     if (f.movement) {
       for (let i = 1; i <= 4; i++) {
-        cx.fillStyle = rgba(col, 0.3 - 0.06 * i);
+        cx.fillStyle = rgba(col, 0.33 - 0.055 * i);
         cx.beginPath();
-        cx.arc(c.x - Math.cos(ang) * i * 9, c.y - Math.sin(ang) * i * 9, 2.4 - 0.3 * i, 0, TAU);
+        cx.arc(
+          c.x - Math.cos(ang) * i * (8 + engine * 2),
+          c.y - Math.sin(ang) * i * (8 + engine * 2),
+          2.8 - 0.35 * i,
+          0,
+          TAU,
+        );
         cx.fill();
       }
     }
@@ -583,7 +716,8 @@ function render() {
     cx.translate(c.x, c.y - lift);
     cx.rotate(ang + Math.PI / 2);
     cx.shadowColor = col;
-    cx.shadowBlur = 9;
+    cx.shadowBlur = 9 + 8 * engine;
+    cx.fillStyle = rgba(col, 0.1 + 0.12 * engine);
     cx.strokeStyle = col;
     cx.lineWidth = 1.8;
     cx.beginPath();
@@ -592,11 +726,15 @@ function render() {
     cx.lineTo(0, 3.5);
     cx.lineTo(-6, 7);
     cx.closePath();
+    cx.fill();
     cx.stroke();
+    cx.fillStyle = rgba('#ffffff', 0.45 + 0.35 * engine);
+    cx.beginPath();
+    cx.arc(0, 3.2, 1.2 + engine, 0, TAU);
+    cx.fill();
     cx.restore();
 
-    if (selFleet === f.id || selFleets.has(f.id))
-      targetBrackets(c.x, c.y - lift, 12, performance.now());
+    if (selFleet === f.id || selFleets.has(f.id)) targetBrackets(c.x, c.y - lift, 12, now);
 
     cx.fillStyle = rgba(col, 0.95);
     cx.font = '700 10px ui-monospace,Menlo,monospace';
@@ -1010,13 +1148,21 @@ function frame(nowReal: number) {
     runAI();
     checkEnd();
   }
-  render();
+  render(nowReal);
   renderPanel();
   // top bar (Iron Order-style resource readouts with +/h deltas)
   const d = floor(s.time / DAY) + 1;
   const h = floor((s.time % DAY) / HOUR);
-  clock.textContent = `Day ${d} · ${String(h).padStart(2, '0')}:00`;
-  dayTimer.textContent = `Day ${d} — next cycle in ${24 - h}h`;
+  const clockText = `Day ${d} · ${String(h).padStart(2, '0')}:00`;
+  if (clockText !== lastClockText) {
+    clock.textContent = clockText;
+    lastClockText = clockText;
+  }
+  const dayTimerText = `Day ${d} — next cycle in ${24 - h}h`;
+  if (dayTimerText !== lastDayTimerText) {
+    dayTimer.textContent = dayTimerText;
+    lastDayTimerText = dayTimerText;
+  }
   const r = s.players[ME]?.resources ?? {};
   const inc = netIncome(s, ME);
   const worlds = Object.values(s.planets).filter((p) => p.owner === ME).length;
@@ -1028,15 +1174,27 @@ function frame(nowReal: number) {
         : `<em class="${delta >= 0 ? 'up' : 'dn'}">${delta >= 0 ? '+' : ''}${Math.round(delta)}/h</em>`;
     return `<span class="res"><i>${icon}</i><span class="rv"><b>${val}</b>${dh}</span></span>`;
   };
-  purse.innerHTML =
+  const hudHtml =
     chip('MTL', kfmt(r.metal ?? 0), inc.metal ?? 0) +
     chip('CRD', kfmt(r.credits ?? 0), inc.credits ?? 0) +
     chip('WLD', String(worlds)) +
     chip('FLT', String(myFleets));
+  if (hudHtml !== lastHudHtml) {
+    purse.innerHTML = hudHtml;
+    lastHudHtml = hudHtml;
+  }
   const battles = Object.keys(s.battles).length;
-  alertBadge.style.display = battles > 0 ? 'grid' : 'none';
-  alertBadge.textContent = String(battles);
-  logEl.innerHTML = logLines.map((l) => `<div>${l}</div>`).join('');
+  const alertText = String(battles);
+  if (alertText !== lastAlertText) {
+    alertBadge.style.display = battles > 0 ? 'grid' : 'none';
+    alertBadge.textContent = alertText;
+    lastAlertText = alertText;
+  }
+  const logHtml = logLines.map((l) => `<div>${l}</div>`).join('');
+  if (logHtml !== lastLogHtml) {
+    logEl.innerHTML = logHtml;
+    lastLogHtml = logHtml;
+  }
   if (banner) {
     bannerEl.textContent = banner;
     bannerEl.style.display = 'block';
