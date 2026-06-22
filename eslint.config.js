@@ -4,7 +4,9 @@ import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
   {
-    ignores: ['**/dist/**', '**/coverage/**', '**/node_modules/**'],
+    // The prototype is throwaway demo code (browser globals, deep relative
+    // imports into shared-core); it is built with esbuild, not part of the core.
+    ignores: ['**/dist/**', '**/coverage/**', '**/node_modules/**', 'prototype/**'],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,
