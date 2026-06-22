@@ -96,3 +96,4 @@ export { movementModule } from './modules/movement';
 export { combatModule } from './modules/combat';
 export { sectorModule } from './modules/sector';
 export { constructionModule } from './modules/construction';
+export { armyModule } from './modules/army';

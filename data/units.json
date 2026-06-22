@@ -10,7 +10,7 @@
   },
   "cruiser": {
     "faction": "vanguard",
-    "stats": { "attack": 10, "defense": 8, "speed": 6, "hp": 40 },
+    "stats": { "attack": 10, "defense": 8, "speed": 6, "hp": 40, "cargoCapacity": 2 },
     "line": "front",
     "traits": [],
     "abilities": [],
@@ -25,6 +25,46 @@
     "abilities": [],
     "cost": { "metal": 260, "credits": 140 },
     "upkeep": { "credits": 12 }
+  },
+  "dropship": {
+    "faction": "vanguard",
+    "domain": "space",
+    "stats": { "attack": 2, "defense": 6, "speed": 6, "hp": 50, "cargoCapacity": 12 },
+    "line": "rear",
+    "traits": [],
+    "abilities": [],
+    "cost": { "metal": 180, "credits": 40 },
+    "upkeep": { "credits": 5 }
+  },
+  "militia": {
+    "faction": "vanguard",
+    "domain": "ground",
+    "stats": { "attack": 6, "defense": 14, "speed": 0, "hp": 20, "cargoSize": 1 },
+    "line": "front",
+    "traits": [],
+    "abilities": [],
+    "cost": { "metal": 40 },
+    "upkeep": { "credits": 1 }
+  },
+  "drop_infantry": {
+    "faction": "vanguard",
+    "domain": "ground",
+    "stats": { "attack": 16, "defense": 8, "speed": 0, "hp": 22, "cargoSize": 1 },
+    "line": "front",
+    "traits": [],
+    "abilities": [],
+    "cost": { "metal": 60, "credits": 20 },
+    "upkeep": { "credits": 2 }
+  },
+  "tank": {
+    "faction": "vanguard",
+    "domain": "ground",
+    "stats": { "attack": 24, "defense": 20, "speed": 0, "hp": 50, "cargoSize": 3 },
+    "line": "front",
+    "traits": [],
+    "abilities": [],
+    "cost": { "metal": 140, "credits": 40 },
+    "upkeep": { "credits": 4 }
   },
   "infected_cruiser": {
     "faction": "swarm",

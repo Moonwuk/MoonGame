@@ -25,12 +25,22 @@ export const UnitStatsSchema = z
     hp: z.number().nonnegative().default(1),
     /** Firing range — only meaningful for artillery units (reserved). */
     range: z.number().nonnegative().default(0),
+    /** Ground-army transport capacity of a ship (0 = carries nothing; a
+     *  dedicated dropship carries a lot). Bigger hulls carry more. */
+    cargoCapacity: z.number().nonnegative().default(0),
+    /** Transport space a ground unit occupies when carried (a tank > infantry). */
+    cargoSize: z.number().nonnegative().default(1),
   })
   .catchall(z.number());
 
 export const UnitDefSchema = z.object({
   faction: z.string(),
   stats: UnitStatsSchema,
+  /** Where the unit operates: `space` units crew fleets and fight in orbit;
+   *  `ground` units are the planetary army (garrison / transported as cargo /
+   *  the landing force in a ground assault). Fleets carry ground units up to
+   *  their ships' `cargoCapacity`. */
+  domain: z.enum(['space', 'ground']).default('space'),
   /** Damage-receiving line (GDD §7.2). `artillery` trait overrides this. */
   line: z.enum(['front', 'mid', 'rear']).default('front'),
   traits: z.array(z.string()).default([]),
