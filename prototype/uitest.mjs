@@ -41,10 +41,12 @@ function mkEl(id) {
   };
   return el;
 }
+// Chainable stub: every method returns the proxy, so e.g.
+// createRadialGradient(...).addColorStop(...) works.
 const ctxProxy = new Proxy(
   {},
   {
-    get: () => () => {},
+    get: () => () => ctxProxy,
     set: () => true,
   },
 );

@@ -28,14 +28,10 @@ import type { GameState, Fleet, Planet, DomainEvent } from '../../packages/share
 
 // --- constants ---------------------------------------------------------------
 
-const COLOR: Record<string, string> = { p1: '#34e7e4', p2: '#fb6f8a', null: '#557089' };
-const SECTOR_RING: Record<string, string> = {
-  empty_space: '#15324a',
-  asteroid_field: '#5b4636',
-  nebula: '#4c2a5a',
-};
-const LANE = 'rgba(52,231,228,0.18)';
-const SHIP_UNITS = ['scout', 'cruiser', 'siege'];
+const COLOR: Record<string, string> = { p1: '#2e86d8', p2: '#e23b3b', null: '#9aa3ad' };
+const LANE = 'rgba(214,222,232,0.30)';
+const TOP = 50; // top-bar height
+const RAIL = 50; // left-rail width
 const BUILDABLE = ['mine', 'refinery', 'barracks', 'fort'];
 const BUILD_UNITS = ['marine', 'orbital_aa', 'cruiser', 'scout', 'siege'];
 const ME = 'p1';
@@ -61,6 +57,84 @@ const logEl = $('log');
 const clock = $('clock');
 const purse = $('purse');
 const bannerEl = $('banner');
+
+// --- viewport, galaxy backdrop & map projection ------------------------------
+
+function viewW(): number {
+  return typeof window !== 'undefined' ? window.innerWidth : 1280;
+}
+function viewH(): number {
+  return typeof window !== 'undefined' ? window.innerHeight : 720;
+}
+function resize() {
+  canvas.width = viewW();
+  canvas.height = viewH();
+}
+if (typeof window !== 'undefined') window.addEventListener('resize', resize);
+resize();
+
+// Deterministic starfield + nebula clouds (normalized 0..1), drawn each frame.
+const STARS = Array.from({ length: 620 }, (_, i) => {
+  const r1 = (Math.sin(i * 12.9898) * 43758.5453) % 1;
+  const r2 = (Math.sin(i * 78.233) * 12543.1234) % 1;
+  const r3 = (Math.sin(i * 3.71) * 9281.77) % 1;
+  return { x: (r1 + 1) % 1, y: (r2 + 1) % 1, b: 0.25 + ((r3 + 1) % 1) * 0.75 };
+});
+const NEBULA: Array<[number, number, number, string]> = [
+  [0.46, 0.46, 0.6, 'rgba(70,90,170,0.16)'],
+  [0.6, 0.4, 0.42, 'rgba(150,70,150,0.13)'],
+  [0.38, 0.6, 0.5, 'rgba(40,120,150,0.10)'],
+  [0.5, 0.48, 0.16, 'rgba(220,210,235,0.16)'], // bright core
+];
+
+function drawGalaxy() {
+  const w = canvas.width;
+  const h = canvas.height;
+  cx.fillStyle = '#04060d';
+  cx.fillRect(0, 0, w, h);
+  for (const [nx, ny, r, col] of NEBULA) {
+    const cx0 = nx * w;
+    const cy0 = ny * h;
+    const rad = r * Math.min(w, h);
+    const g = cx.createRadialGradient(cx0, cy0, 0, cx0, cy0, rad);
+    g.addColorStop(0, col);
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    cx.fillStyle = g;
+    cx.fillRect(0, 0, w, h);
+  }
+  for (const st of STARS) {
+    cx.globalAlpha = st.b;
+    cx.fillStyle = '#dfe8ff';
+    const sz = st.b > 0.9 ? 1.6 : 1;
+    cx.fillRect(st.x * w, st.y * h, sz, sz);
+  }
+  cx.globalAlpha = 1;
+}
+
+// Project a map-space point into the on-screen play area (inside the HUD insets).
+let MINX = Infinity;
+let MAXX = -Infinity;
+let MINY = Infinity;
+let MAXY = -Infinity;
+for (const n of MAP) {
+  MINX = Math.min(MINX, n.x);
+  MAXX = Math.max(MAXX, n.x);
+  MINY = Math.min(MINY, n.y);
+  MAXY = Math.max(MAXY, n.y);
+}
+function proj(p: { x: number; y: number }): { x: number; y: number } {
+  // Keep the node cluster clear of the left rail, the right dossier and the
+  // bottom dispatches log.
+  const left = RAIL + 80;
+  const right = canvas.width - 372;
+  const top = TOP + 80;
+  const bottom = canvas.height - 150;
+  const aw = Math.max(80, right - left);
+  const ah = Math.max(80, bottom - top);
+  const sx = (p.x - MINX) / (MAXX - MINX || 1);
+  const sy = (p.y - MINY) / (MAXY - MINY || 1);
+  return { x: left + sx * aw, y: top + sy * ah };
+}
 
 // --- helpers -----------------------------------------------------------------
 
@@ -208,119 +282,116 @@ function checkEnd() {
 // --- rendering ---------------------------------------------------------------
 
 function render() {
-  cx.clearRect(0, 0, canvas.width, canvas.height);
-  cx.fillStyle = '#0a0f1e';
-  cx.fillRect(0, 0, canvas.width, canvas.height);
-  // starfield
-  cx.fillStyle = 'rgba(255,255,255,0.20)';
-  for (let i = 0; i < 90; i++) {
-    const x = (i * 137.5) % canvas.width;
-    const y = (i * 83.3) % canvas.height;
-    cx.fillRect(x, y, 1, 1);
-  }
-  // lanes
+  drawGalaxy();
+  // star lanes
   cx.strokeStyle = LANE;
-  cx.lineWidth = 1.5;
+  cx.lineWidth = 1.4;
   for (const n of MAP) {
     for (const l of n.links) {
-      if (n.id < l) {
-        const b = s.planets[l]?.position;
-        if (b) {
-          cx.beginPath();
-          cx.moveTo(n.x, n.y);
-          cx.lineTo(b.x, b.y);
-          cx.stroke();
-        }
+      if (n.id < l && s.planets[l]) {
+        const a = proj(n);
+        const q = proj(s.planets[l]!.position);
+        cx.beginPath();
+        cx.moveTo(a.x, a.y);
+        cx.lineTo(q.x, q.y);
+        cx.stroke();
       }
     }
   }
   // battles (pulse)
   const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 180);
   for (const b of Object.values(s.battles)) {
-    const p = s.planets[b.location]?.position;
-    if (!p) continue;
-    cx.strokeStyle = `rgba(251,191,36,${0.4 + 0.5 * pulse})`;
-    cx.lineWidth = 3;
+    const pp = s.planets[b.location];
+    if (!pp) continue;
+    const c = proj(pp.position);
+    cx.strokeStyle = `rgba(245,185,66,${0.45 + 0.45 * pulse})`;
+    cx.lineWidth = 2.5;
     cx.beginPath();
-    cx.arc(p.x, p.y, 30 + 6 * pulse, 0, Math.PI * 2);
+    cx.arc(c.x, c.y, 26 + 5 * pulse, 0, Math.PI * 2);
     cx.stroke();
   }
-  // planets
+  // planets (bright node + dark ring + white label to the right)
+  cx.textAlign = 'left';
+  const R = 16;
   for (const n of MAP) {
     const p = s.planets[n.id];
     if (!p) continue;
+    const c = proj(n);
     const owner = p.owner ?? 'null';
     if (selPlanet === n.id) {
-      cx.strokeStyle = '#fde68a';
+      cx.strokeStyle = '#e8cd84';
       cx.lineWidth = 3;
       cx.beginPath();
-      cx.arc(n.x, n.y, 28, 0, Math.PI * 2);
+      cx.arc(c.x, c.y, R + 7, 0, Math.PI * 2);
       cx.stroke();
     }
-    cx.fillStyle = SECTOR_RING[p.sectorType ?? ''] ?? '#222';
-    cx.beginPath();
-    cx.arc(n.x, n.y, 23, 0, Math.PI * 2);
-    cx.fill();
+    cx.save();
+    cx.shadowColor = COLOR[owner];
+    cx.shadowBlur = 14;
     cx.fillStyle = COLOR[owner];
     cx.beginPath();
-    cx.arc(n.x, n.y, 17, 0, Math.PI * 2);
+    cx.arc(c.x, c.y, R, 0, Math.PI * 2);
     cx.fill();
-    // fort ring
-    const fort = p.buildings.find((b) => b.type === 'fort');
-    if (fort) {
-      cx.strokeStyle = '#e2e8f0';
-      cx.lineWidth = 2;
+    cx.restore();
+    cx.strokeStyle = 'rgba(5,10,20,0.85)';
+    cx.lineWidth = 3;
+    cx.beginPath();
+    cx.arc(c.x, c.y, R, 0, Math.PI * 2);
+    cx.stroke();
+    if (p.buildings.some((b) => b.type === 'fort')) {
+      cx.strokeStyle = '#e8cd84';
+      cx.lineWidth = 1.5;
       cx.beginPath();
-      cx.arc(n.x, n.y, 20, 0, Math.PI * 2);
+      cx.arc(c.x, c.y, R + 3, 0, Math.PI * 2);
       cx.stroke();
-      cx.fillStyle = '#0a0f1e';
-      cx.font = 'bold 9px monospace';
-      cx.textAlign = 'center';
-      cx.fillText('L' + fort.level, n.x, n.y - 24);
     }
-    // building dots
-    const blds = p.buildings.filter((b) => b.type !== 'fort');
-    blds.forEach((b, i) => {
-      cx.fillStyle = b.type === 'mine' ? '#cbd5e1' : b.type === 'refinery' ? '#fcd34d' : '#94a3b8';
-      cx.fillRect(n.x - 8 + i * 8, n.y + 26, 5, 5);
-    });
-    // garrison strength
+    cx.save();
+    cx.shadowColor = 'rgba(0,0,0,0.9)';
+    cx.shadowBlur = 4;
+    cx.fillStyle = '#ffffff';
+    cx.font = '700 15px system-ui,sans-serif';
+    cx.fillText(n.id, c.x + R + 9, c.y + 5);
+    cx.restore();
     const g = p.garrison.reduce((a, st) => a + st.count, 0);
-    cx.fillStyle = '#e2e8f0';
-    cx.font = 'bold 11px monospace';
-    cx.textAlign = 'center';
-    if (g > 0) cx.fillText('⛨' + g, n.x, n.y + 4);
-    // label
-    cx.fillStyle = '#cbd5e1';
-    cx.font = '11px monospace';
-    cx.fillText(n.id, n.x, n.y + 40);
+    const meta = [g > 0 ? `⚔ ${g}` : '', p.buildings.length ? `▣ ${p.buildings.length}` : '']
+      .filter(Boolean)
+      .join('   ');
+    if (meta) {
+      cx.fillStyle = 'rgba(214,224,236,0.72)';
+      cx.font = '11px system-ui';
+      cx.fillText(meta, c.x + R + 9, c.y + 21);
+    }
   }
   // fleets
+  cx.textAlign = 'center';
   for (const f of Object.values(s.fleets)) {
-    const pos = fleetPos(f);
-    if (!pos) continue;
+    const mp = fleetPos(f);
+    if (!mp) continue;
+    const c = proj(mp);
     const ships = f.units.reduce((a, st) => a + st.count, 0);
     const troops = (f.landing ?? []).reduce((a, st) => a + st.count, 0);
     cx.save();
-    cx.translate(pos.x, pos.y - (f.location ? 30 : 0));
+    cx.translate(c.x, c.y - (f.location ? 26 : 0));
     if (selFleet === f.id) {
-      cx.strokeStyle = '#fde68a';
+      cx.strokeStyle = '#e8cd84';
       cx.lineWidth = 2;
       cx.beginPath();
-      cx.arc(0, 0, 12, 0, Math.PI * 2);
+      cx.arc(0, 0, 11, 0, Math.PI * 2);
       cx.stroke();
     }
     cx.fillStyle = COLOR[f.owner];
+    cx.strokeStyle = 'rgba(5,10,20,0.8)';
+    cx.lineWidth = 1.5;
     cx.beginPath();
     cx.moveTo(0, -8);
     cx.lineTo(7, 7);
     cx.lineTo(-7, 7);
     cx.closePath();
     cx.fill();
-    cx.fillStyle = '#e2e8f0';
-    cx.font = 'bold 10px monospace';
-    cx.textAlign = 'center';
-    cx.fillText(`${ships}${troops ? '+' + troops : ''}`, 0, 20);
+    cx.stroke();
+    cx.fillStyle = '#fff';
+    cx.font = '700 10px system-ui';
+    cx.fillText(`${ships}${troops ? '+' + troops : ''}`, 0, 19);
     cx.restore();
   }
 }
@@ -448,10 +519,11 @@ canvas.addEventListener('click', (ev) => {
   const my = ((ev.clientY - rect.top) / rect.height) * canvas.height;
   // hit a fleet?
   for (const f of Object.values(s.fleets)) {
-    const pos = fleetPos(f);
-    if (!pos) continue;
-    const fy = pos.y - (f.location ? 30 : 0);
-    if (Math.hypot(mx - pos.x, my - fy) < 14 && f.owner === ME) {
+    const mp = fleetPos(f);
+    if (!mp) continue;
+    const c = proj(mp);
+    const fy = c.y - (f.location ? 26 : 0);
+    if (Math.hypot(mx - c.x, my - fy) < 14 && f.owner === ME) {
       selFleet = f.id;
       selPlanet = f.location ?? selPlanet;
       lastPanelHtml = '';
@@ -460,7 +532,8 @@ canvas.addEventListener('click', (ev) => {
   }
   // hit a planet?
   for (const n of MAP) {
-    if (Math.hypot(mx - n.x, my - n.y) < 24) {
+    const c = proj(n);
+    if (Math.hypot(mx - c.x, my - c.y) < 22) {
       if (selFleet) {
         const f = s.fleets[selFleet];
         if (f && f.location !== n.id) apply(order(s, moveFleet(ME, selFleet, n.id), s.time));
@@ -504,7 +577,14 @@ function frame(nowReal: number) {
   const h = floor((s.time % DAY) / HOUR);
   clock.textContent = `Day ${d} · ${String(h).padStart(2, '0')}:00`;
   const r = s.players[ME]?.resources ?? {};
-  purse.textContent = `⬡ ${floor(r.metal ?? 0)} metal   ◎ ${floor(r.credits ?? 0)} credits`;
+  const worlds = Object.values(s.planets).filter((p) => p.owner === ME).length;
+  const myFleets = Object.values(s.fleets).filter((f) => f.owner === ME).length;
+  const chip = (icon: string, val: number | string) => `<span class="res"><i>${icon}</i><b>${val}</b></span>`;
+  purse.innerHTML =
+    chip('⬡', floor(r.metal ?? 0)) +
+    chip('◎', floor(r.credits ?? 0)) +
+    chip('◉', worlds) +
+    chip('▲', myFleets);
   logEl.innerHTML = logLines.map((l) => `<div>${l}</div>`).join('');
   if (banner) {
     bannerEl.textContent = banner;
