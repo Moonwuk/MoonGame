@@ -60,10 +60,21 @@ export const data: GameData = parseGameData({
     marine: {
       faction: 'blue',
       stats: { attack: 12, defense: 12, speed: 52, hp: 24 },
+      domain: 'ground',
       traits: ['ground'],
       cost: { metal: 30 },
       buildTimeHours: 2,
       upkeep: { credits: 2 },
+    },
+    orbital_aa: {
+      faction: 'blue',
+      stats: { attack: 4, defense: 14, speed: 0, hp: 30, aaDamage: 12 },
+      domain: 'ground',
+      traits: ['ground'],
+      line: 'rear',
+      cost: { metal: 110, credits: 30 },
+      buildTimeHours: 4,
+      upkeep: { credits: 3 },
     },
   },
   factions: {},
@@ -173,7 +184,7 @@ export const MAP: MapNode[] = [
     sector: 'empty_space',
     links: ['NEXUS', 'OUTPOST'],
     buildings: [{ type: 'fort' }, { type: 'mine' }],
-    garrison: [['marine', 4], ['cruiser', 1]],
+    garrison: [['marine', 4], ['orbital_aa', 1]],
   },
 ];
 

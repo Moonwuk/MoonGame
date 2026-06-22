@@ -5,6 +5,8 @@ import {
   order,
   HOUR,
   moveFleet,
+  orbitFleet,
+  assaultFleet,
   buildUnit,
   buildBuilding,
   launchFleet,
@@ -37,10 +39,19 @@ r = order(s, moveFleet('p1', 'blue-1', 'FORGE'), s.time);
 s = r.state;
 note(s.time, `move blue-1 → FORGE → ${r.error ?? 'ok'}`);
 
-// 4) run the world forward and watch what happens
+// 4) run the world forward; when blue-1 is idle over hostile FORGE, descend & land
 for (let t = s.time + HOUR; t <= 40 * HOUR; t += HOUR) {
   r = advance(s, t);
   s = r.state;
+  const b = s.fleets['blue-1'];
+  if (b && b.location && !b.movement && !b.battleId && s.planets[b.location]?.owner !== 'p1') {
+    if (b.orbit !== 'near') {
+      r = order(s, orbitFleet('p1', 'blue-1', 'near'), s.time);
+      if (r.state) s = r.state;
+    }
+    r = order(s, assaultFleet('p1', 'blue-1'), s.time);
+    if (!r.error) s = r.state;
+  }
   for (const e of r.events) {
     if (
       e.type === 'battle.started' ||

@@ -28,15 +28,16 @@ import type { GameState, Fleet, Planet, DomainEvent } from '../../packages/share
 
 // --- constants ---------------------------------------------------------------
 
-const COLOR: Record<string, string> = { p1: '#38bdf8', p2: '#fb7185', null: '#64748b' };
+const COLOR: Record<string, string> = { p1: '#34e7e4', p2: '#fb6f8a', null: '#557089' };
 const SECTOR_RING: Record<string, string> = {
-  empty_space: '#1e3a5f',
+  empty_space: '#15324a',
   asteroid_field: '#5b4636',
   nebula: '#4c2a5a',
 };
+const LANE = 'rgba(52,231,228,0.18)';
 const SHIP_UNITS = ['scout', 'cruiser', 'siege'];
 const BUILDABLE = ['mine', 'refinery', 'barracks', 'fort'];
-const BUILD_UNITS = ['marine', 'cruiser', 'scout', 'siege'];
+const BUILD_UNITS = ['marine', 'orbital_aa', 'cruiser', 'scout', 'siege'];
 const ME = 'p1';
 
 // --- state -------------------------------------------------------------------
@@ -218,7 +219,7 @@ function render() {
     cx.fillRect(x, y, 1, 1);
   }
   // lanes
-  cx.strokeStyle = 'rgba(120,150,200,0.25)';
+  cx.strokeStyle = LANE;
   cx.lineWidth = 1.5;
   for (const n of MAP) {
     for (const l of n.links) {
