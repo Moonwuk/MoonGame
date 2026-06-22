@@ -39,6 +39,8 @@ describe('game data schema (docs/architecture.md §2)', () => {
     expect(data.units.tank?.stats.cargoSize).toBe(3); // a tank is bulky cargo
     expect(data.units.dropship?.stats.cargoCapacity).toBe(12); // dedicated lift
     expect(data.units.scout_drone?.stats.cargoCapacity).toBe(0); // default, carries nothing
+    expect(data.units.orbital_aa?.stats.aaDamage).toBe(14); // anti-ship orbital AA
+    expect(data.units.cruiser?.stats.aaDamage).toBe(0); // default, no AA
     expect(data.events.reanimate_on_kill?.trigger).toBe('unit_dies_in_battle');
     expect(data.sectors.asteroid_field?.speedBonus).toBeCloseTo(-0.25);
     expect(data.sectors.asteroid_field?.hpBonus).toBeCloseTo(0.1);

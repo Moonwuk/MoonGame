@@ -33,6 +33,7 @@ export {
   type BuildingId,
   type TraitId,
 } from './state/gameState';
+export { isBombarded } from './state/orbit';
 
 // Action contract
 export {

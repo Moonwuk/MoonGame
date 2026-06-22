@@ -30,6 +30,9 @@ export const UnitStatsSchema = z
     cargoCapacity: z.number().nonnegative().default(0),
     /** Transport space a ground unit occupies when carried (a tank > infantry). */
     cargoSize: z.number().nonnegative().default(1),
+    /** Orbital-AA damage per hour a (ground) unit deals to a hostile fleet on the
+     *  NEAR orbit while the planet is not under a ground assault. 0 = no AA. */
+    aaDamage: z.number().nonnegative().default(0),
   })
   .catchall(z.number());
 

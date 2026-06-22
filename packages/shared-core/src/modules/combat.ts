@@ -6,6 +6,8 @@ import { timeScaleOf, type Context } from '../action/types';
 const MS_PER_HOUR = 3_600_000;
 /** Hard cap on rounds so a zero-damage stalemate can't run forever (fail-secure). */
 const MAX_COMBAT_ROUNDS = 240;
+/** Fraction of a bombarding fleet's firepower that rains on the planet below. */
+const BOMBARD_FRACTION = 0.5;
 
 type Tier = 'front' | 'mid' | 'rear' | 'artillery';
 /** Damage-receiving order (GDD §7.2): artillery is only reachable once the
@@ -373,6 +375,90 @@ function finishBattle(h: HandlerContext, battle: Battle, stalemate = false): voi
   }
 }
 
+// --- orbital AA & bombardment (the near orbit, GDD §7.4) ---------------------
+
+/** A planet's orbital-AA firepower = Σ its garrison units' `aaDamage`. */
+function aaStrengthAt(planet: { garrison: UnitStack[] }, data: GameData): number {
+  let aa = 0;
+  for (const s of planet.garrison) {
+    const def = data.units[s.unit];
+    if (def) aa += s.count * def.stats.aaDamage;
+  }
+  return aa;
+}
+
+/** Lowest-id hostile, free fleet sitting on the NEAR orbit of `planetId`. */
+function nearOrbitHostile(h: HandlerContext, planetId: string, owner: string | null): Fleet | null {
+  let best: Fleet | null = null;
+  for (const id of Object.keys(h.state.fleets)) {
+    const f = h.state.fleets[id];
+    if (!f || f.location !== planetId || f.orbit !== 'near' || f.battleId) {
+      continue;
+    }
+    if (!f.units.some((s) => s.count > 0) || owner === null || !isHostile(h, owner, f.owner)) {
+      continue;
+    }
+    if (best === null || f.id < best.id) best = f;
+  }
+  return best;
+}
+
+/** Bombardment firepower a fleet rains on the planet = Σ ship attack × fraction. */
+function bombardPower(fleet: Fleet, data: GameData): number {
+  let atk = 0;
+  for (const s of fleet.units) {
+    const def = data.units[s.unit];
+    if (def) atk += s.count * def.stats.attack;
+  }
+  return atk * BOMBARD_FRACTION;
+}
+
+/** Resolves the orbital layer over one continuous time span: planetary AA fires
+ *  at near-orbit attackers (unless a ground assault keeps it busy), and each
+ *  bombarding fleet wears the world's structures (and freezes its production —
+ *  enforced in economy/construction via `isBombarded`). */
+function runOrbital(h: HandlerContext, hours: number): void {
+  const data = h.ctx.data;
+  for (const planetId of Object.keys(h.state.planets)) {
+    const planet = h.state.planets[planetId];
+    if (!planet) {
+      continue;
+    }
+    const groundAssault = Object.values(h.state.battles).some(
+      (b) => b.location === planetId && b.phase === 'ground',
+    );
+    // Orbital AA — anti-ship, only when not defending the ground.
+    if (planet.owner !== null && !groundAssault) {
+      const aa = aaStrengthAt(planet, data);
+      if (aa > 0) {
+        const target = nearOrbitHostile(h, planetId, planet.owner);
+        if (target) {
+          applyDamageToSide(h, { kind: 'fleet', fleetId: target.id }, aa * hours, data, planetId);
+          const after = h.state.fleets[target.id];
+          if (after && after.units.length === 0) {
+            h.emit('fleet.destroyed', { fleetId: after.id, owner: after.owner });
+            delete h.state.fleets[after.id];
+          }
+        }
+      }
+    }
+    // Bombardment — each hostile bombarding fleet shells the structures below.
+    for (const f of Object.values(h.state.fleets)) {
+      if (
+        f.bombarding &&
+        f.location === planetId &&
+        f.orbit === 'near' &&
+        f.owner !== planet.owner
+      ) {
+        const power = bombardPower(f, data) * hours;
+        if (power > 0) {
+          h.emit('planet.bombarded', { planetId, power, owner: planet.owner, by: f.owner });
+        }
+      }
+    }
+  }
+}
+
 /**
  * Combat — a base module (GDD §7). Battles are stateful entities resolved over
  * real hours, one round per `combat.tick`. Fleets collide at map nodes (a
@@ -447,6 +533,56 @@ export const combatModule: GameModule = {
       if (code) {
         return h.reject(code);
       }
+    });
+
+    // Toggle bombardment of the world below (near orbit, a hostile world, ships
+    // aboard). While on, it shells structures and freezes the owner's production
+    // each time span — and the fleet eats the planet's AA fire in return.
+    api.onAction('fleet.bombard', (action, h) => {
+      const { fleetId, on } = action.payload as { fleetId?: string; on?: boolean };
+      if (typeof fleetId !== 'string' || typeof on !== 'boolean') {
+        return h.reject('E_BAD_PAYLOAD');
+      }
+      const fleet = h.state.fleets[fleetId];
+      if (!fleet) {
+        return h.reject('E_NO_FLEET');
+      }
+      if (fleet.owner !== action.playerId) {
+        return h.reject('E_FORBIDDEN');
+      }
+      if (fleet.location === null || fleet.movement || fleet.battleId) {
+        return h.reject('E_FLEET_BUSY');
+      }
+      if (on) {
+        if (fleet.orbit !== 'near') {
+          return h.reject('E_WRONG_ORBIT');
+        }
+        const planet = h.state.planets[fleet.location];
+        if (!planet) {
+          return h.reject('E_NO_PLANET');
+        }
+        if (planet.owner === fleet.owner) {
+          return h.reject('E_OWN_PLANET');
+        }
+        if (planet.owner !== null && !isHostile(h, fleet.owner, planet.owner)) {
+          return h.reject('E_FORBIDDEN');
+        }
+        if (!fleet.units.some((s) => s.count > 0)) {
+          return h.reject('E_NO_SHIPS');
+        }
+      }
+      fleet.bombarding = on;
+      h.emit('fleet.bombard', { fleetId, on, owner: action.playerId });
+    });
+
+    // The orbital layer accrues over continuous time, like the economy.
+    api.on('time.advanced', (event, h) => {
+      const { from, to } = event.payload as { from: number; to: number };
+      const span = to - from;
+      if (span <= 0) {
+        return;
+      }
+      runOrbital(h, (span / MS_PER_HOUR) * timeScaleOf(h.ctx));
     });
 
     api.on('combat.tick', (event, h) => {

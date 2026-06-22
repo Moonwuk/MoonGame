@@ -2,6 +2,7 @@ import type { GameModule } from '../kernel/module';
 import type { GameState, Planet, UnitStack } from '../state/gameState';
 import type { GameData, ResourceBag } from '../data/schemas';
 import { buildingLevel } from '../data/schemas';
+import { isBombarded } from '../state/orbit';
 import { timeScaleOf } from '../action/types';
 
 const MS_PER_HOUR = 3_600_000;
@@ -88,6 +89,9 @@ export const economyModule: GameModule = {
         const player = h.state.players[planet.owner];
         if (!player) {
           continue; // owner without a player record → nothing to credit
+        }
+        if (isBombarded(h.state, planetId)) {
+          continue; // production frozen while the world is bombarded (GDD §7.4)
         }
         const rate = h.hook<ResourceBag>('economy.production', baseProduction(planet, data), {
           planetId,

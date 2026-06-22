@@ -2,6 +2,7 @@ import type { GameModule, HandlerContext } from '../kernel/module';
 import type { BuildingInstance, Planet, Player, UnitStack } from '../state/gameState';
 import type { GameData, ResourceBag } from '../data/schemas';
 import { buildingLevel, buildingMaxLevel } from '../data/schemas';
+import { isBombarded } from '../state/orbit';
 import type { Action } from '../action/types';
 import { timeScaleOf } from '../action/types';
 
@@ -174,6 +175,9 @@ export const constructionModule: GameModule = {
         return h.reject('E_BAD_PAYLOAD');
       }
       const { planet, player } = ownedPlanet(h, action, payload.planetId);
+      if (isBombarded(h.state, planet.id)) {
+        return h.reject('E_BOMBARDED'); // production frozen under bombardment
+      }
       const def = h.ctx.data.buildings[payload.building];
       if (!def) {
         return h.reject('E_UNKNOWN_BUILDING');
@@ -206,6 +210,9 @@ export const constructionModule: GameModule = {
         return h.reject('E_BAD_PAYLOAD');
       }
       const { planet, player } = ownedPlanet(h, action, payload.planetId);
+      if (isBombarded(h.state, planet.id)) {
+        return h.reject('E_BOMBARDED');
+      }
       const instance = planet.buildings.find((b) => b.type === payload.building);
       if (!instance) {
         return h.reject('E_NO_BUILDING'); // nothing of that type to upgrade
@@ -249,6 +256,9 @@ export const constructionModule: GameModule = {
         return h.reject('E_BAD_PAYLOAD');
       }
       const { planet, player } = ownedPlanet(h, action, payload.planetId);
+      if (isBombarded(h.state, planet.id)) {
+        return h.reject('E_BOMBARDED');
+      }
       const def = h.ctx.data.units[payload.unit];
       if (!def) {
         return h.reject('E_UNKNOWN_UNIT');
@@ -282,6 +292,11 @@ export const constructionModule: GameModule = {
       const planet = h.state.planets[p.planetId];
       if (!planet || planet.owner !== p.playerId) {
         return; // planet gone or captured mid-build → investment forfeited
+      }
+      if (isBombarded(h.state, planet.id)) {
+        // production frozen under bombardment → re-defer until it lifts
+        h.schedule(h.ctx.now + MS_PER_HOUR, 'construction.complete', p);
+        return;
       }
       if (p.kind === 'building' && typeof p.building === 'string') {
         if (planet.buildings.some((b) => b.type === p.building)) {
@@ -367,6 +382,20 @@ export const constructionModule: GameModule = {
         p.dmgToDefender * STRUCTURE_DAMAGE_SHARE,
         p.defender ?? planet.owner,
       );
+    });
+
+    // Orbital bombardment wears structures the same way (combat measures the
+    // firepower; the buildings module applies it — GDD §7.4).
+    api.on('planet.bombarded', (event, h) => {
+      const p = event.payload as { planetId?: string; power?: number; owner?: string | null };
+      if (typeof p.planetId !== 'string' || typeof p.power !== 'number' || p.power <= 0) {
+        return;
+      }
+      const planet = h.state.planets[p.planetId];
+      if (!planet) {
+        return;
+      }
+      damageBuildings(h, planet, p.power, p.owner ?? planet.owner);
     });
   },
 };
