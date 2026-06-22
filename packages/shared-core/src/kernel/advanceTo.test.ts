@@ -1,0 +1,259 @@
+import { describe, it, expect } from 'vitest';
+import { createKernel } from './kernel';
+import type { GameModule } from './module';
+import {
+  createInitialState,
+  type GameState,
+  type Planet,
+  type ScheduledEvent,
+} from '../state/gameState';
+import { parseGameData } from '../data/schemas';
+import type { Action, Context } from '../action/types';
+import { deepFreeze } from '../util/clone';
+
+const testData = parseGameData({
+  version: '0.1.0',
+  resources: ['metal'],
+  units: {},
+  factions: {},
+  buildings: {},
+  events: {},
+});
+const ctx = (now: number): Context => ({ now, data: testData });
+
+function sched(seq: number, at: number, type: string, payload: unknown = null): ScheduledEvent {
+  return { id: `evt:${seq}`, at, type, payload, seq };
+}
+
+function makePlanet(id: string, resources: Record<string, number> = {}): Planet {
+  return {
+    id,
+    owner: null,
+    position: { x: 0, y: 0 },
+    resources,
+    buildings: [],
+    garrison: [],
+    traits: [],
+  };
+}
+
+function stateWith(opts: {
+  time?: number;
+  scheduled?: ScheduledEvent[];
+  planets?: Record<string, Planet>;
+}): GameState {
+  const s = createInitialState({ seed: 'adv', version: { data: '0.1.0', manifest: '1' } });
+  const scheduled = opts.scheduled ?? [];
+  return {
+    ...s,
+    time: opts.time ?? 0,
+    scheduled,
+    scheduleSeq: scheduled.length,
+    planets: opts.planets ?? {},
+  };
+}
+
+const TIME_ADVANCED = 'time.advanced';
+const domainTypes = (events: { type: string }[]): string[] =>
+  events.map((e) => e.type).filter((t) => t !== TIME_ADVANCED);
+
+function okAdvance(r: ReturnType<ReturnType<typeof createKernel>['advanceTo']>) {
+  if (!r.ok) throw new Error(`expected ok advance, got ${r.code}`);
+  return r;
+}
+
+// --- fixtures ---
+
+// Accrues 2 metal per ms of continuous time, for every planet.
+const economyModule: GameModule = {
+  id: 'economy',
+  version: '1.0.0',
+  setup(api) {
+    api.on(TIME_ADVANCED, (event, h) => {
+      const { from, to } = event.payload as { from: number; to: number };
+      const elapsed = to - from;
+      for (const id of Object.keys(h.state.planets)) {
+        const p = h.state.planets[id];
+        if (!p) continue;
+        p.resources.metal = (p.resources.metal ?? 0) + 2 * elapsed;
+      }
+    });
+  },
+};
+
+// A recurring combat tick that reschedules itself for 3 more rounds.
+const tickerModule: GameModule = {
+  id: 'ticker',
+  version: '1.0.0',
+  setup(api) {
+    api.on('combat.tick', (event, h) => {
+      const round = (event.payload as { round: number }).round;
+      if (round < 3) {
+        h.schedule(h.state.time + 100, 'combat.tick', { round: round + 1 });
+      }
+    });
+  },
+};
+
+const diceModule: GameModule = {
+  id: 'dice',
+  version: '1.0.0',
+  setup(api) {
+    api.on('roll', (_event, h) => {
+      h.emit('rolled', { value: h.rng.nextInt(1, 1_000_000) });
+    });
+  },
+};
+
+const boomModule: GameModule = {
+  id: 'boom-adv',
+  version: '1.0.0',
+  setup(api) {
+    api.on('boom', () => {
+      throw new Error('secret internal detail that must not leak');
+    });
+  },
+};
+
+// Reschedules itself at the current instant → would loop forever.
+const infiniteModule: GameModule = {
+  id: 'infinite',
+  version: '1.0.0',
+  setup(api) {
+    api.on('inf', (_event, h) => h.schedule(h.state.time, 'inf'));
+  },
+};
+
+// Schedules events from an action payload (exercises schedule() via applyAction).
+const plannerModule: GameModule = {
+  id: 'planner',
+  version: '1.0.0',
+  setup(api) {
+    api.onAction('plan', (a, h) => {
+      const items = a.payload as { at: number; type: string }[];
+      for (const it of items) h.schedule(it.at, it.type);
+    });
+  },
+};
+
+const action = (type: string, payload: unknown): Action => ({
+  id: `s:p1:1`,
+  type,
+  playerId: 'p1',
+  payload,
+  issuedAt: 0,
+});
+
+// ---------------------------------------------------------------------------
+
+describe('advanceTo — real-time timeline (docs/architecture.md §4.1)', () => {
+  it('fires due events in chronological order, ties broken by seq', () => {
+    const kernel = createKernel([]);
+    const state = stateWith({
+      scheduled: [sched(0, 100, 'a'), sched(1, 50, 'b'), sched(2, 50, 'c')],
+    });
+    const r = okAdvance(kernel.advanceTo(state, ctx(200)));
+    expect(domainTypes(r.events)).toEqual(['b', 'c', 'a']); // 50(seq1), 50(seq2), 100
+    expect(r.state.time).toBe(200);
+  });
+
+  it('emits contiguous time.advanced spans covering the whole interval', () => {
+    const kernel = createKernel([economyModule]);
+    const planets = { p: makePlanet('p', { metal: 0 }) };
+
+    // With an event in the middle (two spans: 0->50, 50->200).
+    const withEvent = okAdvance(
+      kernel.advanceTo(stateWith({ planets, scheduled: [sched(0, 50, 'x')] }), ctx(200)),
+    );
+    expect(withEvent.state.planets.p?.resources.metal).toBe(400); // 2 * 200
+
+    // With no events (single span 0->200) — identical total.
+    const noEvent = okAdvance(kernel.advanceTo(stateWith({ planets }), ctx(200)));
+    expect(noEvent.state.planets.p?.resources.metal).toBe(400);
+  });
+
+  it('does not overshoot and leaves not-yet-due events untouched', () => {
+    const kernel = createKernel([]);
+    const state = stateWith({ scheduled: [sched(0, 500, 'later')] });
+    const r = okAdvance(kernel.advanceTo(state, ctx(200)));
+    expect(r.state.time).toBe(200);
+    expect(r.state.scheduled).toHaveLength(1);
+    expect(domainTypes(r.events)).toEqual([]);
+  });
+
+  it('processes a recurring tick until it stops', () => {
+    const kernel = createKernel([tickerModule]);
+    const state = stateWith({ scheduled: [sched(0, 100, 'combat.tick', { round: 0 })] });
+    const r = okAdvance(kernel.advanceTo(state, ctx(1000)));
+
+    const rounds = r.events
+      .filter((e) => e.type === 'combat.tick')
+      .map((e) => (e.payload as { round: number }).round);
+    expect(rounds).toEqual([0, 1, 2, 3]); // 100, 200, 300, 400
+    expect(r.state.time).toBe(1000);
+    expect(r.state.scheduled).toHaveLength(0);
+  });
+
+  it('is deterministic and advances RNG state', () => {
+    const kernel = createKernel([diceModule]);
+    const state = stateWith({ scheduled: [sched(0, 100, 'roll')] });
+
+    const a = okAdvance(kernel.advanceTo(state, ctx(200)));
+    const b = okAdvance(kernel.advanceTo(state, ctx(200)));
+    expect(a.events).toEqual(b.events);
+    expect(a.state.rng).not.toEqual(state.rng);
+  });
+
+  it('dead-letters a failing event and keeps advancing (fail-secure, A10)', () => {
+    const kernel = createKernel([boomModule]);
+    const state = stateWith({ scheduled: [sched(0, 100, 'boom'), sched(1, 200, 'after')] });
+    const r = okAdvance(kernel.advanceTo(state, ctx(300)));
+
+    expect(r.failures).toEqual([{ at: 100, type: 'boom', code: 'E_INTERNAL' }]);
+    expect(JSON.stringify(r.failures)).not.toContain('secret');
+    expect(domainTypes(r.events)).toEqual(['after']); // 'boom' was discarded
+    expect(r.state.time).toBe(300);
+    expect(r.state.scheduled).toHaveLength(0); // both consumed, world not stuck
+  });
+
+  it('caps a runaway schedule (E_ADVANCE_OVERFLOW)', () => {
+    const kernel = createKernel([infiniteModule]);
+    const state = stateWith({ scheduled: [sched(0, 50, 'inf')] });
+    const r = kernel.advanceTo(state, ctx(100));
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('E_ADVANCE_OVERFLOW');
+  });
+
+  it('rejects moving the clock backwards', () => {
+    const kernel = createKernel([]);
+    const r = kernel.advanceTo(stateWith({ time: 500 }), ctx(200));
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe('E_TIME_BACKWARDS');
+  });
+
+  it('never mutates the input state', () => {
+    const kernel = createKernel([economyModule]);
+    const state = deepFreeze(
+      stateWith({ planets: { p: makePlanet('p', { metal: 0 }) }, scheduled: [sched(0, 50, 'x')] }),
+    );
+    const r = okAdvance(kernel.advanceTo(state, ctx(200)));
+    expect(r.state.planets.p?.resources.metal).toBe(400);
+    expect(state.time).toBe(0); // input frozen & untouched
+    expect(state.planets.p?.resources.metal).toBe(0);
+  });
+
+  it('schedule() from an action feeds the timeline', () => {
+    const kernel = createKernel([plannerModule]);
+    const planned = kernel.applyAction(
+      stateWith({}),
+      action('plan', [{ at: 100, type: 'ping' }]),
+      ctx(0),
+    );
+    expect(planned.ok).toBe(true);
+    if (!planned.ok) return;
+    expect(planned.state.scheduled).toHaveLength(1);
+
+    const r = okAdvance(kernel.advanceTo(planned.state, ctx(150)));
+    expect(domainTypes(r.events)).toEqual(['ping']);
+  });
+});

@@ -1,0 +1,103 @@
+/**
+ * @void/shared-core — the deterministic, data-driven simulation core.
+ *
+ * The same package runs on the server (authority) and the client (preview):
+ * docs/architecture.md §3. It depends on no server, database or network.
+ */
+
+// Determinism
+export { Rng, seedRng, type RngState } from './rng/rng';
+
+// State model
+export {
+  createInitialState,
+  type GameState,
+  type GameVersion,
+  type Player,
+  type Planet,
+  type Fleet,
+  type FleetMovement,
+  type Battle,
+  type BattleSide,
+  type CombatantRef,
+  type ScheduledEvent,
+  type UnitStack,
+  type BuildingInstance,
+  type ResourceBag,
+  type PlayerId,
+  type PlanetId,
+  type FleetId,
+  type BattleId,
+  type ResourceId,
+  type UnitId,
+  type BuildingId,
+  type TraitId,
+} from './state/gameState';
+export { isBombarded } from './state/orbit';
+
+// Action contract
+export {
+  Rejection,
+  parseActionId,
+  timeScaleOf,
+  type Action,
+  type Context,
+  type MatchConfig,
+  type DomainEvent,
+  type ApplyResult,
+  type AdvanceResult,
+  type AdvanceFailure,
+  type ActionIdParts,
+} from './action/types';
+
+// Microkernel
+export { Kernel, createKernel } from './kernel/kernel';
+export type {
+  GameModule,
+  ModuleSetupApi,
+  HandlerContext,
+  ActionHandler,
+  EventHandler,
+  HookFn,
+  ModuleManifest,
+  ModuleManifestEntry,
+} from './kernel/module';
+
+// Data-driven content
+export {
+  parseGameData,
+  safeParseGameData,
+  buildingLevel,
+  buildingMaxLevel,
+  GameDataSchema,
+  UnitDefSchema,
+  FactionDefSchema,
+  BuildingDefSchema,
+  BuildingLevelSchema,
+  EffectRuleSchema,
+  SectorTypeDefSchema,
+  PlanetTypeDefSchema,
+  ResourceBagSchema,
+  UnitStatsSchema,
+  type GameData,
+  type UnitDef,
+  type FactionDef,
+  type BuildingDef,
+  type BuildingLevel,
+  type EffectRule,
+  type SectorTypeDef,
+  type PlanetTypeDef,
+  type UnitStats,
+} from './data/schemas';
+
+// Utilities
+export { deepClone, deepFreeze } from './util/clone';
+
+// Base modules (plugins) — opt-in via the manifest passed to createKernel.
+export { economyModule } from './modules/economy';
+export { movementModule } from './modules/movement';
+export { combatModule } from './modules/combat';
+export { sectorModule } from './modules/sector';
+export { planetTypeModule } from './modules/planetType';
+export { constructionModule } from './modules/construction';
+export { armyModule } from './modules/army';

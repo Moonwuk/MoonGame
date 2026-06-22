@@ -1,0 +1,16 @@
+{
+  "empty_space": {
+    "name": "Empty Space",
+    "speedBonus": 0.15
+  },
+  "asteroid_field": {
+    "name": "Asteroid Field",
+    "speedBonus": -0.25,
+    "hpBonus": 0.1
+  },
+  "nebula": {
+    "name": "Nebula",
+    "speedBonus": -0.1,
+    "hpBonus": 0.05
+  }
+}

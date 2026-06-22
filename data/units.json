@@ -1,0 +1,97 @@
+{
+  "scout_drone": {
+    "faction": "vanguard",
+    "stats": { "attack": 2, "defense": 1, "speed": 12, "hp": 6 },
+    "line": "rear",
+    "traits": [],
+    "abilities": ["long_range_scan"],
+    "cost": { "metal": 40 },
+    "upkeep": { "credits": 2 }
+  },
+  "cruiser": {
+    "faction": "vanguard",
+    "stats": { "attack": 10, "defense": 8, "speed": 6, "hp": 40, "cargoCapacity": 2 },
+    "line": "front",
+    "traits": [],
+    "abilities": [],
+    "cost": { "metal": 220, "credits": 80 },
+    "upkeep": { "credits": 8 }
+  },
+  "siege_lance": {
+    "faction": "vanguard",
+    "stats": { "attack": 18, "defense": 2, "speed": 5, "hp": 14, "range": 3 },
+    "line": "rear",
+    "traits": ["artillery"],
+    "abilities": [],
+    "cost": { "metal": 260, "credits": 140 },
+    "upkeep": { "credits": 12 }
+  },
+  "dropship": {
+    "faction": "vanguard",
+    "domain": "space",
+    "stats": { "attack": 2, "defense": 6, "speed": 6, "hp": 50, "cargoCapacity": 12 },
+    "line": "rear",
+    "traits": [],
+    "abilities": [],
+    "cost": { "metal": 180, "credits": 40 },
+    "upkeep": { "credits": 5 }
+  },
+  "militia": {
+    "faction": "vanguard",
+    "domain": "ground",
+    "stats": { "attack": 6, "defense": 14, "speed": 0, "hp": 20, "cargoSize": 1 },
+    "line": "front",
+    "traits": [],
+    "abilities": [],
+    "cost": { "metal": 40 },
+    "upkeep": { "credits": 1 }
+  },
+  "drop_infantry": {
+    "faction": "vanguard",
+    "domain": "ground",
+    "stats": { "attack": 16, "defense": 8, "speed": 0, "hp": 22, "cargoSize": 1 },
+    "line": "front",
+    "traits": [],
+    "abilities": [],
+    "cost": { "metal": 60, "credits": 20 },
+    "upkeep": { "credits": 2 }
+  },
+  "tank": {
+    "faction": "vanguard",
+    "domain": "ground",
+    "stats": { "attack": 24, "defense": 20, "speed": 0, "hp": 50, "cargoSize": 3 },
+    "line": "front",
+    "traits": [],
+    "abilities": [],
+    "cost": { "metal": 140, "credits": 40 },
+    "upkeep": { "credits": 4 }
+  },
+  "orbital_aa": {
+    "faction": "vanguard",
+    "domain": "ground",
+    "stats": { "attack": 4, "defense": 14, "speed": 0, "hp": 30, "aaDamage": 14, "cargoSize": 2 },
+    "line": "rear",
+    "traits": [],
+    "abilities": [],
+    "cost": { "metal": 120, "credits": 40 },
+    "upkeep": { "credits": 3 }
+  },
+  "infected_cruiser": {
+    "faction": "swarm",
+    "stats": { "attack": 12, "defense": 4, "speed": 6, "hp": 32 },
+    "line": "front",
+    "traits": ["infect_planet", "no_food_cost"],
+    "abilities": ["spread_biomass"],
+    "cost": { "biomass": 200, "dark_matter": 50 },
+    "upkeep": { "biomass": 6 }
+  },
+  "reanimated_drone": {
+    "faction": "necromancer",
+    "stats": { "attack": 5, "defense": 3, "speed": 5, "hp": 12 },
+    "line": "mid",
+    "traits": ["reanimate_on_kill"],
+    "abilities": [],
+    "cost": { "dark_matter": 30 },
+    "upkeep": { "dark_matter": 2 }
+  }
+}
