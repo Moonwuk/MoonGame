@@ -45,6 +45,11 @@ const BUILDABLE = ['mine', 'refinery', 'barracks', 'fort'];
 const BUILD_UNITS = ['marine', 'orbital_aa', 'cruiser', 'scout', 'siege'];
 const ME = 'p1';
 
+/** Escape untrusted strings before inserting into innerHTML (XSS prevention). */
+function esc(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
 /** hex `#rrggbb` → `rgba()` with alpha — for tinted rings, ticks and trails. */
 function rgba(hex: string, a: number): string {
   const v = hex.replace('#', '');
@@ -552,12 +557,12 @@ function render() {
 // --- side panel --------------------------------------------------------------
 
 function btn(act: string, arg: string, label: string, ok: boolean): string {
-  return `<button class="b" data-act="${act}" data-arg="${arg}" ${ok ? '' : 'disabled'}>${label}</button>`;
+  return `<button class="b" data-act="${esc(act)}" data-arg="${esc(arg)}" ${ok ? '' : 'disabled'}>${esc(label)}</button>`;
 }
 function cardHeader(color: string, title: string, sub: string): string {
   return `<div class="phead">
     <span class="pflag" style="background:${color}"></span>
-    <div class="ptitle"><b>${title}</b><span>${sub}</span></div>
+    <div class="ptitle"><b>${esc(title)}</b><span>${esc(sub)}</span></div>
     <button class="pclose" data-act="close" data-arg="">✕</button>
   </div>`;
 }
@@ -566,8 +571,8 @@ function panelHtml(): string {
   if (selFleet) {
     const f = s.fleets[selFleet];
     if (f) {
-      const ships = f.units.map((u) => `${u.count}×${u.unit}`).join(', ') || '—';
-      const tr = (f.landing ?? []).map((u) => `${u.count}×${u.unit}`).join(', ') || '—';
+      const ships = f.units.map((u) => `${u.count}×${esc(u.unit)}`).join(', ') || '—';
+      const tr = (f.landing ?? []).map((u) => `${u.count}×${esc(u.unit)}`).join(', ') || '—';
       const nShips = f.units.reduce((a, u) => a + u.count, 0);
       const nTr = (f.landing ?? []).reduce((a, u) => a + u.count, 0);
       const orbit = f.orbit ?? '—';
@@ -589,7 +594,7 @@ function panelHtml(): string {
       } else {
         const hostile = here!.owner !== f.owner; // enemy or neutral world
         // orbit toggle
-        h += `<div class="sec">Orbit · ${here!.id}</div><div class="row">`;
+        h += `<div class="sec">Orbit · ${esc(here!.id)}</div><div class="row">`;
         h += btn('orbit', 'near', '▼ Descend (near)', orbit !== 'near');
         h += btn('orbit', 'far', '▲ Pull back (far)', orbit !== 'far');
         h += `</div>`;
@@ -644,7 +649,7 @@ function panelHtml(): string {
     const parts: string[] = [];
     if (pt.productionBonus !== 0) parts.push(`prod ${pct(pt.productionBonus)}`);
     if (pt.defenseBonus !== 0) parts.push(`def ${pct(pt.defenseBonus)}`);
-    h += `<div class="row dim">${ptName} world — ${parts.join(' · ')}</div>`;
+    h += `<div class="row dim">${esc(ptName)} world — ${parts.join(' · ')}</div>`;
   }
 
   // buildings
@@ -653,7 +658,7 @@ function panelHtml(): string {
   for (const b of p.buildings) {
     const def = data.buildings[b.type];
     const max = def ? buildingMaxLevel(def) : 1;
-    h += `<div class="row">${def?.name ?? b.type} <span class="dim">L${b.level}/${max} · hp ${floor(b.hp)}/${hpOfLevel(b.type, b.level)}</span>`;
+    h += `<div class="row">${esc(def?.name ?? b.type)} <span class="dim">L${b.level}/${max} · hp ${floor(b.hp)}/${hpOfLevel(b.type, b.level)}</span>`;
     if (mine && b.level < max) {
       const c = def?.upgrades[b.level - 1]?.cost;
       h += ' ' + btn('upgrade', b.type, `▲ ${cost(c)}`, afford(c));
@@ -677,7 +682,7 @@ function panelHtml(): string {
   h +=
     p.garrison.length === 0
       ? `<div class="row dim">undefended</div>`
-      : `<div class="row">${p.garrison.map((u) => `${u.count}×${u.unit}`).join(', ')}</div>`;
+      : `<div class="row">${p.garrison.map((u) => `${u.count}×${esc(u.unit)}`).join(', ')}</div>`;
   if (mine && p.garrison.some((st) => isShip(st.unit))) {
     h += `<div class="row">${btn('launch', p.id, '🚀 Launch fleet from garrison', true)}</div>`;
   }
@@ -906,7 +911,7 @@ function frame(nowReal: number) {
   const battles = Object.keys(s.battles).length;
   alertBadge.style.display = battles > 0 ? 'grid' : 'none';
   alertBadge.textContent = String(battles);
-  logEl.innerHTML = logLines.map((l) => `<div>${l}</div>`).join('');
+  logEl.innerHTML = logLines.map((l) => `<div>${esc(l)}</div>`).join('');
   if (banner) {
     bannerEl.textContent = banner;
     bannerEl.style.display = 'block';
