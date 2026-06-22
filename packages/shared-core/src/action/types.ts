@@ -24,10 +24,22 @@ export interface Action {
   issuedAt: number;
 }
 
+/** Victory rules pinned with the match; absent fields fall back to base rules. */
+export interface VictoryConfig {
+  /** Owned planet share required to end by domination. Default: 0.6 (60%). */
+  dominationPercent?: number;
+  /** Aggregate scoreboard points required to end by score. */
+  scoreLimit?: number;
+  /** Authoritative timestamp when the highest score wins. */
+  endsAt?: number;
+}
+
 /** Match-pinned configuration, versioned with the match (GDD §3.1 / §5.2). */
 export interface MatchConfig {
   /** Global multiplier on all real-time durations (×1 / ×2 / ×4). */
   timeScale: number;
+  /** Optional terminal-state rules (domination / score / timeout). */
+  victory?: VictoryConfig;
 }
 
 /**
