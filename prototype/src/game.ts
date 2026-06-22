@@ -16,6 +16,7 @@ import {
   combatModule,
   sectorModule,
   constructionModule,
+  armyModule,
   type GameData,
   type GameModule,
   type GameState,
@@ -38,14 +39,14 @@ export const data: GameData = parseGameData({
   units: {
     scout: {
       faction: 'blue',
-      stats: { attack: 5, defense: 4, speed: 64, hp: 12 },
+      stats: { attack: 5, defense: 4, speed: 64, hp: 12, cargoCapacity: 1 },
       cost: { metal: 20 },
       buildTimeHours: 1,
       upkeep: { credits: 1 },
     },
     cruiser: {
       faction: 'blue',
-      stats: { attack: 16, defense: 14, speed: 40, hp: 60 },
+      stats: { attack: 16, defense: 14, speed: 40, hp: 60, cargoCapacity: 5 },
       line: 'front',
       cost: { metal: 60, credits: 20 },
       buildTimeHours: 3,
@@ -337,6 +338,7 @@ export const MODULES: GameModule[] = [
   movementModule,
   combatModule,
   constructionModule,
+  armyModule,
   fleetLaunchModule,
 ];
 
@@ -385,6 +387,12 @@ export const orbitFleet = (playerId: string, fleetId: string, orbit: 'near' | 'f
   act(playerId, 'fleet.orbit', { fleetId, orbit });
 export const assaultFleet = (playerId: string, fleetId: string) =>
   act(playerId, 'fleet.assault', { fleetId });
+export const bombardFleet = (playerId: string, fleetId: string, on: boolean) =>
+  act(playerId, 'fleet.bombard', { fleetId, on });
+export const loadArmy = (playerId: string, fleetId: string, unit: string, count = 1) =>
+  act(playerId, 'army.load', { fleetId, unit, count });
+export const unloadArmy = (playerId: string, fleetId: string, unit: string, count = 1) =>
+  act(playerId, 'army.unload', { fleetId, unit, count });
 export const launchFleet = (playerId: string, planetId: string) =>
   act(playerId, 'fleet.launch', { planetId });
 export const buildBuilding = (playerId: string, planetId: string, building: string) =>

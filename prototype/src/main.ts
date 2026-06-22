@@ -18,6 +18,9 @@ import {
   moveFleet,
   orbitFleet,
   assaultFleet,
+  bombardFleet,
+  loadArmy,
+  unloadArmy,
   launchFleet,
   buildBuilding,
   upgradeBuilding,
@@ -25,7 +28,7 @@ import {
   type StepOut,
 } from './game';
 import { buildingMaxLevel } from '../../packages/shared-core/src/index';
-import type { GameState, Fleet, Planet, DomainEvent } from '../../packages/shared-core/src/index';
+import type { GameState, Fleet, Planet, Action, DomainEvent } from '../../packages/shared-core/src/index';
 
 // --- constants ---------------------------------------------------------------
 
@@ -205,6 +208,7 @@ function zoomAt(fx: number, fy: number, factor: number) {
 
 const planet = (id: string | null | undefined): Planet | undefined => (id ? s.planets[id] : undefined);
 const isShip = (u: string) => !data.units[u]?.traits.includes('ground');
+const isGround = (u: string) => data.units[u]?.domain === 'ground';
 const floor = Math.floor;
 const dist = (a: { x: number; y: number }, b: { x: number; y: number }) =>
   Math.hypot(a.x - b.x, a.y - b.y);
@@ -243,9 +247,14 @@ function note(msg: string) {
 function apply(out: StepOut) {
   s = out.state;
   handleEvents(out.events);
-  if (out.error && out.error !== 'E_FLEET_BUSY') {
-    /* swallow AI/ordering errors quietly except surfacing player ones elsewhere */
-  }
+}
+
+/** Apply a player-issued order and surface a rejection in the log (so a denied
+ *  click — wrong orbit, no capacity, can't afford — isn't silently swallowed). */
+function playerOrder(action: Action) {
+  const out = order(s, action, s.time);
+  apply(out);
+  if (out.error) note('✖ ' + out.error.replace(/^E_/, '').toLowerCase().replace(/_/g, ' '));
 }
 
 const NAME: Record<string, string> = { p1: 'Azure', p2: 'Crimson' };
@@ -319,12 +328,13 @@ function runAI() {
   }
 }
 
-// Stopgap until the orbit UI lands: any idle fleet sitting over a hostile world
-// with a clear orbit descends and lands automatically (preserves the capture
-// loop on the new manual-engagement combat model).
+// Enemy (AI) auto-engagement: an idle hostile fleet over a world it doesn't own,
+// with the orbit clear, descends and lands automatically — keeps the AI pressing
+// the capture loop. The player's own fleets are driven by hand (orbit/bombard/
+// assault controls in the fleet panel), so they are skipped here.
 function autoEngage() {
   for (const f of Object.values(s.fleets)) {
-    if (f.location == null || f.movement || f.battleId) continue;
+    if (f.owner === ME || f.location == null || f.movement || f.battleId) continue;
     const here = s.planets[f.location];
     if (!here || here.owner === f.owner) continue;
     const enemyHere = Object.values(s.fleets).some(
@@ -581,13 +591,62 @@ function panelHtml(): string {
       const tr = (f.landing ?? []).map((u) => `${u.count}×${u.unit}`).join(', ') || '—';
       const nShips = f.units.reduce((a, u) => a + u.count, 0);
       const nTr = (f.landing ?? []).reduce((a, u) => a + u.count, 0);
-      return (
-        cardHeader(COLOR[f.owner], 'FLEET', `${nShips} ships · ${nTr} troops · orbit ${f.orbit ?? '—'}`) +
-        `<div class="pstats"><span>✦ ${ships}</span></div>
-        <div class="row dim">Carrying: ${tr}</div>
-        <div class="hint">Tap a destination world to send this fleet — it routes along the lanes; collisions trigger battle.</div>
-        ${btn('cancel', '', 'Deselect', true)}`
+      const orbit = f.orbit ?? '—';
+      let h = cardHeader(
+        COLOR[f.owner],
+        'FLEET',
+        `${nShips} ships · ${nTr} troops · orbit ${orbit}${f.bombarding ? ' · ⊗ bombarding' : ''}`,
       );
+      h += `<div class="pstats"><span>✦ ${ships}</span></div><div class="row dim">Carrying: ${tr}</div>`;
+
+      const here = planet(f.location);
+      const docked = !!here && !f.movement && !f.battleId;
+      if (!docked) {
+        h += `<div class="hint">${
+          f.battleId
+            ? 'Engaged — orbital battle in progress.'
+            : 'In transit — routing along the lanes. Collisions trigger an orbital battle.'
+        }</div>`;
+      } else {
+        const hostile = here!.owner !== f.owner; // enemy or neutral world
+        // orbit toggle
+        h += `<div class="sec">Orbit · ${here!.id}</div><div class="row">`;
+        h += btn('orbit', 'near', '▼ Descend (near)', orbit !== 'near');
+        h += btn('orbit', 'far', '▲ Pull back (far)', orbit !== 'far');
+        h += `</div>`;
+        if (hostile) {
+          h += `<div class="row">`;
+          h += btn(
+            'bombard',
+            f.bombarding ? 'off' : 'on',
+            f.bombarding ? '⊗ Stop bombard' : '⊗ Bombard',
+            orbit === 'near' && nShips > 0,
+          );
+          h += btn('assault', '', '⚔ Assault', orbit === 'near');
+          h += `</div>`;
+          h += `<div class="hint">Near orbit lets you bombard (wears buildings &amp; freezes their output) but the garrison's AA reaches you; far orbit is safe. Assault lands your carried troops against the garrison.</div>`;
+        }
+        // load / unload ground army at your own world
+        if (here!.owner === ME) {
+          h += `<div class="sec">Ground army ⇄ garrison</div>`;
+          const groundHere = here!.garrison.filter((st) => isGround(st.unit));
+          const carried = f.landing ?? [];
+          if (groundHere.length) {
+            h += `<div class="row">`;
+            for (const st of groundHere) h += btn('load', st.unit, `▲ Load ${st.unit}`, true);
+            h += `</div>`;
+          }
+          if (carried.length) {
+            h += `<div class="row">`;
+            for (const st of carried) h += btn('unload', st.unit, `▼ Unload ${st.unit}`, true);
+            h += `</div>`;
+          }
+          if (!groundHere.length && !carried.length) h += `<div class="row dim">no ground army here</div>`;
+        }
+      }
+      h += `<div class="hint">Tap a destination world to move this fleet.</div>`;
+      h += btn('cancel', '', 'Deselect', true);
+      return h;
     }
   }
   const p = planet(selPlanet);
@@ -687,13 +746,23 @@ side.addEventListener('click', (ev) => {
   } else if (act === 'selfleet') {
     selFleet = arg;
   } else if (act === 'build') {
-    apply(order(s, buildBuilding(ME, selPlanet!, arg), s.time));
+    playerOrder(buildBuilding(ME, selPlanet!, arg));
   } else if (act === 'upgrade') {
-    apply(order(s, upgradeBuilding(ME, selPlanet!, arg), s.time));
+    playerOrder(upgradeBuilding(ME, selPlanet!, arg));
   } else if (act === 'unit') {
-    apply(order(s, buildUnit(ME, selPlanet!, arg, 1), s.time));
+    playerOrder(buildUnit(ME, selPlanet!, arg, 1));
   } else if (act === 'launch') {
-    apply(order(s, launchFleet(ME, arg), s.time));
+    playerOrder(launchFleet(ME, arg));
+  } else if (act === 'orbit') {
+    playerOrder(orbitFleet(ME, selFleet!, arg as 'near' | 'far'));
+  } else if (act === 'bombard') {
+    playerOrder(bombardFleet(ME, selFleet!, arg === 'on'));
+  } else if (act === 'assault') {
+    playerOrder(assaultFleet(ME, selFleet!));
+  } else if (act === 'load') {
+    playerOrder(loadArmy(ME, selFleet!, arg, 1));
+  } else if (act === 'unload') {
+    playerOrder(unloadArmy(ME, selFleet!, arg, 1));
   }
   lastPanelHtml = '';
   renderPanel();
