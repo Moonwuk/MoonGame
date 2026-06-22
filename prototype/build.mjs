@@ -47,11 +47,6 @@ body::before{content:"";position:fixed;inset:0;z-index:1;pointer-events:none;mix
 .who{line-height:1.1;min-width:0;}
 .who b{display:block;color:#eafffb;font-weight:700;font-size:12px;letter-spacing:2px;white-space:nowrap;}
 .who span{color:var(--cyan-dim);font-size:9px;letter-spacing:2.5px;white-space:nowrap;}
-.threat{padding:3px 9px;margin:0 4px;flex:0 0 auto;font-size:11px;font-weight:700;letter-spacing:1.5px;
-  border:1px solid var(--grn-dim);color:var(--grn);border-radius:2px;background:rgba(20,60,52,.25);}
-.threat.d3{color:var(--amber);border-color:#7a5a16;background:rgba(80,60,12,.25);}
-.threat.d1{color:var(--red);border-color:#7a221c;background:rgba(80,18,14,.30);animation:thr 1s steps(2) infinite;}
-@keyframes thr{50%{opacity:.45;}}
 #purse{display:flex;align-items:center;flex:1 1 auto;min-width:0;overflow-x:auto;height:100%;margin:0 4px;
   border-left:1px solid var(--line);border-right:1px solid var(--line);scrollbar-width:none;}
 #purse::-webkit-scrollbar{display:none;}
@@ -125,7 +120,6 @@ button.b:disabled{opacity:.32;cursor:not-allowed;color:var(--dim);border-color:v
   #top{height:44px;}
   .who{display:none;}
   .crest{padding:0 10px;}
-  .threat{font-size:10px;padding:3px 7px;}
   .res{padding:0 9px;gap:5px;}
   #devline{display:none;}
   #rail{top:44px;width:40px;}
@@ -155,7 +149,6 @@ const html = `<!doctype html>
   <div class="crest"><span class="dia"></span>
     <div class="who"><b>VOID DOMINION</b><span>SECTOR COMMAND</span></div>
   </div>
-  <div id="threat" class="threat d5">DEFCON 5</div>
   <div id="purse"></div>
   <div class="spd">
     <button data-speed="0">‖</button><button data-speed="2" class="on">▶</button><button data-speed="6">▶▶</button>

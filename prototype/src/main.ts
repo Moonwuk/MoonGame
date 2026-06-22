@@ -77,7 +77,6 @@ const purse = $('purse');
 const bannerEl = $('banner');
 const dayTimer = $('daytimer');
 const alertBadge = $('alertbadge');
-const threat = $('threat');
 
 // --- viewport, galaxy backdrop & map projection ------------------------------
 
@@ -113,7 +112,7 @@ const STARS = Array.from({ length: 280 }, (_, i) => {
 });
 
 // The map is a radar plotting table: a coordinate grid that pans and scales with
-// the camera, faint star ticks, and a slow sensor sweep for ambience.
+// the camera, plus faint star ticks.
 function drawScope() {
   const w = VW;
   const h = VH;
@@ -142,26 +141,6 @@ function drawScope() {
     cx.fillStyle = rgba('#9fe6e0', st.b);
     cx.fillRect(st.x * w, st.y * h, 1, 1);
   }
-
-  // slow radar sweep from the viewport centre (subtle)
-  const a = (performance.now() / 9000) % TAU;
-  const R = Math.hypot(w, h);
-  cx.save();
-  cx.translate(w / 2, h / 2);
-  cx.rotate(a);
-  cx.fillStyle = 'rgba(53,214,230,0.035)';
-  cx.beginPath();
-  cx.moveTo(0, 0);
-  cx.arc(0, 0, R, -0.5, 0);
-  cx.closePath();
-  cx.fill();
-  cx.strokeStyle = 'rgba(53,214,230,0.10)';
-  cx.lineWidth = 1.5;
-  cx.beginPath();
-  cx.moveTo(0, 0);
-  cx.lineTo(R, 0);
-  cx.stroke();
-  cx.restore();
 }
 
 // Project a map-space point into the on-screen play area (inside the HUD insets).
@@ -918,10 +897,6 @@ function frame(nowReal: number) {
   const battles = Object.keys(s.battles).length;
   alertBadge.style.display = battles > 0 ? 'grid' : 'none';
   alertBadge.textContent = String(battles);
-  // cold-war threat readout: peace = DEFCON 5, escalates as battles ignite
-  const lvl = battles >= 2 ? 1 : battles === 1 ? 3 : 5;
-  threat.textContent = 'DEFCON ' + lvl;
-  threat.className = 'threat d' + lvl;
   logEl.innerHTML = logLines.map((l) => `<div>${l}</div>`).join('');
   if (banner) {
     bannerEl.textContent = banner;
