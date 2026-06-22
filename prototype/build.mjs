@@ -94,6 +94,15 @@ body{margin:0;overflow:hidden;background:#04060c;color:var(--ink);
 #side .dim{color:var(--dim);font-size:12px;}
 #side b{color:#fff;}
 #side .hint{color:#cdbd97;font-size:12px;margin-top:8px;line-height:1.5;}
+.phead{display:flex;align-items:center;gap:10px;margin:0 0 9px;padding-bottom:9px;border-bottom:1px solid #463719;}
+.pflag{width:30px;height:22px;border-radius:2px;flex:0 0 auto;box-shadow:inset 0 0 0 1px rgba(0,0,0,.5);}
+.ptitle{flex:1 1 auto;min-width:0;}
+.ptitle b{display:block;color:#fff;font-size:16px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.ptitle span{color:var(--gold-hi);font-size:11px;}
+.pclose{flex:0 0 auto;width:30px;height:30px;border-radius:50%;cursor:pointer;font-size:13px;
+  background:#7a2420;border:1px solid #a83b33;color:#ffd9d4;}
+.pstats{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 5px;}
+.pstats span{background:#120d07;border:1px solid #3a2d15;border-radius:3px;padding:4px 9px;font-size:12px;color:#e7dcc4;}
 button.b{background:linear-gradient(180deg,#3a2e19,#241a0d);color:#e7dcc4;border:1px solid #5a4622;border-radius:2px;
   padding:5px 10px;margin:2px 3px 2px 0;cursor:pointer;font:700 12px system-ui;letter-spacing:.2px;}
 button.b:hover:not(:disabled){border-color:var(--gold);color:var(--gold-hi);}
@@ -124,11 +133,14 @@ button.b:disabled{opacity:.4;cursor:not-allowed;}
   #devline{display:none;}
   #rail{top:48px;width:42px;}
   #rail button{height:40px;font-size:17px;}
-  #side{right:0;left:0;bottom:0;top:auto;width:auto;max-height:56vh;border-radius:10px 10px 0 0;border-top:3px solid var(--gold);}
+  #side{right:0;left:0;bottom:0;top:auto;width:auto;max-height:56vh;z-index:28;
+    border-radius:12px 12px 0 0;border-top:3px solid var(--gold);box-shadow:0 -10px 30px rgba(0,0,0,.6);}
   #log{left:50px;right:8px;width:auto;bottom:56px;height:70px;}
   #botleft{left:48px;bottom:6px;}
   .chat{width:40px;height:40px;}
   #banner{font-size:18px;padding:16px 22px;}
+  body.sheet-open #log,body.sheet-open #botleft{display:none;}
+  button.b{padding:7px 12px;font-size:13px;}
 }
 @media (max-width:430px){
   .res .rv em{display:none;}

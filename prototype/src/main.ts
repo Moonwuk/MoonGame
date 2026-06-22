@@ -135,9 +135,8 @@ for (const n of MAP) {
   MINY = Math.min(MINY, n.y);
   MAXY = Math.max(MAXY, n.y);
 }
-function proj(p: { x: number; y: number }): { x: number; y: number } {
-  // Keep the node cluster clear of the HUD: the left rail, the right dossier
-  // (desktop only — on mobile it's a bottom sheet) and the bottom strip.
+// Base fit: map-space → screen, fitting the cluster inside the HUD insets.
+function projBase(p: { x: number; y: number }): { x: number; y: number } {
   const left = (MOBILE ? 40 : RAIL) + (MOBILE ? 18 : 80);
   const right = VW - (MOBILE ? 24 : 372);
   const top = TOP + (MOBILE ? 54 : 80);
@@ -147,6 +146,22 @@ function proj(p: { x: number; y: number }): { x: number; y: number } {
   const sx = (p.x - MINX) / (MAXX - MINX || 1);
   const sy = (p.y - MINY) / (MAXY - MINY || 1);
   return { x: left + sx * aw, y: top + sy * ah };
+}
+
+// Camera: pan offset + zoom over the base fit. Node/label sizes stay constant
+// in screen pixels; only positions transform (a node-graph style zoom).
+const cam = { scale: 1, x: 0, y: 0 };
+const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
+function world(p: { x: number; y: number }): { x: number; y: number } {
+  const b = projBase(p);
+  return { x: b.x * cam.scale + cam.x, y: b.y * cam.scale + cam.y };
+}
+function zoomAt(fx: number, fy: number, factor: number) {
+  const bx = (fx - cam.x) / cam.scale;
+  const by = (fy - cam.y) / cam.scale;
+  cam.scale = clamp(cam.scale * factor, 0.6, 5);
+  cam.x = fx - bx * cam.scale;
+  cam.y = fy - by * cam.scale;
 }
 
 // --- helpers -----------------------------------------------------------------
@@ -308,8 +323,8 @@ function render() {
   for (const n of MAP) {
     for (const l of n.links) {
       if (n.id < l && s.planets[l]) {
-        const a = proj(n);
-        const q = proj(s.planets[l]!.position);
+        const a = world(n);
+        const q = world(s.planets[l]!.position);
         cx.beginPath();
         cx.moveTo(a.x, a.y);
         cx.lineTo(q.x, q.y);
@@ -322,7 +337,7 @@ function render() {
   for (const b of Object.values(s.battles)) {
     const pp = s.planets[b.location];
     if (!pp) continue;
-    const c = proj(pp.position);
+    const c = world(pp.position);
     cx.strokeStyle = `rgba(245,185,66,${0.45 + 0.45 * pulse})`;
     cx.lineWidth = 2.5;
     cx.beginPath();
@@ -335,7 +350,7 @@ function render() {
   for (const n of MAP) {
     const p = s.planets[n.id];
     if (!p) continue;
-    const c = proj(n);
+    const c = world(n);
     const owner = p.owner ?? 'null';
     if (selPlanet === n.id) {
       cx.strokeStyle = '#e8cd84';
@@ -386,7 +401,7 @@ function render() {
   for (const f of Object.values(s.fleets)) {
     const mp = fleetPos(f);
     if (!mp) continue;
-    const c = proj(mp);
+    const c = world(mp);
     const ships = f.units.reduce((a, st) => a + st.count, 0);
     const troops = (f.landing ?? []).reduce((a, st) => a + st.count, 0);
     cx.save();
@@ -420,6 +435,13 @@ function render() {
 function btn(act: string, arg: string, label: string, ok: boolean): string {
   return `<button class="b" data-act="${act}" data-arg="${arg}" ${ok ? '' : 'disabled'}>${label}</button>`;
 }
+function cardHeader(color: string, title: string, sub: string): string {
+  return `<div class="phead">
+    <span class="pflag" style="background:${color}"></span>
+    <div class="ptitle"><b>${title}</b><span>${sub}</span></div>
+    <button class="pclose" data-act="close" data-arg="">✕</button>
+  </div>`;
+}
 
 function panelHtml(): string {
   if (selFleet) {
@@ -427,19 +449,26 @@ function panelHtml(): string {
     if (f) {
       const ships = f.units.map((u) => `${u.count}×${u.unit}`).join(', ') || '—';
       const tr = (f.landing ?? []).map((u) => `${u.count}×${u.unit}`).join(', ') || '—';
-      return `<h3 style="color:${COLOR[f.owner]}">Fleet selected</h3>
-        <div class="row">Ships: ${ships}</div><div class="row">Troops: ${tr}</div>
-        <div class="hint">Click a planet to send this fleet (it routes along lanes; collisions trigger battle).</div>
-        ${btn('cancel', '', 'Cancel', true)}`;
+      const nShips = f.units.reduce((a, u) => a + u.count, 0);
+      const nTr = (f.landing ?? []).reduce((a, u) => a + u.count, 0);
+      return (
+        cardHeader(COLOR[f.owner], 'FLEET', `${nShips} ships · ${nTr} troops · orbit ${f.orbit ?? '—'}`) +
+        `<div class="pstats"><span>✦ ${ships}</span></div>
+        <div class="row dim">Carrying: ${tr}</div>
+        <div class="hint">Tap a destination world to send this fleet — it routes along the lanes; collisions trigger battle.</div>
+        ${btn('cancel', '', 'Deselect', true)}`
+      );
     }
   }
   const p = planet(selPlanet);
-  if (!p) return '<div class="hint">Click a planet.</div>';
+  if (!p) return '<div class="hint">Tap a world.</div>';
   const owner = p.owner ?? 'null';
   const mine = p.owner === ME;
   const sec = data.sectors[p.sectorType ?? '']?.name ?? p.sectorType ?? '—';
-  let h = `<h3 style="color:${COLOR[owner]}">${p.id}</h3>
-    <div class="row">Owner: <b>${p.owner ? NAME[p.owner] : 'Neutral'}</b> · Sector: ${sec}</div>`;
+  const gcount = p.garrison.reduce((a, st) => a + st.count, 0);
+  let h =
+    cardHeader(COLOR[owner], p.id, `${p.owner ? NAME[p.owner] : 'Neutral'} · ${sec}`) +
+    `<div class="pstats"><span>⚔ ${gcount} garrison</span><span>▣ ${p.buildings.length} built</span></div>`;
 
   // buildings
   h += `<div class="sec">Buildings</div>`;
@@ -503,6 +532,7 @@ function panelHtml(): string {
 function renderPanel() {
   const open = selFleet !== null || selPlanet !== null;
   side.style.display = open ? 'block' : 'none';
+  document.body.classList.toggle('sheet-open', open); // mobile: hide log/comms under the sheet
   if (!open) {
     lastPanelHtml = '';
     return;
@@ -519,7 +549,10 @@ side.addEventListener('click', (ev) => {
   if (!t || t.disabled) return;
   const act = t.dataset.act;
   const arg = t.dataset.arg ?? '';
-  if (act === 'cancel') {
+  if (act === 'close') {
+    selFleet = null;
+    selPlanet = null;
+  } else if (act === 'cancel') {
     selFleet = null;
   } else if (act === 'selfleet') {
     selFleet = arg;
@@ -538,27 +571,23 @@ side.addEventListener('click', (ev) => {
 
 // --- canvas input ------------------------------------------------------------
 
-canvas.addEventListener('click', (ev) => {
-  const rect = canvas.getBoundingClientRect();
-  const mx = ((ev.clientX - rect.left) / rect.width) * VW;
-  const my = ((ev.clientY - rect.top) / rect.height) * VH;
-  // hit a fleet?
+// Tap/click selection at a screen point (drag-aware — see the pointer handlers).
+function selectAt(mx: number, my: number) {
   for (const f of Object.values(s.fleets)) {
     const mp = fleetPos(f);
     if (!mp) continue;
-    const c = proj(mp);
+    const c = world(mp);
     const fy = c.y - (f.location ? 26 : 0);
-    if (Math.hypot(mx - c.x, my - fy) < 14 && f.owner === ME) {
+    if (Math.hypot(mx - c.x, my - fy) < 16 && f.owner === ME) {
       selFleet = f.id;
       selPlanet = f.location ?? selPlanet;
       lastPanelHtml = '';
       return;
     }
   }
-  // hit a planet?
   for (const n of MAP) {
-    const c = proj(n);
-    if (Math.hypot(mx - c.x, my - c.y) < 22) {
+    const c = world(n);
+    if (Math.hypot(mx - c.x, my - c.y) < 24) {
       if (selFleet) {
         const f = s.fleets[selFleet];
         if (f && f.location !== n.id) apply(order(s, moveFleet(ME, selFleet, n.id), s.time));
@@ -570,6 +599,75 @@ canvas.addEventListener('click', (ev) => {
     }
   }
   selFleet = null;
+  selPlanet = null; // empty space → close the dossier
+}
+
+// --- camera control: drag-pan, pinch-zoom, wheel-zoom, tap-select ------------
+
+const pointers = new Map<number, { x: number; y: number }>();
+let dragStart: { x: number; y: number } | null = null;
+let dragged = false;
+let pinchDist = 0;
+const ptXY = (ev: PointerEvent) => {
+  const r = canvas.getBoundingClientRect();
+  return { x: ((ev.clientX - r.left) / r.width) * VW, y: ((ev.clientY - r.top) / r.height) * VH };
+};
+canvas.addEventListener('pointerdown', (ev) => {
+  canvas.setPointerCapture?.(ev.pointerId);
+  const p = ptXY(ev);
+  pointers.set(ev.pointerId, p);
+  if (pointers.size === 1) {
+    dragStart = p;
+    dragged = false;
+  } else if (pointers.size === 2) {
+    const [a, b] = [...pointers.values()];
+    pinchDist = Math.hypot(a.x - b.x, a.y - b.y);
+  }
+});
+canvas.addEventListener('pointermove', (ev) => {
+  const prev = pointers.get(ev.pointerId);
+  if (!prev) return;
+  const p = ptXY(ev);
+  pointers.set(ev.pointerId, p);
+  if (pointers.size >= 2) {
+    const [a, b] = [...pointers.values()];
+    const d = Math.hypot(a.x - b.x, a.y - b.y);
+    if (pinchDist > 0) zoomAt((a.x + b.x) / 2, (a.y + b.y) / 2, d / pinchDist);
+    pinchDist = d;
+    dragged = true;
+  } else {
+    cam.x += p.x - prev.x;
+    cam.y += p.y - prev.y;
+    if (dragStart && Math.hypot(p.x - dragStart.x, p.y - dragStart.y) > 6) dragged = true;
+  }
+});
+function endPointer(ev: PointerEvent) {
+  const single = pointers.size === 1;
+  const p = pointers.get(ev.pointerId);
+  pointers.delete(ev.pointerId);
+  if (pointers.size < 2) pinchDist = 0;
+  if (single && !dragged && p) selectAt(p.x, p.y);
+}
+canvas.addEventListener('pointerup', endPointer);
+canvas.addEventListener('pointercancel', (ev) => {
+  pointers.delete(ev.pointerId);
+  pinchDist = 0;
+});
+canvas.addEventListener(
+  'wheel',
+  (ev) => {
+    ev.preventDefault();
+    const r = canvas.getBoundingClientRect();
+    const x = ((ev.clientX - r.left) / r.width) * VW;
+    const y = ((ev.clientY - r.top) / r.height) * VH;
+    zoomAt(x, y, ev.deltaY < 0 ? 1.12 : 1 / 1.12);
+  },
+  { passive: false },
+);
+canvas.addEventListener('dblclick', () => {
+  cam.scale = 1;
+  cam.x = 0;
+  cam.y = 0;
 });
 
 // --- top bar / speed ---------------------------------------------------------

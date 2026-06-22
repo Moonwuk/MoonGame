@@ -60,6 +60,7 @@ const getEl = (id) => {
 globalThis.document = {
   getElementById: getEl,
   querySelectorAll: () => [],
+  body: mkEl('body'),
 };
 let t = 0;
 globalThis.performance = { now: () => (t += 16) };
