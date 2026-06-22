@@ -1,0 +1,19 @@
+{
+  "name": "@void/action-layer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Validated, authorized action envelope layer for multiplayer safety.",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@void/shared-core": "workspace:*",
+    "zod": "^4.4.3"
+  }
+}
