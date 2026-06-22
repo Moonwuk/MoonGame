@@ -2,7 +2,7 @@
 
 > Живой «якорь контекста»: что готово, как работает, что дальше. Обновляется по
 > мере разработки (после крупных изменений). Парные документы: `architecture.md`,
-> `modulesystem.md`, `gdd.md`, `roadmap.md`, `metagame.md`, корневой `CLAUDE.md`.
+> `modulesystem.md`, `gdd.md`, `roadmap.md`, `deep-technical-roadmap.md`, `metagame.md`, корневой `CLAUDE.md`.
 >
 > **Ветка:** `claude/awesome-bohr-ygnunp` · **PR #1** (draft).
 > **Гейт:** `pnpm run check` (lint + typecheck + test). **Тесты: 127 зелёных.**
@@ -70,7 +70,7 @@ packages/shared-core/src/
   examples/      skirmish.test.ts (демо-сценарий + SVG)
   index.ts       баррель (экспорт публичного API)
 data/            manifest, resources, units, buildings, factions, events, sectors (.json)
-docs/            architecture, modulesystem, roadmap, engineering-risks, gdd, metagame, state(этот)
+docs/            architecture, modulesystem, roadmap, deep-technical-roadmap, engineering-risks, gdd, metagame, state(этот)
 prototype/       src/game.ts, src/main.ts (UI), src/smoke.ts, build.mjs, uitest.mjs, dist/ (артефакт, в .gitignore)
 ```
 
