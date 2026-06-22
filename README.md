@@ -30,6 +30,7 @@
 .
 ├── packages/
 │   ├── shared-core/   # детерминированное ядро-симуляция (готовится первым)
+│   ├── action-layer/  # Stage 2: envelope validation, auth, idempotency, sequence
 │   ├── server/        # авторитетный сервер — Stage 3 (плейсхолдер)
 │   └── client/        # React Native клиент — Stage 4 (плейсхолдер)
 ├── data/              # игровой контент (data-driven): units, factions, buildings, events, resources
@@ -47,6 +48,10 @@
 | `data/`    | zod-схемы игровых данных + `parseGameData` (валидация всего входа)                           |
 | `modules/` | Базовые модули-плагины: `economyModule`, `movementModule`, `combatModule`                    |
 | `util/`    | `deepClone`/`deepFreeze` для immutable-контракта редьюсера                                   |
+
+### `@void/action-layer`
+
+Stage 2 security gate before server authority applies actions: `ActionEnvelope` validation, player/session authorization, idempotency receipts and per-session `clientSeq` ordering. This layer is intentionally outside `shared-core`: the core stays deterministic and assumes actions already passed validation/authorization.
 
 ## Разработка
 
