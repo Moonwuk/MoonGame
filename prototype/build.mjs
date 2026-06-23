@@ -109,8 +109,27 @@ body::before{content:"";position:fixed;inset:0;z-index:1;pointer-events:none;mix
   background:transparent;border:1px solid #7a221c;color:var(--red);}
 .pstats{display:flex;gap:7px;flex-wrap:wrap;margin:2px 0 4px;}
 .pstats span{background:rgba(53,214,230,.06);border:1px solid var(--line);padding:4px 9px;font-size:11px;color:var(--ink);}
+.ptabs{display:flex;gap:6px;margin:10px 0 4px;flex-wrap:wrap;}
+.ptab{cursor:pointer;background:rgba(53,214,230,.04);border:1px solid var(--line);color:var(--cyan-dim);
+  padding:6px 10px;font:700 10px ui-monospace,monospace;letter-spacing:1px;text-transform:uppercase;border-radius:2px;}
+.ptab b{margin-left:7px;color:var(--ink);}
+.ptab.on{color:var(--cyan);border-color:var(--cyan);background:rgba(53,214,230,.14);box-shadow:0 0 12px rgba(53,214,230,.2);}
+.asset-row{display:flex;align-items:center;gap:8px;margin:5px 0;min-height:24px;}
+.asset-row b{min-width:120px;font-size:12px;}
 .bicon{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;margin-right:7px;
   border:1px solid var(--line-hi);background:rgba(53,214,230,.07);color:var(--cyan);font-size:12px;}
+.asset-row .bicon{margin-right:0;flex:0 0 auto;}
+.conveyor{margin:6px 0 8px;padding:8px;border:1px solid var(--line);background:rgba(53,214,230,.04);}
+.conveyor .current{display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:center;font-size:11px;}
+.conveyor .current span{color:var(--grn);letter-spacing:1.5px;font-size:9px;}
+.conveyor .current.idle span{color:var(--dim);}
+.conveyor .current em{color:var(--cyan-dim);font-style:normal;}
+.conveyor .bar{height:4px;margin:7px 0;background:rgba(53,214,230,.08);overflow:hidden;}
+.conveyor .bar i{display:block;height:100%;background:linear-gradient(90deg,var(--grn),var(--cyan));box-shadow:0 0 10px rgba(125,240,208,.6);}
+.conveyor .queue{display:flex;gap:6px;flex-wrap:wrap;}
+.conveyor .queue span{border:1px solid var(--line);background:rgba(2,9,13,.55);padding:3px 6px;font-size:10px;color:var(--ink);}
+.conveyor .queue em{font-style:normal;color:var(--grn-dim);margin-right:5px;}
+.conveyor .queue.empty{color:var(--dim);font-size:10px;}
 button.b{background:transparent;color:var(--cyan);border:1px solid var(--cyan-dim);border-radius:2px;
   padding:5px 10px;margin:3px 4px 2px 0;cursor:pointer;font:700 11px ui-monospace,monospace;letter-spacing:.4px;}
 button.b:hover:not(:disabled){background:rgba(53,214,230,.14);box-shadow:0 0 10px rgba(53,214,230,.35);}
