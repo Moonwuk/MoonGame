@@ -6,7 +6,7 @@
 > `deep-technical-roadmap.md`, `metagame.md`, корневой `CLAUDE.md` / `CONTRIBUTING.md`.
 >
 > **Ветка:** feature-ветка · **PR:** создаётся после изменений.
-> **Гейт:** `pnpm run check` (lint + typecheck + test). **Тесты: 213 зелёных.**
+> **Гейт:** `pnpm run check` (lint + typecheck + test). **Тесты: 213 зелёных** (209 + 4 regression).
 
 ---
 
@@ -190,8 +190,8 @@ E_ORBIT_CONTESTED, E_NO_TROOPS, E_OWN_PLANET, E_NO_PLANET, E_FLEET_BUSY,…`.
 {count}`** — оплата вперёд из казны, отложенное завершение через
   `construction.complete` (`buildTimeHours`×timeScale). Одно здание каждого типа
   на планету; юниты идут в гарнизон. Коды: `E_BAD_PAYLOAD, E_NO_PLANET,
-E_FORBIDDEN, E_UNKNOWN_BUILDING/UNIT, E_ALREADY_BUILT, E_NO_BUILDING,
-E_MAX_LEVEL, E_INSUFFICIENT, E_BOMBARDED`.
+E_FORBIDDEN, E_UNKNOWN_BUILDING/UNIT, E_ALREADY_BUILT, E_ALREADY_QUEUED,
+E_NO_BUILDING, E_MAX_LEVEL, E_INSUFFICIENT, E_BOMBARDED`.
 - На `construction.complete`: добавляет здание/уровень/юнитов **если ещё владеешь
   планетой** (иначе вложение сгорает); **под бомбардировкой — пауза** (re-defer).
 - Хук `combat.damage`: **бонус обороны гарнизона** = сумма `defenseBonus`
@@ -329,11 +329,12 @@ golden; модель времени `advanceTo`; экономика (казна 
 - Прототип: орбитальные контролы (near/far, bombard, assault, load/unload) теперь в
   UI игрока; `autoEngage` остался только для ИИ; ПВО считается в ядре, но отдельной
   индикации в UI пока нет; `fleet.launch` — пока прототип-модуль.
-- Бой: оккупация необоронённого мира оставляет десант на борту (мир без гарнизона);
-  флот-только-десант (без кораблей) выигрывает наземный бой, но **не захватывает**
-  (releaseOrDestroyFleet удаляет пустой флот раньше capturePlanet) — редкий кейс.
-- Стройка: два одинаковых заказа до завершения спишут ресурсы дважды (идемпотентность
-  — зона Этапа 2 action-layer).
+- ✅ ~~Бой: флот-только-десант (без кораблей) выигрывает наземный бой, но не
+  захватывает~~ — **исправлено**: `capturePlanet` вызывается до `releaseOrDestroyFleet`,
+  десант депонируется в гарнизон; fleet без кораблей уничтожается после захвата.
+- ✅ ~~Стройка: два одинаковых заказа до завершения спишут ресурсы дважды~~ —
+  **исправлено**: `building.construct` и `building.upgrade` проверяют pending
+  `construction.complete` в `scheduled[]` и отклоняют дубль (`E_ALREADY_QUEUED`).
 - Один предсуществующий ESLint-warning в `skirmish.test.ts` (лишний `eslint-disable
 no-console`), не падает гейт.
 
@@ -341,7 +342,7 @@ no-console`), не падает гейт.
 
 ```bash
 pnpm install
-pnpm run check       # lint + typecheck + test (гейт; 209 тестов)
+pnpm run check       # lint + typecheck + test (гейт; 213 тестов)
 pnpm test            # vitest
 pnpm run prototype   # собрать prototype/dist/void-dominion.html
 ```
