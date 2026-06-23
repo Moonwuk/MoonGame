@@ -799,30 +799,81 @@ let selectionBox: { x1: number; y1: number; x2: number; y2: number } | null = nu
  * Province field — the whole map is a tiling of provinces (Bytro/Paradox-style):
  * every point belongs to the nearest seed. Seeds are planets (capturable, tinted
  * in their owner's colour — green/blue/gray/red) or empty-space voids
- * (uncapturable, neutral). Lanes thread through provinces; the borders show
- * where a travelling fleet crosses from one into the next. Different-owner seams
- * are drawn as bold frontiers, internal seams stay faint. Under the lanes/blips.
+ * (uncapturable, neutral). Different-owner seams are bold frontiers, internal
+ * seams faint.
+ *
+ * The tiling is static in base (pre-camera) space, so it is baked ONCE into an
+ * offscreen buffer and blitted under the camera each frame: no per-frame Voronoi
+ * (FPS) and no shimmer from sampling in screen space while panning. Rebake only
+ * when the viewport changes or a province changes hands — both rare.
  */
-function drawProvinces(): void {
-  const cell = 16;
-  // seeds: live-owned planets + uncapturable void sectors
-  const seeds = MAP.map((n) => {
-    const c = world(n);
-    return { x: c.x, y: c.y, key: s.planets[n.id]?.owner ?? 'null', col: COLOR[s.planets[n.id]?.owner ?? 'null'] };
-  });
-  for (const v of VOID_SECTORS) {
-    const c = world(v);
-    seeds.push({ x: c.x, y: c.y, key: 'void', col: VOID_COLOR });
+let provBuf: HTMLCanvasElement | null = null;
+let provBufCtx: CanvasRenderingContext2D | null = null;
+let provBufFailed = false;
+let provSig = '';
+let provOX = 0; // base-space coord the buffer's top-left maps to
+let provOY = 0;
+
+function bakeProvinces(): void {
+  const owners = MAP.map((n) => s.planets[n.id]?.owner ?? 'null').join(',');
+  const sig = `${VW}x${VH}:${MOBILE ? 1 : 0}|${owners}`;
+  if (sig === provSig || provBufFailed) {
+    return;
   }
-  const cols = Math.ceil(VW / cell) + 1;
-  const rows = Math.ceil(VH / cell) + 1;
+  if (!provBufCtx) {
+    if (typeof document.createElement !== 'function') {
+      provBufFailed = true; // headless (smoke test) — skip the territory layer
+      return;
+    }
+    provBuf = document.createElement('canvas');
+    provBufCtx = provBuf.getContext('2d');
+    if (!provBufCtx) {
+      provBufFailed = true;
+      return;
+    }
+  }
+  provSig = sig;
+  const g = provBufCtx;
+
+  // seeds in base space (projBase output, pre-camera → the bake survives pan/zoom)
+  const seeds = [
+    ...MAP.map((n) => {
+      const b = projBase(n);
+      const o = s.planets[n.id]?.owner ?? 'null';
+      return { x: b.x, y: b.y, key: o, col: COLOR[o] };
+    }),
+    ...VOID_SECTORS.map((v) => {
+      const b = projBase(v);
+      return { x: b.x, y: b.y, key: 'void', col: VOID_COLOR };
+    }),
+  ];
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const sd of seeds) {
+    minX = Math.min(minX, sd.x);
+    maxX = Math.max(maxX, sd.x);
+    minY = Math.min(minY, sd.y);
+    maxY = Math.max(maxY, sd.y);
+  }
+  const pad = 260; // base px beyond the seeds so edges stay filled while panning
+  provOX = Math.floor(minX - pad);
+  provOY = Math.floor(minY - pad);
+  const w = Math.ceil(maxX + pad) - provOX;
+  const h = Math.ceil(maxY + pad) - provOY;
+  provBuf!.width = w;
+  provBuf!.height = h;
+
+  const cell = 8;
+  const cols = Math.ceil(w / cell);
+  const rows = Math.ceil(h / cell);
   const owner: string[] = new Array<string>(cols * rows);
   const seedOf: number[] = new Array<number>(cols * rows);
-  cx.save();
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
-      const px = c * cell + cell / 2;
-      const py = r * cell + cell / 2;
+      const px = provOX + c * cell + cell / 2;
+      const py = provOY + r * cell + cell / 2;
       let best = Infinity;
       let si = 0;
       for (let i = 0; i < seeds.length; i++) {
@@ -836,39 +887,51 @@ function drawProvinces(): void {
       const idx = r * cols + c;
       owner[idx] = seed.key;
       seedOf[idx] = si;
-      // void stays a flat dim wash; owned territory tints a bit stronger near its core
-      const a = seed.key === 'void' ? 0.03 : 0.07 + 0.06 * Math.max(0, 1 - Math.sqrt(best) / 300);
-      cx.fillStyle = rgba(seed.col, a);
-      cx.fillRect(c * cell, r * cell, cell, cell);
+      const a = seed.key === 'void' ? 0.05 : 0.09 + 0.07 * Math.max(0, 1 - Math.sqrt(best) / 300);
+      g.fillStyle = rgba(seed.col, a);
+      g.fillRect(c * cell, r * cell, cell, cell);
     }
   }
-  // borders — faint between provinces, bold where owners differ (a frontier).
-  // Two passes (internal seams, then frontiers) so each gets its own stroke style.
+  // borders — faint internal seams, then bold owner frontiers, each its own style
   const strokeEdges = (frontierPass: boolean): void => {
-    cx.beginPath();
+    g.beginPath();
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         const idx = r * cols + c;
         if (c > 0 && seedOf[idx - 1] !== seedOf[idx] && (owner[idx - 1] !== owner[idx]) === frontierPass) {
-          cx.moveTo(c * cell, r * cell);
-          cx.lineTo(c * cell, r * cell + cell);
+          g.moveTo(c * cell, r * cell);
+          g.lineTo(c * cell, r * cell + cell);
         }
         if (r > 0 && seedOf[idx - cols] !== seedOf[idx] && (owner[idx - cols] !== owner[idx]) === frontierPass) {
-          cx.moveTo(c * cell, r * cell);
-          cx.lineTo(c * cell + cell, r * cell);
+          g.moveTo(c * cell, r * cell);
+          g.lineTo(c * cell + cell, r * cell);
         }
       }
     }
-    cx.stroke();
+    g.stroke();
   };
-  cx.setLineDash([3, 4]);
-  cx.lineWidth = 1;
-  cx.strokeStyle = rgba('#7df0d0', 0.13);
+  g.setLineDash([3, 4]);
+  g.lineWidth = 1;
+  g.strokeStyle = rgba('#7df0d0', 0.16);
   strokeEdges(false);
-  cx.setLineDash([]);
-  cx.lineWidth = 1.4;
-  cx.strokeStyle = rgba('#dff7ee', 0.34);
+  g.setLineDash([]);
+  g.lineWidth = 1.4;
+  g.strokeStyle = rgba('#dff7ee', 0.4);
   strokeEdges(true);
+}
+
+function drawProvinces(): void {
+  bakeProvinces();
+  if (!provBuf || provBufFailed) {
+    return;
+  }
+  // Blit the base-space buffer under the live camera: buffer pixel (x,y) maps to
+  // base (provOX+x, provOY+y), and translate+scale takes base → screen, exactly
+  // matching world() — so provinces pan/zoom locked to the planets, no jitter.
+  cx.save();
+  cx.translate(cam.x, cam.y);
+  cx.scale(cam.scale, cam.scale);
+  cx.drawImage(provBuf, provOX, provOY);
   cx.restore();
 }
 
