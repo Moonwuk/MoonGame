@@ -1,0 +1,190 @@
+# GitLab CI/CD — функциональный гейт + слой DevSecOps-сканеров.
+#
+# Философия: SHIFT-LEFT — ловим уязвимости в пайплайне, а не в проде, и как можно
+# раньше (на каждый push/MR). Каждый КЛАСС сканера закрывает свой вектор атаки
+# (см. блоки ниже и docs/security/pipeline.md). Инструменты намеренно открытые:
+# они tier-независимы (работают на GitLab Free) и учат «что под капотом», в отличие
+# от чёрного ящика управляемых сканеров GitLab.
+#
+# GATING (ratcheting): на старте шумные сканеры стоят allow_failure:true — ты ВИДИШЬ
+# находки, но пайплайн не красный. По мере триажа (baseline + подавления) переводишь
+# их в блокирующие. Секреты и high/critical в зависимостях блокируют сразу.
+
+stages:
+  - build # функциональный гейт (как в .github/workflows/ci.yml)
+  - test
+  - security # сканеры безопасности (стартуют сразу через needs: [])
+  - sbom # инвентаризация зависимостей
+
+variables:
+  PNPM_VERSION: '10'
+  NODE_IMAGE: 'node:22-bookworm-slim'
+  # Supply-chain заметка: в проде пинуй образы по dig/sha256, не по тегу.
+
+# Базовый шаблон для джоб, которым нужен установленный workspace.
+.node:
+  image: $NODE_IMAGE
+  before_script:
+    - corepack enable
+    - corepack prepare pnpm@$PNPM_VERSION --activate
+    - pnpm config set store-dir .pnpm-store
+    - pnpm install --frozen-lockfile
+  cache:
+    key:
+      files: [pnpm-lock.yaml]
+    paths: [.pnpm-store]
+
+# ===========================================================================
+# 0) ФУНКЦИОНАЛЬНЫЙ ГЕЙТ — не «безопасность», но фундамент: красный код не катим.
+# ===========================================================================
+lint-typecheck:
+  extends: .node
+  stage: build
+  script:
+    - pnpm run lint # eslint (incl. правила детерминизма ядра)
+    - pnpm run typecheck
+
+unit-tests:
+  extends: .node
+  stage: test
+  script:
+    - pnpm run test # 213 тестов; golden-RNG фиксирует детерминизм
+
+# ===========================================================================
+# 1) SAST — Static Application Security Testing (анализ ИСХОДНОГО кода).
+#    Зачем: ловит уязвимые ПАТТЕРНЫ в нашем коде до рантайма — инъекции, небезопасный
+#    eval/Function, prototype pollution, path traversal, ReDoS, неэкранированный HTML.
+#    OWASP A03 (Injection), A04 (Insecure Design). Самый «левый» сканер.
+#    Инструмент: Semgrep (наборы правил p/typescript, p/javascript, p/security-audit).
+# ===========================================================================
+sast-semgrep:
+  stage: security
+  needs: [] # стартуем сразу, независимо от тестов — security-сигнал автономен
+  image: semgrep/semgrep
+  script:
+    - semgrep scan --config=p/typescript --config=p/javascript --config=p/security-audit
+      --sarif --output semgrep.sarif --error || true
+    - semgrep scan --config=p/typescript --config=p/javascript --config=p/security-audit
+      --gitlab-sast --output gl-sast-report.json
+  artifacts:
+    reports:
+      sast: gl-sast-report.json # нативный отчёт GitLab (виджет в MR на Ultimate)
+    paths: [semgrep.sarif]
+    when: always
+  allow_failure: true # на старте: видим находки, не блокируем. Потом снять.
+
+# ===========================================================================
+# 2) SCA / Dependency Scanning — Software Composition Analysis.
+#    Зачем: 80%+ уязвимостей приходят из ЗАВИСИМОСТЕЙ (supply chain). Сверяем
+#    pnpm-lock с базами CVE. OWASP A06 (Vulnerable & Outdated Components).
+#    Два инструмента — перекрёстная проверка и обучение разнице источников:
+#      - pnpm audit  → npm advisory DB (быстро, нативно)
+#      - osv-scanner → Google OSV (агрегирует GHSA/CVE/Go/PyPI/…)
+# ===========================================================================
+sca-pnpm-audit:
+  extends: .node
+  stage: security
+  needs: []
+  script:
+    - pnpm audit --audit-level=high
+  allow_failure: false # high/critical в депах — стоп-кран (как в нашем GitHub CI)
+
+sca-osv-scanner:
+  stage: security
+  needs: []
+  image:
+    name: ghcr.io/google/osv-scanner:latest
+    entrypoint: ['']
+  script:
+    - osv-scanner --lockfile=pnpm-lock.yaml --format sarif --output osv.sarif || true
+    - osv-scanner --lockfile=pnpm-lock.yaml # человекочитаемо + код возврата
+  artifacts:
+    paths: [osv.sarif]
+    when: always
+  allow_failure: true
+
+# ===========================================================================
+# 3) Secret Detection — поиск утёкших секретов в коде И git-истории.
+#    Зачем: закоммиченный токен/ключ/пароль = прямой компромисс; история помнит всё.
+#    OWASP A07 (Auth Failures) / A02 (Cryptographic Failures).
+#    Инструмент: Gitleaks (regex + энтропия по рабочему дереву и всем коммитам).
+# ===========================================================================
+secrets-gitleaks:
+  stage: security
+  needs: []
+  image:
+    name: zricethezav/gitleaks:latest
+    entrypoint: ['']
+  script:
+    - gitleaks detect --source . --redact --verbose
+      --report-format sarif --report-path gitleaks.sarif
+  artifacts:
+    paths: [gitleaks.sarif]
+    when: always
+  allow_failure: false # утёкший секрет — однозначный стоп-кран
+
+# ===========================================================================
+# 4) Trivy fs — vuln + secret + misconfig в одном проходе (defense-in-depth).
+#    Зачем: перекрывает SCA/секреты другим движком + ловит МИСКОНФИГИ IaC, когда
+#    появятся Dockerfile/compose/k8s сервера (Этап 3). OWASP A05 (Misconfiguration).
+#    Контейнерный скан (trivy image) добавим, когда будет образ сервера.
+# ===========================================================================
+trivy-fs:
+  stage: security
+  needs: []
+  image:
+    name: aquasec/trivy:latest
+    entrypoint: ['']
+  script:
+    - trivy fs --scanners vuln,secret,misconfig --severity HIGH,CRITICAL
+      --format sarif --output trivy.sarif --exit-code 0 .
+    - trivy fs --scanners vuln,secret,misconfig --severity HIGH,CRITICAL --exit-code 1 .
+  artifacts:
+    paths: [trivy.sarif]
+    when: always
+  allow_failure: true
+
+# ===========================================================================
+# 5) SBOM — Software Bill of Materials (инвентарь всего, что у нас стоит).
+#    Зачем: при новом громком CVE (log4shell-стиль) SBOM мгновенно отвечает
+#    «затронуты ли мы и где». OWASP A08 (Integrity). Формат CycloneDX.
+#    Дальше по зрелости: подпись артефактов (cosign) + provenance (SLSA).
+# ===========================================================================
+sbom-syft:
+  stage: sbom
+  needs: []
+  image:
+    name: anchore/syft:latest
+    entrypoint: ['']
+  script:
+    - syft . -o cyclonedx-json=sbom.cdx.json -o table
+  artifacts:
+    paths: [sbom.cdx.json]
+    when: always
+
+# ===========================================================================
+# 6) DAST — Dynamic Application Security Testing (РАНТАЙМ, для Этапа 3).
+#    Зачем: гоняет атаки по ЖИВОМУ API (OWASP ZAP) — находит то, что SAST не видит:
+#    сломанная авторизация на эндпоинте, инъекции в реальном запросе, заголовки.
+#    Включить, когда поднимется сервер (packages/server). Шаблон:
+# ===========================================================================
+# dast-zap:
+#   stage: security
+#   image: ghcr.io/zaproxy/zaproxy:stable
+#   variables:
+#     TARGET: 'http://server:3000'
+#   script:
+#     - zap-baseline.py -t "$TARGET" -r zap-report.html -w zap.md || true
+#   artifacts:
+#     paths: [zap-report.html]
+#     when: always
+#   allow_failure: true
+
+# --- АЛЬТЕРНАТИВА: управляемые сканеры GitLab (нативные отчёты + Security
+# --- Dashboard на Ultimate). Можно вместо/вместе с открытыми выше. Раскомментируй:
+# include:
+#   - template: Security/SAST.gitlab-ci.yml
+#   - template: Security/Secret-Detection.gitlab-ci.yml
+#   - template: Security/Dependency-Scanning.gitlab-ci.yml
+#   - template: Jobs/SAST-IaC.gitlab-ci.yml
+#   - template: Security/Container-Scanning.gitlab-ci.yml
