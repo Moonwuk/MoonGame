@@ -6,7 +6,7 @@
 > `deep-technical-roadmap.md`, `metagame.md`, корневой `CLAUDE.md` / `CONTRIBUTING.md`.
 >
 > **Ветка:** feature-ветка · **PR:** создаётся после изменений.
-> **Гейт:** `pnpm run check` (lint + typecheck + test). **Тесты: 217 зелёных** (213 + 4 багфикс-регрессии).
+> **Гейт:** `pnpm run check` (lint + typecheck + test). **Тесты: 218 зелёных**.
 
 ---
 
@@ -205,9 +205,10 @@ unit.built`.
 Действия **`army.load`** / **`army.unload {fleetId, unit, count}`** — перекладка
 наземных юнитов между гарнизоном и трюмом флота, в пределах **вместимости**
 (`Σ cargoCapacity` кораблей; груз занимает `cargoSize`). Корабли (`domain:space`)
-возить нельзя. Коды: `E_NO_CAPACITY, E_NO_ARMY, E_NOT_GROUND, E_FLEET_BUSY,
-E_FORBIDDEN, E_NO_PLANET, E_UNKNOWN_UNIT, E_BAD_PAYLOAD`. События `army.loaded/
-unloaded`.
+возить нельзя; юниты с трейтом **`immobile`** (стационарные установки — орбитальное
+ПВО) грузить нельзя (`E_IMMOBILE`). Коды: `E_NO_CAPACITY, E_NO_ARMY, E_NOT_GROUND,
+E_IMMOBILE, E_FLEET_BUSY, E_FORBIDDEN, E_NO_PLANET, E_UNKNOWN_UNIT, E_BAD_PAYLOAD`.
+События `army.loaded/unloaded`.
 
 **Общий запрос:** `isBombarded(state, planetId)` / `bombardedPlanets(state)` (`state/orbit.ts`) —
 есть ли враждебный бомбящий флот на near; используют economy и construction.
@@ -340,7 +341,7 @@ golden; модель времени `advanceTo`; экономика (казна 
 
 ```bash
 pnpm install
-pnpm run check       # lint + typecheck + test (гейт; 217 тестов)
+pnpm run check       # lint + typecheck + test (гейт; 218 тестов)
 pnpm test            # vitest
 pnpm run prototype   # собрать prototype/dist/void-dominion.html
 ```

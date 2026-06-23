@@ -74,7 +74,7 @@ export const data: GameData = parseGameData({
       faction: 'blue',
       stats: { attack: 4, defense: 14, speed: 0, hp: 30, aaDamage: 12 },
       domain: 'ground',
-      traits: ['ground'],
+      traits: ['ground', 'immobile'], // a fixed emplacement — can't be lifted onto a fleet
       line: 'rear',
       cost: { metal: 110, credits: 30 },
       buildTimeHours: 4,
@@ -98,6 +98,15 @@ export const data: GameData = parseGameData({
       hp: 20,
     },
     barracks: { name: 'Barracks', cost: { metal: 70 }, buildTimeHours: 3, hp: 25 },
+    // space fortress — only built in an asteroid field; turns the junction into a
+    // defended, assaultable strongpoint (it garrisons a fixed orbital-AA by default)
+    starfort: {
+      name: 'Void Fortress',
+      cost: { metal: 180, credits: 60 },
+      buildTimeHours: 6,
+      hp: 70,
+      defenseBonus: 0.4,
+    },
     fort: {
       name: 'Fort',
       cost: { metal: 100 },

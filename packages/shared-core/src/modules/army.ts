@@ -94,6 +94,9 @@ export const armyModule: GameModule = {
 
     api.onAction('army.load', (action, h) => {
       const { fleet, planet, def, unit, count } = resolve(action, h);
+      if (def.traits.includes('immobile')) {
+        return h.reject('E_IMMOBILE'); // fixed emplacements (e.g. orbital AA) can't be lifted
+      }
       const avail = healthyStack(planet.garrison, unit);
       if (!avail || avail.count < count) {
         return h.reject('E_NO_ARMY'); // not that many in the garrison

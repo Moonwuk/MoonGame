@@ -59,7 +59,13 @@ const TOP = 50; // top-bar height
 const RAIL = 50; // left-rail width
 const BUILDABLE = ['mine', 'refinery', 'barracks', 'fort'];
 const BUILD_UNITS = ['marine', 'orbital_aa', 'cruiser', 'scout', 'siege'];
-const BUILD_ICON: Record<string, string> = { mine: '⬢', refinery: '◇', barracks: '▤', fort: '⬡' };
+const BUILD_ICON: Record<string, string> = {
+  mine: '⬢',
+  refinery: '◇',
+  barracks: '▤',
+  fort: '⬡',
+  starfort: '✦',
+};
 const UNIT_ICON: Record<string, string> = {
   marine: '◆',
   orbital_aa: '⌁',
@@ -517,6 +523,17 @@ function apply(out: StepOut) {
   handleEvents(out.events);
 }
 
+// A space fortress comes with a fixed orbital-AA emplacement (prototype scenario
+// rule). The garrison unit makes the junction "defended" — it can no longer be
+// walked into, only stormed — and its AA now fires on near-orbit attackers.
+function installFortressAA(planetId: string) {
+  const pl = s.planets[planetId];
+  if (!pl) return;
+  const aa = pl.garrison.find((u) => u.unit === 'orbital_aa' && u.hp === undefined);
+  if (aa) aa.count += 1;
+  else pl.garrison.push({ unit: 'orbital_aa', count: 1 });
+}
+
 /** Apply a player-issued order and surface a rejection in the log (so a denied
  *  click — wrong orbit, no capacity, can't afford — isn't silently swallowed). */
 function playerOrder(action: Action) {
@@ -556,6 +573,7 @@ function handleEvents(events: DomainEvent[]) {
         break;
       case 'building.constructed':
         note(`🏗️ ${p.building} built at ${p.planetId}`);
+        if (p.building === 'starfort') installFortressAA(p.planetId as string);
         break;
       case 'building.upgraded':
         note(`⬆️ ${p.building} → L${p.level} at ${p.planetId}`);
@@ -624,6 +642,26 @@ function autoEngage() {
       (g) => g.owner !== f.owner && g.location === f.location && g.units.some((u) => u.count > 0),
     );
     if (enemyHere) continue; // let the auto orbital battle settle first
+    if (f.orbit !== 'near') apply(order(s, orbitFleet(f.owner, f.id, 'near'), s.time));
+    apply(order(s, assaultFleet(f.owner, f.id), s.time));
+  }
+}
+
+// Undefended asteroid junctions are taken by simply arriving: an idle fleet over a
+// neutral/hostile junction with no garrison and no contesting enemy occupies it
+// (orbit in, walk in) via the core's capture path. A fortress garrisons AA → the
+// junction becomes defended → this skips it, so it must be stormed like a city.
+function autoCaptureJunctions() {
+  for (const f of Object.values(s.fleets)) {
+    if (f.location == null || f.movement || f.battleId) continue;
+    if (SECTOR_OF[f.location] !== 'asteroid_field') continue;
+    const pl = s.planets[f.location];
+    if (!pl || pl.owner === f.owner) continue;
+    if ((pl.garrison ?? []).some((u) => u.count > 0)) continue; // fortified → storm it instead
+    const contested = Object.values(s.fleets).some(
+      (g) => g.owner !== f.owner && g.location === f.location && g.units.some((u) => u.count > 0),
+    );
+    if (contested) continue;
     if (f.orbit !== 'near') apply(order(s, orbitFleet(f.owner, f.id, 'near'), s.time));
     apply(order(s, assaultFleet(f.owner, f.id), s.time));
   }
@@ -1064,8 +1102,10 @@ function render(now: number) {
     const ownerPulse = 0.64 + 0.36 * Math.sin(now / 620 + n.x * 0.011 + n.y * 0.017);
 
     // asteroid-field sector: a lane junction, not a city — scattered rocks + a
-    // fat hub where the lanes meet, no orbits. Captured by simply arriving.
+    // fat hub where the lanes meet, no orbits. Captured by simply arriving — unless
+    // a space fortress is raised here, which fortifies it (orbit + AA, must storm).
     if (n.sector === 'asteroid_field') {
+      const fort = p.buildings.find((b) => b.type === 'starfort');
       const glow = cx.createRadialGradient(c.x, c.y, 0, c.x, c.y, 30);
       glow.addColorStop(0, rgba(col, p.owner ? 0.14 : 0.05));
       glow.addColorStop(1, 'rgba(2,6,12,0)');
@@ -1110,16 +1150,34 @@ function render(now: number) {
       cx.arc(c.x, c.y, 7.5 + 0.6 * ownerPulse, 0, TAU);
       cx.stroke();
       cx.restore();
-      if (selPlanet === n.id) targetBrackets(c.x, c.y, 15, now);
+      // space fortress: a hexagonal bastion ring around the hub (with HP bar)
+      if (fort) {
+        cx.save();
+        cx.strokeStyle = col;
+        cx.lineWidth = 1.6;
+        cx.shadowColor = col;
+        cx.shadowBlur = 8;
+        poly(c.x, c.y, 12, 6, Math.PI / 6);
+        cx.stroke();
+        poly(c.x, c.y, 7, 6, Math.PI / 6);
+        cx.stroke();
+        cx.restore();
+        const frac = Math.max(0, Math.min(1, fort.hp / hpOfLevel('starfort', fort.level)));
+        cx.fillStyle = 'rgba(2,9,13,.7)';
+        cx.fillRect(c.x - 12, c.y - 22, 24, 3);
+        cx.fillStyle = rgba(frac > 0.35 ? col : '#ff5a4d', 0.9);
+        cx.fillRect(c.x - 12, c.y - 22, 24 * frac, 3);
+      }
+      if (selPlanet === n.id) targetBrackets(c.x, c.y, fort ? 18 : 15, now);
       cx.save();
       cx.shadowColor = 'rgba(0,0,0,0.85)';
       cx.shadowBlur = 3;
       cx.fillStyle = p.owner ? col : '#9fc9c4';
       cx.font = '700 11px ui-monospace,Menlo,monospace';
-      cx.fillText(n.id, c.x + 15, c.y - 1);
+      cx.fillText(n.id, c.x + 16, c.y - 1);
       cx.fillStyle = 'rgba(150,210,205,0.55)';
       cx.font = '9px ui-monospace,Menlo,monospace';
-      cx.fillText('asteroid field', c.x + 15, c.y + 11);
+      cx.fillText(fort ? 'void fortress ✦' : 'asteroid field', c.x + 16, c.y + 11);
       cx.restore();
       continue;
     }
@@ -1232,7 +1290,11 @@ function render(now: number) {
     if (f.location && !f.movement) (stationed[f.location] ??= []).push(f);
   for (const pid of Object.keys(stationed)) {
     const pl = s.planets[pid];
-    if (!pl || SECTOR_OF[pid] === 'asteroid_field') continue;
+    if (!pl) continue;
+    // bare asteroid junctions have no orbit; a fortress (or any garrison) gives one
+    const fortified =
+      pl.buildings.some((b) => b.type === 'starfort') || (pl.garrison ?? []).some((u) => u.count > 0);
+    if (SECTOR_OF[pid] === 'asteroid_field' && !fortified) continue;
     const pc = world(pl.position);
     if (!visible(pc, 80)) continue;
     for (const orb of ['far', 'near'] as const) {
@@ -1600,7 +1662,9 @@ function panelHtml(): string {
       h += `</div>`;
     }
     if (mine) {
-      const missing = BUILDABLE.filter((t) => !p.buildings.some((b) => b.type === t));
+      // an asteroid junction can only raise a space fortress; a city builds the rest
+      const buildable = SECTOR_OF[p.id] === 'asteroid_field' ? ['starfort'] : BUILDABLE;
+      const missing = buildable.filter((t) => !p.buildings.some((b) => b.type === t));
       if (missing.length) {
         h += buildButtons(p.id, missing, 'building');
       }
@@ -1895,6 +1959,7 @@ function frame(nowReal: number) {
     const target = s.time + (dt / 1000) * speed * HOUR;
     apply(advance(s, target));
     autoEngage();
+    autoCaptureJunctions();
     runAI();
     pumpBuildQueues();
     checkEnd();
