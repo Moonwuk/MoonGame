@@ -346,8 +346,7 @@ function setFleetSelection(ids: string[]) {
   const picked = ids.filter((id) => s.fleets[id]?.owner === ME);
   selFleets = new Set(picked);
   selFleet = picked.length === 1 ? (picked[0] ?? null) : null;
-  const first = picked[0] ? s.fleets[picked[0]] : undefined;
-  if (first?.location) selPlanet = first.location;
+  selPlanet = null; // a fleet selection never co-selects a planet (mutually exclusive)
   lastPanelHtml = '';
 }
 function clearSelection() {
@@ -511,13 +510,7 @@ function glowRing(x: number, y: number, r: number, color: string, alpha: number)
   cx.restore();
 }
 
-function drawWarpLane(a: { x: number; y: number }, b: { x: number; y: number }, now: number) {
-  const dx = b.x - a.x;
-  const dy = b.y - a.y;
-  const len = Math.hypot(dx, dy);
-  if (len <= 0) return;
-  const ux = dx / len;
-  const uy = dy / len;
+function drawWarpLane(a: { x: number; y: number }, b: { x: number; y: number }) {
   cx.save();
   cx.strokeStyle = LANE;
   cx.lineWidth = 1;
@@ -527,21 +520,6 @@ function drawWarpLane(a: { x: number; y: number }, b: { x: number; y: number }, 
   cx.moveTo(a.x, a.y);
   cx.lineTo(b.x, b.y);
   cx.stroke();
-  cx.setLineDash([10, 18]);
-  cx.lineDashOffset = -(now / 55) % 28;
-  cx.strokeStyle = 'rgba(125,240,208,0.18)';
-  cx.lineWidth = 1.1;
-  cx.beginPath();
-  cx.moveTo(a.x, a.y);
-  cx.lineTo(b.x, b.y);
-  cx.stroke();
-  const t = (((now / 2200) % 1) + ((a.x + b.y) % 97) / 97) % 1;
-  cx.fillStyle = 'rgba(125,240,208,0.72)';
-  cx.shadowColor = LOCK;
-  cx.shadowBlur = 8;
-  cx.beginPath();
-  cx.arc(a.x + dx * t, a.y + dy * t, 1.8 + 0.8 * Math.sin(now / 180), 0, TAU);
-  cx.fill();
   cx.restore();
 }
 
@@ -561,7 +539,7 @@ function drawBattlePulse(x: number, y: number, pulse: number) {
 }
 
 /** The planned route of every moving fleet of mine — dashed, brighter if selected. */
-function drawFleetRoutes(now: number) {
+function drawFleetRoutes() {
   for (const f of Object.values(s.fleets)) {
     if (f.owner !== ME || !f.movement) continue;
     const start = fleetAnchor(f);
@@ -575,7 +553,6 @@ function drawFleetRoutes(now: number) {
     if (pts.length < 2) continue;
     cx.save();
     cx.setLineDash([4, 6]);
-    cx.lineDashOffset = -now / 40;
     cx.strokeStyle = rgba(LOCK, sel ? 0.85 : 0.32);
     cx.lineWidth = sel ? 1.8 : 1.1;
     cx.shadowColor = LOCK;
@@ -649,10 +626,10 @@ function render(now: number) {
     const a = world(aPlanet.position);
     const b = world(bPlanet.position);
     if (!visible(a, 120) && !visible(b, 120)) continue;
-    drawWarpLane(a, b, now);
+    drawWarpLane(a, b);
   }
 
-  drawFleetRoutes(now);
+  drawFleetRoutes();
 
   // battles — pulsing red contact ring
   const wave = (now / 900) % 1;
@@ -1084,7 +1061,7 @@ function panelHtml(): string {
 }
 
 function renderPanel() {
-  const open = selFleet !== null || selPlanet !== null;
+  const open = selFleet !== null || selPlanet !== null || selFleets.size > 0;
   side.style.display = open ? 'block' : 'none';
   document.body.classList.toggle('sheet-open', open); // mobile: hide log/comms under the sheet
   if (!open) {
@@ -1223,6 +1200,8 @@ function selectAt(mx: number, my: number) {
         return;
       }
       selPlanet = n.id;
+      selFleet = null;
+      selFleets = new Set();
       lastPanelHtml = '';
       return;
     }
