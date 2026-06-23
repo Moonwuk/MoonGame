@@ -11,8 +11,7 @@ import {
   order,
   data,
   MAP,
-  VOID_SECTORS,
-  STARS as STAR_SYSTEMS,
+  SECTOR_TYPES,
   HOUR,
   DAY,
   hpOfLevel,
@@ -73,11 +72,8 @@ const UNIT_ICON: Record<string, string> = {
   scout: '◌',
   siege: '✦',
 };
-const SECTOR_GLOW: Record<string, string> = {
-  asteroid_field: '#d6a645',
-  nebula: '#8f6dff',
-  empty_space: '#35d6e6',
-};
+/** Accent colour for a sector type (from the data-driven registry). */
+const sectorColor = (type: string): string => SECTOR_TYPES[type]?.color ?? '#35d6e6';
 const ME = 'p1';
 type PlanetTab = 'ground' | 'ships' | 'buildings';
 type BuildLane = 'buildings' | 'units';
@@ -636,6 +632,7 @@ function runAI() {
 function autoEngage() {
   for (const f of Object.values(s.fleets)) {
     if (f.owner === ME || f.location == null || f.movement || f.battleId) continue;
+    if (!SECTOR_TYPES[SECTOR_OF[f.location]]?.capturable) continue; // empty space can't be taken
     const here = s.planets[f.location];
     if (!here || here.owner === f.owner) continue;
     const enemyHere = Object.values(s.fleets).some(
@@ -654,7 +651,7 @@ function autoEngage() {
 function autoCaptureJunctions() {
   for (const f of Object.values(s.fleets)) {
     if (f.location == null || f.movement || f.battleId) continue;
-    if (SECTOR_OF[f.location] !== 'asteroid_field') continue;
+    if (SECTOR_OF[f.location] !== 'asteroid') continue;
     const pl = s.planets[f.location];
     if (!pl || pl.owner === f.owner) continue;
     if ((pl.garrison ?? []).some((u) => u.count > 0)) continue; // fortified → storm it instead
@@ -916,17 +913,14 @@ function buildProvinces(): void {
     return;
   }
   provSig = sig;
-  const seeds = [
-    ...MAP.map((n) => {
-      const b = projBase(n);
-      const o = s.planets[n.id]?.owner ?? 'null';
-      return { x: b.x, y: b.y, key: o, col: COLOR[o] };
-    }),
-    ...VOID_SECTORS.map((v) => {
-      const b = projBase(v);
-      return { x: b.x, y: b.y, key: 'void', col: VOID_COLOR };
-    }),
-  ];
+  // every sector is a cell; empty sectors are an uncapturable neutral wash, the
+  // rest take their owner's colour (political map).
+  const seeds = MAP.map((n) => {
+    const b = projBase(n);
+    if (n.sector === 'empty') return { x: b.x, y: b.y, key: 'void', col: VOID_COLOR };
+    const o = s.planets[n.id]?.owner ?? 'null';
+    return { x: b.x, y: b.y, key: o, col: COLOR[o] };
+  });
   let minX = Infinity;
   let minY = Infinity;
   let maxX = -Infinity;
@@ -992,100 +986,10 @@ function drawProvinces(): void {
   cx.restore();
 }
 
-function nearestStar(x: number, y: number): (typeof STAR_SYSTEMS)[number] | null {
-  let best = Infinity;
-  let found: (typeof STAR_SYSTEMS)[number] | null = null;
-  for (const st of STAR_SYSTEMS) {
-    const d = (st.x - x) ** 2 + (st.y - y) ** 2;
-    if (d < best) {
-      best = d;
-      found = st;
-    }
-  }
-  return found;
-}
-
-/**
- * Stars + empty-sector markers, under the lanes/planets. Each planet rides a faint
- * orbital ring around its star (the "objects orbit a star" layout); each star shows
- * a small ✦; each empty (void) cell shows a faint survey tick at its centre, so the
- * whole map reads as one continuous tiling of sectors.
- */
-function drawStars(): void {
-  // empty-sector centres — a faint survey tick + dot at each void cell's seed
-  cx.save();
-  cx.lineWidth = 1;
-  for (const v of VOID_SECTORS) {
-    const c = world(v);
-    if (!visible(c, 24)) continue;
-    cx.strokeStyle = rgba(VOID_COLOR, 0.5);
-    cx.beginPath();
-    for (const [dx, dy] of [
-      [0, -1],
-      [0, 1],
-      [-1, 0],
-      [1, 0],
-    ] as const) {
-      cx.moveTo(c.x + dx * 1.5, c.y + dy * 1.5);
-      cx.lineTo(c.x + dx * 3.5, c.y + dy * 3.5);
-    }
-    cx.stroke();
-    cx.fillStyle = rgba(VOID_COLOR, 0.6);
-    cx.beginPath();
-    cx.arc(c.x, c.y, 1, 0, TAU);
-    cx.fill();
-  }
-  cx.restore();
-  // orbital rings — one faint ring per planet, centred on its star
-  cx.save();
-  cx.lineWidth = 1;
-  for (const n of MAP) {
-    const star = nearestStar(n.x, n.y);
-    if (!star) continue;
-    const sc = world(star);
-    const pc = world(n);
-    const rr = Math.hypot(pc.x - sc.x, pc.y - sc.y);
-    if (rr < 6 || !visible(sc, rr + 40)) continue;
-    cx.strokeStyle = rgba(star.color, 0.07);
-    cx.beginPath();
-    cx.arc(sc.x, sc.y, rr, 0, TAU);
-    cx.stroke();
-  }
-  cx.restore();
-  // system markers — a small, dim ✦ + faint label at each star (no bright "sun"
-  // orb; just enough to anchor the orbital rings and name the system)
-  cx.textAlign = 'center';
-  for (const star of STAR_SYSTEMS) {
-    const sc = world(star);
-    if (!visible(sc, 60)) continue;
-    cx.save();
-    cx.strokeStyle = rgba(star.color, 0.45);
-    cx.lineWidth = 1.1;
-    const t = 4.5;
-    for (const [dx, dy] of [
-      [0, -1],
-      [0, 1],
-      [-1, 0],
-      [1, 0],
-    ] as const) {
-      cx.beginPath();
-      cx.moveTo(sc.x + dx * 2, sc.y + dy * 2);
-      cx.lineTo(sc.x + dx * t, sc.y + dy * t);
-      cx.stroke();
-    }
-    cx.fillStyle = rgba(star.color, 0.5);
-    cx.beginPath();
-    cx.arc(sc.x, sc.y, 1.6, 0, TAU);
-    cx.fill();
-    cx.restore();
-  }
-}
-
 function render(now: number) {
   cx.setTransform(DPR, 0, 0, DPR, 0, 0); // draw in CSS pixels, crisp on hi-DPI
   drawScope(now);
   drawProvinces();
-  drawStars();
 
   // jump lanes — cached links with animated energy packets
   for (const [from, to] of MAP_LINKS) {
@@ -1120,13 +1024,38 @@ function render(now: number) {
     const c = world(n);
     if (!visible(c, 110)) continue;
     const col = COLOR[p.owner ?? 'null'];
-    const sector = SECTOR_GLOW[n.sector] ?? SECTOR_GLOW.empty_space;
+    const sector = sectorColor(n.sector);
     const ownerPulse = 0.64 + 0.36 * Math.sin(now / 620 + n.x * 0.011 + n.y * 0.017);
+
+    // empty-space sector: just a faint survey marker at its centre (no city, no
+    // capture) — it is only a node you travel through.
+    if (n.sector === 'empty') {
+      cx.save();
+      cx.strokeStyle = rgba(VOID_COLOR, 0.5);
+      cx.lineWidth = 1;
+      cx.beginPath();
+      for (const [dx, dy] of [
+        [0, -1],
+        [0, 1],
+        [-1, 0],
+        [1, 0],
+      ] as const) {
+        cx.moveTo(c.x + dx * 1.5, c.y + dy * 1.5);
+        cx.lineTo(c.x + dx * 3.5, c.y + dy * 3.5);
+      }
+      cx.stroke();
+      cx.fillStyle = rgba(VOID_COLOR, 0.6);
+      cx.beginPath();
+      cx.arc(c.x, c.y, 1, 0, TAU);
+      cx.fill();
+      cx.restore();
+      continue;
+    }
 
     // asteroid-field sector: a lane junction, not a city — scattered rocks + a
     // fat hub where the lanes meet, no orbits. Captured by simply arriving — unless
     // a space fortress is raised here, which fortifies it (orbit + AA, must storm).
-    if (n.sector === 'asteroid_field') {
+    if (n.sector === 'asteroid') {
       const fort = p.buildings.find((b) => b.type === 'starfort');
       const glow = cx.createRadialGradient(c.x, c.y, 0, c.x, c.y, 30);
       glow.addColorStop(0, rgba(col, p.owner ? 0.14 : 0.05));
@@ -1313,10 +1242,10 @@ function render(now: number) {
   for (const pid of Object.keys(stationed)) {
     const pl = s.planets[pid];
     if (!pl) continue;
-    // bare asteroid junctions have no orbit; a fortress (or any garrison) gives one
+    // orbit only on types that have one (cities); a fortress gives a junction one too
     const fortified =
       pl.buildings.some((b) => b.type === 'starfort') || (pl.garrison ?? []).some((u) => u.count > 0);
-    if (SECTOR_OF[pid] === 'asteroid_field' && !fortified) continue;
+    if (!SECTOR_TYPES[SECTOR_OF[pid]]?.orbit && !fortified) continue;
     const pc = world(pl.position);
     if (!visible(pc, 80)) continue;
     for (const orb of ['far', 'near'] as const) {
@@ -1562,7 +1491,8 @@ function panelHtml(): string {
             : 'In transit — routing along the lanes. Collisions trigger an orbital battle.'
         }</div>`;
       } else {
-        const hostile = here!.owner !== f.owner; // enemy or neutral world
+        // enemy/neutral world you can act on — empty space is pass-through only
+        const hostile = here!.owner !== f.owner && (SECTOR_TYPES[SECTOR_OF[here!.id]]?.capturable ?? false);
         // orbit toggle
         h += `<div class="sec">Orbit · ${here!.id}</div><div class="row">`;
         h += btn('orbit', 'near', '▼ Descend (near)', orbit !== 'near');
@@ -1685,7 +1615,7 @@ function panelHtml(): string {
     }
     if (mine) {
       // an asteroid junction can only raise a space fortress; a city builds the rest
-      const buildable = SECTOR_OF[p.id] === 'asteroid_field' ? ['starfort'] : BUILDABLE;
+      const buildable = SECTOR_OF[p.id] === 'asteroid' ? ['starfort'] : BUILDABLE;
       const missing = buildable.filter((t) => !p.buildings.some((b) => b.type === t));
       if (missing.length) {
         h += buildButtons(p.id, missing, 'building');
@@ -1730,7 +1660,11 @@ function renderCmdBar() {
   const anyDocked = docked.length > 0;
   const anyFar = docked.some((f) => (f.orbit ?? 'far') === 'far');
   const canAssault = docked.some(
-    (f) => f.orbit === 'near' && f.location && s.planets[f.location]?.owner !== f.owner,
+    (f) =>
+      f.orbit === 'near' &&
+      f.location &&
+      s.planets[f.location]?.owner !== f.owner &&
+      SECTOR_TYPES[SECTOR_OF[f.location]]?.capturable, // empty space can't be taken
   );
   const descend = anyFar; // at least one far → primary orbit action is descend to near
   const html =

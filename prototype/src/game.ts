@@ -134,8 +134,37 @@ export const data: GameData = parseGameData({
   },
 });
 
+// --- sectors -----------------------------------------------------------------
+
+/**
+ * Sector-type registry — the whole map is a graph of sectors, each of exactly one
+ * type. Types are pure data: add/remove them freely; every type carries its own
+ * properties, and rendering + behaviour read from here (no hard-coded sector logic).
+ *   core       — terrain key in `data.sectors` (speed/HP bonuses) this type maps to
+ *   capturable — can be owned/taken (empty space can't — only traversed)
+ *   buildable  — structures can be raised here
+ *   orbit      — has the near/far orbital layer (cities, fortresses)
+ *   color      — map accent for the type
+ */
+export interface SectorType {
+  name: string;
+  core: string;
+  capturable: boolean;
+  buildable: boolean;
+  orbit: boolean;
+  color: string;
+}
+export const SECTOR_TYPES: Record<string, SectorType> = {
+  planet: { name: 'Planet', core: 'empty_space', capturable: true, buildable: true, orbit: true, color: '#5fd0ff' },
+  nebula: { name: 'Nebula', core: 'nebula', capturable: true, buildable: true, orbit: true, color: '#8f6dff' },
+  asteroid: { name: 'Asteroid Field', core: 'asteroid_field', capturable: true, buildable: true, orbit: false, color: '#d6a645' },
+  empty: { name: 'Empty Space', core: 'empty_space', capturable: false, buildable: false, orbit: false, color: '#46606e' },
+};
+
 // --- the map -----------------------------------------------------------------
 
+/** One sector node. `sector` is its type key (see SECTOR_TYPES); `links` are the
+ *  paths to neighbouring sectors; `type` is the planet-type (bonuses) for worlds. */
 export interface MapNode {
   id: string;
   owner: string | null;
@@ -148,197 +177,33 @@ export interface MapNode {
   garrison?: Array<[string, number]>;
 }
 
+// One connected graph of sectors (free layout). Empty sectors are real nodes you
+// travel through; only non-empty types can be owned. Links are bidirectional.
 export const MAP: MapNode[] = [
-  // ── System AURORA (player home, west) ──────────────────────────────────────
-  {
-    id: 'HOME',
-    owner: 'p1',
-    x: 150,
-    y: 250,
-    sector: 'empty_space',
-    type: 'terran',
-    links: ['FORGE', 'RELAY', 'ANCHOR'],
-    buildings: [{ type: 'mine' }],
-    garrison: [['marine', 3]],
-  },
-  {
-    id: 'ANCHOR',
-    owner: 'p1',
-    x: 130,
-    y: 440,
-    sector: 'empty_space',
-    type: 'oceanic',
-    links: ['HOME', 'RELAY'],
-    buildings: [{ type: 'refinery' }],
-    garrison: [
-      ['marine', 2],
-      ['orbital_aa', 1],
-    ],
-  },
-  {
-    id: 'RELAY',
-    owner: null,
-    x: 320,
-    y: 380,
-    sector: 'nebula',
-    type: 'barren',
-    links: ['HOME', 'ANCHOR', 'FORGE', 'VEIL'],
-    garrison: [['marine', 1]],
-  },
-  {
-    // asteroid belt — a lane junction (no city), captured by simply arriving
-    id: 'FORGE',
-    owner: null,
-    x: 250,
-    y: 170,
-    sector: 'asteroid_field',
-    links: ['HOME', 'RELAY'],
-  },
-  // ── System MERIDIAN (contested, centre) ────────────────────────────────────
-  {
-    id: 'NEXUS',
-    owner: null,
-    x: 560,
-    y: 250,
-    sector: 'nebula',
-    type: 'oceanic',
-    links: ['VEIL', 'HARBOR', 'DRIFT'],
-    buildings: [{ type: 'fort' }],
-    garrison: [
-      ['marine', 3],
-      ['cruiser', 1],
-    ],
-  },
-  {
-    id: 'VEIL',
-    owner: null,
-    x: 460,
-    y: 440,
-    sector: 'nebula',
-    type: 'gas_giant',
-    links: ['NEXUS', 'HARBOR', 'RELAY'],
-    buildings: [{ type: 'refinery' }],
-    garrison: [['marine', 2]],
-  },
-  {
-    id: 'HARBOR',
-    owner: null,
-    x: 660,
-    y: 440,
-    sector: 'empty_space',
-    type: 'oceanic',
-    links: ['NEXUS', 'VEIL', 'OUTPOST'],
-    buildings: [{ type: 'barracks' }],
-    garrison: [['marine', 2]],
-  },
-  {
-    id: 'DRIFT',
-    owner: null,
-    x: 560,
-    y: 150,
-    sector: 'asteroid_field',
-    links: ['NEXUS'],
-  },
-  // ── System EMBER (enemy, east) ─────────────────────────────────────────────
-  {
-    id: 'OUTPOST',
-    owner: 'p2',
-    x: 850,
-    y: 250,
-    sector: 'empty_space',
-    type: 'volcanic',
-    links: ['CRIMSON', 'BASTION', 'HARBOR'],
-    buildings: [{ type: 'mine' }],
-    garrison: [['marine', 3]],
-  },
-  {
-    id: 'BASTION',
-    owner: 'p2',
-    x: 930,
-    y: 450,
-    sector: 'nebula',
-    type: 'barren',
-    links: ['CRIMSON', 'OUTPOST', 'SLAG'],
-    buildings: [{ type: 'fort' }],
-    garrison: [
-      ['marine', 3],
-      ['scout', 1],
-    ],
-  },
-  {
-    id: 'CRIMSON',
-    owner: 'p2',
-    x: 970,
-    y: 260,
-    sector: 'empty_space',
-    type: 'terran',
-    links: ['OUTPOST', 'BASTION', 'SLAG'],
-    buildings: [{ type: 'fort' }, { type: 'mine' }],
-    garrison: [
-      ['marine', 4],
-      ['orbital_aa', 1],
-    ],
-  },
-  {
-    id: 'SLAG',
-    owner: null,
-    x: 1020,
-    y: 400,
-    sector: 'asteroid_field',
-    links: ['CRIMSON', 'BASTION'],
-  },
-];
-
-/**
- * Empty-space provinces — uncapturable void sectors. They are not planets (no
- * garrison, no city, nothing to take): fleets only *pass through* them. Generated
- * as a jittered grid that tiles the whole map, with any cell sitting on top of a
- * planet/junction dropped — so the map is one continuous tiling of provinces
- * (planet/junction provinces carved out of a field of empty cells), Bytro/Paradox-style.
- */
-export interface VoidSector {
-  id: string;
-  x: number;
-  y: number;
-}
-function emptySectorGrid(): VoidSector[] {
-  // stable hash → deterministic jitter (no Math.random; layout never shifts)
-  const hash = (a: number, b: number): number => {
-    const v = Math.sin(a * 12.9898 + b * 78.233) * 43758.5453;
-    return v - Math.floor(v);
-  };
-  const step = 120;
-  const cells: VoidSector[] = [];
-  let i = 0;
-  for (let gx = -40; gx <= 1140; gx += step) {
-    for (let gy = -20; gy <= 600; gy += step) {
-      const x = gx + (hash(gx, gy) - 0.5) * 70;
-      const y = gy + (hash(gy, gx) - 0.5) * 70;
-      // a planet/junction owns its own cell — don't drop an empty centre on it
-      if (MAP.some((n) => Math.hypot(n.x - x, n.y - y) < 85)) continue;
-      cells.push({ id: `VOID-${i++}`, x, y });
-    }
-  }
-  return cells;
-}
-export const VOID_SECTORS: VoidSector[] = emptySectorGrid();
-
-/**
- * Stars — the suns each system orbits. Visual anchors only (not part of the
- * movement graph): the map clusters planets/junctions into systems around them,
- * with empty-space voids in between. Colour hints the stellar class.
- */
-export interface StarSystem {
-  id: string;
-  x: number;
-  y: number;
-  color: string;
-  r: number;
-}
-export const STARS: StarSystem[] = [
-  { id: 'AURORA', x: 210, y: 310, color: '#ffd98a', r: 12 }, // warm — player home
-  { id: 'MERIDIAN', x: 560, y: 320, color: '#9fc0ff', r: 14 }, // blue-white — contested
-  { id: 'EMBER', x: 935, y: 335, color: '#ff9a6a', r: 13 }, // red giant — enemy
+  // home region (west)
+  { id: 'HOME', owner: 'p1', x: 150, y: 250, sector: 'planet', type: 'terran', links: ['FORGE', 'RELAY', 'ANCHOR'], buildings: [{ type: 'mine' }], garrison: [['marine', 3]] },
+  { id: 'ANCHOR', owner: 'p1', x: 130, y: 440, sector: 'planet', type: 'oceanic', links: ['HOME', 'RELAY', 'VOID_W'], buildings: [{ type: 'refinery' }], garrison: [['marine', 2], ['orbital_aa', 1]] },
+  { id: 'RELAY', owner: null, x: 320, y: 360, sector: 'planet', type: 'barren', links: ['HOME', 'ANCHOR', 'FORGE', 'VOID_HM'], garrison: [['marine', 1]] },
+  { id: 'FORGE', owner: null, x: 250, y: 175, sector: 'asteroid', links: ['HOME', 'RELAY', 'VOID_HU'] },
+  // contested region (centre)
+  { id: 'NEXUS', owner: null, x: 560, y: 250, sector: 'nebula', type: 'oceanic', links: ['VOID_HM', 'VEIL', 'HARBOR', 'DRIFT'], buildings: [{ type: 'fort' }], garrison: [['marine', 3], ['cruiser', 1]] },
+  { id: 'VEIL', owner: null, x: 470, y: 430, sector: 'nebula', type: 'gas_giant', links: ['VOID_HM', 'NEXUS', 'HARBOR', 'VOID_S'], buildings: [{ type: 'refinery' }], garrison: [['marine', 2]] },
+  { id: 'HARBOR', owner: null, x: 660, y: 430, sector: 'planet', type: 'oceanic', links: ['NEXUS', 'VEIL', 'VOID_ME', 'VOID_S'], buildings: [{ type: 'barracks' }], garrison: [['marine', 2]] },
+  { id: 'DRIFT', owner: null, x: 560, y: 150, sector: 'asteroid', links: ['VOID_HU', 'NEXUS', 'VOID_MU', 'VOID_N'] },
+  // enemy region (east)
+  { id: 'OUTPOST', owner: 'p2', x: 850, y: 250, sector: 'planet', type: 'volcanic', links: ['VOID_ME', 'VOID_MU', 'CRIMSON', 'BASTION'], buildings: [{ type: 'mine' }], garrison: [['marine', 3]] },
+  { id: 'BASTION', owner: 'p2', x: 930, y: 440, sector: 'nebula', type: 'barren', links: ['OUTPOST', 'CRIMSON', 'SLAG'], buildings: [{ type: 'fort' }], garrison: [['marine', 3], ['scout', 1]] },
+  { id: 'CRIMSON', owner: 'p2', x: 970, y: 260, sector: 'planet', type: 'terran', links: ['OUTPOST', 'BASTION', 'SLAG', 'VOID_E'], buildings: [{ type: 'fort' }, { type: 'mine' }], garrison: [['marine', 4], ['orbital_aa', 1]] },
+  { id: 'SLAG', owner: null, x: 1020, y: 390, sector: 'asteroid', links: ['CRIMSON', 'BASTION', 'VOID_E'] },
+  // empty space — uncapturable, but part of the graph (you travel through it)
+  { id: 'VOID_W', owner: null, x: 70, y: 380, sector: 'empty', links: ['ANCHOR'] },
+  { id: 'VOID_HM', owner: null, x: 425, y: 335, sector: 'empty', links: ['RELAY', 'NEXUS', 'VEIL'] },
+  { id: 'VOID_HU', owner: null, x: 405, y: 150, sector: 'empty', links: ['FORGE', 'DRIFT'] },
+  { id: 'VOID_S', owner: null, x: 565, y: 545, sector: 'empty', links: ['VEIL', 'HARBOR'] },
+  { id: 'VOID_N', owner: null, x: 560, y: 40, sector: 'empty', links: ['DRIFT'] },
+  { id: 'VOID_ME', owner: null, x: 755, y: 335, sector: 'empty', links: ['HARBOR', 'OUTPOST'] },
+  { id: 'VOID_MU', owner: null, x: 710, y: 180, sector: 'empty', links: ['DRIFT', 'OUTPOST'] },
+  { id: 'VOID_E', owner: null, x: 1110, y: 330, sector: 'empty', links: ['CRIMSON', 'SLAG'] },
 ];
 
 function player(
@@ -433,7 +298,7 @@ export function newGame(): GameState {
       owner: n.owner,
       position: { x: n.x, y: n.y },
       links: n.links,
-      sectorType: n.sector,
+      sectorType: SECTOR_TYPES[n.sector]?.core ?? 'empty_space',
       planetType: n.type,
       resources: {},
       buildings: (n.buildings ?? []).map((b) => {
