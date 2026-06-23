@@ -12,6 +12,7 @@ import {
   data,
   MAP,
   VOID_SECTORS,
+  STARS as STAR_SYSTEMS,
   HOUR,
   DAY,
   hpOfLevel,
@@ -628,19 +629,6 @@ function autoEngage() {
   }
 }
 
-// Asteroid-field sectors are undefended lane junctions: a fleet that arrives and
-// stops there captures it — the province recolours and it stays taken until
-// someone else arrives. Prototype-level presentation rule; the authoritative
-// capture mechanic will live in shared-core.
-function captureJunctions() {
-  for (const f of Object.values(s.fleets)) {
-    if (f.location == null || f.movement) continue;
-    if (SECTOR_OF[f.location] !== 'asteroid_field') continue;
-    const pl = s.planets[f.location];
-    if (pl && pl.owner !== f.owner) pl.owner = f.owner;
-  }
-}
-
 function checkEnd() {
   if (banner) return;
   const mine = Object.values(s.planets).filter((p) => p.owner === ME).length;
@@ -985,10 +973,80 @@ function drawProvinces(): void {
   cx.restore();
 }
 
+function nearestStar(x: number, y: number): (typeof STAR_SYSTEMS)[number] | null {
+  let best = Infinity;
+  let found: (typeof STAR_SYSTEMS)[number] | null = null;
+  for (const st of STAR_SYSTEMS) {
+    const d = (st.x - x) ** 2 + (st.y - y) ** 2;
+    if (d < best) {
+      best = d;
+      found = st;
+    }
+  }
+  return found;
+}
+
+/**
+ * Stars — each system's sun, drawn under the lanes/planets. Faint orbital rings
+ * (each planet circling its nearest star) sell the "objects orbit a star, abstracted
+ * into game conventions" layout; the suns themselves glow in their stellar colour.
+ */
+function drawStars(now: number): void {
+  // orbital rings — one faint ring per planet, centred on its star
+  cx.save();
+  cx.lineWidth = 1;
+  for (const n of MAP) {
+    const star = nearestStar(n.x, n.y);
+    if (!star) continue;
+    const sc = world(star);
+    const pc = world(n);
+    const rr = Math.hypot(pc.x - sc.x, pc.y - sc.y);
+    if (rr < 6 || !visible(sc, rr + 40)) continue;
+    cx.strokeStyle = rgba(star.color, 0.07);
+    cx.beginPath();
+    cx.arc(sc.x, sc.y, rr, 0, TAU);
+    cx.stroke();
+  }
+  cx.restore();
+  // the suns
+  cx.textAlign = 'center';
+  for (const star of STAR_SYSTEMS) {
+    const sc = world(star);
+    const rad = Math.max(2.5, star.r * cam.scale);
+    if (!visible(sc, rad * 5)) continue;
+    const pulse = 0.75 + 0.25 * Math.sin(now / 700 + star.x * 0.01);
+    const halo = cx.createRadialGradient(sc.x, sc.y, 0, sc.x, sc.y, rad * 4.5);
+    halo.addColorStop(0, rgba(star.color, 0.5 * pulse));
+    halo.addColorStop(0.32, rgba(star.color, 0.16));
+    halo.addColorStop(1, 'rgba(2,6,12,0)');
+    cx.fillStyle = halo;
+    cx.beginPath();
+    cx.arc(sc.x, sc.y, rad * 4.5, 0, TAU);
+    cx.fill();
+    cx.save();
+    cx.shadowColor = star.color;
+    cx.shadowBlur = 22;
+    cx.fillStyle = 'rgba(255,246,224,0.95)';
+    cx.beginPath();
+    cx.arc(sc.x, sc.y, rad, 0, TAU);
+    cx.fill();
+    cx.restore();
+    cx.strokeStyle = rgba(star.color, 0.5);
+    cx.lineWidth = 1.2;
+    cx.beginPath();
+    cx.arc(sc.x, sc.y, rad + 4, 0, TAU);
+    cx.stroke();
+    cx.fillStyle = rgba(star.color, 0.75);
+    cx.font = '700 9px ui-monospace,Menlo,monospace';
+    cx.fillText(star.id, sc.x, sc.y - rad * 4.5 - 3);
+  }
+}
+
 function render(now: number) {
   cx.setTransform(DPR, 0, 0, DPR, 0, 0); // draw in CSS pixels, crisp on hi-DPI
   drawScope(now);
   drawProvinces();
+  drawStars(now);
 
   // jump lanes — cached links with animated energy packets
   for (const [from, to] of MAP_LINKS) {
@@ -1858,7 +1916,6 @@ function frame(nowReal: number) {
     const target = s.time + (dt / 1000) * speed * HOUR;
     apply(advance(s, target));
     autoEngage();
-    captureJunctions();
     runAI();
     pumpBuildQueues();
     checkEnd();

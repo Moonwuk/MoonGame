@@ -140,11 +140,12 @@ export interface MapNode {
 }
 
 export const MAP: MapNode[] = [
+  // ── System AURORA (player home, west) ──────────────────────────────────────
   {
     id: 'HOME',
     owner: 'p1',
-    x: 130,
-    y: 330,
+    x: 150,
+    y: 250,
     sector: 'empty_space',
     type: 'terran',
     links: ['FORGE', 'RELAY', 'ANCHOR'],
@@ -152,30 +153,10 @@ export const MAP: MapNode[] = [
     garrison: [['marine', 3]],
   },
   {
-    id: 'FORGE',
-    owner: null,
-    x: 320,
-    y: 165,
-    sector: 'asteroid_field',
-    type: 'volcanic',
-    links: ['HOME', 'NEXUS', 'VEIL'],
-    garrison: [['marine', 2]],
-  },
-  {
-    id: 'RELAY',
-    owner: null,
-    x: 320,
-    y: 480,
-    sector: 'empty_space',
-    type: 'barren',
-    links: ['HOME', 'NEXUS', 'ANCHOR', 'HARBOR'],
-    garrison: [['marine', 1]],
-  },
-  {
     id: 'ANCHOR',
     owner: 'p1',
-    x: 190,
-    y: 560,
+    x: 130,
+    y: 440,
     sector: 'empty_space',
     type: 'oceanic',
     links: ['HOME', 'RELAY'],
@@ -186,24 +167,33 @@ export const MAP: MapNode[] = [
     ],
   },
   {
-    id: 'VEIL',
+    id: 'RELAY',
     owner: null,
-    x: 560,
-    y: 125,
+    x: 320,
+    y: 380,
     sector: 'nebula',
-    type: 'gas_giant',
-    links: ['FORGE', 'NEXUS', 'OUTPOST'],
-    buildings: [{ type: 'refinery' }],
-    garrison: [['marine', 2]],
+    type: 'barren',
+    links: ['HOME', 'ANCHOR', 'FORGE', 'VEIL'],
+    garrison: [['marine', 1]],
   },
+  {
+    // asteroid belt — a lane junction (no city), captured by simply arriving
+    id: 'FORGE',
+    owner: null,
+    x: 250,
+    y: 170,
+    sector: 'asteroid_field',
+    links: ['HOME', 'RELAY'],
+  },
+  // ── System MERIDIAN (contested, centre) ────────────────────────────────────
   {
     id: 'NEXUS',
     owner: null,
-    x: 520,
-    y: 320,
+    x: 560,
+    y: 250,
     sector: 'nebula',
     type: 'oceanic',
-    links: ['FORGE', 'RELAY', 'VEIL', 'HARBOR', 'OUTPOST', 'CRIMSON'],
+    links: ['VEIL', 'HARBOR', 'DRIFT'],
     buildings: [{ type: 'fort' }],
     garrison: [
       ['marine', 3],
@@ -211,24 +201,44 @@ export const MAP: MapNode[] = [
     ],
   },
   {
+    id: 'VEIL',
+    owner: null,
+    x: 460,
+    y: 440,
+    sector: 'nebula',
+    type: 'gas_giant',
+    links: ['NEXUS', 'HARBOR', 'RELAY'],
+    buildings: [{ type: 'refinery' }],
+    garrison: [['marine', 2]],
+  },
+  {
     id: 'HARBOR',
     owner: null,
-    x: 610,
-    y: 545,
+    x: 660,
+    y: 440,
     sector: 'empty_space',
     type: 'oceanic',
-    links: ['RELAY', 'NEXUS', 'CRIMSON'],
+    links: ['NEXUS', 'VEIL', 'OUTPOST'],
     buildings: [{ type: 'barracks' }],
     garrison: [['marine', 2]],
   },
   {
+    id: 'DRIFT',
+    owner: null,
+    x: 560,
+    y: 150,
+    sector: 'asteroid_field',
+    links: ['NEXUS'],
+  },
+  // ── System EMBER (enemy, east) ─────────────────────────────────────────────
+  {
     id: 'OUTPOST',
     owner: 'p2',
-    x: 740,
-    y: 175,
-    sector: 'asteroid_field',
+    x: 850,
+    y: 250,
+    sector: 'empty_space',
     type: 'volcanic',
-    links: ['VEIL', 'NEXUS', 'CRIMSON', 'BASTION'],
+    links: ['CRIMSON', 'BASTION', 'HARBOR'],
     buildings: [{ type: 'mine' }],
     garrison: [['marine', 3]],
   },
@@ -236,10 +246,10 @@ export const MAP: MapNode[] = [
     id: 'BASTION',
     owner: 'p2',
     x: 930,
-    y: 255,
-    sector: 'asteroid_field',
+    y: 450,
+    sector: 'nebula',
     type: 'barren',
-    links: ['OUTPOST', 'CRIMSON'],
+    links: ['CRIMSON', 'OUTPOST', 'SLAG'],
     buildings: [{ type: 'fort' }],
     garrison: [
       ['marine', 3],
@@ -249,16 +259,24 @@ export const MAP: MapNode[] = [
   {
     id: 'CRIMSON',
     owner: 'p2',
-    x: 830,
-    y: 380,
+    x: 970,
+    y: 260,
     sector: 'empty_space',
     type: 'terran',
-    links: ['NEXUS', 'HARBOR', 'OUTPOST', 'BASTION'],
+    links: ['OUTPOST', 'BASTION', 'SLAG'],
     buildings: [{ type: 'fort' }, { type: 'mine' }],
     garrison: [
       ['marine', 4],
       ['orbital_aa', 1],
     ],
+  },
+  {
+    id: 'SLAG',
+    owner: null,
+    x: 1020,
+    y: 400,
+    sector: 'asteroid_field',
+    links: ['CRIMSON', 'BASTION'],
   },
 ];
 
@@ -275,10 +293,30 @@ export interface VoidSector {
   y: number;
 }
 export const VOID_SECTORS: VoidSector[] = [
-  { id: 'CORONA REACH', x: 520, y: -60 }, // northern deep space
-  { id: 'THE ABYSS', x: 470, y: 720 }, // southern deep space
-  { id: 'WESTERN RIFT', x: -110, y: 350 }, // western rift
-  { id: 'OUTER EXPANSE', x: 1140, y: 430 }, // eastern expanse
+  { id: 'AURORA RIFT', x: 390, y: 300 }, // void between AURORA and MERIDIAN
+  { id: 'MERIDIAN GULF', x: 750, y: 320 }, // void between MERIDIAN and EMBER
+  { id: 'NORTHERN VOID', x: 560, y: -80 }, // deep space, north
+  { id: 'SOUTHERN VOID', x: 560, y: 720 }, // deep space, south
+  { id: 'WESTERN EXPANSE', x: -110, y: 330 }, // western edge
+  { id: 'OUTER DARK', x: 1170, y: 360 }, // eastern edge
+];
+
+/**
+ * Stars — the suns each system orbits. Visual anchors only (not part of the
+ * movement graph): the map clusters planets/junctions into systems around them,
+ * with empty-space voids in between. Colour hints the stellar class.
+ */
+export interface StarSystem {
+  id: string;
+  x: number;
+  y: number;
+  color: string;
+  r: number;
+}
+export const STARS: StarSystem[] = [
+  { id: 'AURORA', x: 210, y: 310, color: '#ffd98a', r: 12 }, // warm — player home
+  { id: 'MERIDIAN', x: 560, y: 320, color: '#9fc0ff', r: 14 }, // blue-white — contested
+  { id: 'EMBER', x: 935, y: 335, color: '#ff9a6a', r: 13 }, // red giant — enemy
 ];
 
 function player(
