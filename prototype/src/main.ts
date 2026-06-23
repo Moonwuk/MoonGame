@@ -278,6 +278,8 @@ const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
 const MAP_LINKS = MAP.flatMap((n) =>
   n.links.filter((l) => n.id < l).map((l) => [n.id, l] as const),
 );
+// node sector type by id — drives asteroid-junction rendering + capture-by-arrival
+const SECTOR_OF: Record<string, string> = Object.fromEntries(MAP.map((n) => [n.id, n.sector]));
 function world(p: { x: number; y: number }): { x: number; y: number } {
   const b = projBase(p);
   return { x: b.x * cam.scale + cam.x, y: b.y * cam.scale + cam.y };
@@ -626,6 +628,19 @@ function autoEngage() {
   }
 }
 
+// Asteroid-field sectors are undefended lane junctions: a fleet that arrives and
+// stops there captures it — the province recolours and it stays taken until
+// someone else arrives. Prototype-level presentation rule; the authoritative
+// capture mechanic will live in shared-core.
+function captureJunctions() {
+  for (const f of Object.values(s.fleets)) {
+    if (f.location == null || f.movement) continue;
+    if (SECTOR_OF[f.location] !== 'asteroid_field') continue;
+    const pl = s.planets[f.location];
+    if (pl && pl.owner !== f.owner) pl.owner = f.owner;
+  }
+}
+
 function checkEnd() {
   if (banner) return;
   const mine = Object.values(s.planets).filter((p) => p.owner === ME).length;
@@ -652,6 +667,41 @@ function poly(x: number, y: number, r: number, sides: number, rot = 0) {
     else cx.moveTo(px, py);
   }
   cx.closePath();
+}
+
+// Stable asteroid cluster for an asteroid-field junction — built once and seeded
+// by the node position, so the rocks never shimmer or move between frames.
+interface Rock {
+  dx: number;
+  dy: number;
+  r: number;
+  rot: number;
+  sides: number;
+}
+const asteroidCache = new Map<string, Rock[]>();
+function asteroidsFor(id: string, x: number, y: number): Rock[] {
+  const hit = asteroidCache.get(id);
+  if (hit) return hit;
+  let seed = (Math.floor(x * 3457) ^ Math.floor(y * 8761) ^ 0x9e3779b9) >>> 0;
+  const rnd = (): number => {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    return seed / 0xffffffff;
+  };
+  const rocks: Rock[] = [];
+  const count = 9 + Math.floor(rnd() * 4);
+  for (let i = 0; i < count; i++) {
+    const ang = rnd() * TAU;
+    const dist = 7 + rnd() * 21;
+    rocks.push({
+      dx: Math.cos(ang) * dist,
+      dy: Math.sin(ang) * dist * 0.72, // slightly flattened → reads as a belt
+      r: 1.5 + rnd() * 2.8,
+      rot: rnd() * TAU,
+      sides: 3 + Math.floor(rnd() * 3),
+    });
+  }
+  asteroidCache.set(id, rocks);
+  return rocks;
 }
 
 /** Four slowly-rotating corner brackets — the "locked target" selection reticle. */
@@ -976,6 +1026,67 @@ function render(now: number) {
     const sector = SECTOR_GLOW[n.sector] ?? SECTOR_GLOW.empty_space;
     const ownerPulse = 0.64 + 0.36 * Math.sin(now / 620 + n.x * 0.011 + n.y * 0.017);
 
+    // asteroid-field sector: a lane junction, not a city — scattered rocks + a
+    // fat hub where the lanes meet, no orbits. Captured by simply arriving.
+    if (n.sector === 'asteroid_field') {
+      const glow = cx.createRadialGradient(c.x, c.y, 0, c.x, c.y, 30);
+      glow.addColorStop(0, rgba(col, p.owner ? 0.14 : 0.05));
+      glow.addColorStop(1, 'rgba(2,6,12,0)');
+      cx.fillStyle = glow;
+      cx.beginPath();
+      cx.arc(c.x, c.y, 30, 0, TAU);
+      cx.fill();
+      cx.save();
+      cx.strokeStyle = 'rgba(186,170,140,0.7)';
+      cx.fillStyle = 'rgba(42,40,33,0.72)';
+      cx.lineWidth = 1;
+      for (const rk of asteroidsFor(n.id, n.x, n.y)) {
+        cx.save();
+        cx.translate(c.x + rk.dx, c.y + rk.dy);
+        cx.rotate(rk.rot + now / 9000);
+        cx.beginPath();
+        for (let k = 0; k < rk.sides; k++) {
+          const a = (k / rk.sides) * TAU;
+          const rr = rk.r * (0.72 + 0.28 * Math.sin(a * 2 + rk.rot));
+          const px = Math.cos(a) * rr;
+          const py = Math.sin(a) * rr;
+          if (k) cx.lineTo(px, py);
+          else cx.moveTo(px, py);
+        }
+        cx.closePath();
+        cx.fill();
+        cx.stroke();
+        cx.restore();
+      }
+      cx.restore();
+      // fat junction hub (the lanes converge here), owner-coloured
+      cx.save();
+      cx.shadowColor = col;
+      cx.shadowBlur = 8;
+      cx.fillStyle = rgba(col, 0.92);
+      cx.beginPath();
+      cx.arc(c.x, c.y, 4.2, 0, TAU);
+      cx.fill();
+      cx.strokeStyle = rgba(col, 0.75);
+      cx.lineWidth = 1.3;
+      cx.beginPath();
+      cx.arc(c.x, c.y, 7.5 + 0.6 * ownerPulse, 0, TAU);
+      cx.stroke();
+      cx.restore();
+      if (selPlanet === n.id) targetBrackets(c.x, c.y, 15, now);
+      cx.save();
+      cx.shadowColor = 'rgba(0,0,0,0.85)';
+      cx.shadowBlur = 3;
+      cx.fillStyle = p.owner ? col : '#9fc9c4';
+      cx.font = '700 11px ui-monospace,Menlo,monospace';
+      cx.fillText(n.id, c.x + 15, c.y - 1);
+      cx.fillStyle = 'rgba(150,210,205,0.55)';
+      cx.font = '9px ui-monospace,Menlo,monospace';
+      cx.fillText('asteroid field', c.x + 15, c.y + 11);
+      cx.restore();
+      continue;
+    }
+
     const aura = cx.createRadialGradient(c.x, c.y, 0, c.x, c.y, R + 34);
     aura.addColorStop(0, rgba(col, p.owner ? 0.18 : 0.08));
     aura.addColorStop(0.55, rgba(sector, 0.06 + 0.04 * ownerPulse));
@@ -1077,13 +1188,14 @@ function render(now: number) {
     cx.restore();
   }
 
-  // orbit rings around any planet that holds a stationed fleet (near vs far)
+  // orbit rings around any CITY that holds a stationed fleet (near vs far).
+  // Asteroid-field junctions have no orbits, so they are skipped.
   const stationed: Record<string, Fleet[]> = {};
   for (const f of Object.values(s.fleets))
     if (f.location && !f.movement) (stationed[f.location] ??= []).push(f);
   for (const pid of Object.keys(stationed)) {
     const pl = s.planets[pid];
-    if (!pl) continue;
+    if (!pl || SECTOR_OF[pid] === 'asteroid_field') continue;
     const pc = world(pl.position);
     if (!visible(pc, 80)) continue;
     for (const orb of ['far', 'near'] as const) {
@@ -1746,6 +1858,7 @@ function frame(nowReal: number) {
     const target = s.time + (dt / 1000) * speed * HOUR;
     apply(advance(s, target));
     autoEngage();
+    captureJunctions();
     runAI();
     pumpBuildQueues();
     checkEnd();
