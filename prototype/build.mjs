@@ -166,8 +166,12 @@ body.sheet-open #log{display:none;}
 @media (max-width:720px){
   #top{height:44px;}
   .who{display:none;}
-  .crest{padding:0 8px;}
-  #burger{display:flex;}
+  .crest{padding:0 10px;}
+  /* hamburger drops out of the top bar to a thumb-reachable button, lower-left */
+  #burger{display:flex;position:fixed;left:8px;bottom:14px;top:auto;width:46px;height:46px;
+    border:1px solid var(--line-hi);border-radius:4px;background:var(--glass);z-index:36;
+    box-shadow:0 0 16px rgba(0,0,0,.5);}
+  body.sheet-open #burger{display:none;}
   #topclock{display:block;}
   .res{padding:0 9px;gap:5px;}
   #devline{display:none;}

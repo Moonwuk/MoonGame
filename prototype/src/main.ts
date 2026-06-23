@@ -835,45 +835,49 @@ let selectionBox: { x1: number; y1: number; x2: number; y2: number } | null = nu
 
 /**
  * Province field — the whole map is a tiling of provinces (Bytro/Paradox-style):
- * every point belongs to the nearest seed. Seeds are planets (capturable, tinted
- * in their owner's colour — green/blue/gray/red) or empty-space voids
- * (uncapturable, neutral). Different-owner seams are bold frontiers, internal
- * seams faint.
- *
- * The tiling is static in base (pre-camera) space, so it is baked ONCE into an
- * offscreen buffer and blitted under the camera each frame: no per-frame Voronoi
- * (FPS) and no shimmer from sampling in screen space while panning. Rebake only
- * when the viewport changes or a province changes hands — both rare.
+ * every point belongs to the nearest seed (planets = capturable territory tinted
+ * in the owner's colour; empty-space voids = uncapturable, neutral). The tiling is
+ * computed as vector Voronoi cells (half-plane clipping) in base space and filled
+ * under the camera each frame — so it covers the whole map, scales without
+ * stretching, and never shimmers. Rebuilt only on viewport / ownership change.
  */
-let provBuf: HTMLCanvasElement | null = null;
-let provBufCtx: CanvasRenderingContext2D | null = null;
-let provBufFailed = false;
+interface ProvCell {
+  owner: string;
+  col: string;
+  poly: Array<[number, number]>;
+}
+let provCells: ProvCell[] = [];
 let provSig = '';
-let provOX = 0; // base-space coord the buffer's top-left maps to
-let provOY = 0;
 
-function bakeProvinces(): void {
+/** Clip a convex polygon to the half-plane a*x + b*y + c <= 0 (Sutherland–Hodgman). */
+function clipHalfPlane(
+  poly: Array<[number, number]>,
+  a: number,
+  b: number,
+  c: number,
+): Array<[number, number]> {
+  const out: Array<[number, number]> = [];
+  for (let i = 0; i < poly.length; i++) {
+    const cur = poly[i]!;
+    const nxt = poly[(i + 1) % poly.length]!;
+    const dc = a * cur[0] + b * cur[1] + c;
+    const dn = a * nxt[0] + b * nxt[1] + c;
+    if (dc <= 0) out.push(cur);
+    if ((dc < 0) !== (dn < 0)) {
+      const t = dc / (dc - dn);
+      out.push([cur[0] + t * (nxt[0] - cur[0]), cur[1] + t * (nxt[1] - cur[1])]);
+    }
+  }
+  return out;
+}
+
+function buildProvinces(): void {
   const owners = MAP.map((n) => s.planets[n.id]?.owner ?? 'null').join(',');
   const sig = `${VW}x${VH}:${MOBILE ? 1 : 0}|${owners}`;
-  if (sig === provSig || provBufFailed) {
+  if (sig === provSig) {
     return;
   }
-  if (!provBufCtx) {
-    if (typeof document.createElement !== 'function') {
-      provBufFailed = true; // headless (smoke test) — skip the territory layer
-      return;
-    }
-    provBuf = document.createElement('canvas');
-    provBufCtx = provBuf.getContext('2d');
-    if (!provBufCtx) {
-      provBufFailed = true;
-      return;
-    }
-  }
   provSig = sig;
-  const g = provBufCtx;
-
-  // seeds in base space (projBase output, pre-camera → the bake survives pan/zoom)
   const seeds = [
     ...MAP.map((n) => {
       const b = projBase(n);
@@ -895,81 +899,58 @@ function bakeProvinces(): void {
     minY = Math.min(minY, sd.y);
     maxY = Math.max(maxY, sd.y);
   }
-  const pad = 260; // base px beyond the seeds so edges stay filled while panning
-  provOX = Math.floor(minX - pad);
-  provOY = Math.floor(minY - pad);
-  const w = Math.ceil(maxX + pad) - provOX;
-  const h = Math.ceil(maxY + pad) - provOY;
-  provBuf!.width = w;
-  provBuf!.height = h;
-
-  const cell = 8;
-  const cols = Math.ceil(w / cell);
-  const rows = Math.ceil(h / cell);
-  const owner: string[] = new Array<string>(cols * rows);
-  const seedOf: number[] = new Array<number>(cols * rows);
-  for (let r = 0; r < rows; r++) {
-    for (let c = 0; c < cols; c++) {
-      const px = provOX + c * cell + cell / 2;
-      const py = provOY + r * cell + cell / 2;
-      let best = Infinity;
-      let si = 0;
-      for (let i = 0; i < seeds.length; i++) {
-        const d = (px - seeds[i]!.x) ** 2 + (py - seeds[i]!.y) ** 2;
-        if (d < best) {
-          best = d;
-          si = i;
-        }
-      }
-      const seed = seeds[si]!;
-      const idx = r * cols + c;
-      owner[idx] = seed.key;
-      seedOf[idx] = si;
-      const a = seed.key === 'void' ? 0.05 : 0.09 + 0.07 * Math.max(0, 1 - Math.sqrt(best) / 300);
-      g.fillStyle = rgba(seed.col, a);
-      g.fillRect(c * cell, r * cell, cell, cell);
+  // A clip rectangle far larger than the seed span, so the cells tile well beyond
+  // the screen at any pan/zoom — the territory always fills the whole map.
+  const m = 4000;
+  const rect: Array<[number, number]> = [
+    [minX - m, minY - m],
+    [maxX + m, minY - m],
+    [maxX + m, maxY + m],
+    [minX - m, maxY + m],
+  ];
+  provCells = [];
+  for (let i = 0; i < seeds.length; i++) {
+    const si = seeds[i]!;
+    let poly: Array<[number, number]> = rect.map((p) => [p[0], p[1]]);
+    for (let j = 0; j < seeds.length && poly.length >= 3; j++) {
+      if (j === i) continue;
+      const sj = seeds[j]!;
+      const a = 2 * (sj.x - si.x);
+      const b = 2 * (sj.y - si.y);
+      const c = si.x * si.x + si.y * si.y - (sj.x * sj.x + sj.y * sj.y);
+      poly = clipHalfPlane(poly, a, b, c);
+    }
+    if (poly.length >= 3) {
+      provCells.push({ owner: si.key, col: si.col, poly });
     }
   }
-  // borders — faint internal seams, then bold owner frontiers, each its own style
-  const strokeEdges = (frontierPass: boolean): void => {
-    g.beginPath();
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols; c++) {
-        const idx = r * cols + c;
-        if (c > 0 && seedOf[idx - 1] !== seedOf[idx] && (owner[idx - 1] !== owner[idx]) === frontierPass) {
-          g.moveTo(c * cell, r * cell);
-          g.lineTo(c * cell, r * cell + cell);
-        }
-        if (r > 0 && seedOf[idx - cols] !== seedOf[idx] && (owner[idx - cols] !== owner[idx]) === frontierPass) {
-          g.moveTo(c * cell, r * cell);
-          g.lineTo(c * cell + cell, r * cell);
-        }
-      }
-    }
-    g.stroke();
-  };
-  g.setLineDash([3, 4]);
-  g.lineWidth = 1;
-  g.strokeStyle = rgba('#7df0d0', 0.16);
-  strokeEdges(false);
-  g.setLineDash([]);
-  g.lineWidth = 1.4;
-  g.strokeStyle = rgba('#dff7ee', 0.4);
-  strokeEdges(true);
 }
 
 function drawProvinces(): void {
-  bakeProvinces();
-  if (!provBuf || provBufFailed) {
-    return;
-  }
-  // Blit the base-space buffer under the live camera: buffer pixel (x,y) maps to
-  // base (provOX+x, provOY+y), and translate+scale takes base → screen, exactly
-  // matching world() — so provinces pan/zoom locked to the planets, no jitter.
+  buildProvinces();
+  // Draw in base space under the live camera (translate+scale matches world()),
+  // so the vector cells pan/zoom locked to the planets — no shimmer, no stretch.
   cx.save();
   cx.translate(cam.x, cam.y);
   cx.scale(cam.scale, cam.scale);
-  cx.drawImage(provBuf, provOX, provOY);
+  const trace = (poly: Array<[number, number]>): void => {
+    cx.beginPath();
+    cx.moveTo(poly[0]![0], poly[0]![1]);
+    for (let i = 1; i < poly.length; i++) cx.lineTo(poly[i]![0], poly[i]![1]);
+    cx.closePath();
+  };
+  for (const cell of provCells) {
+    trace(cell.poly);
+    cx.fillStyle = rgba(cell.col, cell.owner === 'void' ? 0.05 : 0.11);
+    cx.fill();
+  }
+  // faint province borders — vector, so ~1px on screen at any zoom
+  cx.lineWidth = 1 / cam.scale;
+  cx.strokeStyle = rgba('#7df0d0', 0.16);
+  for (const cell of provCells) {
+    trace(cell.poly);
+    cx.stroke();
+  }
   cx.restore();
 }
 
@@ -991,7 +972,7 @@ function nearestStar(x: number, y: number): (typeof STAR_SYSTEMS)[number] | null
  * (each planet circling its nearest star) sell the "objects orbit a star, abstracted
  * into game conventions" layout; the suns themselves glow in their stellar colour.
  */
-function drawStars(now: number): void {
+function drawStars(): void {
   // orbital rings — one faint ring per planet, centred on its star
   cx.save();
   cx.lineWidth = 1;
@@ -1008,37 +989,35 @@ function drawStars(now: number): void {
     cx.stroke();
   }
   cx.restore();
-  // the suns
+  // system markers — a small, dim ✦ + faint label at each star (no bright "sun"
+  // orb; just enough to anchor the orbital rings and name the system)
   cx.textAlign = 'center';
   for (const star of STAR_SYSTEMS) {
     const sc = world(star);
-    const rad = Math.max(2.5, star.r * cam.scale);
-    if (!visible(sc, rad * 5)) continue;
-    const pulse = 0.75 + 0.25 * Math.sin(now / 700 + star.x * 0.01);
-    const halo = cx.createRadialGradient(sc.x, sc.y, 0, sc.x, sc.y, rad * 4.5);
-    halo.addColorStop(0, rgba(star.color, 0.5 * pulse));
-    halo.addColorStop(0.32, rgba(star.color, 0.16));
-    halo.addColorStop(1, 'rgba(2,6,12,0)');
-    cx.fillStyle = halo;
-    cx.beginPath();
-    cx.arc(sc.x, sc.y, rad * 4.5, 0, TAU);
-    cx.fill();
+    if (!visible(sc, 60)) continue;
     cx.save();
-    cx.shadowColor = star.color;
-    cx.shadowBlur = 22;
-    cx.fillStyle = 'rgba(255,246,224,0.95)';
+    cx.strokeStyle = rgba(star.color, 0.45);
+    cx.lineWidth = 1.1;
+    const t = 4.5;
+    for (const [dx, dy] of [
+      [0, -1],
+      [0, 1],
+      [-1, 0],
+      [1, 0],
+    ] as const) {
+      cx.beginPath();
+      cx.moveTo(sc.x + dx * 2, sc.y + dy * 2);
+      cx.lineTo(sc.x + dx * t, sc.y + dy * t);
+      cx.stroke();
+    }
+    cx.fillStyle = rgba(star.color, 0.5);
     cx.beginPath();
-    cx.arc(sc.x, sc.y, rad, 0, TAU);
+    cx.arc(sc.x, sc.y, 1.6, 0, TAU);
     cx.fill();
+    cx.fillStyle = rgba(star.color, 0.5);
+    cx.font = '700 8px ui-monospace,Menlo,monospace';
+    cx.fillText(star.id, sc.x, sc.y - 11);
     cx.restore();
-    cx.strokeStyle = rgba(star.color, 0.5);
-    cx.lineWidth = 1.2;
-    cx.beginPath();
-    cx.arc(sc.x, sc.y, rad + 4, 0, TAU);
-    cx.stroke();
-    cx.fillStyle = rgba(star.color, 0.75);
-    cx.font = '700 9px ui-monospace,Menlo,monospace';
-    cx.fillText(star.id, sc.x, sc.y - rad * 4.5 - 3);
   }
 }
 
@@ -1046,7 +1025,7 @@ function render(now: number) {
   cx.setTransform(DPR, 0, 0, DPR, 0, 0); // draw in CSS pixels, crisp on hi-DPI
   drawScope(now);
   drawProvinces();
-  drawStars(now);
+  drawStars();
 
   // jump lanes — cached links with animated energy packets
   for (const [from, to] of MAP_LINKS) {
