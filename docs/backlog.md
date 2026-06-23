@@ -17,7 +17,7 @@
 
 `[core]` `packages/shared-core/src/modules` (+ `data`) · `[act]` `action-layer` ·
 `[srv]` `server` · `[cli]` `client` · `[proto]` `prototype` · `[data]` `data/*.json` ·
-`[docs]` `docs`
+`[docs]` `docs` · `[sec]` CI/сканеры (`.gitlab-ci.yml`, `docs/security`, конфиги сканеров)
 
 ## Статусы
 
@@ -100,6 +100,25 @@
   горячий путь планировщика (`kernel.ts`: `scheduled` отсортирован → `earliestDue` O(1)
   + бинарная вставка), route-кэш в `movement`, оптимизации `combat`/`orbit`/`economy`.
   **Детерминизм сохранён** (golden-RNG + 213 тестов зелёные).
+
+## Блок SEC · AppSec / DevSecOps `[sec]`
+
+> Трек безопасности — живёт рядом с продуктовым и раздаётся как задачи. База —
+> `.gitlab-ci.yml` + `docs/security/pipeline.md`. Один кирпич = один сканер/правило/шаг.
+
+- **SEC-0** ✅ Базовый GitLab-пайплайн: SAST (Semgrep) + SCA (pnpm audit + osv-scanner)
+  + секреты (Gitleaks) + Trivy fs + SBOM (Syft), ratcheting-гейт.
+- **SEC-1** ⏳ Триаж + baseline: разобрать находки, подавить ложные **с обоснованием**
+  (`.semgrepignore` / `.gitleaks.toml` / `.trivyignore`), разобранные сканеры → блокирующие.
+- **SEC-2** ⏳ Кастомные Semgrep-правила под инварианты ядра: запрет `Math.random`/
+  `Date.now` и Node-built-ins в `shared-core/src` (детерминизм/чистота как security-граница).
+- **SEC-3** ⏳ Безопасность самого пайплайна: пин образов сканеров по `sha256`,
+  masked+protected CI-переменные, least-privilege токены.
+- **SEC-4** ⏳ Агрегация находок: SARIF → DefectDojo / GitHub Code Scanning (единая панель, трекинг).
+- **SEC-5** 🔒(F1, Docker сервера) Container scanning: `trivy image` на образ сервера + пин базового образа.
+- **SEC-6** 🔒(F1+ запущенный сервер) DAST: ZAP baseline против `packages/server` (раскомментировать `dast-zap`).
+- **SEC-7** 🔒(SEC-5) Supply-chain integrity (A08): подпись образов `cosign` + provenance **SLSA** + проверка на деплое.
+- **SEC-8** 🔒(Этап 7) Полный проход **OWASP Top 10 2021** по чек-листу + threat model.
 
 ---
 
