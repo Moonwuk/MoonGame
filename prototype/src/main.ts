@@ -451,7 +451,7 @@ function selectedFleetIds(): string[] {
   return selFleet && s.fleets[selFleet]?.owner === ME ? [selFleet] : [];
 }
 
-const ORBIT_R: Record<'near' | 'far', number> = { near: 26, far: 46 };
+const ORBIT_R: Record<'near' | 'far', number> = { near: 30, far: 50 };
 
 /** Screen anchor (+ heading) for a fleet's chevron: the interpolated lane
  *  position while moving, or a slot on its near/far orbit ring while stationed
@@ -933,14 +933,20 @@ function render(now: number) {
     const pc = world(pl.position);
     if (!visible(pc, 80)) continue;
     for (const orb of ['far', 'near'] as const) {
+      const warm = orb === 'near'; // near = hot zone (bombard / AA reaches), far = safe
       cx.save();
-      cx.setLineDash([2, 6]);
-      cx.lineDashOffset = orb === 'near' ? now / 220 : -now / 260;
-      cx.strokeStyle = rgba('#7df0d0', orb === 'near' ? 0.24 : 0.13);
-      cx.lineWidth = 1;
+      cx.setLineDash(warm ? [2, 5] : [7, 6]);
+      cx.lineDashOffset = warm ? now / 200 : -now / 280;
+      cx.strokeStyle = rgba(warm ? '#ffb15f' : '#7df0d0', warm ? 0.42 : 0.22);
+      cx.lineWidth = warm ? 1.3 : 1;
       cx.beginPath();
       cx.arc(pc.x, pc.y, ORBIT_R[orb], 0, TAU);
       cx.stroke();
+      cx.setLineDash([]);
+      cx.fillStyle = rgba(warm ? '#ffb15f' : '#7df0d0', 0.7);
+      cx.font = '700 7px ui-monospace,Menlo,monospace';
+      cx.textAlign = 'center';
+      cx.fillText(warm ? 'NEAR' : 'FAR', pc.x, pc.y + ORBIT_R[orb] + 8);
       cx.restore();
     }
   }
@@ -990,25 +996,42 @@ function render(now: number) {
       }
     }
 
+    // fleet model = a squadron of 1 / 2 / 3 triangles by ship count
+    const squad = Math.min(3, Math.max(1, ships));
+    const formation: ReadonlyArray<readonly [number, number]> =
+      squad === 1
+        ? [[0, 0]]
+        : squad === 2
+          ? [
+              [-4, 1],
+              [4, 1],
+            ]
+          : [
+              [0, -3.5],
+              [-5, 5],
+              [5, 5],
+            ];
     cx.save();
     cx.translate(A.x, A.y);
     cx.rotate(A.ang + Math.PI / 2);
     cx.shadowColor = col;
-    cx.shadowBlur = 9 + 8 * engine;
-    cx.fillStyle = rgba(col, 0.1 + 0.12 * engine);
+    cx.shadowBlur = 8 + 7 * engine;
+    cx.fillStyle = rgba(col, 0.14 + 0.12 * engine);
     cx.strokeStyle = col;
-    cx.lineWidth = 1.8;
+    cx.lineWidth = 1.5;
+    for (const [ox, oy] of formation) {
+      cx.beginPath();
+      cx.moveTo(ox, oy - 5);
+      cx.lineTo(ox + 3.6, oy + 4);
+      cx.lineTo(ox - 3.6, oy + 4);
+      cx.closePath();
+      cx.fill();
+      cx.stroke();
+    }
+    const lead = formation[0]!;
+    cx.fillStyle = rgba('#ffffff', 0.4 + 0.35 * engine);
     cx.beginPath();
-    cx.moveTo(0, -8);
-    cx.lineTo(6, 7);
-    cx.lineTo(0, 3.5);
-    cx.lineTo(-6, 7);
-    cx.closePath();
-    cx.fill();
-    cx.stroke();
-    cx.fillStyle = rgba('#ffffff', 0.45 + 0.35 * engine);
-    cx.beginPath();
-    cx.arc(0, 3.2, 1.2 + engine, 0, TAU);
+    cx.arc(lead[0], lead[1], 1 + 0.8 * engine, 0, TAU);
     cx.fill();
     cx.restore();
 
