@@ -51,12 +51,48 @@ const RAIL = 50; // left-rail width
 const BUILDABLE = ['mine', 'refinery', 'barracks', 'fort'];
 const BUILD_UNITS = ['marine', 'orbital_aa', 'cruiser', 'scout', 'siege'];
 const BUILD_ICON: Record<string, string> = { mine: '⬢', refinery: '◇', barracks: '▤', fort: '⬡' };
+const UNIT_ICON: Record<string, string> = {
+  marine: '◆',
+  orbital_aa: '⌁',
+  cruiser: '▲',
+  scout: '◌',
+  siege: '✦',
+};
 const SECTOR_GLOW: Record<string, string> = {
   asteroid_field: '#d6a645',
   nebula: '#8f6dff',
   empty_space: '#35d6e6',
 };
 const ME = 'p1';
+type PlanetTab = 'ground' | 'ships' | 'buildings';
+type BuildLane = 'buildings' | 'units';
+type BuildKind = 'building' | 'upgrade' | 'unit';
+
+interface QueuedBuild {
+  kind: BuildKind;
+  id: string;
+  count: number;
+}
+
+interface PlanetBuildQueue {
+  buildings: QueuedBuild[];
+  units: QueuedBuild[];
+}
+
+interface ConstructionPayload {
+  kind?: 'building' | 'unit' | 'upgrade';
+  planetId?: string;
+  building?: string;
+  unit?: string;
+  count?: number;
+  level?: number;
+}
+
+interface ActiveBuild {
+  at: number;
+  seq: number;
+  payload: ConstructionPayload;
+}
 
 /** hex `#rrggbb` → `rgba()` with alpha — for tinted rings, ticks and trails. */
 function rgba(hex: string, a: number): string {
@@ -77,6 +113,8 @@ let selPlanet: string | null = null;
 let selFleets = new Set<string>();
 let aiming = false; // "Move" command armed → next world tap orders the move
 let aimPointer: { x: number; y: number } | null = null; // last canvas pointer (for the move preview)
+let planetTab: PlanetTab = 'buildings';
+const buildQueues: Record<string, PlanetBuildQueue> = {};
 const logLines: string[] = [];
 let lastAiAt = 0;
 let lastPanelHtml = '';
@@ -266,6 +304,136 @@ function afford(bag: Record<string, number> | undefined): boolean {
   const res = s.players[ME]?.resources ?? {};
   for (const [r, n] of Object.entries(bag ?? {})) if ((res[r] ?? 0) < n) return false;
   return true;
+}
+function unitIcon(unit: string): string {
+  return UNIT_ICON[unit] ?? (isGround(unit) ? '◆' : '▲');
+}
+function displayUnit(unit: string): string {
+  return unit.replace(/_/g, ' ');
+}
+function queueOf(planetId: string): PlanetBuildQueue {
+  return (buildQueues[planetId] ??= { buildings: [], units: [] });
+}
+function laneOf(kind: BuildKind): BuildLane {
+  return kind === 'unit' ? 'units' : 'buildings';
+}
+function buildCost(planetId: string, q: QueuedBuild): Record<string, number> | undefined {
+  if (q.kind === 'unit') {
+    return data.units[q.id]?.cost;
+  }
+  if (q.kind === 'building') {
+    return data.buildings[q.id]?.cost;
+  }
+  const pl = s.planets[planetId];
+  const inst = pl?.buildings.find((b) => b.type === q.id);
+  return inst ? data.buildings[q.id]?.upgrades[inst.level - 1]?.cost : undefined;
+}
+function canStartQueued(planetId: string, q: QueuedBuild): boolean {
+  return afford(buildCost(planetId, q));
+}
+function constructionPayload(payload: unknown): ConstructionPayload | null {
+  const p = payload as ConstructionPayload;
+  return typeof p?.planetId === 'string' ? p : null;
+}
+function activeConstruction(planetId: string, lane: BuildLane): ActiveBuild | null {
+  let best: ActiveBuild | null = null;
+  for (const event of s.scheduled) {
+    if (event.type !== 'construction.complete') {
+      continue;
+    }
+    const payload = constructionPayload(event.payload);
+    if (!payload || payload.planetId !== planetId) {
+      continue;
+    }
+    const kind = payload.kind === 'unit' ? 'units' : 'buildings';
+    if (kind !== lane) {
+      continue;
+    }
+    if (!best || event.at < best.at || (event.at === best.at && event.seq < best.seq)) {
+      best = { at: event.at, seq: event.seq, payload };
+    }
+  }
+  return best;
+}
+function constructionLabel(p: ConstructionPayload): string {
+  if (p.kind === 'unit' && p.unit) {
+    return `${p.count ?? 1}× ${unitIcon(p.unit)} ${displayUnit(p.unit)}`;
+  }
+  if (p.kind === 'upgrade' && p.building) {
+    return `${BUILD_ICON[p.building] ?? '▣'} ${data.buildings[p.building]?.name ?? p.building} → L${p.level ?? '?'}`;
+  }
+  if (p.building) {
+    return `${BUILD_ICON[p.building] ?? '▣'} ${data.buildings[p.building]?.name ?? p.building}`;
+  }
+  return 'unknown order';
+}
+function buildDurationHours(p: ConstructionPayload): number {
+  if (p.kind === 'unit' && p.unit) {
+    return data.units[p.unit]?.buildTimeHours ?? 0;
+  }
+  if (p.kind === 'upgrade' && p.building && typeof p.level === 'number') {
+    return data.buildings[p.building]?.upgrades[p.level - 2]?.buildTimeHours ?? 0;
+  }
+  if (p.building) {
+    return data.buildings[p.building]?.buildTimeHours ?? 0;
+  }
+  return 0;
+}
+function timeLeft(at: number): string {
+  const hours = Math.max(0, (at - s.time) / HOUR);
+  return hours >= 1 ? `${hours.toFixed(1)}h` : `${Math.ceil(hours * 60)}m`;
+}
+function progressPct(active: ActiveBuild): number {
+  const duration = buildDurationHours(active.payload) * HOUR;
+  if (duration <= 0) {
+    return 100;
+  }
+  return Math.max(0, Math.min(100, 100 - ((active.at - s.time) / duration) * 100));
+}
+function queuedLabel(q: QueuedBuild): string {
+  if (q.kind === 'unit') {
+    return `${q.count}× ${unitIcon(q.id)} ${displayUnit(q.id)}`;
+  }
+  if (q.kind === 'upgrade') {
+    return `${BUILD_ICON[q.id] ?? '▣'} ${data.buildings[q.id]?.name ?? q.id} upgrade`;
+  }
+  return `${BUILD_ICON[q.id] ?? '▣'} ${data.buildings[q.id]?.name ?? q.id}`;
+}
+function enqueueBuild(planetId: string, order: QueuedBuild): void {
+  queueOf(planetId)[laneOf(order.kind)].push(order);
+  note(`queued ${queuedLabel(order)} at ${planetId}`);
+  pumpBuildQueues();
+}
+function submitQueued(planetId: string, queued: QueuedBuild): StepOut {
+  const action =
+    queued.kind === 'unit'
+      ? buildUnit(ME, planetId, queued.id, queued.count)
+      : queued.kind === 'upgrade'
+        ? upgradeBuilding(ME, planetId, queued.id)
+        : buildBuilding(ME, planetId, queued.id);
+  const out = order(s, action, s.time);
+  apply(out);
+  return out;
+}
+function pumpBuildQueues(): void {
+  for (const planetId of Object.keys(buildQueues)) {
+    const q = buildQueues[planetId];
+    const p = s.planets[planetId];
+    if (!p || p.owner !== ME) {
+      continue;
+    }
+    for (const lane of ['buildings', 'units'] as const) {
+      const next = q[lane][0];
+      if (!next || activeConstruction(planetId, lane) || !canStartQueued(planetId, next)) {
+        continue;
+      }
+      q[lane].shift();
+      const r = submitQueued(planetId, next);
+      if (r.error) {
+        note(`${queuedLabel(next)} failed: ${r.error}`);
+      }
+    }
+  }
 }
 function fleetPos(f: Fleet): { x: number; y: number } | null {
   if (f.location) return s.planets[f.location]?.position ?? null;
@@ -887,6 +1055,55 @@ function cardHeader(color: string, title: string, sub: string): string {
     <button class="pclose" data-act="close" data-arg="">✕</button>
   </div>`;
 }
+function tabButton(tab: PlanetTab, label: string, count: number): string {
+  const on = planetTab === tab ? ' on' : '';
+  return `<button class="ptab${on}" data-act="tab" data-arg="${tab}">${label}<b>${count}</b></button>`;
+}
+function unitRows(stacks: Array<{ unit: string; count: number }>): string {
+  if (!stacks.length) {
+    return `<div class="row dim">none</div>`;
+  }
+  return stacks
+    .map(
+      (st) =>
+        `<div class="asset-row"><span class="bicon">${unitIcon(st.unit)}</span><b>${st.count}× ${displayUnit(st.unit)}</b><span class="dim">${isGround(st.unit) ? 'ground' : 'space'}</span></div>`,
+    )
+    .join('');
+}
+function conveyorHtml(planetId: string, lane: BuildLane): string {
+  const active = activeConstruction(planetId, lane);
+  const queued = queueOf(planetId)[lane];
+  let html = `<div class="conveyor">`;
+  if (active) {
+    const pct = progressPct(active);
+    html += `<div class="current"><span>NOW</span><b>${constructionLabel(active.payload)}</b><em>${timeLeft(active.at)}</em></div>`;
+    html += `<div class="bar"><i style="width:${pct.toFixed(0)}%"></i></div>`;
+  } else {
+    html += `<div class="current idle"><span>IDLE</span><b>ready for next order</b><em>—</em></div>`;
+    html += `<div class="bar"><i style="width:0%"></i></div>`;
+  }
+  if (queued.length) {
+    html += `<div class="queue">${queued
+      .map((q, i) => `<span><em>${i + 1}</em>${queuedLabel(q)}</span>`)
+      .join('')}</div>`;
+  } else {
+    html += `<div class="queue empty">queue empty</div>`;
+  }
+  return html + `</div>`;
+}
+function buildButtons(planetId: string, ids: string[], kind: 'building' | 'unit'): string {
+  let html = `<div class="row">`;
+  for (const id of ids) {
+    const c = kind === 'unit' ? data.units[id]?.cost : data.buildings[id]?.cost;
+    const icon = kind === 'unit' ? unitIcon(id) : (BUILD_ICON[id] ?? '+');
+    const label =
+      kind === 'unit'
+        ? `${icon} ${displayUnit(id)} ${cost(c)}`
+        : `${icon} ${data.buildings[id]?.name ?? id} ${cost(c)}`;
+    html += btn(kind === 'unit' ? 'unit' : 'build', id, label, s.planets[planetId]?.owner === ME);
+  }
+  return html + `</div>`;
+}
 
 function panelHtml(): string {
   const group = [...selFleets].map((id) => s.fleets[id]).filter((f): f is Fleet => !!f);
@@ -984,10 +1201,13 @@ function panelHtml(): string {
   const sec = data.sectors[p.sectorType ?? '']?.name ?? p.sectorType ?? '—';
   const pt = p.planetType ? data.planetTypes[p.planetType] : undefined;
   const ptName = pt?.name ?? p.planetType ?? '—';
+  const ground = p.garrison.filter((st) => isGround(st.unit));
+  const ships = p.garrison.filter((st) => isShip(st.unit));
   const gcount = p.garrison.reduce((a, st) => a + st.count, 0);
+  const here = Object.values(s.fleets).filter((f) => f.location === p.id);
   let h =
     cardHeader(COLOR[owner], p.id, `${p.owner ? NAME[p.owner] : 'Neutral'} · ${ptName} · ${sec}`) +
-    `<div class="pstats"><span>⚔ ${gcount} garrison</span><span>▣ ${p.buildings.length} built</span></div>`;
+    `<div class="pstats"><span>⚔ ${gcount} garrison</span><span>${unitIcon('marine')} ${ground.reduce((a, st) => a + st.count, 0)} ground</span><span>${unitIcon('cruiser')} ${ships.reduce((a, st) => a + st.count, 0)} ships</span><span>▣ ${p.buildings.length} built</span></div>`;
   if (pt && (pt.productionBonus !== 0 || pt.defenseBonus !== 0)) {
     const pct = (n: number) => (n >= 0 ? '+' : '') + Math.round(n * 100) + '%';
     const parts: string[] = [];
@@ -996,66 +1216,69 @@ function panelHtml(): string {
     h += `<div class="row dim">${ptName} world — ${parts.join(' · ')}</div>`;
   }
 
-  // buildings
-  h += `<div class="sec">Buildings</div>`;
-  if (p.buildings.length === 0) h += `<div class="row dim">none</div>`;
-  for (const b of p.buildings) {
-    const def = data.buildings[b.type];
-    const max = def ? buildingMaxLevel(def) : 1;
-    h += `<div class="row"><span class="bicon">${BUILD_ICON[b.type] ?? '▪'}</span>${def?.name ?? b.type} <span class="dim">L${b.level}/${max} · hp ${floor(b.hp)}/${hpOfLevel(b.type, b.level)}</span>`;
-    if (mine && b.level < max) {
-      const c = def?.upgrades[b.level - 1]?.cost;
-      h += ' ' + btn('upgrade', b.type, `▲ ${cost(c)}`, afford(c));
+  h += `<div class="ptabs">${tabButton('ground', 'Ground', ground.length)}${tabButton(
+    'ships',
+    'Ships',
+    ships.length + here.length,
+  )}${tabButton('buildings', 'Buildings', p.buildings.length)}</div>`;
+
+  if (planetTab === 'ground') {
+    h += `<div class="sec">Ground units</div>`;
+    h += unitRows(ground);
+    if (mine) {
+      const groundBuilds = BUILD_UNITS.filter((u) => isGround(u));
+      h += `<div class="sec">Ground conveyor</div>`;
+      h += conveyorHtml(p.id, 'units');
+      h += buildButtons(p.id, groundBuilds, 'unit');
     }
-    h += `</div>`;
-  }
-  if (mine) {
-    const missing = BUILDABLE.filter((t) => !p.buildings.some((b) => b.type === t));
-    if (missing.length) {
-      h += `<div class="row" style="margin-top:4px">`;
-      for (const t of missing) {
-        const c = data.buildings[t]?.cost;
-        h += btn(
-          'build',
-          t,
-          `${BUILD_ICON[t] ?? '+'} ${data.buildings[t]?.name ?? t} ${cost(c)}`,
-          afford(c),
-        );
+    h += `<div class="hint">Ground units defend planets and can be loaded onto fleets from the fleet panel.</div>`;
+  } else if (planetTab === 'ships') {
+    h += `<div class="sec">Spacecraft in garrison</div>`;
+    h += unitRows(ships);
+    if (mine && ships.length) {
+      h += `<div class="row">${btn('launch', p.id, '🚀 Launch fleet from garrison', true)}</div>`;
+    }
+    if (here.length) {
+      h += `<div class="sec">Fleets in orbit</div>`;
+      for (const f of here) {
+        const fShips = f.units.reduce((a, st) => a + st.count, 0);
+        const tr = (f.landing ?? []).reduce((a, st) => a + st.count, 0);
+        const sel = f.owner === ME ? btn('selfleet', f.id, 'Select →', true) : '';
+        h += `<div class="asset-row" style="color:${COLOR[f.owner]}"><span class="bicon">▲</span><b>${fShips} ships${tr ? ' +' + tr + ' troops' : ''}</b><span class="dim">orbit ${f.orbit ?? 'far'}</span>${sel}</div>`;
+      }
+    }
+    if (mine) {
+      const shipBuilds = BUILD_UNITS.filter((u) => isShip(u));
+      h += `<div class="sec">Shipyard conveyor</div>`;
+      h += conveyorHtml(p.id, 'units');
+      h += buildButtons(p.id, shipBuilds, 'unit');
+    }
+    h += `<div class="hint">Built spacecraft join the garrison first; launch creates a mobile fleet.</div>`;
+  } else {
+    h += `<div class="sec">Building conveyor</div>`;
+    if (mine) {
+      h += conveyorHtml(p.id, 'buildings');
+    } else {
+      h += `<div class="row dim">enemy construction telemetry unavailable</div>`;
+    }
+    h += `<div class="sec">Buildings</div>`;
+    if (p.buildings.length === 0) h += `<div class="row dim">none</div>`;
+    for (const b of p.buildings) {
+      const def = data.buildings[b.type];
+      const max = def ? buildingMaxLevel(def) : 1;
+      h += `<div class="asset-row"><span class="bicon">${BUILD_ICON[b.type] ?? '▪'}</span><b>${def?.name ?? b.type}</b><span class="dim">L${b.level}/${max} · hp ${floor(b.hp)}/${hpOfLevel(b.type, b.level)}</span>`;
+      if (mine && b.level < max) {
+        const c = def?.upgrades[b.level - 1]?.cost;
+        h += btn('upgrade', b.type, `▲ Upgrade ${cost(c)}`, afford(c));
       }
       h += `</div>`;
     }
-  }
-
-  // garrison
-  h += `<div class="sec">Garrison</div>`;
-  h +=
-    p.garrison.length === 0
-      ? `<div class="row dim">undefended</div>`
-      : `<div class="row">${p.garrison.map((u) => `${u.count}×${u.unit}`).join(', ')}</div>`;
-  if (mine && p.garrison.some((st) => isShip(st.unit))) {
-    h += `<div class="row">${btn('launch', p.id, '🚀 Launch fleet from garrison', true)}</div>`;
-  }
-
-  // fleets here
-  const here = Object.values(s.fleets).filter((f) => f.location === p.id);
-  if (here.length) {
-    h += `<div class="sec">Fleets in orbit</div>`;
-    for (const f of here) {
-      const ships = f.units.reduce((a, st) => a + st.count, 0);
-      const tr = (f.landing ?? []).reduce((a, st) => a + st.count, 0);
-      const sel = f.owner === ME ? btn('selfleet', f.id, 'Select →', true) : '';
-      h += `<div class="row" style="color:${COLOR[f.owner]}">▲ ${ships} ships${tr ? ' +' + tr + ' troops' : ''} ${sel}</div>`;
+    if (mine) {
+      const missing = BUILDABLE.filter((t) => !p.buildings.some((b) => b.type === t));
+      if (missing.length) {
+        h += buildButtons(p.id, missing, 'building');
+      }
     }
-  }
-
-  // unit production
-  if (mine) {
-    h += `<div class="sec">Build units → garrison</div><div class="row">`;
-    for (const u of BUILD_UNITS) {
-      const c = data.units[u]?.cost;
-      h += btn('unit', u, `${u} ${cost(c)}`, afford(c));
-    }
-    h += `</div><div class="hint">Built units join the garrison; “Launch fleet” turns ships + troops into a mobile fleet.</div>`;
   }
   return h;
 }
@@ -1123,12 +1346,16 @@ side.addEventListener('click', (ev) => {
     selFleets = new Set();
   } else if (act === 'selfleet') {
     setFleetSelection([arg]);
+  } else if (act === 'tab') {
+    if (arg === 'ground' || arg === 'ships' || arg === 'buildings') {
+      planetTab = arg;
+    }
   } else if (act === 'build') {
-    playerOrder(buildBuilding(ME, selPlanet!, arg));
+    enqueueBuild(selPlanet!, { kind: 'building', id: arg, count: 1 });
   } else if (act === 'upgrade') {
-    playerOrder(upgradeBuilding(ME, selPlanet!, arg));
+    enqueueBuild(selPlanet!, { kind: 'upgrade', id: arg, count: 1 });
   } else if (act === 'unit') {
-    playerOrder(buildUnit(ME, selPlanet!, arg, 1));
+    enqueueBuild(selPlanet!, { kind: 'unit', id: arg, count: 1 });
   } else if (act === 'launch') {
     playerOrder(launchFleet(ME, arg));
   } else if (act === 'orbit') {
@@ -1338,6 +1565,7 @@ function frame(nowReal: number) {
     apply(advance(s, target));
     autoEngage();
     runAI();
+    pumpBuildQueues();
     checkEnd();
   }
   render(nowReal);
