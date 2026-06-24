@@ -114,6 +114,8 @@
 
 > Трек безопасности — живёт рядом с продуктовым и раздаётся как задачи. База —
 > `.gitlab-ci.yml` + `docs/security/pipeline.md`. Один кирпич = один сканер/правило/шаг.
+> Глубокие роадмапы (задачи/подзадачи): `secure-sdlc-roadmap.md` (как строим безопасно) и
+> `secure-environment-roadmap.md` (как безопасно эксплуатируем) — SEC/F-бирки сшиты с ними.
 
 - **SEC-0** ✅ Базовый GitLab-пайплайн: SAST (Semgrep) + SCA (pnpm audit + osv-scanner)
   + секреты (Gitleaks) + Trivy fs + SBOM (Syft), ratcheting-гейт.
