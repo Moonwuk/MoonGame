@@ -105,6 +105,11 @@ interface ActiveBuild {
   payload: ConstructionPayload;
 }
 
+/** Escape untrusted strings before inserting into innerHTML (XSS prevention). */
+function esc(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
 /** hex `#rrggbb` → `rgba()` with alpha — for tinted rings, ticks and trails. */
 function rgba(hex: string, a: number): string {
   const v = hex.replace('#', '');
@@ -1388,12 +1393,12 @@ function render(now: number) {
 // --- side panel --------------------------------------------------------------
 
 function btn(act: string, arg: string, label: string, ok: boolean): string {
-  return `<button class="b" data-act="${act}" data-arg="${arg}" ${ok ? '' : 'disabled'}>${label}</button>`;
+  return `<button class="b" data-act="${esc(act)}" data-arg="${esc(arg)}" ${ok ? '' : 'disabled'}>${esc(label)}</button>`;
 }
 function cardHeader(color: string, title: string, sub: string): string {
   return `<div class="phead">
     <span class="pflag" style="background:${color}"></span>
-    <div class="ptitle"><b>${title}</b><span>${sub}</span></div>
+    <div class="ptitle"><b>${esc(title)}</b><span>${esc(sub)}</span></div>
     <button class="pclose" data-act="close" data-arg="">✕</button>
   </div>`;
 }
@@ -1470,8 +1475,8 @@ function panelHtml(): string {
   if (selFleet) {
     const f = s.fleets[selFleet];
     if (f) {
-      const shipList = f.units.map((u) => `${u.count}×${u.unit}`).join(', ') || '—';
-      const trList = (f.landing ?? []).map((u) => `${u.count}×${u.unit}`).join(', ') || '—';
+      const shipList = f.units.map((u) => `${u.count}×${esc(u.unit)}`).join(', ') || '—';
+      const trList = (f.landing ?? []).map((u) => `${u.count}×${esc(u.unit)}`).join(', ') || '—';
       const nShips = sumUnits(f.units);
       const nTr = sumUnits(f.landing ?? []);
       const orbit = f.orbit ?? '—';
@@ -1494,7 +1499,7 @@ function panelHtml(): string {
         // enemy/neutral world you can act on — empty space is pass-through only
         const hostile = here!.owner !== f.owner && (SECTOR_TYPES[SECTOR_OF[here!.id]]?.capturable ?? false);
         // orbit toggle
-        h += `<div class="sec">Orbit · ${here!.id}</div><div class="row">`;
+        h += `<div class="sec">Orbit · ${esc(here!.id)}</div><div class="row">`;
         h += btn('orbit', 'near', '▼ Descend (near)', orbit !== 'near');
         h += btn('orbit', 'far', '▲ Pull back (far)', orbit !== 'far');
         h += `</div>`;
@@ -1553,7 +1558,7 @@ function panelHtml(): string {
     const parts: string[] = [];
     if (pt.productionBonus !== 0) parts.push(`prod ${pct(pt.productionBonus)}`);
     if (pt.defenseBonus !== 0) parts.push(`def ${pct(pt.defenseBonus)}`);
-    h += `<div class="row dim">${ptName} world — ${parts.join(' · ')}</div>`;
+    h += `<div class="row dim">${esc(ptName)} world — ${parts.join(' · ')}</div>`;
   }
 
   h += `<div class="ptabs">${tabButton('ground', 'Ground', ground.length)}${tabButton(
@@ -1963,7 +1968,7 @@ function frame(nowReal: number) {
     alertBadge.textContent = alertText;
     lastAlertText = alertText;
   }
-  const logHtml = logLines.map((l) => `<div>${l}</div>`).join('');
+  const logHtml = logLines.map((l) => `<div>${esc(l)}</div>`).join('');
   if (logHtml !== lastLogHtml) {
     logEl.innerHTML = logHtml;
     lastLogHtml = logHtml;
