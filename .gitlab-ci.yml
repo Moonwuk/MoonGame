@@ -198,8 +198,8 @@ sbom-syft:
   stage: sbom
   needs: []
   image:
-    name: anchore/syft:v1.20.0  # Пinned version, known to have shell
-    entrypoint: [""]            # Override default entrypoint if any
+    name: anchore/syft:v1.20.0  # Пиннутая версия с известной структурой
+    entrypoint: [""]            # ОБЯЗАТЕЛЬНО: отключаем стандартный entrypoint
   script:
     - syft . -o cyclonedx-json=sbom.cdx.json -o table
   artifacts:
