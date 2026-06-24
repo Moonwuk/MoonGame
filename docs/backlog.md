@@ -85,6 +85,11 @@
 
 ## Блок G · Клиент (Этап 4) `[cli]` _(параллелен серверу)_
 
+> **Переориентировано на PWA-first веб-клиент** — детальные бирки CP0–CP7 в
+> [`cross-platform-roadmap.md`](cross-platform-roadmap.md). Соответствие: G1→CP1,
+> G2→CP4 (Pixi вместо Skia), G3→`@void/client`+CP1, G4→CP3. Бирки G1–G4 ниже —
+> исходный (RN) вариант.
+
 - **G1** ⏳ React Native оболочка + WS-подключение + graceful reconnect.
 - **G2** 🔒(G1) Skia-рендер карты (зум / скролл / culling).
 - **G3** 🔒(G1) Применение diff'ов от сервера к локальному состоянию.
