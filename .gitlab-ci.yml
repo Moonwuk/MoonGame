@@ -143,7 +143,51 @@ trivy-fs:
     paths: [trivy.sarif]
     when: always
   allow_failure: true
+  
+secrets-gitleaks:
+  stage: security
+  needs: []
+  image:
+    name: zricethezav/gitleaks:latest
+    entrypoint: ['']
+  script:
+    # 👇 ЗАМЕНИТЕ СТАРУЮ СТРОКУ НА ЭТУ:
+    - gitleaks detect --source . --log-opts="--all" --redact --verbose --report-format sarif --report-path gitleaks.sarif
+  artifacts:
+    paths: [gitleaks.sarif]
+    when: always
+  allow_failure: false
 
+  trivy-fs:
+  stage: security
+  needs: []
+  image:
+    name: aquasec/trivy:0.58.2  # Pinned stable version
+    entrypoint: [""]
+  script:
+    - trivy fs --scanners vuln,secret,misconfig --severity HIGH,CRITICAL \
+        --format sarif --output trivy.sarif --exit-code 0 .
+    - trivy fs --scanners vuln,secret,misconfig --severity HIGH,CRITICAL \
+        --exit-code 1 .
+  artifacts:
+    paths: [trivy.sarif]
+    when: always
+  allow_failure: true
+
+sca-osv-scanner:
+  stage: security
+  needs: []
+  image:
+    name: ghcr.io/google/osv-scanner:v1.9.1
+    entrypoint: [""]
+  script:
+    # Используем полный путь к бинарнику внутри контейнера
+    - /osv-scanner --lockfile=pnpm-lock.yaml --format sarif --output osv.sarif || true
+    - /osv-scanner --lockfile=pnpm-lock.yaml
+  artifacts:
+    paths: [osv.sarif]
+    when: always
+  allow_failure: true
 # ===========================================================================
 # 5) SBOM — Software Bill of Materials (инвентарь всего, что у нас стоит).
 #    Зачем: при новом громком CVE (log4shell-стиль) SBOM мгновенно отвечает
@@ -154,8 +198,8 @@ sbom-syft:
   stage: sbom
   needs: []
   image:
-    name: anchore/syft:latest
-    entrypoint: ['']
+    name: anchore/syft:v1.20.0  # Пinned version, known to have shell
+    entrypoint: [""]            # Override default entrypoint if any
   script:
     - syft . -o cyclonedx-json=sbom.cdx.json -o table
   artifacts:
