@@ -2158,10 +2158,15 @@ scrim.addEventListener('click', () => document.body.classList.remove('drawer-ope
 
 // --- loop --------------------------------------------------------------------
 
+const fpsEl = $('fps');
+let fpsEma = 60; // smoothed frames-per-second readout
+let lastFpsText = '';
 let lastReal = performance.now();
 function frame(nowReal: number) {
   const dt = nowReal - lastReal;
   lastReal = nowReal;
+  // smooth FPS; ignore absurd gaps (tab backgrounded) so the readout stays sane
+  if (dt > 0 && dt < 1000) fpsEma = fpsEma * 0.9 + (1000 / dt) * 0.1;
   if (speed > 0 && !banner) {
     const target = s.time + (dt / 1000) * speed * HOUR;
     apply(advance(s, target));
@@ -2188,6 +2193,11 @@ function frame(nowReal: number) {
   if (dayTimerText !== lastDayTimerText) {
     dayTimer.textContent = dayTimerText;
     lastDayTimerText = dayTimerText;
+  }
+  const fpsText = `${Math.round(fpsEma)} FPS`;
+  if (fpsText !== lastFpsText) {
+    fpsEl.textContent = fpsText;
+    lastFpsText = fpsText;
   }
   const r = s.players[ME]?.resources ?? {};
   const inc = netIncome(s, ME);

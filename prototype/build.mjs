@@ -60,6 +60,10 @@ body::before{content:"";position:fixed;inset:0;z-index:1;pointer-events:none;mix
 #speedbar{position:fixed;right:14px;bottom:14px;z-index:24;display:flex;align-items:center;gap:4px;
   padding:5px 7px;background:rgba(3,12,16,.78);border:1px solid var(--line-hi);border-radius:3px;
   box-shadow:0 0 16px rgba(40,200,210,.10);}
+#fps{position:fixed;top:50px;right:10px;z-index:25;pointer-events:none;
+  font:700 10px ui-monospace,Menlo,monospace;color:var(--grn);opacity:.72;letter-spacing:.5px;
+  text-shadow:0 0 6px rgba(0,0,0,.85);}
+@media (max-width:720px){#fps{top:48px;}}
 .spd button{min-width:30px;height:26px;padding:0 5px;border-radius:2px;cursor:pointer;font:11px ui-monospace,monospace;
   background:transparent;color:var(--cyan-dim);border:1px solid var(--line-hi);}
 .spd button.on{background:rgba(53,214,230,.16);color:var(--cyan);border-color:var(--cyan);box-shadow:0 0 10px rgba(53,214,230,.4);}
@@ -249,6 +253,7 @@ const html = `<!doctype html>
   <span class="sep"></span><button data-fog title="Fog of war — dev preview (variant A)">FOG</button>
 </div>
 <div id="cmdbar"></div>
+<div id="fps"></div>
 <div id="banner"></div>
 <script>${js}</script>
 </body></html>`;

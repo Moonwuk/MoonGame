@@ -236,28 +236,31 @@ function fillSectors(): KeyNode[] {
   return out;
 }
 
-// Wire sectors up by proximity: each links to its nearest neighbours within range
-// (symmetric, degree-capped) — "every sector has N paths, joined or not to its
-// neighbours". This is what makes the whole map one traversable graph.
-function withProximityLinks(nodes: KeyNode[]): MapNode[] {
-  const range = 215;
-  const cap = 6;
-  const adj = new Map<string, Set<string>>(nodes.map((n) => [n.id, new Set<string>()]));
+// Wire sectors up as a Relative Neighbourhood Graph: a sector links to another
+// ONLY if no third sector lies "between" them (closer to both than they are to
+// each other). That gives each sector paths to its immediate neighbours only —
+// no long criss-crossing lanes — while the map stays one fully-connected graph
+// (an RNG always contains the Euclidean minimum spanning tree). Links are
+// symmetric. O(n³), trivial for a few dozen sectors.
+function withNeighborLinks(nodes: KeyNode[]): MapNode[] {
   const dist = (a: KeyNode, b: KeyNode): number => Math.hypot(a.x - b.x, a.y - b.y);
-  for (const n of nodes) {
-    const near = nodes
-      .filter((m) => m.id !== n.id && dist(m, n) <= range)
-      .sort((a, b) => dist(a, n) - dist(b, n))
-      .slice(0, cap);
-    for (const m of near) {
-      adj.get(n.id)!.add(m.id);
-      adj.get(m.id)!.add(n.id);
+  const adj = new Map<string, Set<string>>(nodes.map((n) => [n.id, new Set<string>()]));
+  for (let i = 0; i < nodes.length; i++) {
+    for (let j = i + 1; j < nodes.length; j++) {
+      const a = nodes[i]!;
+      const b = nodes[j]!;
+      const dab = dist(a, b);
+      const between = nodes.some((c) => c !== a && c !== b && dist(a, c) < dab && dist(b, c) < dab);
+      if (!between) {
+        adj.get(a.id)!.add(b.id);
+        adj.get(b.id)!.add(a.id);
+      }
     }
   }
   return nodes.map((n) => ({ ...n, links: [...adj.get(n.id)!] }));
 }
 
-export const MAP: MapNode[] = withProximityLinks([...KEY, ...fillSectors()]);
+export const MAP: MapNode[] = withNeighborLinks([...KEY, ...fillSectors()]);
 
 function player(
   id: string,
