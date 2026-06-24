@@ -154,7 +154,14 @@ Severity: 🔴 High (блокер играбельной/публичной ве
 Выделенный research-проход прерван лимитом — досверить цитатами: build-vs-adopt realtime
 (Colyseus/Nakama/SpacetimeDB актуальное состояние), pg-boss vs BullMQ vs Temporal на масштабе,
 WebTransport-поддержка в браузерах, паттерны graceful-deploy для долгих WS, стоимостные модели
-Fly.io/Railway для always-on. Этот документ — инженерный анализ; цитаты добавить отдельным PR.
+Fly.io/Railway для always-on.
+
+**Конкретно (из инженерного ревью, см. `sprint-1.md`):**
+- **pg-boss vs BullMQ на НАШЕМ паттерне** (долгие таймеры «прибудет через N ч»), а не синтетика.
+- **JSONB versioning/индексы** в Postgres: `jsonb_path_ops`, GIN vs GiST под наш access pattern.
+- **Десинк-детекция** в других async-strategy на TS: как решали сверку состояния.
+
+Этот документ — инженерный анализ; цитаты добавить отдельным PR.
 
 ## Ссылки на внутренние доки
 
