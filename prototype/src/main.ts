@@ -114,6 +114,19 @@ function rgba(hex: string, a: number): string {
   return `rgba(${r},${g},${b},${a})`;
 }
 
+/** Total count across a stack of units (ships, garrison or landing troops). */
+const sumUnits = (stacks: ReadonlyArray<{ count: number }>): number =>
+  stacks.reduce((a, s) => a + s.count, 0);
+
+// Map-marker geometry / palette, shared so every blip reads the same way.
+const CARDINAL: ReadonlyArray<readonly [number, number]> = [
+  [0, -1],
+  [0, 1],
+  [-1, 0],
+  [1, 0],
+];
+const ORBIT_COLOR = { near: '#ffb15f', far: '#7df0d0' } as const; // hot zone / safe ring
+
 // --- state -------------------------------------------------------------------
 
 let s: GameState = newGame();
@@ -1007,7 +1020,6 @@ function render(now: number) {
 
   // battles — pulsing red contact ring
   const wave = (now / 900) % 1;
-  const pulse = 0.5 + 0.5 * Math.sin(now / 180);
   for (const b of Object.values(s.battles)) {
     const pp = s.planets[b.location];
     if (!pp) continue;
@@ -1035,12 +1047,7 @@ function render(now: number) {
       cx.strokeStyle = rgba(VOID_COLOR, 0.5);
       cx.lineWidth = 1;
       cx.beginPath();
-      for (const [dx, dy] of [
-        [0, -1],
-        [0, 1],
-        [-1, 0],
-        [1, 0],
-      ] as const) {
+      for (const [dx, dy] of CARDINAL) {
         cx.moveTo(c.x + dx * 1.5, c.y + dy * 1.5);
         cx.lineTo(c.x + dx * 3.5, c.y + dy * 3.5);
       }
@@ -1207,12 +1214,7 @@ function render(now: number) {
     cx.strokeStyle = rgba(col, 0.7);
     cx.lineWidth = 1.2;
     cx.beginPath();
-    for (const [dx, dy] of [
-      [0, -1],
-      [0, 1],
-      [-1, 0],
-      [1, 0],
-    ] as const) {
+    for (const [dx, dy] of CARDINAL) {
       cx.moveTo(c.x + dx * (R - 3), c.y + dy * (R - 3));
       cx.lineTo(c.x + dx * (R + 5), c.y + dy * (R + 5));
     }
@@ -1227,7 +1229,7 @@ function render(now: number) {
     cx.fillStyle = p.owner ? col : '#9fc9c4';
     cx.font = '700 12px ui-monospace,Menlo,monospace';
     cx.fillText(n.id, c.x + R + 12, c.y - 1);
-    const g = p.garrison.reduce((a, st) => a + st.count, 0);
+    const g = sumUnits(p.garrison);
     cx.fillStyle = 'rgba(150,210,205,0.6)';
     cx.font = '10px ui-monospace,Menlo,monospace';
     const icons = p.buildings.map((b) => BUILD_ICON[b.type] ?? '▪').join('');
@@ -1254,13 +1256,13 @@ function render(now: number) {
       cx.save();
       cx.setLineDash(warm ? [2, 5] : [7, 6]);
       cx.lineDashOffset = warm ? now / 200 : -now / 280;
-      cx.strokeStyle = rgba(warm ? '#ffb15f' : '#7df0d0', warm ? 0.42 : 0.22);
+      cx.strokeStyle = rgba(ORBIT_COLOR[orb], warm ? 0.42 : 0.22);
       cx.lineWidth = warm ? 1.3 : 1;
       cx.beginPath();
       cx.arc(pc.x, pc.y, ORBIT_R[orb], 0, TAU);
       cx.stroke();
       cx.setLineDash([]);
-      cx.fillStyle = rgba(warm ? '#ffb15f' : '#7df0d0', 0.7);
+      cx.fillStyle = rgba(ORBIT_COLOR[orb], 0.7);
       cx.font = '700 7px ui-monospace,Menlo,monospace';
       cx.textAlign = 'center';
       cx.fillText(warm ? 'NEAR' : 'FAR', pc.x, pc.y + ORBIT_R[orb] + 8);
@@ -1274,8 +1276,8 @@ function render(now: number) {
     const A = fleetAnchor(f);
     if (!A || !visible(A, 120)) continue;
     const col = COLOR[f.owner];
-    const ships = f.units.reduce((a, st) => a + st.count, 0);
-    const troops = (f.landing ?? []).reduce((a, st) => a + st.count, 0);
+    const ships = sumUnits(f.units);
+    const troops = sumUnits(f.landing ?? []);
     const engine = 0.55 + 0.45 * Math.sin(now / 120 + f.id.length);
 
     // bombardment beam down to the planet
@@ -1360,7 +1362,7 @@ function render(now: number) {
 
     // orbit tag for a stationed fleet (N = near / F = far)
     if (f.location && !f.movement) {
-      cx.fillStyle = rgba(f.orbit === 'near' ? '#ffb15f' : '#7df0d0', 0.9);
+      cx.fillStyle = rgba(ORBIT_COLOR[f.orbit ?? 'far'], 0.9);
       cx.font = '700 8px ui-monospace,Menlo,monospace';
       cx.fillText(f.orbit === 'near' ? 'N' : 'F', A.x, A.y - 12);
     }
@@ -1448,11 +1450,8 @@ function buildButtons(planetId: string, ids: string[], kind: 'building' | 'unit'
 function panelHtml(): string {
   const group = [...selFleets].map((id) => s.fleets[id]).filter((f): f is Fleet => !!f);
   if (group.length > 1) {
-    const ships = group.reduce((a, f) => a + f.units.reduce((b, u) => b + u.count, 0), 0);
-    const troops = group.reduce(
-      (a, f) => a + (f.landing ?? []).reduce((b, u) => b + u.count, 0),
-      0,
-    );
+    const ships = group.reduce((a, f) => a + sumUnits(f.units), 0);
+    const troops = group.reduce((a, f) => a + sumUnits(f.landing ?? []), 0);
     let h = cardHeader(
       COLOR[ME],
       'TASK GROUP',
@@ -1461,8 +1460,8 @@ function panelHtml(): string {
     h += `<div class="hint">Press <b>Move</b>, then tap a destination to send all selected fleets (they route and stop). Shift-drag on the map selects a fleet group.</div>`;
     for (const f of group) {
       const loc = f.location ?? (f.movement ? `${f.movement.from}→${f.movement.to}` : '—');
-      const nShips = f.units.reduce((a, u) => a + u.count, 0);
-      const nTr = (f.landing ?? []).reduce((a, u) => a + u.count, 0);
+      const nShips = sumUnits(f.units);
+      const nTr = sumUnits(f.landing ?? []);
       h += `<div class="row" style="color:${COLOR[f.owner]}">▲ ${f.id} <span class="dim">${loc}</span> · ${nShips}${nTr ? '+' + nTr : ''}</div>`;
     }
     h += btn('cancel', '', 'Deselect group', true);
@@ -1471,17 +1470,17 @@ function panelHtml(): string {
   if (selFleet) {
     const f = s.fleets[selFleet];
     if (f) {
-      const ships = f.units.map((u) => `${u.count}×${u.unit}`).join(', ') || '—';
-      const tr = (f.landing ?? []).map((u) => `${u.count}×${u.unit}`).join(', ') || '—';
-      const nShips = f.units.reduce((a, u) => a + u.count, 0);
-      const nTr = (f.landing ?? []).reduce((a, u) => a + u.count, 0);
+      const shipList = f.units.map((u) => `${u.count}×${u.unit}`).join(', ') || '—';
+      const trList = (f.landing ?? []).map((u) => `${u.count}×${u.unit}`).join(', ') || '—';
+      const nShips = sumUnits(f.units);
+      const nTr = sumUnits(f.landing ?? []);
       const orbit = f.orbit ?? '—';
       let h = cardHeader(
         COLOR[f.owner],
         'FLEET',
         `${nShips} ships · ${nTr} troops · orbit ${orbit}${f.bombarding ? ' · ⊗ bombarding' : ''}`,
       );
-      h += `<div class="pstats"><span>✦ ${ships}</span></div><div class="row dim">Carrying: ${tr}</div>`;
+      h += `<div class="pstats"><span>✦ ${shipList}</span></div><div class="row dim">Carrying: ${trList}</div>`;
 
       const here = planet(f.location);
       const docked = !!here && !f.movement && !f.battleId;
@@ -1544,11 +1543,11 @@ function panelHtml(): string {
   const ptName = pt?.name ?? p.planetType ?? '—';
   const ground = p.garrison.filter((st) => isGround(st.unit));
   const ships = p.garrison.filter((st) => isShip(st.unit));
-  const gcount = p.garrison.reduce((a, st) => a + st.count, 0);
+  const gcount = sumUnits(p.garrison);
   const here = Object.values(s.fleets).filter((f) => f.location === p.id);
   let h =
     cardHeader(COLOR[owner], p.id, `${p.owner ? NAME[p.owner] : 'Neutral'} · ${ptName} · ${sec}`) +
-    `<div class="pstats"><span>⚔ ${gcount} garrison</span><span>${unitIcon('marine')} ${ground.reduce((a, st) => a + st.count, 0)} ground</span><span>${unitIcon('cruiser')} ${ships.reduce((a, st) => a + st.count, 0)} ships</span><span>▣ ${p.buildings.length} built</span></div>`;
+    `<div class="pstats"><span>⚔ ${gcount} garrison</span><span>${unitIcon('marine')} ${sumUnits(ground)} ground</span><span>${unitIcon('cruiser')} ${sumUnits(ships)} ships</span><span>▣ ${p.buildings.length} built</span></div>`;
   if (pt && (pt.productionBonus !== 0 || pt.defenseBonus !== 0)) {
     const pct = (n: number) => (n >= 0 ? '+' : '') + Math.round(n * 100) + '%';
     const parts: string[] = [];
@@ -1582,8 +1581,8 @@ function panelHtml(): string {
     if (here.length) {
       h += `<div class="sec">Fleets in orbit</div>`;
       for (const f of here) {
-        const fShips = f.units.reduce((a, st) => a + st.count, 0);
-        const tr = (f.landing ?? []).reduce((a, st) => a + st.count, 0);
+        const fShips = sumUnits(f.units);
+        const tr = sumUnits(f.landing ?? []);
         const sel = f.owner === ME ? btn('selfleet', f.id, 'Select →', true) : '';
         h += `<div class="asset-row" style="color:${COLOR[f.owner]}"><span class="bicon">▲</span><b>${fShips} ships${tr ? ' +' + tr + ' troops' : ''}</b><span class="dim">orbit ${f.orbit ?? 'far'}</span>${sel}</div>`;
       }
