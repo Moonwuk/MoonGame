@@ -76,10 +76,13 @@ describe('createMultiplayerServer', () => {
       );
 
       const [m1, m2] = await Promise.all([state1, state2]);
-      expect(m1).toMatchObject({ type: 'state', seq: 1 });
-      expect(m2).toMatchObject({ type: 'state', seq: 1 });
-      if (m1.type !== 'state') throw new Error('expected state');
-      expect(m1.state.players.p1?.resources.marker).toBe(1);
+      expect(m1).toMatchObject({ type: 'delta', seq: 1 });
+      expect(m2).toMatchObject({ type: 'delta', seq: 1 });
+      if (m1.type !== 'delta') throw new Error('expected delta');
+      const changedP1 = m1.delta.changed.players?.p1 as
+        | { resources?: Record<string, number> }
+        | undefined;
+      expect(changedP1?.resources?.marker).toBe(1);
     } finally {
       p1.close();
       p2.close();

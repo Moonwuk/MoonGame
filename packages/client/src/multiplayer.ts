@@ -1,4 +1,4 @@
-import type { Action, GameState, PlayerId } from '@void/shared-core';
+import { applyDelta, type Action, type GameState, type PlayerId, type StateDelta } from '@void/shared-core';
 
 export type MultiplayerStatus = 'connecting' | 'open' | 'closed';
 
@@ -27,6 +27,7 @@ interface InboundBase {
   seq?: number;
   playerId?: PlayerId;
   state?: GameState;
+  delta?: StateDelta;
   actionId?: string;
   code?: string;
 }
@@ -45,6 +46,10 @@ function decode(raw: string): InboundBase | null {
 
 export class MultiplayerClient {
   private status: MultiplayerStatus = 'closed';
+  /** Last known authoritative state; deltas are applied on top of it. */
+  private lastState: GameState | null = null;
+  private matchId?: string;
+  private playerId?: PlayerId;
 
   constructor(
     private readonly socket: MultiplayerSocket,
@@ -82,11 +87,32 @@ export class MultiplayerClient {
       typeof message.seq === 'number' &&
       message.state
     ) {
+      // Full snapshot — resets the local baseline (join / resync).
+      this.lastState = message.state;
+      this.matchId = message.matchId;
+      this.playerId = message.playerId ?? this.playerId;
       this.handlers.onSnapshot?.({
         matchId: message.matchId,
-        playerId: message.playerId,
+        playerId: this.playerId,
         seq: message.seq,
         state: message.state,
+      });
+      return;
+    }
+    if (
+      message.type === 'delta' &&
+      message.delta &&
+      typeof message.seq === 'number' &&
+      this.lastState &&
+      this.matchId
+    ) {
+      // Incremental update — patch the baseline and surface the new full state.
+      this.lastState = applyDelta(this.lastState, message.delta);
+      this.handlers.onSnapshot?.({
+        matchId: this.matchId,
+        playerId: this.playerId,
+        seq: message.seq,
+        state: this.lastState,
       });
       return;
     }

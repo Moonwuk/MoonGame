@@ -7,6 +7,7 @@ import type {
   Kernel,
   PlayerId,
 } from '@void/shared-core';
+import { diffState } from '@void/shared-core';
 import {
   parseClientMessage,
   serializeServerMessage,
@@ -63,10 +64,15 @@ export class MatchRoom {
   private readonly receipts = new Map<string, ActionReceipt>();
   private seq = 0;
   private stateValue: GameState;
+  /** The state every connected peer is known to hold — the baseline deltas diff
+   *  against. A new peer's `welcome` resets it to the current state (between
+   *  actions the room state never changes, so one room-wide baseline is sound). */
+  private lastBroadcast: GameState;
 
   constructor(options: MatchRoomOptions) {
     this.id = options.id;
     this.stateValue = options.initialState;
+    this.lastBroadcast = options.initialState;
     this.kernel = options.kernel;
     this.data = options.data;
     this.config = options.config ?? { timeScale: 1 };
@@ -217,14 +223,17 @@ export class MatchRoom {
   }
 
   private broadcastState(events: DomainEvent[]): void {
+    // Send only what changed since the last broadcast (an idle world ⇒ tiny
+    // payload). Full snapshots go out on join (`welcome`) and idempotent resync.
     const message: ServerMessage = {
-      type: 'state',
+      type: 'delta',
       matchId: this.id,
       seq: this.seq,
       serverTime: this.now(),
-      state: this.stateValue,
+      delta: diffState(this.lastBroadcast, this.stateValue),
       events,
     };
+    this.lastBroadcast = this.stateValue;
     for (const playerPeers of this.peers.values()) {
       for (const peer of playerPeers) this.send(peer, message);
     }

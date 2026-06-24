@@ -41,6 +41,7 @@ export {
   type MatchState,
 } from './state/gameState';
 export { isBombarded, bombardedPlanets } from './state/orbit';
+export { diffState, applyDelta, type StateDelta } from './state/delta';
 
 // Action contract
 export {

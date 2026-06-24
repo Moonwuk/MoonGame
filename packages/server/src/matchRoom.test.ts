@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  applyDelta,
   createInitialState,
   createKernel,
   parseGameData,
@@ -102,8 +103,28 @@ describe('MatchRoom', () => {
 
     expect(result.ok).toBe(true);
     expect(r.state.players.p1?.name).toBe('Commander');
-    expect(p1.messages.at(-1)).toMatchObject({ type: 'state', seq: 1 });
-    expect(p2.messages.at(-1)).toMatchObject({ type: 'state', seq: 1 });
+    // each peer gets a delta carrying only the changed entity, not the full state
+    expect(p1.messages.at(-1)).toMatchObject({
+      type: 'delta',
+      seq: 1,
+      delta: { changed: { players: { p1: { name: 'Commander' } } } },
+    });
+    expect(p2.messages.at(-1)).toMatchObject({ type: 'delta', seq: 1 });
+  });
+
+  it('a peer reconstructs the exact server state from welcome + deltas', () => {
+    const r = room();
+    const p1 = new MemoryPeer();
+    r.addPeer('p1', p1);
+    const welcome = p1.messages[0];
+    if (welcome?.type !== 'welcome') throw new Error('expected a welcome snapshot');
+    let clientState = welcome.state;
+    r.submitAction('p1', action('a1', 'p1', 'Commander'), p1);
+    r.submitAction('p1', action('a2', 'p1', 'Admiral'), p1);
+    for (const m of p1.messages) {
+      if (m.type === 'delta') clientState = applyDelta(clientState, m.delta);
+    }
+    expect(clientState).toEqual(r.state);
   });
 
   it('rejects cross-player spoofed actions without broadcasting state', () => {
@@ -136,7 +157,8 @@ describe('MatchRoom', () => {
     expect(first).toMatchObject({ ok: true, seq: 1 });
     expect(second).toMatchObject({ ok: true, seq: 1 });
     expect(r.state.players.p1?.name).toBe('First');
-    expect(p1.messages.filter((m) => m.type === 'state')).toHaveLength(2);
+    // first action → delta broadcast; the deduped retry → full state resync
+    expect(p1.messages.filter((m) => m.type === 'delta' || m.type === 'state')).toHaveLength(2);
   });
 
   it('validates inbound client messages before applying them', () => {

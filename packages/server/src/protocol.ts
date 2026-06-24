@@ -1,4 +1,4 @@
-import type { Action, DomainEvent, GameState, PlayerId } from '@void/shared-core';
+import type { Action, DomainEvent, GameState, PlayerId, StateDelta } from '@void/shared-core';
 
 export type ServerErrorCode =
   | 'E_BAD_MESSAGE'
@@ -36,6 +36,17 @@ export interface ServerStateMessage {
   events: DomainEvent[];
 }
 
+/** Incremental update — only the entities/fields that changed since the peer's
+ *  last `welcome`/`state` snapshot. A full `state` is sent on join and on resync. */
+export interface ServerDeltaMessage {
+  type: 'delta';
+  matchId: string;
+  seq: number;
+  serverTime: number;
+  delta: StateDelta;
+  events: DomainEvent[];
+}
+
 export interface ServerRejectionMessage {
   type: 'rejection';
   matchId: string;
@@ -60,6 +71,7 @@ export interface ServerErrorMessage {
 export type ServerMessage =
   | ServerWelcomeMessage
   | ServerStateMessage
+  | ServerDeltaMessage
   | ServerRejectionMessage
   | ServerPongMessage
   | ServerErrorMessage;
