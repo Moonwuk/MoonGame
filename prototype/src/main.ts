@@ -42,6 +42,8 @@ import type {
 // Tactical-display palette: cyan = friendly, red = hostile, steel = neutral,
 // phosphor-green accent = targeting/HUD. Everything reads on near-black.
 const COLOR: Record<string, string> = { p1: '#35d6e6', p2: '#ff5a4d', null: '#6f8a93' };
+// Dev-only fog: colour for a node whose contents are outside sensor range.
+const FOG_COL = '#3a4852';
 const LANE = 'rgba(73,196,206,0.20)';
 const GRID = 'rgba(46,150,160,0.07)';
 const LOCK = '#7df0d0'; // selection / targeting reticle accent
@@ -86,6 +88,11 @@ let lastClockText = '';
 let lastDayTimerText = '';
 let lastLogHtml = '';
 let lastAlertText = '';
+// --- fog of war (DEV-ONLY, temporary preview of core "variant A") ------------
+// Client-side projection just for the renderer — NOT the real security boundary
+// (that is `visibleState` in shared-core, built later). Toggle in the speed bar.
+let fogOn = true; // default on so the effect is visible
+let fogVisible: Set<string> | null = null; // node ids in sensor range; null = no fog
 
 // --- dom ---------------------------------------------------------------------
 
@@ -325,6 +332,37 @@ function note(msg: string) {
   const h = floor((s.time % DAY) / HOUR);
   logLines.push(`D${d} ${String(h).padStart(2, '0')}h · ${msg}`);
   while (logLines.length > 9) logLines.shift();
+}
+
+/** The map node a fleet occupies / is travelling over (for visibility). */
+function fleetNode(f: Fleet): string | null {
+  return f.location ?? f.movement?.to ?? f.movement?.from ?? null;
+}
+/** Variant-A visibility: a node's contents are seen if the viewer owns it, or a
+ *  friendly world/fleet sits within one jump (sensor range). Recomputed every
+ *  frame — no memory, so things blink out the moment coverage lifts. */
+function computeFog(): Set<string> {
+  const vis = new Set<string>();
+  const add = (id: string | null | undefined) => {
+    if (!id) return;
+    vis.add(id);
+    const pl = s.planets[id];
+    if (pl?.links) for (const l of pl.links) vis.add(l);
+  };
+  for (const p of Object.values(s.planets)) if (p.owner === ME) add(p.id);
+  for (const f of Object.values(s.fleets))
+    if (f.owner === ME) {
+      add(f.location);
+      if (f.movement) {
+        add(f.movement.from);
+        add(f.movement.to);
+      }
+    }
+  return vis;
+}
+/** True if the viewer may see the contents of node `id` (no fog ⇒ always). */
+function known(id: string | null | undefined): boolean {
+  return !fogVisible || (id != null && fogVisible.has(id));
 }
 function apply(out: StepOut) {
   s = out.state;
@@ -635,6 +673,7 @@ function render(now: number) {
   const wave = (now / 900) % 1;
   const pulse = 0.5 + 0.5 * Math.sin(now / 180);
   for (const b of Object.values(s.battles)) {
+    if (!known(b.location)) continue;
     const pp = s.planets[b.location];
     if (!pp) continue;
     const c = world(pp.position);
@@ -650,12 +689,14 @@ function render(now: number) {
     if (!p) continue;
     const c = world(n);
     if (!visible(c, 110)) continue;
-    const col = COLOR[p.owner ?? 'null'];
+    const kn = known(n.id);
+    const showOwner = kn ? p.owner : null; // hide ownership of fogged systems
+    const col = kn ? COLOR[p.owner ?? 'null'] : FOG_COL;
     const sector = SECTOR_GLOW[n.sector] ?? SECTOR_GLOW.empty_space;
     const ownerPulse = 0.64 + 0.36 * Math.sin(now / 620 + n.x * 0.011 + n.y * 0.017);
 
     const aura = cx.createRadialGradient(c.x, c.y, 0, c.x, c.y, R + 34);
-    aura.addColorStop(0, rgba(col, p.owner ? 0.18 : 0.08));
+    aura.addColorStop(0, rgba(col, showOwner ? 0.18 : 0.08));
     aura.addColorStop(0.55, rgba(sector, 0.06 + 0.04 * ownerPulse));
     aura.addColorStop(1, 'rgba(2,6,12,0)');
     cx.fillStyle = aura;
@@ -675,14 +716,14 @@ function render(now: number) {
     cx.restore();
 
     // fort = hex containment ring
-    if (p.buildings.some((b) => b.type === 'fort')) {
+    if (kn && p.buildings.some((b) => b.type === 'fort')) {
       cx.strokeStyle = rgba(col, 0.5);
       cx.lineWidth = 1;
       poly(c.x, c.y, R + 6, 6, Math.PI / 6);
       cx.stroke();
     }
 
-    if (p.buildings.length) {
+    if (kn && p.buildings.length) {
       cx.save();
       cx.font = '11px ui-monospace,Menlo,monospace';
       cx.textAlign = 'center';
@@ -721,7 +762,7 @@ function render(now: number) {
     cx.fill();
     cx.restore();
 
-    glowRing(c.x, c.y, R + 5 + 3 * ownerPulse, col, p.owner ? 0.16 : 0.08);
+    glowRing(c.x, c.y, R + 5 + 3 * ownerPulse, col, showOwner ? 0.16 : 0.08);
 
     // N/E/S/W crosshair ticks
     cx.strokeStyle = rgba(col, 0.7);
@@ -740,25 +781,33 @@ function render(now: number) {
 
     if (selPlanet === n.id) targetBrackets(c.x, c.y, R + 10, now);
 
-    // callout: id + garrison/buildings, monospace
+    // callout: id + garrison/buildings, monospace (fogged → no telemetry)
     cx.save();
     cx.shadowColor = 'rgba(0,0,0,0.85)';
     cx.shadowBlur = 3;
-    cx.fillStyle = p.owner ? col : '#9fc9c4';
+    cx.fillStyle = kn ? (p.owner ? col : '#9fc9c4') : 'rgba(120,140,150,0.55)';
     cx.font = '700 12px ui-monospace,Menlo,monospace';
     cx.fillText(n.id, c.x + R + 12, c.y - 1);
-    const g = p.garrison.reduce((a, st) => a + st.count, 0);
-    cx.fillStyle = 'rgba(150,210,205,0.6)';
     cx.font = '10px ui-monospace,Menlo,monospace';
-    const icons = p.buildings.map((b) => BUILD_ICON[b.type] ?? '▪').join('');
-    cx.fillText(`G:${g}  B:${icons || '—'}`, c.x + R + 12, c.y + 12);
+    if (kn) {
+      const g = p.garrison.reduce((a, st) => a + st.count, 0);
+      cx.fillStyle = 'rgba(150,210,205,0.6)';
+      const icons = p.buildings.map((b) => BUILD_ICON[b.type] ?? '▪').join('');
+      cx.fillText(`G:${g}  B:${icons || '—'}`, c.x + R + 12, c.y + 12);
+    } else {
+      cx.fillStyle = 'rgba(110,130,140,0.5)';
+      cx.fillText('· no telemetry', c.x + R + 12, c.y + 12);
+    }
     cx.restore();
   }
 
   // orbit rings around any planet that holds a stationed fleet (near vs far)
   const stationed: Record<string, Fleet[]> = {};
   for (const f of Object.values(s.fleets))
-    if (f.location && !f.movement) (stationed[f.location] ??= []).push(f);
+    if (f.location && !f.movement) {
+      if (f.owner !== ME && !known(f.location)) continue; // hidden enemy orbit
+      (stationed[f.location] ??= []).push(f);
+    }
   for (const pid of Object.keys(stationed)) {
     const pl = s.planets[pid];
     if (!pl) continue;
@@ -780,6 +829,7 @@ function render(now: number) {
   // fleets — glowing chevrons on their orbit ring (stationed) or along the lane
   cx.textAlign = 'center';
   for (const f of Object.values(s.fleets)) {
+    if (f.owner !== ME && !known(fleetNode(f))) continue; // enemy out of sensors
     const A = fleetAnchor(f);
     if (!A || !visible(A, 120)) continue;
     const col = COLOR[f.owner];
@@ -979,6 +1029,14 @@ function panelHtml(): string {
   }
   const p = planet(selPlanet);
   if (!p) return '<div class="hint">Tap a world.</div>';
+  if (!known(p.id) && p.owner !== ME) {
+    return (
+      cardHeader(FOG_COL, p.id, 'NO TELEMETRY') +
+      `<div class="row dim">Outside sensor range — ownership, garrison and structures unknown.</div>` +
+      `<div class="hint">Hold a neighbouring world or send a fleet within one jump to scan this system.</div>` +
+      btn('cancel', '', 'Deselect', true)
+    );
+  }
   const owner = p.owner ?? 'null';
   const mine = p.owner === ME;
   const sec = data.sectors[p.sectorType ?? '']?.name ?? p.sectorType ?? '—';
@@ -1327,6 +1385,18 @@ for (const b of Array.from(document.querySelectorAll('[data-speed]'))) {
   });
 }
 
+// Dev-only fog-of-war toggle (temporary — removed once core visibleState lands).
+const fogBtn = Array.from(document.querySelectorAll('[data-fog]'))[0] as HTMLElement | undefined;
+if (fogBtn) {
+  fogBtn.classList.toggle('on', fogOn);
+  fogBtn.addEventListener('click', () => {
+    fogOn = !fogOn;
+    fogBtn.classList.toggle('on', fogOn);
+    lastPanelHtml = ''; // force the side panel to re-evaluate visibility
+    note(fogOn ? 'fog of war: ON (variant A — here & now)' : 'fog of war: OFF (omniscient)');
+  });
+}
+
 // --- loop --------------------------------------------------------------------
 
 let lastReal = performance.now();
@@ -1340,6 +1410,7 @@ function frame(nowReal: number) {
     runAI();
     checkEnd();
   }
+  fogVisible = fogOn ? computeFog() : null; // dev fog projection for this frame
   render(nowReal);
   renderPanel();
   renderCmdBar();

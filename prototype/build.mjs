@@ -63,6 +63,8 @@ body::before{content:"";position:fixed;inset:0;z-index:1;pointer-events:none;mix
 .spd button{min-width:30px;height:26px;padding:0 5px;border-radius:2px;cursor:pointer;font:11px ui-monospace,monospace;
   background:transparent;color:var(--cyan-dim);border:1px solid var(--line-hi);}
 .spd button.on{background:rgba(53,214,230,.16);color:var(--cyan);border-color:var(--cyan);box-shadow:0 0 10px rgba(53,214,230,.4);}
+.spd .sep{width:1px;height:18px;background:var(--line-hi);margin:0 4px;flex:0 0 auto;}
+.spd button[data-fog]{min-width:40px;letter-spacing:1px;font-weight:700;}
 #cmdbar{position:fixed;left:50%;transform:translateX(-50%);bottom:14px;z-index:26;display:none;align-items:center;
   gap:6px;padding:6px 8px;background:rgba(3,12,16,.88);border:1px solid var(--line-hi);border-radius:3px;
   box-shadow:0 0 22px rgba(40,200,210,.14);}
@@ -189,6 +191,7 @@ const html = `<!doctype html>
 <div id="log"></div>
 <div id="speedbar" class="spd">
   <button data-speed="0">‖</button><button data-speed="2" class="on">▶</button><button data-speed="6">▶▶</button>
+  <span class="sep"></span><button data-fog title="Fog of war — dev preview (variant A)">FOG</button>
 </div>
 <div id="cmdbar"></div>
 <div id="banner"></div>
