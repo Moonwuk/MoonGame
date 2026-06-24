@@ -5,8 +5,10 @@ import { buildingLevel, buildingMaxLevel } from '../data/schemas';
 import { isBombarded } from '../state/orbit';
 import type { Action } from '../action/types';
 import { timeScaleOf } from '../action/types';
+import { canAfford, payCost } from '../util/treasury';
 import { MS_PER_HOUR } from '../util/time';
 import { addUnits } from '../util/stacks';
+
 /** Share of the ground assault's round damage that also wears down the planet's
  *  structures (the rest is spent on the defending garrison). Tunable. */
 const STRUCTURE_DAMAGE_SHARE = 0.5;
@@ -31,27 +33,9 @@ interface CompletePayload {
   count?: number;
   level?: number;
 }
-
-// --- treasury helpers --------------------------------------------------------
-
-/** True if the treasury can cover every line of `cost`. */
-function canAfford(treasury: ResourceBag, cost: ResourceBag): boolean {
-  for (const res of Object.keys(cost)) {
-    if ((treasury[res] ?? 0) < (cost[res] ?? 0)) {
-      return false;
-    }
-  }
-  return true;
-}
-
-/** Deducts `cost` from the treasury in place (caller has checked affordability). */
-function payCost(treasury: ResourceBag, cost: ResourceBag): void {
-  for (const res of Object.keys(cost)) {
-    const amount = cost[res] ?? 0;
-    if (amount !== 0) {
-      treasury[res] = (treasury[res] ?? 0) - amount;
-    }
-  }
+interface ConstructionRequirement {
+  allowed: boolean;
+  code?: string;
 }
 
 /** `cost × count`, for multi-unit orders. */
@@ -70,6 +54,22 @@ function scheduleCompletion(h: HandlerContext, hours: number, payload: CompleteP
   h.schedule(h.ctx.now + ms, 'construction.complete', payload);
 }
 
+function requireUnlocked(
+  h: HandlerContext,
+  playerId: string,
+  kind: 'unit' | 'building',
+  id: string,
+): void {
+  const requirement = h.hook<ConstructionRequirement>(
+    'construction.requirement',
+    { allowed: true },
+    { playerId, kind, id },
+  );
+  if (!requirement.allowed) {
+    return h.reject(requirement.code ?? 'E_LOCKED');
+  }
+}
+
 /** Resolves the acting player and a planet they own, or rejects with a stable
  *  code (E_NO_PLANET / E_FORBIDDEN). Shared by every build / upgrade order. */
 function ownedPlanet(
@@ -79,14 +79,14 @@ function ownedPlanet(
 ): { planet: Planet; player: Player } {
   const planet = h.state.planets[planetId];
   if (!planet) {
-    h.reject('E_NO_PLANET');
+    return h.reject('E_NO_PLANET');
   }
   if (planet.owner !== action.playerId) {
-    h.reject('E_FORBIDDEN');
+    return h.reject('E_FORBIDDEN');
   }
   const player = h.state.players[action.playerId];
   if (!player) {
-    h.reject('E_FORBIDDEN'); // no treasury / not a participant
+    return h.reject('E_FORBIDDEN'); // no treasury / not a participant
   }
   return { planet, player };
 }
@@ -171,8 +171,20 @@ export const constructionModule: GameModule = {
       if (!def) {
         return h.reject('E_UNKNOWN_BUILDING');
       }
+      requireUnlocked(h, action.playerId, 'building', payload.building);
       if (planet.buildings.some((b) => b.type === payload.building)) {
         return h.reject('E_ALREADY_BUILT'); // one of each type; grow it with building.upgrade
+      }
+      if (
+        h.state.scheduled.some(
+          (e) =>
+            e.type === 'construction.complete' &&
+            (e.payload as CompletePayload).kind === 'building' &&
+            (e.payload as CompletePayload).planetId === planet.id &&
+            (e.payload as CompletePayload).building === payload.building,
+        )
+      ) {
+        return h.reject('E_ALREADY_QUEUED');
       }
       const level1 = buildingLevel(def, 1);
       if (!canAfford(player.resources, level1.cost)) {
@@ -214,6 +226,17 @@ export const constructionModule: GameModule = {
       if (nextLevel > buildingMaxLevel(def)) {
         return h.reject('E_MAX_LEVEL');
       }
+      if (
+        h.state.scheduled.some(
+          (e) =>
+            e.type === 'construction.complete' &&
+            (e.payload as CompletePayload).kind === 'upgrade' &&
+            (e.payload as CompletePayload).planetId === planet.id &&
+            (e.payload as CompletePayload).building === instance.type,
+        )
+      ) {
+        return h.reject('E_ALREADY_QUEUED');
+      }
       const next = buildingLevel(def, nextLevel);
       if (!canAfford(player.resources, next.cost)) {
         return h.reject('E_INSUFFICIENT');
@@ -252,6 +275,7 @@ export const constructionModule: GameModule = {
       if (!def) {
         return h.reject('E_UNKNOWN_UNIT');
       }
+      requireUnlocked(h, action.playerId, 'unit', payload.unit);
       const cost = scaleCost(def.cost, count);
       if (!canAfford(player.resources, cost)) {
         return h.reject('E_INSUFFICIENT');

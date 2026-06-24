@@ -54,6 +54,17 @@ export const UnitDefSchema = z.object({
   buildTimeHours: z.number().nonnegative().default(0),
   /** Daily upkeep paid to keep the unit (per day). */
   upkeep: ResourceBagSchema.default({}),
+  /** A unit of special significance. Only super-units contribute to the match
+   *  score (ordinary military never does); see the victory module. */
+  superUnit: z.boolean().default(false),
+  /** Victory-score worth of one such unit (only counted when `superUnit`). */
+  scoreValue: z.number().nonnegative().default(0),
+  /** Radar "signature": how detectable the unit is. A fleet's signature is the
+   *  sum of count × signature; radar reveals a coarse size bucket, never the
+   *  exact composition (fog-of-war — `visibleState`). */
+  signature: z.number().nonnegative().default(1),
+  /** Radar reach (in jumps) the unit projects as a radar-ship (0 = none). */
+  radarRange: z.number().nonnegative().default(0),
 });
 
 export const FactionDefSchema = z.object({
@@ -88,6 +99,13 @@ export const BuildingDefSchema = z.object({
   /** Overrides for levels 2..N (index 0 = level 2). maxLevel = 1 + length. */
   upgrades: z.array(BuildingLevelSchema).default([]),
   traits: z.array(z.string()).default([]),
+  /** Victory-score worth of this building; the victory module multiplies it by
+   *  the instance's level, so investing in upgrades raises (and losing the
+   *  building lowers) the owner's score. */
+  scoreValue: z.number().nonnegative().default(0),
+  /** Radar reach (in jumps) the building projects from the world it sits on
+   *  (0 = none). Drives signature detection in `visibleState`. */
+  radarRange: z.number().nonnegative().default(0),
 });
 
 /**
@@ -112,6 +130,9 @@ export const SectorTypeDefSchema = z.object({
   speedBonus: z.number().default(0),
   /** Effective fleet HP change for battles in this sector, e.g. 0.1 = +10%. */
   hpBonus: z.number().default(0),
+  /** Victory-score worth of controlling a node in this sector (terrain like an
+   *  asteroid field is worth holding even without a habitable planet). */
+  scoreValue: z.number().nonnegative().default(0),
 });
 
 /**
@@ -127,6 +148,39 @@ export const PlanetTypeDefSchema = z.object({
    *  divided by (1 + this). Positive = defensible world, negative = exposed.
    *  Stacks with building defense. */
   defenseBonus: z.number().default(0),
+  /** Victory-score worth of owning a world of this type (a developed terran
+   *  world is worth more than a barren rock); added on top of the base. */
+  scoreValue: z.number().nonnegative().default(0),
+});
+
+export const TechnologyUnlocksSchema = z.object({
+  units: z.array(z.string()).default([]),
+  buildings: z.array(z.string()).default([]),
+  abilities: z.array(z.string()).default([]),
+});
+
+export const TechnologyEffectsSchema = z.object({
+  /** Multiplier on owned planetary production, e.g. 0.1 = +10%. */
+  productionBonus: z.number().default(0),
+  /** Multiplier on owned fleet movement speed, e.g. 0.15 = +15%. */
+  fleetSpeedBonus: z.number().default(0),
+  /** Multiplier on outgoing combat damage, e.g. 0.1 = +10%. */
+  combatDamageBonus: z.number().default(0),
+});
+
+export const TechnologyDefSchema = z.object({
+  name: z.string(),
+  description: z.string().optional(),
+  tier: z.number().int().positive().default(1),
+  cost: ResourceBagSchema.default({}),
+  researchTimeHours: z.number().nonnegative().default(0),
+  prerequisites: z.array(z.string()).default([]),
+  unlocks: TechnologyUnlocksSchema.default({ units: [], buildings: [], abilities: [] }),
+  effects: TechnologyEffectsSchema.default({
+    productionBonus: 0,
+    fleetSpeedBonus: 0,
+    combatDamageBonus: 0,
+  }),
 });
 
 export const GameDataSchema = z.object({
@@ -138,6 +192,7 @@ export const GameDataSchema = z.object({
   events: z.record(z.string(), EffectRuleSchema),
   sectors: z.record(z.string(), SectorTypeDefSchema).default({}),
   planetTypes: z.record(z.string(), PlanetTypeDefSchema).default({}),
+  technologies: z.record(z.string(), TechnologyDefSchema).default({}),
 });
 
 export type ResourceBag = z.infer<typeof ResourceBagSchema>;
@@ -149,6 +204,9 @@ export type BuildingLevel = z.infer<typeof BuildingLevelSchema>;
 export type EffectRule = z.infer<typeof EffectRuleSchema>;
 export type SectorTypeDef = z.infer<typeof SectorTypeDefSchema>;
 export type PlanetTypeDef = z.infer<typeof PlanetTypeDefSchema>;
+export type TechnologyUnlocks = z.infer<typeof TechnologyUnlocksSchema>;
+export type TechnologyEffects = z.infer<typeof TechnologyEffectsSchema>;
+export type TechnologyDef = z.infer<typeof TechnologyDefSchema>;
 export type GameData = z.infer<typeof GameDataSchema>;
 
 /** Stats of a building at a given level (1-based). Level 1 = the base fields;

@@ -1,0 +1,26 @@
+# CODEOWNERS — автоматическое назначение ревьюеров по зонам репозитория.
+# https://docs.github.com/articles/about-code-owners
+#
+# Раскомментируй строки и подставь GitHub-ник'и (@user) по мере распределения
+# ответственности. Владелец должен иметь Write-доступ к репозиторию.
+# Пока всё закомментировано — ревьюер назначается вручную.
+#
+# Ядро-симуляция (детерминизм, инварианты — самая чувствительная зона)
+# /packages/shared-core/   @owner-core
+#
+# Слой действий (Этап 2 — безопасность/идемпотентность)
+# /packages/action-layer/  @owner-core
+#
+# Сервер (Этап 3)
+# /packages/server/        @owner-backend
+#
+# Клиент (Этап 4)
+# /packages/client/        @owner-frontend
+#
+# Игровой контент (data-driven, низкий риск)
+# /data/                   @owner-content
+#
+# Документация и регламент
+# /docs/                   @owner-lead
+# /CLAUDE.md               @owner-lead
+# /CONTRIBUTING.md         @owner-lead

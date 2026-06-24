@@ -17,6 +17,7 @@ export type BattleId = string;
 export type ResourceId = string;
 export type UnitId = string;
 export type BuildingId = string;
+export type TechnologyId = string;
 export type TraitId = string;
 
 /** A dynamic resource ledger. The engine never assumes a fixed set of
@@ -47,6 +48,40 @@ export interface Player {
   status: 'active' | 'defeated';
   /** The player's treasury — production accrues here, upkeep/costs drain it. */
   resources: ResourceBag;
+  technologies?: PlayerTechnologyState;
+}
+
+export interface ActiveResearch {
+  technology: TechnologyId;
+  startedAt: number;
+  completesAt: number;
+}
+
+export interface PlayerTechnologyState {
+  completed: TechnologyId[];
+  active?: ActiveResearch;
+}
+
+export type MatchStatus = 'ongoing' | 'ended';
+export type MatchEndReason = 'domination' | 'elimination' | 'score' | 'timeout';
+
+export interface MatchScore {
+  /** Map control: owned planet/sectors. */
+  controlledPlanets: number;
+  /** Standing fleets the player still commands. */
+  fleets: number;
+  /** Ships, carried ground troops and planetary garrisons. */
+  units: number;
+  /** Aggregate score used by score-limit and timeout victories. */
+  total: number;
+}
+
+export interface MatchState {
+  status: MatchStatus;
+  winner: PlayerId | null;
+  endedAt?: number;
+  reason?: MatchEndReason;
+  scores: Record<PlayerId, MatchScore>;
 }
 
 export interface Planet {
@@ -178,6 +213,8 @@ export interface GameState {
   version: GameVersion;
   /** Current simulation time (ms), server-authoritative. */
   time: number;
+  /** Terminal match state and the latest scoreboard. */
+  match: MatchState;
   rng: RngState;
   players: Record<PlayerId, Player>;
   planets: Record<PlanetId, Planet>;
@@ -200,6 +237,7 @@ export function createInitialState(params: {
   return {
     version: params.version,
     time: params.time ?? 0,
+    match: { status: 'ongoing', winner: null, scores: {} },
     rng: seedRng(params.seed),
     players: {},
     planets: {},

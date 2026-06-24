@@ -22,7 +22,7 @@
 
 Подробности — в [`docs/`](./docs): [`gdd.md`](./docs/gdd.md) (игровой дизайн),
 [`architecture.md`](./docs/architecture.md), [`modulesystem.md`](./docs/modulesystem.md),
-[`roadmap.md`](./docs/roadmap.md).
+[`roadmap.md`](./docs/roadmap.md), [`deep-technical-roadmap.md`](./docs/deep-technical-roadmap.md), [`multiplayer.md`](./docs/multiplayer.md), [`engineering-risks.md`](./docs/engineering-risks.md).
 
 ## Структура монорепы
 
@@ -30,8 +30,9 @@
 .
 ├── packages/
 │   ├── shared-core/   # детерминированное ядро-симуляция (готовится первым)
-│   ├── server/        # авторитетный сервер — Stage 3 (плейсхолдер)
-│   └── client/        # React Native клиент — Stage 4 (плейсхолдер)
+│   ├── action-layer/  # Stage 2: envelope validation, auth, idempotency, sequence
+│   ├── server/        # авторитетный сервер — Stage 3 (in-memory multiplayer slice)
+│   └── client/        # React Native клиент — Stage 4 (transport adapter slice)
 ├── data/              # игровой контент (data-driven): units, factions, buildings, events, resources
 └── docs/              # проектные документы
 ```
@@ -47,6 +48,10 @@
 | `data/`    | zod-схемы игровых данных + `parseGameData` (валидация всего входа)                           |
 | `modules/` | Базовые модули-плагины: `economyModule`, `movementModule`, `combatModule`                    |
 | `util/`    | `deepClone`/`deepFreeze` для immutable-контракта редьюсера                                   |
+
+### `@void/action-layer`
+
+Stage 2 security gate before server authority applies actions: `ActionEnvelope` validation, player/session authorization, idempotency receipts and per-session `clientSeq` ordering. This layer is intentionally outside `shared-core`: the core stays deterministic and assumes actions already passed validation/authorization.
 
 ## Разработка
 
