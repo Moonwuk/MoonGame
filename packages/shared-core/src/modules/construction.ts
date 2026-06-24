@@ -5,6 +5,7 @@ import { buildingLevel, buildingMaxLevel } from '../data/schemas';
 import { isBombarded } from '../state/orbit';
 import type { Action } from '../action/types';
 import { timeScaleOf } from '../action/types';
+import { canAfford, payCost } from '../util/treasury';
 
 const MS_PER_HOUR = 3_600_000;
 /** Share of the ground assault's round damage that also wears down the planet's
@@ -34,28 +35,6 @@ interface CompletePayload {
 interface ConstructionRequirement {
   allowed: boolean;
   code?: string;
-}
-
-// --- treasury helpers --------------------------------------------------------
-
-/** True if the treasury can cover every line of `cost`. */
-function canAfford(treasury: ResourceBag, cost: ResourceBag): boolean {
-  for (const res of Object.keys(cost)) {
-    if ((treasury[res] ?? 0) < (cost[res] ?? 0)) {
-      return false;
-    }
-  }
-  return true;
-}
-
-/** Deducts `cost` from the treasury in place (caller has checked affordability). */
-function payCost(treasury: ResourceBag, cost: ResourceBag): void {
-  for (const res of Object.keys(cost)) {
-    const amount = cost[res] ?? 0;
-    if (amount !== 0) {
-      treasury[res] = (treasury[res] ?? 0) - amount;
-    }
-  }
 }
 
 /** `cost × count`, for multi-unit orders. */
