@@ -98,6 +98,18 @@ export const data: GameData = parseGameData({
       hp: 20,
     },
     barracks: { name: 'Barracks', cost: { metal: 70 }, buildTimeHours: 3, hp: 25 },
+    // radar array — projects a detection radius (in jumps) that grows with its
+    // level; enemy fleets inside it show up as coarse signatures (not identified).
+    radar: {
+      name: 'Radar Array',
+      cost: { metal: 90, credits: 40 },
+      buildTimeHours: 3,
+      hp: 18,
+      upgrades: [
+        { cost: { metal: 180, credits: 80 }, buildTimeHours: 5, hp: 28 },
+        { cost: { metal: 300, credits: 140 }, buildTimeHours: 7, hp: 38 },
+      ],
+    },
     // space fortress — only built in an asteroid field; turns the junction into a
     // defended, assaultable strongpoint (it garrisons a fixed orbital-AA by default)
     starfort: {
@@ -183,7 +195,7 @@ type KeyNode = Omit<MapNode, 'links'>;
 // map is filled in around them and everything is wired up by proximity below.
 const KEY: KeyNode[] = [
   // home region (west)
-  { id: 'HOME', owner: 'p1', x: 150, y: 250, sector: 'planet', type: 'terran', buildings: [{ type: 'mine' }], garrison: [['marine', 3]] },
+  { id: 'HOME', owner: 'p1', x: 150, y: 250, sector: 'planet', type: 'terran', buildings: [{ type: 'mine' }, { type: 'radar' }], garrison: [['marine', 3]] },
   { id: 'ANCHOR', owner: 'p1', x: 130, y: 440, sector: 'planet', type: 'oceanic', buildings: [{ type: 'refinery' }], garrison: [['marine', 2], ['orbital_aa', 1]] },
   { id: 'RELAY', owner: null, x: 320, y: 360, sector: 'planet', type: 'barren', garrison: [['marine', 1]] },
   { id: 'FORGE', owner: null, x: 250, y: 175, sector: 'asteroid' },

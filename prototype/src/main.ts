@@ -50,15 +50,13 @@ const COLOR: Record<string, string> = {
   null: '#6f8a93', // neutral — gray
 };
 const VOID_COLOR = '#46606e'; // empty-space provinces — uncapturable void
-// Dev-only fog: colour for a node whose contents are outside sensor range.
-const FOG_COL = '#3a4852';
 const LANE = 'rgba(73,196,206,0.20)';
 const GRID = 'rgba(46,150,160,0.07)';
 const LOCK = '#7df0d0'; // selection / targeting reticle accent
 const TAU = Math.PI * 2;
 const TOP = 50; // top-bar height
 const RAIL = 50; // left-rail width
-const BUILDABLE = ['mine', 'refinery', 'barracks', 'fort'];
+const BUILDABLE = ['mine', 'refinery', 'barracks', 'radar', 'fort'];
 const BUILD_UNITS = ['marine', 'orbital_aa', 'cruiser', 'scout', 'siege'];
 const BUILD_ICON: Record<string, string> = {
   mine: '⬢',
@@ -66,6 +64,7 @@ const BUILD_ICON: Record<string, string> = {
   barracks: '▤',
   fort: '⬡',
   starfort: '✦',
+  radar: '⊚',
 };
 const UNIT_ICON: Record<string, string> = {
   marine: '◆',
@@ -159,7 +158,7 @@ let lastAlertText = '';
 // Client-side projection just for the renderer — NOT the real security boundary
 // (that is `visibleState` in shared-core, built later). Toggle in the speed bar.
 let fogOn = true; // default on so the effect is visible
-let fogVisible: Set<string> | null = null; // node ids in sensor range; null = no fog
+let vision: Vision | null = null; // identify + radar sets for this frame; null = no fog
 
 // --- dom ---------------------------------------------------------------------
 
@@ -542,31 +541,179 @@ function note(msg: string) {
 function fleetNode(f: Fleet): string | null {
   return f.location ?? f.movement?.to ?? f.movement?.from ?? null;
 }
-/** Variant-A visibility: a node's contents are seen if the viewer owns it, or a
- *  friendly world/fleet sits within one jump (sensor range). Recomputed every
- *  frame — no memory, so things blink out the moment coverage lifts. */
-function computeFog(): Set<string> {
-  const vis = new Set<string>();
-  const add = (id: string | null | undefined) => {
-    if (!id) return;
-    vis.add(id);
-    const pl = s.planets[id];
-    if (pl?.links) for (const l of pl.links) vis.add(l);
-  };
-  for (const p of Object.values(s.planets)) if (p.owner === ME) add(p.id);
+
+// --- radar / signatures (prototype-local; a future core `signature` stat + a
+//     `radar.source` hook will move these into data) -------------------------
+// How "loud" each unit is to enemy radar — big hulls broadcast, recon is quiet.
+const SIGNATURE: Record<string, number> = { scout: 1, marine: 1, orbital_aa: 2, cruiser: 4, siege: 5 };
+// Radar-ship classes: a fleet carrying one projects radar this many jumps.
+const RADAR_SHIP: Record<string, number> = { scout: 2 };
+const SENSOR_HOPS = 1; // identify (full-detail) range from any owned node / fleet
+
+/** Total radar signature of a fleet = Σ count × per-unit signature. */
+function fleetSignature(f: Fleet): number {
+  let sig = 0;
+  for (const st of f.units) sig += st.count * (SIGNATURE[st.unit] ?? 1);
+  return sig;
+}
+/** Coarse size bucket shown for a radar contact (reuses the count-label idea). */
+function sigClass(sig: number): 'S' | 'M' | 'L' {
+  return sig >= 13 ? 'L' : sig >= 5 ? 'M' : 'S';
+}
+/** Radar reach (jumps) a fleet projects, from its loudest radar-ship (0 = none). */
+function fleetRadar(f: Fleet): number {
+  let r = 0;
+  for (const st of f.units) if (st.count > 0) r = Math.max(r, RADAR_SHIP[st.unit] ?? 0);
+  return r;
+}
+/** Radar reach (jumps) a world projects, from its best radar array (level + 1). */
+function planetRadar(p: Planet): number {
+  let r = 0;
+  for (const b of p.buildings) if (b.type === 'radar') r = Math.max(r, b.level + 1);
+  return r;
+}
+
+/** Flood `hops` jumps out from `start` over the lane graph into `out`. */
+function floodHops(start: string, hops: number, out: Set<string>): void {
+  out.add(start);
+  let frontier = [start];
+  for (let d = 0; d < hops; d++) {
+    const next: string[] = [];
+    for (const id of frontier) {
+      const pl = s.planets[id];
+      if (!pl?.links) continue;
+      for (const l of pl.links)
+        if (!out.has(l)) {
+          out.add(l);
+          next.push(l);
+        }
+    }
+    frontier = next;
+  }
+}
+
+interface Vision {
+  identify: Set<string>;
+  radar: Set<string>;
+}
+/** Variant-B visibility: an identify range (full detail, feeds memory) plus a
+ *  wider radar range (enemy fleets seen only as coarse signatures). The radar
+ *  reach scales with radar-array level and radar-ships. null vision = fog off. */
+function computeVision(): Vision {
+  const identify = new Set<string>();
+  const radar = new Set<string>();
+  for (const p of Object.values(s.planets))
+    if (p.owner === ME) {
+      floodHops(p.id, SENSOR_HOPS, identify);
+      const rr = planetRadar(p);
+      if (rr > 0) floodHops(p.id, rr, radar);
+    }
   for (const f of Object.values(s.fleets))
     if (f.owner === ME) {
-      add(f.location);
-      if (f.movement) {
-        add(f.movement.from);
-        add(f.movement.to);
-      }
+      const node = fleetNode(f);
+      if (!node) continue;
+      floodHops(node, SENSOR_HOPS, identify);
+      const rr = fleetRadar(f);
+      if (rr > 0) floodHops(node, rr, radar);
     }
-  return vis;
+  for (const id of identify) radar.add(id); // identify implies radar
+  return { identify, radar };
 }
-/** True if the viewer may see the contents of node `id` (no fog ⇒ always). */
+
+// Per-viewer MEMORY of the last identified state of a node (variant B): once you
+// have seen a system, you remember its last-known state (greyed) when sight lifts.
+interface Snapshot {
+  owner: string | null;
+  garrison: number;
+  buildings: { type: string; level: number }[];
+}
+const memory = new Map<string, Snapshot>();
+function updateMemory(identify: Set<string>): void {
+  for (const id of identify) {
+    const p = s.planets[id];
+    if (p)
+      memory.set(id, {
+        owner: p.owner,
+        garrison: sumUnits(p.garrison),
+        buildings: p.buildings.map((b) => ({ type: b.type, level: b.level })),
+      });
+  }
+}
+
+/** True if node `id` is identified (full detail); fog off ⇒ always true. */
 function known(id: string | null | undefined): boolean {
-  return !fogVisible || (id != null && fogVisible.has(id));
+  return !vision || (id != null && vision.identify.has(id));
+}
+/** True if node `id` is inside radar reach (signature-level detection). */
+function radarHas(id: string | null | undefined): boolean {
+  return !!vision && id != null && vision.radar.has(id);
+}
+
+/** Draw a fogged system: a greyed last-known blip from memory, or an unexplored
+ *  marker if it has never been identified. */
+function drawFogMarker(c: { x: number; y: number }, id: string, mem: Snapshot | undefined): void {
+  cx.save();
+  if (mem) {
+    const col = COLOR[mem.owner ?? 'null'];
+    cx.setLineDash([2, 4]);
+    cx.strokeStyle = rgba(col, 0.34);
+    cx.lineWidth = 1;
+    cx.beginPath();
+    cx.arc(c.x, c.y, 9, 0, TAU);
+    cx.stroke();
+    cx.setLineDash([]);
+    cx.fillStyle = rgba(col, 0.4);
+    cx.beginPath();
+    cx.arc(c.x, c.y, 1.6, 0, TAU);
+    cx.fill();
+    cx.textAlign = 'left';
+    cx.fillStyle = rgba(col, 0.5);
+    cx.font = '700 11px ui-monospace,Menlo,monospace';
+    cx.fillText(id, c.x + 13, c.y - 1);
+    cx.fillStyle = 'rgba(120,140,150,0.45)';
+    cx.font = '9px ui-monospace,Menlo,monospace';
+    const icons = mem.buildings.map((b) => BUILD_ICON[b.type] ?? '▪').join('');
+    cx.fillText(`G:${mem.garrison} ${icons} ✦last`, c.x + 13, c.y + 10);
+  } else {
+    cx.strokeStyle = 'rgba(90,110,120,0.3)';
+    cx.lineWidth = 1;
+    cx.beginPath();
+    cx.arc(c.x, c.y, 6, 0, TAU);
+    cx.stroke();
+    cx.fillStyle = 'rgba(90,110,120,0.4)';
+    cx.font = '9px ui-monospace,Menlo,monospace';
+    cx.textAlign = 'center';
+    cx.fillText('?', c.x, c.y + 3);
+  }
+  cx.restore();
+}
+
+/** Draw an enemy fleet detected by radar only — a coarse amber signature blip
+ *  (size bucket S/M/L from its signature strength), with no identity. */
+function drawSignature(f: Fleet, now: number): void {
+  const A = fleetAnchor(f);
+  if (!A || !visible(A, 120)) return;
+  const cls = sigClass(fleetSignature(f));
+  const r = cls === 'L' ? 9 : cls === 'M' ? 7 : 5;
+  const pulse = 0.5 + 0.5 * Math.sin(now / 200 + A.x * 0.05);
+  cx.save();
+  cx.translate(A.x, A.y);
+  cx.strokeStyle = rgba('#ffb43a', 0.5 + 0.3 * pulse); // amber = unidentified contact
+  cx.fillStyle = rgba('#ffb43a', 0.1 + 0.08 * pulse);
+  cx.lineWidth = 1.3;
+  cx.beginPath(); // diamond
+  cx.moveTo(0, -r);
+  cx.lineTo(r, 0);
+  cx.lineTo(0, r);
+  cx.lineTo(-r, 0);
+  cx.closePath();
+  cx.fill();
+  cx.stroke();
+  cx.fillStyle = rgba('#ffd98a', 0.92);
+  cx.font = '700 9px ui-monospace,Menlo,monospace';
+  cx.textAlign = 'center';
+  cx.fillText('◆' + cls, 0, r + 12);
+  cx.restore();
 }
 function apply(out: StepOut) {
   s = out.state;
@@ -1081,8 +1228,14 @@ function render(now: number) {
     const c = world(n);
     if (!visible(c, 110)) continue;
     const kn = known(n.id);
-    const showOwner = kn ? p.owner : null; // hide ownership of fogged systems
-    const col = kn ? COLOR[p.owner ?? 'null'] : FOG_COL;
+    // Variant B: fog hides capturable systems (void cells stay as pure geometry).
+    // Unknown → a remembered last-known blip, or an "unexplored" marker.
+    if (fogOn && n.sector !== 'empty' && !kn) {
+      drawFogMarker(c, n.id, memory.get(n.id));
+      continue;
+    }
+    const showOwner = p.owner;
+    const col = COLOR[p.owner ?? 'null'];
     const sector = sectorColor(n.sector);
     const ownerPulse = 0.64 + 0.36 * Math.sin(now / 620 + n.x * 0.011 + n.y * 0.017);
 
@@ -1327,7 +1480,14 @@ function render(now: number) {
   // fleets — glowing chevrons on their orbit ring (stationed) or along the lane
   cx.textAlign = 'center';
   for (const f of Object.values(s.fleets)) {
-    if (f.owner !== ME && !known(fleetNode(f))) continue; // enemy out of sensors
+    if (f.owner !== ME) {
+      const fn = fleetNode(f);
+      if (!known(fn)) {
+        // not identified: a radar contact shows only a coarse signature, not the fleet
+        if (radarHas(fn)) drawSignature(f, now);
+        continue;
+      }
+    }
     const A = fleetAnchor(f);
     if (!A || !visible(A, 120)) continue;
     const col = COLOR[f.owner];
@@ -1592,10 +1752,26 @@ function panelHtml(): string {
   const p = planet(selPlanet);
   if (!p) return '<div class="hint">Tap a world.</div>';
   if (!known(p.id) && p.owner !== ME) {
+    const mem = memory.get(p.id);
+    if (mem) {
+      const icons =
+        mem.buildings
+          .map((b) => `${BUILD_ICON[b.type] ?? '▪'} ${data.buildings[b.type]?.name ?? b.type} L${b.level}`)
+          .join(', ') || 'none seen';
+      return (
+        cardHeader(COLOR[mem.owner ?? 'null'], p.id, 'LAST KNOWN ✦') +
+        `<div class="row dim">Out of sensor range — last scan (may be stale).</div>` +
+        `<div class="row">Owner: <b>${mem.owner ? NAME[mem.owner] : 'Neutral'}</b></div>` +
+        `<div class="row">Garrison when seen: <b>${mem.garrison}</b></div>` +
+        `<div class="row">Structures: ${icons}</div>` +
+        `<div class="hint">Re-scan with a fleet or radar to refresh.</div>` +
+        btn('cancel', '', 'Deselect', true)
+      );
+    }
     return (
-      cardHeader(FOG_COL, p.id, 'NO TELEMETRY') +
-      `<div class="row dim">Outside sensor range — ownership, garrison and structures unknown.</div>` +
-      `<div class="hint">Hold a neighbouring world or send a fleet within one jump to scan this system.</div>` +
+      cardHeader('#5f8f8c', p.id, 'NO TELEMETRY') +
+      `<div class="row dim">Unexplored — outside sensor and radar range. Contents unknown.</div>` +
+      `<div class="hint">Send a fleet toward this system (or extend radar) to detect it.</div>` +
       btn('cancel', '', 'Deselect', true)
     );
   }
@@ -1994,7 +2170,8 @@ function frame(nowReal: number) {
     pumpBuildQueues();
     checkEnd();
   }
-  fogVisible = fogOn ? computeFog() : null; // dev fog projection for this frame
+  vision = fogOn ? computeVision() : null; // dev fog projection for this frame
+  if (vision) updateMemory(vision.identify); // variant B: remember what we see
   render(nowReal);
   renderPanel();
   renderCmdBar();
