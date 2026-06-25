@@ -1879,8 +1879,8 @@ function renderPanel() {
   }
 }
 
-function cmdBtn(cmd: string, label: string, cls: string, disabled: boolean): string {
-  return `<button data-cmd="${cmd}" class="${cls}" ${disabled ? 'disabled' : ''}>${label}</button>`;
+function cmdBtn(cmd: string, icon: string, label: string, cls: string, disabled: boolean): string {
+  return `<button data-cmd="${cmd}" class="${cls}" title="${esc(label)}" aria-label="${esc(label)}" ${disabled ? 'disabled' : ''}><span class="ci">${icon}</span><span class="cl">${esc(label)}</span></button>`;
 }
 
 /** Horizontal fleet command bar — Move (arm) / Stop / Attack / orbit change —
@@ -1908,10 +1908,10 @@ function renderCmdBar() {
   const descend = anyFar; // at least one far → primary orbit action is descend to near
   const html =
     `<span class="cmdlabel">${ids.length > 1 ? ids.length + ' FLEETS' : 'FLEET'}</span>` +
-    cmdBtn('move', '⤳ Move', aiming ? 'on' : '', false) +
-    cmdBtn('stop', '■ Stop', 'danger', !anyMoving) +
-    cmdBtn('attack', '⚔ Attack', '', !canAssault) +
-    cmdBtn(descend ? 'near' : 'far', descend ? '▼ Near' : '▲ Far', '', !anyDocked);
+    cmdBtn('move', '⤳', 'Move', aiming ? 'on' : '', false) +
+    cmdBtn('stop', '■', 'Stop', 'danger', !anyMoving) +
+    cmdBtn('attack', '⚔', 'Attack', '', !canAssault) +
+    cmdBtn(descend ? 'near' : 'far', descend ? '▼' : '▲', descend ? 'Near' : 'Far', '', !anyDocked);
   if (html !== lastCmdHtml) {
     cmdbar.innerHTML = html;
     lastCmdHtml = html;

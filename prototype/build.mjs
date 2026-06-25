@@ -74,8 +74,11 @@ body::before{content:"";position:fixed;inset:0;z-index:1;pointer-events:none;mix
   box-shadow:0 0 22px rgba(40,200,210,.14);}
 #cmdbar.show{display:flex;}
 #cmdbar .cmdlabel{color:var(--cyan-dim);font-size:9px;letter-spacing:1.5px;padding-right:4px;white-space:nowrap;}
-#cmdbar button{min-width:50px;height:32px;padding:0 11px;cursor:pointer;font:700 11px ui-monospace,monospace;
+#cmdbar button{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
+  min-width:50px;height:46px;padding:4px 8px;cursor:pointer;font:700 11px ui-monospace,monospace;
   letter-spacing:.5px;background:transparent;color:var(--cyan);border:1px solid var(--cyan-dim);border-radius:2px;}
+#cmdbar button .ci{font-size:17px;line-height:1;}
+#cmdbar button .cl{font-size:8px;letter-spacing:.6px;opacity:.82;text-transform:uppercase;}
 #cmdbar button:hover:not(:disabled){background:rgba(53,214,230,.14);box-shadow:0 0 10px rgba(53,214,230,.35);}
 #cmdbar button:disabled{opacity:.3;cursor:not-allowed;color:var(--dim);border-color:var(--line);}
 #cmdbar button.on{background:rgba(53,214,230,.18);border-color:var(--cyan);}
@@ -198,7 +201,7 @@ body.sheet-open #log{display:none;}
     border-bottom:1px solid var(--line);}
   #drawer #botleft{position:static;left:auto;bottom:auto;padding:12px 16px;}
 
-  #side{right:0;left:0;bottom:0;top:auto;width:auto;max-height:56vh;z-index:28;clip-path:none;
+  #side{right:0;left:0;bottom:0;top:auto;width:auto;max-height:50vh;z-index:28;clip-path:none;
     border-left:0;border-right:0;border-top:1px solid var(--cyan);}
 
   /* speed control sits at the bottom-right; it hides under the sheet, and a
@@ -207,9 +210,12 @@ body.sheet-open #log{display:none;}
   body.sheet-open #speedbar{display:none;}
 
   #banner{font-size:16px;padding:14px 20px;letter-spacing:2px;}
-  button.b{padding:7px 12px;font-size:12px;}
-  #cmdbar{bottom:10px;}
-  body.sheet-open #cmdbar{bottom:calc(56vh + 8px);}
+  button.b{padding:9px 12px;font-size:12px;min-height:40px;}
+  #cmdbar{bottom:10px;gap:5px;}
+  #cmdbar .cmdlabel{display:none;}
+  #cmdbar button{min-width:56px;height:52px;}
+  #cmdbar button .ci{font-size:20px;}
+  body.sheet-open #cmdbar{bottom:calc(50vh + 8px);}
 }
 @media (max-width:430px){
   .res .rv em{display:none;}
