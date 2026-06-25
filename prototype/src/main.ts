@@ -574,9 +574,11 @@ function fleetNode(f: Fleet): string | null {
 //     `radar.source` hook will move these into data) -------------------------
 // How "loud" each unit is to enemy radar — big hulls broadcast, recon is quiet.
 const SIGNATURE: Record<string, number> = { scout: 1, marine: 1, orbital_aa: 2, cruiser: 4, siege: 5 };
-// Radar-ship classes: a fleet carrying one projects radar this many jumps.
-const RADAR_SHIP: Record<string, number> = { scout: 2 };
-const SENSOR_HOPS = 1; // identify (full-detail) range from any owned node / fleet
+// Radar-ship classes: a fleet carrying one projects radar this far (DISTANCE, map units).
+const RADAR_SHIP: Record<string, number> = { scout: 350 };
+// Radar-array detection radius (DISTANCE, map units) by building level.
+const RADAR_LEVEL_DIST = [0, 300, 500, 700];
+const SENSOR_HOPS = 1; // identify (full-detail) range from any owned node / fleet (jumps)
 
 /** Total radar signature of a fleet = Σ count × per-unit signature. */
 function fleetSignature(f: Fleet): number {
@@ -588,17 +590,30 @@ function fleetSignature(f: Fleet): number {
 function sigClass(sig: number): 'S' | 'M' | 'L' {
   return sig >= 13 ? 'L' : sig >= 5 ? 'M' : 'S';
 }
-/** Radar reach (jumps) a fleet projects, from its loudest radar-ship (0 = none). */
+/** Radar reach (distance) a fleet projects, from its loudest radar-ship (0 = none). */
 function fleetRadar(f: Fleet): number {
   let r = 0;
   for (const st of f.units) if (st.count > 0) r = Math.max(r, RADAR_SHIP[st.unit] ?? 0);
   return r;
 }
-/** Radar reach (jumps) a world projects, from its best radar array (level + 1). */
+/** Radar reach (distance) a world projects, from its best radar array (grows with level). */
 function planetRadar(p: Planet): number {
   let r = 0;
-  for (const b of p.buildings) if (b.type === 'radar') r = Math.max(r, b.level + 1);
+  for (const b of p.buildings) if (b.type === 'radar') r = Math.max(r, RADAR_LEVEL_DIST[b.level] ?? 0);
   return r;
+}
+/** Add every node within Euclidean `radius` of `start`'s position — radar is a
+ *  physical signal, not jumps: a node close in space shows up even if many jumps
+ *  away (or unreachable) by the lane graph. */
+function withinRadius(start: string, radius: number, out: Set<string>): void {
+  const origin = s.planets[start]?.position;
+  if (!origin) return;
+  const r2 = radius * radius;
+  for (const pl of Object.values(s.planets)) {
+    const dx = pl.position.x - origin.x;
+    const dy = pl.position.y - origin.y;
+    if (dx * dx + dy * dy <= r2) out.add(pl.id);
+  }
 }
 
 /** Flood `hops` jumps out from `start` over the lane graph into `out`. */
@@ -634,7 +649,7 @@ function computeVision(): Vision {
     if (p.owner === ME) {
       floodHops(p.id, SENSOR_HOPS, identify);
       const rr = planetRadar(p);
-      if (rr > 0) floodHops(p.id, rr, radar);
+      if (rr > 0) withinRadius(p.id, rr, radar);
     }
   for (const f of Object.values(s.fleets))
     if (f.owner === ME) {
@@ -642,7 +657,7 @@ function computeVision(): Vision {
       if (!node) continue;
       floodHops(node, SENSOR_HOPS, identify);
       const rr = fleetRadar(f);
-      if (rr > 0) floodHops(node, rr, radar);
+      if (rr > 0) withinRadius(node, rr, radar);
     }
   for (const id of identify) radar.add(id); // identify implies radar
   return { identify, radar };

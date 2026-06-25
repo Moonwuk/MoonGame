@@ -1,10 +1,17 @@
 import { once } from 'node:events';
 import { describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
-import { applyDelta, type Action, type GameState } from '@void/shared-core';
+import { applyDelta, visibleState, type Action, type GameData, type GameState } from '@void/shared-core';
 import { createDevMatch, loadShippedData } from './scenario';
 import { createMultiplayerServer } from './wsServer';
 import type { ServerMessage } from './protocol';
+
+/** The visible-`GameState` a player's client reconstructs to (fog applied,
+ *  signatures/remembered ride as separate message fields). */
+function visibleBase(state: GameState, player: string, data: GameData): GameState {
+  const { signatures: _s, remembered: _r, ...base } = visibleState(state, player, data);
+  return base as GameState;
+}
 
 function orbit(player: string, seq: number, to: 'near' | 'far'): Action {
   return {
@@ -58,15 +65,16 @@ function runClient(
 
 // Soak / consistency under concurrent load — part of the multiplayer-test prep.
 // N clients each fire K actions at once; the authoritative room must serialize
-// all N×K, stay consistent, and every client must converge to the *same* state
-// reconstructed purely from its welcome + delta stream. A late-joining client
-// resyncs from its welcome, so connect timing does not matter.
-describe('soak: concurrent clients converge on one authoritative state', () => {
-  it('serializes N×K concurrent actions and all clients reconstruct the same state', async () => {
+// all N×K, stay consistent, and every client must converge to ITS OWN visible
+// view (fog of war, F6) reconstructed purely from its welcome + delta stream.
+// A late-joining client resyncs from its welcome, so connect timing does not matter.
+describe('soak: concurrent clients converge on their authoritative view', () => {
+  it('serializes N×K concurrent actions and each client reconstructs its own visible state', async () => {
     const players = ['green', 'red', 'blue', 'gold'];
     const K = 6; // even ⇒ each client's last action (index K-1, odd) sets orbit 'near'
     const total = players.length * K;
-    const room = createDevMatch(loadShippedData(), { players, now: () => 1000, time: 0 });
+    const data = loadShippedData();
+    const room = createDevMatch(data, { players, now: () => 1000, time: 0 });
     const server = createMultiplayerServer({ room });
     const url = await server.listen();
     try {
@@ -84,8 +92,11 @@ describe('soak: concurrent clients converge on one authoritative state', () => {
       for (const player of players) {
         expect(room.state.fleets[`${player}_1`]?.orbit).toBe('near');
       }
-      // Every client reconstructed the exact authoritative state — no drift.
-      for (const final of finals) expect(final).toEqual(room.state);
+      // Each client reconstructed exactly its own visible view of the
+      // authoritative state — no drift, and fog hides the other players.
+      players.forEach((player, i) => {
+        expect(finals[i]).toEqual(visibleBase(room.state, player, data));
+      });
     } finally {
       await server.close();
     }
