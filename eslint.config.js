@@ -4,9 +4,16 @@ import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
   {
-    // The prototype and the multiplayer test client are throwaway demo code
-    // (browser globals, esbuild-built); not part of the core or its gate.
-    ignores: ['**/dist/**', '**/coverage/**', '**/node_modules/**', 'prototype/**', 'testclient/**'],
+    // The prototype, the multiplayer test client, and the mobile (Capacitor)
+    // wrapper are throwaway demo / build glue; not part of the core or its gate.
+    ignores: [
+      '**/dist/**',
+      '**/coverage/**',
+      '**/node_modules/**',
+      'prototype/**',
+      'testclient/**',
+      'mobile/**',
+    ],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,
