@@ -11,7 +11,9 @@ const data: GameData = parseGameData({
     scout: { faction: 'x', stats: { attack: 2, defense: 2, speed: 9, hp: 8 }, radarRange: 2 },
   },
   factions: {},
-  buildings: { radar: { name: 'Radar', radarRange: 2 } },
+  buildings: {
+    radar: { name: 'Radar', radarRange: 2, upgrades: [{ radarRange: 3 }, { radarRange: 4 }] },
+  },
   events: {},
 });
 
@@ -67,6 +69,18 @@ describe('visibleState (fog of war as a security boundary)', () => {
     expect(view.fleets['enemy-radar']).toBeUndefined();
     // 4 cruisers × signature 4 = 16 → bucket L.
     expect(view.signatures).toEqual([{ location: 'C', size: 'L' }]);
+  });
+
+  it('a higher-level radar array detects farther (level-scaled reach)', () => {
+    const state = scenario();
+    // Level 1 (reach 2): D is 3 jumps away → outside radar, no contact.
+    expect(visibleState(state, 'p1', data).signatures.some((s) => s.location === 'D')).toBe(false);
+    // Upgrade A's radar to level 2 (reach 3) → D comes into radar as a signature,
+    // while the fleet there is still not identified.
+    state.planets.A!.buildings = [{ type: 'radar', level: 2, hp: 26 }];
+    const view = visibleState(state, 'p1', data);
+    expect(view.fleets['enemy-hidden']).toBeUndefined();
+    expect(view.signatures.some((s) => s.location === 'D')).toBe(true);
   });
 
   it('strips other players private data but keeps identity', () => {

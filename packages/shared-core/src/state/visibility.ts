@@ -1,4 +1,4 @@
-import type { GameData } from '../data/schemas';
+import { buildingLevel, type GameData } from '../data/schemas';
 import { deepClone } from '../util/clone';
 import type { Fleet, GameState, PlanetId, PlayerId } from './gameState';
 
@@ -94,7 +94,10 @@ function coverageFor(state: GameState, viewerId: PlayerId, data: GameData): Cove
     if (planet.owner !== viewerId) continue;
     flood(state, planet.id, IDENTIFY_HOPS, identify);
     let reach = 0;
-    for (const b of planet.buildings) reach = Math.max(reach, data.buildings[b.type]?.radarRange ?? 0);
+    for (const b of planet.buildings) {
+      const def = data.buildings[b.type];
+      if (def) reach = Math.max(reach, buildingLevel(def, b.level).radarRange);
+    }
     if (reach > 0) flood(state, planet.id, reach, radar);
   }
   for (const fleet of Object.values(state.fleets)) {

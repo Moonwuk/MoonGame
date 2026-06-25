@@ -6,7 +6,7 @@
 > `deep-technical-roadmap.md`, `multiplayer.md`, `metagame.md`, корневой `CLAUDE.md` / `CONTRIBUTING.md`.
 >
 > **Ветка:** feature-ветка · **PR:** создаётся после изменений.
-> **Гейт:** `pnpm run check` (lint + typecheck + test). **Тесты: 252 зелёных**.
+> **Гейт:** `pnpm run check` (lint + typecheck + test). **Тесты: 254 зелёных**.
 
 ---
 
@@ -270,10 +270,12 @@ cruiser, siege_lance(artillery,range), dropship(cargoCapacity 12), militia,
 drop_infantry, tank(cargoSize 3), orbital_aa(aaDamage), infected_cruiser,
 reanimated_drone` (супер-юнитов пока нет — добавятся позже).
 - **buildings** (`BuildingDef`): `cost, buildTimeHours, produces, hp,
-defenseBonus, upgrades[{…}], traits, scoreValue`. Есть: `mine_t1, mine_t2, shipyard,
-biomass_pit, barracks, spaceport, fort` (форт — 3 уровня: HP 35→50→65,
-  defenseBonus 0.35→0.50→0.65). `scoreValue`: fort 20·уровень, shipyard 12,
-  mine/biomass 8, barracks/spaceport 6.
+defenseBonus, upgrades[{…}], traits, scoreValue, radarRange`. Есть: `mine_t1, mine_t2,
+shipyard, biomass_pit, barracks, spaceport, radar, fort` (форт — 3 уровня: HP 35→50→65,
+  defenseBonus 0.35→0.50→0.65; **радар — 3 уровня**: `radarRange` 2→3→4 прыжка,
+  HP 18→26→34). `radarRange` теперь **уровневый** (`BuildingLevelSchema`), `visibleState`
+  читает его через `buildingLevel(def, level)`. `scoreValue`: fort 20·уровень, shipyard 12,
+  mine/biomass 8, barracks/spaceport/radar 6.
 - **sectors:** `empty_space(+скорость), asteroid_field(−скорость/+живучесть/score 5),
 nebula(score 3)`. **planetTypes** дают `scoreValue` (terran 40, oceanic 35,
 volcanic 20, gas_giant 10, barren 5).
@@ -379,7 +381,7 @@ golden; модель времени `advanceTo`; экономика (казна 
 
 ```bash
 pnpm install
-pnpm run check       # lint + typecheck + test (гейт; 252 тестов)
+pnpm run check       # lint + typecheck + test (гейт; 254 тестов)
 pnpm test            # vitest
 pnpm run prototype   # собрать prototype/dist/void-dominion.html
 ```

@@ -83,6 +83,9 @@ export const BuildingLevelSchema = z.object({
   hp: z.number().nonnegative().default(0),
   /** Ground-defense bonus this level grants the garrison (0.01 = +1%). */
   defenseBonus: z.number().default(0.01),
+  /** Radar reach (in jumps) at this level — lets a radar array widen its
+   *  detection radius as it is upgraded. */
+  radarRange: z.number().nonnegative().default(0),
 });
 
 export const BuildingDefSchema = z.object({
@@ -213,8 +216,8 @@ export type GameData = z.infer<typeof GameDataSchema>;
  *  levels 2..N come from `upgrades`. Out-of-range levels fall back to level 1. */
 export function buildingLevel(def: BuildingDef, level: number): BuildingLevel {
   if (level <= 1) {
-    const { cost, buildTimeHours, produces, hp, defenseBonus } = def;
-    return { cost, buildTimeHours, produces, hp, defenseBonus };
+    const { cost, buildTimeHours, produces, hp, defenseBonus, radarRange } = def;
+    return { cost, buildTimeHours, produces, hp, defenseBonus, radarRange };
   }
   return def.upgrades[level - 2] ?? buildingLevel(def, 1);
 }
