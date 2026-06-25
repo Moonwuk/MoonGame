@@ -4,9 +4,9 @@ import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
   {
-    // The prototype is throwaway demo code (browser globals, deep relative
-    // imports into shared-core); it is built with esbuild, not part of the core.
-    ignores: ['**/dist/**', '**/coverage/**', '**/node_modules/**', 'prototype/**'],
+    // The prototype and the multiplayer test client are throwaway demo code
+    // (browser globals, esbuild-built); not part of the core or its gate.
+    ignores: ['**/dist/**', '**/coverage/**', '**/node_modules/**', 'prototype/**', 'testclient/**'],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,
