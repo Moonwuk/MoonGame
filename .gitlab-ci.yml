@@ -222,6 +222,20 @@ trivy-fs:
     paths: [trivy.sarif]
     when: always
   allow_failure: true
+  
+secrets-gitleaks:
+  stage: security
+  needs: []
+  image:
+    name: zricethezav/gitleaks:latest
+    entrypoint: ['']
+  script:
+    # 👇 ЗАМЕНИТЕ СТАРУЮ СТРОКУ НА ЭТУ:
+    - gitleaks detect --source . --log-opts="--all" --redact --verbose --report-format sarif --report-path gitleaks.sarif
+  artifacts:
+    paths: [gitleaks.sarif]
+    when: always
+  allow_failure: false
 
 # Checkov — специализированный IaC scanner (Dockerfile, Terraform, K8s)
 iac-checkov:
