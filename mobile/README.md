@@ -5,8 +5,11 @@ offline HTML game) into an installable Android APK by wrapping it in a Capacitor
 WebView. No hosting needed — the HTML ships inside the app. Standalone project
 (not in the pnpm workspace); uses `npm`.
 
-This is `cross-platform-roadmap.md` CP6.1 (Capacitor route), aimed at the playable
-prototype. It is NOT the networked client yet (the prototype runs locally).
+This is `cross-platform-roadmap.md` CP6.2 (Capacitor route — pulled forward ahead of
+the CP6.1 TWA route to enable the multiplayer-via-APK test). The wrapped prototype
+now ships **net mode**: its connect overlay can join a live session served by
+`pnpm dev:proto-server`. See `docs/multiplayer.md` → "Two phones, one session" for
+the friend-test runbook (server + `wss://` tunnel → sideload → both connect).
 
 ## Get the APK without a local Android toolchain (recommended)
 

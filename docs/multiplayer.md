@@ -49,6 +49,77 @@ peers and that a peer reconstructs the exact authoritative state from `welcome` 
 deltas. The construction (data loader + `createDevMatch`) lives in
 `packages/server/src/scenario.ts`, reused by both the runner and the test.
 
+## Playing the real prototype together (and via the APK)
+
+The section above connects clients to a minimal core harness (`dev:server`,
+green/red). To play the **actual prototype** — the map, the HUD, the whole
+console — as a two-player session, use the prototype dev server. It hosts the
+prototype's *own* world (same `kernel` + `data` + `newGame()`), so the client
+renders the live session exactly like single-player.
+
+```bash
+pnpm dev:proto-server                          # 127.0.0.1:8788, match id "proto"
+HOST=0.0.0.0 PORT=8788 pnpm dev:proto-server   # reachable from other devices / a tunnel
+```
+
+It prints:
+
+```
+health : http://127.0.0.1:8788/health
+Azure  : ws://127.0.0.1:8788/matches/proto?player=p1
+Crimson: ws://127.0.0.1:8788/matches/proto?player=p2
+```
+
+The prototype now opens on a **connect overlay** (build it with `pnpm prototype`,
+open `prototype/dist/void-dominion.html`):
+
+- **Single player** — the local skirmish vs the AI, exactly as before.
+- **Connect** — paste the server URL, pick **Azure** (p1) or **Crimson** (p2),
+  and join the live session. The last URL is remembered (so the APK reconnects in
+  one tap). Whoever you join as renders **green** ("you"); the opponent is red.
+
+### Two phones, one session — the APK friend test
+
+The Capacitor APK (`mobile/`, see `mobile/README.md`) wraps this same prototype,
+so it ships with net mode built in. To test with a remote friend:
+
+1. **Run the server + a public tunnel** on your machine (the tunnel gives a
+   `wss://` URL, which mobile WebViews accept — a plain `ws://` would be blocked
+   as cleartext):
+   ```bash
+   HOST=0.0.0.0 PORT=8788 pnpm dev:proto-server
+   cloudflared tunnel --url http://localhost:8788   # or: ngrok http 8788
+   ```
+   Use the printed `https://…trycloudflare.com` host as `wss://…trycloudflare.com`.
+2. **Build the APK** (CI: Actions → "Android APK (prototype)" → download
+   `void-dominion-debug-apk`) and send `app-debug.apk` to your friend.
+3. Both install/sideload it. In the overlay, **both paste the same `wss://…` URL**;
+   you pick Azure, your friend picks Crimson; tap **Connect**.
+4. You are now in one live session: move fleets, build, assault — each side sees
+   the other's orders in real time, served by the authoritative core.
+
+Keep the server + tunnel running for the session (state is in-memory — a restart
+loses the match). Do **not** leave an unauthenticated server tunnelled long-term
+(auth is brick F7 / SE-0.1).
+
+### Net-mode scope (first MP test)
+
+The prototype was built single-player, so some rules live in the client. Against
+the authoritative server those are suspended; the server only enforces the
+**kernel** rules. What that means in MP:
+
+- **Capture** is via the kernel's combat: orbit **near** → **assault** (the
+  walk-into-an-undefended-neutral-sector shortcut is a client-only convenience
+  and does not apply in MP).
+- **No AI** — the opponent is a human (the local red AI is off in net mode).
+- **Builds** send one order per tap (the server times construction); the local
+  multi-item build queue is single-player only.
+- Starfort auto-AA and in-MP event toast notifications are not wired yet.
+
+State still updates fully on every snapshot; these are follow-ups, not blockers
+for a connectivity test. The natural next step is promoting walk-in capture into
+a real kernel rule so MP and single-player share one capture mechanic.
+
 ## Preparing for a live multiplayer test
 
 **Seat more than two players.** `createDevMatch(data, { players: ['green', 'red', 'blue', 'gold'] })`
