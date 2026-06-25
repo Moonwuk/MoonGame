@@ -47,7 +47,7 @@ function fleetSignature(fleet: Fleet, data: GameData): number {
   return total;
 }
 
-/** Radar reach (jumps) a fleet projects, from its loudest radar-ship. */
+/** Radar reach (distance, in map units) a fleet projects, from its loudest radar-ship. */
 function fleetRadar(fleet: Fleet, data: GameData): number {
   let reach = 0;
   for (const stack of fleet.units) {
@@ -76,6 +76,21 @@ function flood(state: GameState, start: PlanetId, hops: number, out: Set<PlanetI
   }
 }
 
+/** Add every node within Euclidean `radius` of `originId`'s position. Radar is a
+ *  physical signal, not graph hops: a node that is close in space still shows up
+ *  even if it is many jumps away (or unreachable) by the lane graph. Uses squared
+ *  distance — exact and deterministic, no sqrt. */
+function withinRadius(state: GameState, originId: PlanetId, radius: number, out: Set<PlanetId>): void {
+  const origin = state.planets[originId]?.position;
+  if (!origin) return;
+  const r2 = radius * radius;
+  for (const planet of Object.values(state.planets)) {
+    const dx = planet.position.x - origin.x;
+    const dy = planet.position.y - origin.y;
+    if (dx * dx + dy * dy <= r2) out.add(planet.id);
+  }
+}
+
 /** The node a fleet occupies or is travelling over. */
 function fleetNode(fleet: Fleet): PlanetId | null {
   return fleet.location ?? fleet.movement?.to ?? fleet.movement?.from ?? null;
@@ -98,7 +113,7 @@ function coverageFor(state: GameState, viewerId: PlayerId, data: GameData): Cove
       const def = data.buildings[b.type];
       if (def) reach = Math.max(reach, buildingLevel(def, b.level).radarRange);
     }
-    if (reach > 0) flood(state, planet.id, reach, radar);
+    if (reach > 0) withinRadius(state, planet.id, reach, radar);
   }
   for (const fleet of Object.values(state.fleets)) {
     if (fleet.owner !== viewerId) continue;
@@ -106,7 +121,7 @@ function coverageFor(state: GameState, viewerId: PlayerId, data: GameData): Cove
     if (node === null) continue;
     flood(state, node, IDENTIFY_HOPS, identify);
     const reach = fleetRadar(fleet, data);
-    if (reach > 0) flood(state, node, reach, radar);
+    if (reach > 0) withinRadius(state, node, reach, radar);
   }
   for (const id of identify) radar.add(id); // identify implies radar
   return { identify, radar };

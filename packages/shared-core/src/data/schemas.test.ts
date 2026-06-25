@@ -68,14 +68,15 @@ describe('game data schema (docs/architecture.md §2)', () => {
     expect(buildingLevel(data.buildings.barracks!, 1).defenseBonus).toBeCloseTo(0.01);
   });
 
-  it('the radar array widens its detection radius across its 3 levels', () => {
+  it('the radar array widens its detection radius (distance) across its 3 levels', () => {
     const data = parseGameData(loadShippedBundle());
     const radar = data.buildings.radar;
     expect(radar).toBeDefined();
     expect(buildingMaxLevel(radar!)).toBe(3);
-    expect(buildingLevel(radar!, 1).radarRange).toBe(2);
-    expect(buildingLevel(radar!, 2).radarRange).toBe(3);
-    expect(buildingLevel(radar!, 3).radarRange).toBe(4);
+    // radarRange is a Euclidean distance (map units), not jumps.
+    expect(buildingLevel(radar!, 1).radarRange).toBe(300);
+    expect(buildingLevel(radar!, 2).radarRange).toBe(500);
+    expect(buildingLevel(radar!, 3).radarRange).toBe(700);
   });
 
   it('applies defaults for omitted optional fields', () => {
