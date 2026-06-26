@@ -55,14 +55,29 @@ const port = Number(process.env.PORT ?? 8788);
 const htmlPath = 'prototype/dist/void-dominion.html';
 const indexHtml = existsSync(htmlPath) ? readFileSync(htmlPath, 'utf8') : undefined;
 
-// First non-internal IPv4 — the address other devices on the same Wi-Fi dial.
-function lanIp(): string | null {
+// Every non-internal IPv4 this host owns (the candidates other devices could dial).
+function ipv4s(): string[] {
+  const all: string[] = [];
   for (const ifaces of Object.values(networkInterfaces())) {
     for (const i of ifaces ?? []) {
-      if (i.family === 'IPv4' && !i.internal) return i.address;
+      if (i.family === 'IPv4' && !i.internal) all.push(i.address);
     }
   }
-  return null;
+  return all;
+}
+
+// Classify an IPv4 by how a peer can reach it (mirrors `pnpm doctor`). A VM-NAT
+// (VirtualBox/QEMU) or link-local address prints fine but is a dead end off this
+// box — the trap behind "works locally, friend can't join".
+function ipKind(ip: string): 'vm-nat' | 'link-local' | 'cgnat' | 'lan' | 'public' {
+  if (ip.startsWith('10.0.2.') || ip.startsWith('10.0.3.')) return 'vm-nat';
+  if (ip.startsWith('169.254.')) return 'link-local';
+  const [a, b] = ip.split('.').map(Number);
+  if (a === 100 && b >= 64 && b <= 127) return 'cgnat';
+  if (ip.startsWith('192.168.') || ip.startsWith('10.') || (a === 172 && b >= 16 && b <= 31)) {
+    return 'lan';
+  }
+  return 'public';
 }
 
 // Lobby gate: the world clock starts at 0 ("Day 1") and only accrues real time
@@ -81,32 +96,54 @@ const room = new MatchRoom({
 });
 
 const server = createMultiplayerServer({ room, host, port, indexHtml });
-const wsUrl = await server.listen();
+let wsUrl: string;
+try {
+  wsUrl = await server.listen();
+} catch (err) {
+  // The port never opened — say why (in plain language) instead of dumping an
+  // unhandled-rejection stack, which reads as "the server doesn't start".
+  const code = (err as { code?: string }).code;
+  process.stderr.write(
+    code === 'EADDRINUSE'
+      ? `\nPort ${port} is already in use — another server is still running, or a stale one didn't exit.\n` +
+          `  Free it, or start on another port:  PORT=${port + 1} pnpm host\n\n`
+      : `\nFailed to start the server: ${(err as Error)?.message ?? String(err)}\n\n`,
+  );
+  process.exit(1);
+}
 const httpUrl = wsUrl.replace(/^ws/, 'http').replace(/\/matches\/.*$/, '');
 
-const ip = lanIp();
-const onLan = host === '0.0.0.0' && ip;
+// Pick the address a friend actually dials: a real LAN/public IPv4, never a
+// VM-NAT/link-local one. `pnpm doctor` prints the full reachability breakdown.
+const addrs = host === '0.0.0.0' ? ipv4s() : [];
+const shareIp =
+  addrs.find((a) => ipKind(a) === 'public') ?? addrs.find((a) => ipKind(a) === 'lan') ?? null;
+const onLan = shareIp !== null;
+const unreachableOnly = host === '0.0.0.0' && !onLan && addrs.length > 0;
 const localHttp = httpUrl.replace('0.0.0.0', 'localhost'); // 0.0.0.0 isn't openable
-const friendUrl = onLan ? `http://${ip}:${port}/` : null;
+const friendUrl = onLan ? `http://${shareIp}:${port}/` : null;
 
-process.stdout.write(
-  [
-    'Void Dominion — prototype dev server (in-memory, real core)',
-    indexHtml
-      ? `  game   : ${localHttp}/   (open in a browser → Connect)`
-      : `  game   : run \`pnpm prototype\` first to serve the HTML at /`,
-    `  health : ${localHttp}/health`,
-    '',
-    '  Two-person test:',
-    `   • You:    open ${localHttp}/  → Connect → Azure (p1)`,
-    onLan
-      ? `   • Friend: open ${friendUrl}  (same Wi-Fi) → Connect → Crimson (p2)`
-      : '   • Friend: run `pnpm host` (binds 0.0.0.0 → prints a LAN URL), or tunnel the port for a remote friend — see docs/multiplayer.md',
-    '',
-    `  raw ws : ${wsUrl.replace('0.0.0.0', 'localhost')}?player=p1  ·  …?player=p2`,
-    '',
-  ].join('\n'),
-);
+const lines = [
+  'Void Dominion — prototype dev server (in-memory, real core)',
+  indexHtml
+    ? `  game   : ${localHttp}/   (open in a browser → Connect)`
+    : `  game   : run \`pnpm prototype\` first to serve the HTML at /`,
+  `  health : ${localHttp}/health`,
+  '',
+  '  Two-person test:',
+  `   • You:    open ${localHttp}/  → Connect → Azure (p1)`,
+  onLan
+    ? `   • Friend: open ${friendUrl}  (same Wi-Fi) → Connect → Crimson (p2)`
+    : '   • Friend: run `pnpm host` (binds 0.0.0.0 → prints a LAN URL), or tunnel the port for a remote friend — see docs/multiplayer.md',
+];
+if (unreachableOnly) {
+  lines.push(
+    `   ⚠ only a non-routable address (${addrs.join(', ')}) — VM-NAT/link-local, unreachable off this box.`,
+    `     Remote friend? Tunnel it:  cloudflared tunnel --url http://localhost:${port}   (or run \`pnpm doctor\`)`,
+  );
+}
+lines.push('', `  raw ws : ${wsUrl.replace('0.0.0.0', 'localhost')}?player=p1  ·  …?player=p2`, '');
+process.stdout.write(lines.join('\n'));
 
 // On Ctrl-C: print the playtest summary (counts gathered by `observe`) and where
 // the raw JSONL landed, then close cleanly — the per-match data survives the run.

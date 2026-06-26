@@ -2906,14 +2906,34 @@ $('csolo').addEventListener('click', () => {
 });
 
 $('cgo').addEventListener('click', () => {
-  const base = srvInput.value.trim().replace(/\/+$/, '');
-  if (!base) {
+  let raw = srvInput.value.trim();
+  if (!raw) {
     statusEl.textContent = 'enter a server URL';
+    return;
+  }
+  // Accept whatever the user pasted — http(s)://, ws(s)://, or a bare host:port —
+  // and normalize to a ws(s):// ORIGIN. This kills three silent failure modes:
+  //  • an https page opening ws:// is blocked as mixed content → force wss://;
+  //  • a pasted full URL with a /matches/… path would double the path → 404;
+  //  • a bare host with no scheme can't open at all.
+  raw = raw.replace(/^http(s?):\/\//i, 'ws$1://'); // http→ws, https→wss
+  if (!/^wss?:\/\//i.test(raw)) {
+    raw = (location.protocol === 'https:' ? 'wss://' : 'ws://') + raw;
+  }
+  if (location.protocol === 'https:' && raw.startsWith('ws://')) {
+    raw = 'wss://' + raw.slice('ws://'.length);
+  }
+  let base: string;
+  try {
+    const u = new URL(raw);
+    base = `${u.protocol}//${u.host}`; // drop any path/query the user pasted
+  } catch {
+    statusEl.textContent = 'bad server URL';
     return;
   }
   const who = whoInput.value === 'p2' ? 'p2' : 'p1';
   const url = `${base}/matches/proto?player=${encodeURIComponent(who)}`;
-  statusEl.textContent = 'connecting…';
+  statusEl.textContent = `connecting → ${url}`; // show the resolved target so a bad URL is visible
   localStorage.setItem('void.server', base);
 
   if (netSock) netSock.close();

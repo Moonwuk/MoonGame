@@ -136,6 +136,63 @@ Free hosts sleep when idle (cold start on first hit) and state is in-memory (a r
 loses the match) — fine for testing, and the handshake is unauthenticated, so don't
 leave it public long-term (auth is brick F7 / SE-0.1).
 
+### Troubleshooting — "the server won't open / we can't connect"
+
+First, on the host machine run the one-command preflight — it names the problem:
+
+```bash
+pnpm doctor   # is the port bindable? which of my IPs are reachable? what URL do I share?
+```
+
+It enumerates every IPv4 and classifies each (loopback / **vm-nat** / link-local /
+**cgnat** / lan / public), flags a loopback-only bind, and either prints the exact URL
+to share or tells you to tunnel when nothing is reachable. The server itself prints the
+same warning at boot when the only address it can advertise is a dead end (e.g. a
+VirtualBox `10.0.2.x`). If you're still stuck, walk this top-to-bottom and stop at the
+first failing step:
+
+1. **Launched the right way?** Use `pnpm host` (binds `0.0.0.0`); **never**
+   `pnpm dev:proto-server` for a two-person test (it binds `127.0.0.1` = loopback only,
+   so only the host machine can connect — the literal "works for me, friend can't join").
+   On Windows the POSIX prefix `HOST=0.0.0.0 pnpm …` is **ignored** — use `pnpm host`, or
+   PowerShell `$env:HOST='0.0.0.0'; $env:PORT='8788'; pnpm dev:proto-server`.
+
+2. **Did the port open?** On the host: `curl -sS http://localhost:8788/health` → expects
+   `{"ok":true,…}`. If it refuses, read the console: an esbuild `[ERROR]` (no banner) means
+   fix the bundle / `pnpm install`; a clean `Port 8788 is already in use` means a stale
+   server holds it — free it (`PORT=8789 pnpm host`, or kill the old process: Linux
+   `lsof -tiTCP:8788 -sTCP:LISTEN | xargs -r kill`; Windows `netstat -ano | findstr :8788`
+   then `taskkill /PID <pid> /F`).
+
+3. **Reachable from another box?** From a *second* device on the same network:
+   `curl -sS http://<host-ip>:8788/health`. Connection **refused** ⇒ loopback-only bind
+   (step 1). **Timeout** ⇒ a firewall is dropping 8788 — open it: Linux
+   `sudo ufw allow 8788/tcp`; Windows (elevated PowerShell)
+   `New-NetFirewallRule -DisplayName "Void 8788" -Direction Inbound -Protocol TCP -LocalPort 8788 -Action Allow`.
+
+4. **Is the IP you're sharing even routable?** A `10.0.2.x`/`10.0.3.x` (VM-NAT), `169.254.x`
+   (link-local), or any `192.168.x`/`10.x`/`172.16–31.x` (private LAN) address works **only**
+   on the same LAN — **never** for a friend on another network. A `100.64–127.x` address is
+   carrier-grade NAT, unreachable inbound even with port-forwarding. For a remote friend, go
+   to step 6.
+
+5. **Public-IP host (e.g. the friend's Windows box):** after `pnpm host` + the firewall rule,
+   the router must **port-forward** TCP 8788 → that PC's LAN IP, and the WAN IP must be a real
+   public one. Check for CGNAT: compare the router's WAN IP to `curl -s https://api.ipify.org`
+   — if they differ, port-forwarding can't work; tunnel instead (step 6). From the other side:
+   `nc -vz <public-ip> 8788` (Linux) / `Test-NetConnection <public-ip> -Port 8788` (Windows).
+
+6. **Remote friend / VM-NAT / CGNAT → tunnel** (dials outbound, ignores NAT & firewalls).
+   This is the recommended path for anyone not on your LAN (see Path C / Path D above):
+   `cloudflared tunnel --url http://localhost:8788` and share the printed `https://…` URL.
+
+7. **Page loads but the WebSocket won't connect?** Open DevTools → Console/Network (filter WS).
+   A **403** means `?player=` isn't `p1`/`p2` (pick Azure/Crimson in the overlay, don't hand-type).
+   A **404** means a stray path — the connect field wants an **origin only** (`ws://host:8788`),
+   not a `/matches/…` URL. A **mixed-content** block means an `https` page tried `ws://` — the
+   overlay now auto-upgrades to `wss://`, but a stale saved value can linger:
+   `localStorage.removeItem('void.server')` then reload.
+
 ### Lobby — the match waits for both players
 
 However you connect, the world starts **paused** ("⏳ Waiting for … to join"): the
