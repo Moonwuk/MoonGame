@@ -2884,11 +2884,14 @@ const showConnect = (show: boolean): void => {
 };
 srvInput.value =
   localStorage.getItem('void.server') ??
-  // Default to the SAME ORIGIN: a deployed https page → wss://<host> (just a link,
-  // no typing); a LAN/local http page → ws://<host>:8788. Remembered after first use.
+  // Default to the SAME ORIGIN so a served page needs no typing: deployed https →
+  // wss://<host>; the game served from the proto-server (http on its port) →
+  // ws://<host>:<port>; a file:// page or the APK (no port) → ws://<host>:8788.
   (location.protocol === 'https:'
     ? `wss://${location.host}`
-    : `ws://${location.hostname || '127.0.0.1'}:8788`);
+    : location.port
+      ? `ws://${location.host}`
+      : `ws://${location.hostname || '127.0.0.1'}:8788`);
 
 $('csolo').addEventListener('click', () => {
   NET = false;
