@@ -3,7 +3,7 @@
 > Живой «якорь контекста»: что готово, как работает, что дальше. Обновляется по
 > мере разработки (после крупных изменений). Парные документы: `architecture.md`,
 > `modulesystem.md`, `gdd.md`, `roadmap.md`, `backlog.md` (кирпичики задач),
-> `deep-technical-roadmap.md`, `multiplayer.md`, `metagame.md`, корневой `CLAUDE.md` / `CONTRIBUTING.md`.
+> `deep-technical-roadmap.md`, `multiplayer.md`, `metagame.md`, `map-roadmap.md`, корневой `CLAUDE.md` / `CONTRIBUTING.md`.
 >
 > **Ветка:** feature-ветка · **PR:** создаётся после изменений.
 > **Гейт:** `pnpm run check` (lint + typecheck + test). **Тесты: 255 зелёных**.
