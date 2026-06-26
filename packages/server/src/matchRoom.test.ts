@@ -173,3 +173,55 @@ describe('MatchRoom', () => {
     expect(r.state.players.p1?.name).toBe('Valid');
   });
 });
+
+describe('MatchRoom — lobby gate (waitForPlayers)', () => {
+  function lobby(): { r: MatchRoom; tick: (ms: number) => void } {
+    let real = 1000;
+    const r = new MatchRoom({
+      id: 'lobby',
+      initialState: testState(),
+      kernel: createKernel([renameModule]),
+      data: testData(),
+      now: () => real,
+      waitForPlayers: ['p1', 'p2'],
+    });
+    return { r, tick: (ms) => (real += ms) };
+  }
+  const waitingOf = (m: ServerMessage | undefined): boolean | undefined =>
+    (m as { waiting?: boolean } | undefined)?.waiting;
+
+  it('freezes the world clock until both players connect, runs it, re-freezes on drop', () => {
+    const { r, tick } = lobby();
+    const p1 = new MemoryPeer();
+    const p2 = new MemoryPeer();
+
+    // p1 alone → waiting, clock frozen at 0
+    r.addPeer('p1', p1);
+    expect(p1.messages[0]).toMatchObject({ type: 'welcome', waiting: true, serverTime: 0 });
+
+    // an order WHILE waiting applies, but does NOT advance the clock
+    tick(5000);
+    r.submitAction('p1', action('a1', 'p1', 'Solo'), p1);
+    expect(r.state.time).toBe(0);
+    expect(p1.messages.at(-1)).toMatchObject({ type: 'delta', serverTime: 0, waiting: true });
+
+    // p2 joins → the match starts; both learn the wait is over
+    r.addPeer('p2', p2);
+    expect(waitingOf(p2.messages[0])).toBeUndefined(); // p2 welcome: running
+    expect(waitingOf(p1.messages.at(-1))).toBeUndefined(); // p1 got a flip broadcast
+
+    // 3s pass with both connected → the clock accrues exactly that
+    tick(3000);
+    r.submitAction('p2', action('a2', 'p2', 'Duo'), p2);
+    expect(r.state.time).toBe(3000);
+    expect(p2.messages.at(-1)).toMatchObject({ type: 'delta', serverTime: 3000 });
+
+    // p2 drops → clock re-freezes at 3000; p1 is told it's waiting again
+    r.removePeer('p2', p2);
+    expect(waitingOf(p1.messages.at(-1))).toBe(true);
+    tick(10000);
+    r.submitAction('p1', action('a3', 'p1', 'Alone'), p1);
+    expect(r.state.time).toBe(3000); // still frozen — no advance past 3000
+    expect(p1.messages.at(-1)).toMatchObject({ serverTime: 3000, waiting: true });
+  });
+});

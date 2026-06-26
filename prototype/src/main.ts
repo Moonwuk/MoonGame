@@ -2922,6 +2922,13 @@ $('cgo').addEventListener('click', () => {
         // mirror apply()'s selection cleanup (we replace `s` directly here)
         if (selFleet && !s.fleets[selFleet]) selFleet = null;
         selFleets = new Set([...selFleets].filter((id) => s.fleets[id]?.owner === ME));
+        // Lobby: the server holds the world clock until both players are in. Show a
+        // waiting banner (only clear our OWN waiting banner, never a victory one).
+        if (snap.waiting) {
+          banner = `⏳ Waiting for ${NAME[ME === 'p1' ? 'p2' : 'p1']} to join…`;
+        } else if (banner && banner.startsWith('⏳')) {
+          banner = null;
+        }
         lastPanelHtml = '';
       },
       onRejection: (_id, code) =>

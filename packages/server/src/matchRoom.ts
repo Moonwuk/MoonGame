@@ -30,6 +30,10 @@ export interface MatchRoomOptions {
   config?: Context['config'];
   now?: () => number;
   maxPayloadBytes?: number;
+  /** Lobby gate: the world clock stays FROZEN until every listed player is
+   *  connected, and re-freezes if one drops (`now` is then read as raw wall-clock
+   *  and only accrues while all are present). Omit ⇒ the clock runs freely. */
+  waitForPlayers?: PlayerId[];
 }
 
 export interface ActionReceipt {
@@ -61,6 +65,11 @@ export class MatchRoom {
   private readonly config: Context['config'];
   private readonly now: () => number;
   private readonly maxPayloadBytes: number;
+  /** Lobby gate (null = run freely). The world clock only accrues while all these
+   *  players are connected. */
+  private readonly waitFor: ReadonlySet<PlayerId> | null;
+  private lobbyAccrued = 0; // game-ms accrued while running
+  private lobbyRunningSince: number | null = null; // raw ms when running began, else null
   private readonly peers = new Map<PlayerId, Set<RoomPeer>>();
   private readonly receipts = new Map<string, ActionReceipt>();
   private seq = 0;
@@ -78,6 +87,49 @@ export class MatchRoom {
     this.config = options.config ?? { timeScale: 1 };
     this.now = options.now ?? (() => Date.now());
     this.maxPayloadBytes = options.maxPayloadBytes ?? 32_768;
+    this.waitFor =
+      options.waitForPlayers && options.waitForPlayers.length > 0
+        ? new Set(options.waitForPlayers)
+        : null;
+  }
+
+  /** Whether every required player is currently connected (always true when no
+   *  lobby gate is configured). */
+  private get lobbyRunning(): boolean {
+    if (!this.waitFor) return true;
+    for (const p of this.waitFor) if ((this.peers.get(p)?.size ?? 0) === 0) return false;
+    return true;
+  }
+
+  /** True while the match is paused waiting for the required players (frozen clock). */
+  private get waiting(): boolean {
+    return this.waitFor !== null && !this.lobbyRunning;
+  }
+
+  /** The world clock: free-running unless a lobby gate is configured, in which case
+   *  it only accrues real time while all required players are connected. */
+  private clock(): number {
+    if (!this.waitFor) return this.now();
+    return (
+      this.lobbyAccrued + (this.lobbyRunningSince === null ? 0 : this.now() - this.lobbyRunningSince)
+    );
+  }
+
+  /** Re-evaluate running/paused after a connection change: freeze or resume the
+   *  clock. Returns true if the lobby state flipped (so callers can notify peers). */
+  private syncLobbyClock(): boolean {
+    if (!this.waitFor) return false;
+    const running = this.lobbyRunning;
+    if (running && this.lobbyRunningSince === null) {
+      this.lobbyRunningSince = this.now(); // start / resume
+      return true;
+    }
+    if (!running && this.lobbyRunningSince !== null) {
+      this.lobbyAccrued += this.now() - this.lobbyRunningSince; // freeze
+      this.lobbyRunningSince = null;
+      return true;
+    }
+    return false;
   }
 
   get state(): GameState {
@@ -101,6 +153,7 @@ export class MatchRoom {
     const playerPeers = this.peers.get(playerId) ?? new Set<RoomPeer>();
     playerPeers.add(peer);
     this.peers.set(playerId, playerPeers);
+    const flipped = this.syncLobbyClock(); // last player in? the match resumes
     const view = this.viewFor(playerId);
     this.lastVisible.set(playerId, view.base);
     this.send(peer, {
@@ -108,11 +161,13 @@ export class MatchRoom {
       matchId: this.id,
       playerId,
       seq: this.seq,
-      serverTime: this.now(),
+      serverTime: this.clock(),
       state: view.base,
       signatures: view.signatures,
       remembered: view.remembered,
+      ...(this.waiting ? { waiting: true } : {}),
     });
+    if (flipped) this.broadcastState([]); // tell the already-present peer the wait ended
     return true;
   }
 
@@ -132,6 +187,7 @@ export class MatchRoom {
     if (!playerPeers) return;
     playerPeers.delete(peer);
     if (playerPeers.size === 0) this.peers.delete(playerId);
+    if (this.syncLobbyClock()) this.broadcastState([]); // a required player dropped → freeze + notify
   }
 
   receive(playerId: PlayerId, peer: RoomPeer, raw: string): void {
@@ -147,11 +203,11 @@ export class MatchRoom {
     if (message.type === 'ping') {
       const pong =
         message.clientTime === undefined
-          ? { type: 'pong' as const, matchId: this.id, serverTime: this.now() }
+          ? { type: 'pong' as const, matchId: this.id, serverTime: this.clock() }
           : {
               type: 'pong' as const,
               matchId: this.id,
-              serverTime: this.now(),
+              serverTime: this.clock(),
               clientTime: message.clientTime,
             };
       this.send(peer, pong);
@@ -176,7 +232,7 @@ export class MatchRoom {
       return { ok: false, seq: receipt.seq, events: [], code: receipt.code };
     }
 
-    const serverNow = this.now();
+    const serverNow = this.clock();
     const advanced = this.advance(serverNow);
     if (!advanced.ok) {
       const receipt = this.recordReceipt(action, playerId, false, advanced.code);
@@ -208,11 +264,12 @@ export class MatchRoom {
       type: 'state',
       matchId: this.id,
       seq: this.seq,
-      serverTime: this.now(),
+      serverTime: this.clock(),
       state: view.base,
       events: [],
       signatures: view.signatures,
       remembered: view.remembered,
+      ...(this.waiting ? { waiting: true } : {}),
     };
   }
 
@@ -247,7 +304,8 @@ export class MatchRoom {
     // Fog of war is a server boundary: each player gets a delta against THEIR own
     // last visible view, so hidden worlds/fleets are physically never sent. Only
     // what changed in that player's view goes out (an idle world ⇒ tiny payload).
-    const now = this.now();
+    const now = this.clock();
+    const waiting = this.waiting;
     for (const [playerId, playerPeers] of this.peers) {
       const view = this.viewFor(playerId);
       const baseline = this.lastVisible.get(playerId) ?? view.base;
@@ -261,6 +319,7 @@ export class MatchRoom {
         events: events.filter((e) => this.eventVisibleTo(e, playerId, identify)),
         signatures: view.signatures,
         remembered: view.remembered,
+        ...(waiting ? { waiting: true } : {}),
       };
       this.lastVisible.set(playerId, view.base);
       for (const peer of playerPeers) this.send(peer, message);

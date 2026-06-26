@@ -12,6 +12,8 @@ export interface MultiplayerSnapshot {
   playerId?: PlayerId;
   seq: number;
   state: GameState;
+  /** True while the match is paused waiting for the required players to connect. */
+  waiting?: boolean;
 }
 
 export interface MultiplayerClientHandlers {
@@ -30,6 +32,7 @@ interface InboundBase {
   delta?: StateDelta;
   actionId?: string;
   code?: string;
+  waiting?: boolean;
 }
 
 function decode(raw: string): InboundBase | null {
@@ -96,6 +99,7 @@ export class MultiplayerClient {
         playerId: this.playerId,
         seq: message.seq,
         state: message.state,
+        waiting: message.waiting,
       });
       return;
     }
@@ -113,6 +117,7 @@ export class MultiplayerClient {
         playerId: this.playerId,
         seq: message.seq,
         state: this.lastState,
+        waiting: message.waiting,
       });
       return;
     }

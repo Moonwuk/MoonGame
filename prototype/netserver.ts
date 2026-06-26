@@ -35,16 +35,17 @@ function lanIp(): string | null {
   return null;
 }
 
-// World time starts at 0 and tracks real elapsed time since boot, so the in-game
-// clock reads "Day 1" at launch (rather than ~Day 20000 from a wall-clock epoch)
-// while still advancing in real wall-clock seconds.
-const bootTime = Date.now();
+// Lobby gate: the world clock starts at 0 ("Day 1") and only accrues real time
+// while BOTH players are connected — so the match sits paused until the friend
+// joins, and re-freezes if someone drops. `now` is read raw; MatchRoom does the
+// freeze/accrue.
 const room = new MatchRoom({
   id: 'proto',
   initialState: newGame(),
   kernel,
   data,
-  now: () => Date.now() - bootTime,
+  now: () => Date.now(),
+  waitForPlayers: ['p1', 'p2'],
 });
 
 const server = createMultiplayerServer({ room, host, port, indexHtml });

@@ -32,7 +32,13 @@ export interface ClientPingMessage {
 
 export type ClientMessage = ClientActionMessage | ClientPingMessage;
 
-export interface ServerWelcomeMessage extends VisibilityFields {
+/** Lobby flag carried on snapshots: true while the match is paused waiting for the
+ *  required players to connect (the world clock is frozen). Absent ⇒ running. */
+export interface LobbyField {
+  waiting?: boolean;
+}
+
+export interface ServerWelcomeMessage extends VisibilityFields, LobbyField {
   type: 'welcome';
   matchId: string;
   playerId: PlayerId;
@@ -41,7 +47,7 @@ export interface ServerWelcomeMessage extends VisibilityFields {
   state: GameState;
 }
 
-export interface ServerStateMessage extends VisibilityFields {
+export interface ServerStateMessage extends VisibilityFields, LobbyField {
   type: 'state';
   matchId: string;
   seq: number;
@@ -52,7 +58,7 @@ export interface ServerStateMessage extends VisibilityFields {
 
 /** Incremental update — only the entities/fields that changed since the peer's
  *  last `welcome`/`state` snapshot. A full `state` is sent on join and on resync. */
-export interface ServerDeltaMessage extends VisibilityFields {
+export interface ServerDeltaMessage extends VisibilityFields, LobbyField {
   type: 'delta';
   matchId: string;
   seq: number;
