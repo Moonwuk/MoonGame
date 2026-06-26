@@ -1237,6 +1237,26 @@ function buildStaticLayer(): void {
     g.lineWidth = si.owner ? 1.6 : 1;
     g.stroke();
   }
+
+  // PATH NETWORK — thin roads between adjacent provinces (the visible "пути").
+  // Movement runs along these; an army marches province-to-adjacent-province and
+  // its route (drawAimPreview / drawFleetRoutes) traces them.
+  g.strokeStyle = 'rgba(150,185,195,0.34)';
+  g.lineWidth = 1.1;
+  for (const n of MAP) {
+    if (!s.planets[n.id]) continue;
+    const a = world(n);
+    for (const l of n.links) {
+      if (n.id >= l) continue; // each undirected road once
+      const B = s.planets[l];
+      if (!B) continue;
+      const b = world(B.position);
+      g.beginPath();
+      g.moveTo(a.x, a.y);
+      g.lineTo(b.x, b.y);
+      g.stroke();
+    }
+  }
 }
 
 /** Blit the cached static layer (device-pixel 1:1) beneath the live dynamic art. */

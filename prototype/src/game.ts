@@ -269,7 +269,13 @@ function withNeighborLinks(nodes: KeyNode[]): MapNode[] {
   return nodes.map((n) => ({ ...n, links: [...adj.get(n.id)!] }));
 }
 
-export const MAP: MapNode[] = withNeighborLinks([...KEY, ...fillSectors()]);
+// Bytro-style province map: only real provinces (no "empty" void waypoints), wired
+// to their neighbours by shared border (relative-neighbourhood graph). Movement is
+// province-to-adjacent; the links ARE the visible path network.
+export const MAP: MapNode[] = withNeighborLinks([
+  ...KEY,
+  ...fillSectors().filter((n) => n.sector !== 'empty'),
+]);
 
 function player(
   id: string,
