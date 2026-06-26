@@ -17,6 +17,11 @@ import type { Fleet, GameState, PlanetId, PlayerId } from './gameState';
 /** Identify (full-detail) range, in jumps, from any owned world or fleet. */
 const IDENTIFY_HOPS = 1;
 
+/** A radar projects TWO concentric ranges: it catches coarse signatures out to its
+ *  full reach, and fully identifies contacts within the inner half of that reach
+ *  (close contacts are resolved; far ones are just blips). */
+const IDENTIFY_REACH_FRACTION = 0.5;
+
 /** Size buckets for a radar contact — a coarse image, never the composition. */
 export type SignatureSize = 'S' | 'M' | 'L';
 function bucket(signature: number): SignatureSize {
@@ -116,7 +121,10 @@ function coverageFor(state: GameState, viewerId: PlayerId, data: GameData): Cove
       const def = data.buildings[b.type];
       if (def) reach = Math.max(reach, buildingLevel(def, b.level).radarRange);
     }
-    if (reach > 0) withinRadius(state, planet.id, reach, radar);
+    if (reach > 0) {
+      withinRadius(state, planet.id, reach, radar); // signatures (outer)
+      withinRadius(state, planet.id, reach * IDENTIFY_REACH_FRACTION, identify); // full reveal (inner)
+    }
   }
   for (const fleet of Object.values(state.fleets)) {
     if (fleet.owner !== viewerId) continue;
@@ -124,7 +132,10 @@ function coverageFor(state: GameState, viewerId: PlayerId, data: GameData): Cove
     if (node === null) continue;
     flood(state, node, IDENTIFY_HOPS, identify);
     const reach = fleetRadar(fleet, data);
-    if (reach > 0) withinRadius(state, node, reach, radar);
+    if (reach > 0) {
+      withinRadius(state, node, reach, radar); // signatures (outer)
+      withinRadius(state, node, reach * IDENTIFY_REACH_FRACTION, identify); // full reveal (inner)
+    }
   }
   for (const id of identify) radar.add(id); // identify implies radar
   return { identify, radar };

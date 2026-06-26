@@ -674,6 +674,9 @@ const RADAR_SHIP: Record<string, number> = { scout: 350 };
 // Radar-array detection radius (DISTANCE, map units) by building level.
 const RADAR_LEVEL_DIST = [0, 300, 500, 700];
 const SENSOR_HOPS = 1; // identify (full-detail) range from any owned node / fleet (jumps)
+// A radar projects two concentric ranges: signatures out to its full reach, and
+// full identification within the inner half (mirrors shared-core visibility).
+const IDENTIFY_REACH_FRACTION = 0.5;
 
 /** Total radar signature of a fleet = Σ count × per-unit signature. */
 function fleetSignature(f: Fleet): number {
@@ -744,7 +747,10 @@ function computeVision(): Vision {
     if (p.owner === ME) {
       floodHops(p.id, SENSOR_HOPS, identify);
       const rr = planetRadar(p);
-      if (rr > 0) withinRadius(p.id, rr, radar);
+      if (rr > 0) {
+        withinRadius(p.id, rr, radar); // signatures (outer)
+        withinRadius(p.id, rr * IDENTIFY_REACH_FRACTION, identify); // full reveal (inner)
+      }
     }
   for (const f of Object.values(s.fleets))
     if (f.owner === ME) {
@@ -752,7 +758,10 @@ function computeVision(): Vision {
       if (!node) continue;
       floodHops(node, SENSOR_HOPS, identify);
       const rr = fleetRadar(f);
-      if (rr > 0) withinRadius(node, rr, radar);
+      if (rr > 0) {
+        withinRadius(node, rr, radar); // signatures (outer)
+        withinRadius(node, rr * IDENTIFY_REACH_FRACTION, identify); // full reveal (inner)
+      }
     }
   for (const id of identify) radar.add(id); // identify implies radar
   return { identify, radar };
@@ -1184,11 +1193,12 @@ function drawBattlePulse(x: number, y: number, pulse: number) {
 }
 
 /**
- * Faint rings for my own radar reach (planet arrays + radar-ships). The reach is
- * a Euclidean distance in MAP units (array L1/L2/L3 = 300/500/700), so on the
- * projected map it reads as an ellipse — projecting the radius on each axis
- * matches how `withinRadius` actually senses (a true circle in map space). Makes
- * "what my sensors cover" tangible; only meaningful with fog on.
+ * Rings for my own radar reach (planet arrays + radar-ships). Each radar projects
+ * TWO concentric ranges (matching shared-core visibility): an OUTER signature ring
+ * (full reach — enemy fleets show as coarse blips in fog) and an INNER full-reveal
+ * ring (half the reach — contacts fully identified). The reach is a Euclidean
+ * distance in MAP units; the projection is uniform so they read as true circles.
+ * Only meaningful with fog on.
  */
 function drawRadarCoverage() {
   if (!fogOn) return;
@@ -1209,18 +1219,25 @@ function drawRadarCoverage() {
   cx.save();
   for (const src of sources) {
     const c = world({ x: src.x, y: src.y });
-    const rx = world({ x: src.x + src.r, y: src.y }).x - c.x;
-    const ry = world({ x: src.x, y: src.y + src.r }).y - c.y;
-    if (!(rx > 0) || !(ry > 0)) continue;
-    cx.beginPath();
-    cx.ellipse(c.x, c.y, rx, ry, 0, 0, TAU);
-    cx.fillStyle = rgba(LOCK, 0.04);
-    cx.fill();
-    cx.setLineDash([3, 7]);
-    cx.lineWidth = 1;
-    cx.strokeStyle = rgba(LOCK, 0.22);
-    cx.stroke();
+    const ring = (rr: number, dash: number[], fillA: number, strokeA: number): void => {
+      const rx = world({ x: src.x + rr, y: src.y }).x - c.x;
+      const ry = world({ x: src.x, y: src.y + rr }).y - c.y;
+      if (!(rx > 0) || !(ry > 0)) return;
+      cx.beginPath();
+      cx.ellipse(c.x, c.y, rx, ry, 0, 0, TAU);
+      if (fillA > 0) {
+        cx.fillStyle = rgba(LOCK, fillA);
+        cx.fill();
+      }
+      cx.setLineDash(dash);
+      cx.lineWidth = 1;
+      cx.strokeStyle = rgba(LOCK, strokeA);
+      cx.stroke();
+    };
+    ring(src.r, [3, 7], 0.03, 0.18); // outer — signatures (fainter, dashed)
+    ring(src.r * IDENTIFY_REACH_FRACTION, [], 0.06, 0.34); // inner — full reveal (brighter, solid)
   }
+  cx.setLineDash([]);
   cx.restore();
 }
 
@@ -1528,12 +1545,12 @@ function blitStaticLayer(): void {
   cx.restore();
 }
 
-/** Draw the radar detection radius of the selected sector. Radar reach is a
- *  physical distance in map units; `world()` projects it (per-axis, non-uniform)
- *  into an on-screen ellipse so its edge lines up with which nodes it actually
- *  covers. Nothing is drawn for a sector that projects no radar.
- *  (Complements `drawRadarCoverage` — that shows ALL my sources persistently;
- *  this labels the one selected sector's radius on tap.) */
+/** Draw the radar ranges of the selected sector: the OUTER signature radius (full
+ *  reach, animated dashed) and the INNER full-reveal radius (half the reach, solid)
+ *  — the two concentric ranges from shared-core visibility. The reach is a physical
+ *  distance in map units; the projection is uniform so they read as true circles.
+ *  Nothing is drawn for a sector with no radar. (Complements `drawRadarCoverage` —
+ *  that shows ALL my sources persistently; this labels the selected one on tap.) */
 function drawRadarRange(now: number): void {
   if (!selPlanet) return;
   const p = s.planets[selPlanet];
@@ -1541,29 +1558,45 @@ function drawRadarRange(now: number): void {
   const reach = planetRadar(p);
   if (reach <= 0) return;
   const c = world(p.position);
-  const ex = world({ x: p.position.x + reach, y: p.position.y });
-  const ey = world({ x: p.position.x, y: p.position.y + reach });
-  const rx = Math.abs(ex.x - c.x);
-  const ry = Math.abs(ey.y - c.y);
   const pulse = 0.5 + 0.5 * Math.sin(now / 600);
+  const radiusPx = (rr: number): { rx: number; ry: number } => ({
+    rx: Math.abs(world({ x: p.position.x + rr, y: p.position.y }).x - c.x),
+    ry: Math.abs(world({ x: p.position.x, y: p.position.y + rr }).y - c.y),
+  });
   cx.save();
-  cx.fillStyle = rgba('#5ff0c0', 0.05);
+  cx.shadowColor = '#5ff0c0';
+  cx.textAlign = 'left';
+  cx.font = '700 10px ui-monospace,Menlo,monospace';
+
+  // outer — signature reach (coarse blips in fog)
+  const o = radiusPx(reach);
+  cx.fillStyle = rgba('#5ff0c0', 0.04);
   cx.beginPath();
-  cx.ellipse(c.x, c.y, rx, ry, 0, 0, TAU);
+  cx.ellipse(c.x, c.y, o.rx, o.ry, 0, 0, TAU);
   cx.fill();
   cx.setLineDash([6, 7]);
   cx.lineDashOffset = -now / 60;
-  cx.strokeStyle = rgba('#5ff0c0', 0.42 + 0.22 * pulse);
-  cx.lineWidth = 1.4;
-  cx.shadowColor = '#5ff0c0';
+  cx.strokeStyle = rgba('#5ff0c0', 0.34 + 0.18 * pulse);
+  cx.lineWidth = 1.3;
   cx.shadowBlur = 6;
   cx.stroke();
+  cx.fillStyle = rgba('#aef6e6', 0.85);
+  cx.fillText(`◌ SIGNATURE ${reach}`, c.x + o.rx + 7, c.y + 3);
+
+  // inner — full-reveal reach (contacts fully identified)
+  const inner = reach * IDENTIFY_REACH_FRACTION;
+  const i = radiusPx(inner);
+  cx.fillStyle = rgba('#5ff0c0', 0.06);
+  cx.beginPath();
+  cx.ellipse(c.x, c.y, i.rx, i.ry, 0, 0, TAU);
+  cx.fill();
   cx.setLineDash([]);
-  cx.shadowBlur = 0;
+  cx.strokeStyle = rgba('#7df0d0', 0.6 + 0.2 * pulse);
+  cx.lineWidth = 1.4;
+  cx.shadowBlur = 7;
+  cx.stroke();
   cx.fillStyle = rgba('#aef6e6', 0.9);
-  cx.font = '700 10px ui-monospace,Menlo,monospace';
-  cx.textAlign = 'left';
-  cx.fillText(`◌ RADAR ${reach}`, c.x + rx + 7, c.y + 3);
+  cx.fillText(`● REVEAL ${Math.round(inner)}`, c.x + i.rx + 7, c.y - 7);
   cx.restore();
 }
 
