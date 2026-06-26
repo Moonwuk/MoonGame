@@ -20,7 +20,7 @@ function snapshot(state: GameState, planetId: PlanetId, now: number): PlanetSnap
     buildings: planet.buildings.map((b) => ({ ...b })),
     at: now,
   };
-  if (planet.sectorType !== undefined) snap.sectorType = planet.sectorType;
+  if (planet.terrain !== undefined) snap.terrain = planet.terrain;
   if (planet.planetType !== undefined) snap.planetType = planet.planetType;
   return snap;
 }

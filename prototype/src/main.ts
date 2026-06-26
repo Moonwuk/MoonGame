@@ -1814,7 +1814,7 @@ function panelHtml(): string {
     );
   }
   const mine = p.owner === ME;
-  const sec = data.sectors[p.sectorType ?? '']?.name ?? p.sectorType ?? '—';
+  const sec = data.sectors[p.terrain ?? '']?.name ?? p.terrain ?? '—';
   const pt = p.planetType ? data.planetTypes[p.planetType] : undefined;
   const ptName = pt?.name ?? p.planetType ?? '—';
   const ground = p.garrison.filter((st) => isGround(st.unit));

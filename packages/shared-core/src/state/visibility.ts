@@ -163,8 +163,8 @@ export function visibleState(state: GameState, viewerId: PlayerId, data: GameDat
       planet.garrison = snap.garrison.map((s) => ({ ...s }));
       planet.buildings = snap.buildings.map((b) => ({ ...b }));
       planet.resources = {};
-      if (snap.sectorType === undefined) delete planet.sectorType;
-      else planet.sectorType = snap.sectorType;
+      if (snap.terrain === undefined) delete planet.terrain;
+      else planet.terrain = snap.terrain;
       if (snap.planetType === undefined) delete planet.planetType;
       else planet.planetType = snap.planetType;
       remembered.push(planet.id);
@@ -173,7 +173,7 @@ export function visibleState(state: GameState, viewerId: PlayerId, data: GameDat
       planet.garrison = [];
       planet.buildings = [];
       planet.resources = {};
-      delete planet.sectorType;
+      delete planet.terrain;
       delete planet.planetType;
     }
   }

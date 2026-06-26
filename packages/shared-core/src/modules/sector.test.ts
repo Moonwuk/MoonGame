@@ -30,7 +30,7 @@ function planet(
   owner: string | null,
   x: number,
   y: number,
-  sectorType?: string,
+  terrain?: string,
   links: string[] = [],
 ): Planet {
   return {
@@ -38,7 +38,7 @@ function planet(
     owner,
     position: { x, y },
     links,
-    sectorType,
+    terrain,
     resources: {},
     buildings: [],
     garrison: [],

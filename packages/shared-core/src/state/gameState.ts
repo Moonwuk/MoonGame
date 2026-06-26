@@ -94,7 +94,7 @@ export interface Planet {
   links?: PlanetId[];
   /** Sector terrain type id (resolved against game data `sectors`); its buffs
    *  /debuffs are applied through hooks. Undefined = plain space, no modifier. */
-  sectorType?: string;
+  terrain?: string;
   /** Planet type id — the world's nature (resolved against game data
    *  `planetTypes`); production/defense modifiers are applied through hooks.
    *  Undefined = generic world, no modifier. */
@@ -237,7 +237,7 @@ export interface PlanetSnapshot {
   owner: PlayerId | null;
   garrison: UnitStack[];
   buildings: BuildingInstance[];
-  sectorType?: string;
+  terrain?: string;
   planetType?: string;
   /** Simulation time (ms) this snapshot was taken. */
   at: number;

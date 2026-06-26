@@ -92,7 +92,7 @@ function planet(
     owner,
     position: { x, y },
     links,
-    sectorType: 'empty_space',
+    terrain: 'empty_space',
     planetType,
     resources: {},
     buildings: [],

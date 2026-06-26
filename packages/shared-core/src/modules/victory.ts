@@ -45,7 +45,7 @@ function computeScores(h: HandlerContext): Record<PlayerId, MatchScore> {
     if (planetType) {
       score.total += planetType.scoreValue;
     }
-    const sector = planet.sectorType ? data.sectors[planet.sectorType] : undefined;
+    const sector = planet.terrain ? data.sectors[planet.terrain] : undefined;
     if (sector) {
       score.total += sector.scoreValue;
     }

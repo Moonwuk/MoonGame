@@ -72,7 +72,7 @@ interface Node {
   x: number;
   y: number;
   links: string[];
-  sectorType?: string;
+  terrain?: string;
   garrison?: Array<[string, number]>;
   buildings?: string[];
 }
@@ -85,7 +85,7 @@ const MAP: Node[] = [
     x: 15,
     y: 35,
     links: ['FORGE', 'RELAY'],
-    sectorType: 'empty_space',
+    terrain: 'empty_space',
     buildings: ['mine'],
   },
   {
@@ -94,16 +94,16 @@ const MAP: Node[] = [
     x: 40,
     y: 18,
     links: ['HOME', 'NEXUS'],
-    sectorType: 'asteroid_field',
+    terrain: 'asteroid_field',
   },
-  { id: 'RELAY', owner: null, x: 40, y: 52, links: ['HOME', 'NEXUS'], sectorType: 'empty_space' },
+  { id: 'RELAY', owner: null, x: 40, y: 52, links: ['HOME', 'NEXUS'], terrain: 'empty_space' },
   {
     id: 'NEXUS',
     owner: null,
     x: 65,
     y: 35,
     links: ['FORGE', 'RELAY', 'BASTION', 'OUTPOST'],
-    sectorType: 'nebula',
+    terrain: 'nebula',
   },
   {
     id: 'OUTPOST',
@@ -111,7 +111,7 @@ const MAP: Node[] = [
     x: 95,
     y: 18,
     links: ['NEXUS', 'BASTION'],
-    sectorType: 'asteroid_field',
+    terrain: 'asteroid_field',
   },
   {
     id: 'BASTION',
@@ -130,7 +130,7 @@ function planet(n: Node): Planet {
     owner: n.owner,
     position: { x: n.x, y: n.y },
     links: n.links,
-    sectorType: n.sectorType,
+    terrain: n.terrain,
     resources: {},
     buildings: (n.buildings ?? []).map((type) => ({ type, level: 1, hp: 0 })),
     garrison: (n.garrison ?? []).map(([unit, count]) => ({ unit, count })),
@@ -371,8 +371,8 @@ function renderFrame(frame: Frame, dx: number, dy: number): string {
     parts.push(
       `<text x="${sx(p.position.x)}" y="${sy(p.position.y) - 13}" fill="#94a3b8" font-size="10" font-family="monospace" text-anchor="middle">${p.id}</text>`,
     );
-    if (p.sectorType) {
-      const label = p.sectorType.replace('_field', '').replace('_space', '');
+    if (p.terrain) {
+      const label = p.terrain.replace('_field', '').replace('_space', '');
       parts.push(
         `<text x="${sx(p.position.x)}" y="${sy(p.position.y) + 20}" fill="#64748b" font-size="9" font-family="monospace" text-anchor="middle">${label}</text>`,
       );

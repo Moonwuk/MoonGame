@@ -354,7 +354,7 @@ export function newGame(): GameState {
       owner: n.owner,
       position: { x: n.x, y: n.y },
       links: n.links,
-      sectorType: SECTOR_TYPES[n.sector]?.core ?? 'empty_space',
+      terrain: SECTOR_TYPES[n.sector]?.core ?? 'empty_space',
       planetType: n.type,
       resources: {},
       buildings: (n.buildings ?? []).map((b) => {
