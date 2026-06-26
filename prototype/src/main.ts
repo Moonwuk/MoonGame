@@ -1194,12 +1194,17 @@ function buildStaticLayer(): void {
     const c = world(n);
     seeds.push({ x: c.x, y: c.y, w: (p.size ?? 1) * W, owner: p.owner ?? null, kind: n.sector });
   }
-  const MARGIN = 2500;
+  // Clip cells to the MAP boundary (province bounding box + padding), not the
+  // viewport — otherwise the outermost provinces stretch to the screen edge. This
+  // gives the map a defined edge that pans/zooms with the camera.
+  const padB = Math.max(40, (MAXX - MINX) * 0.05);
+  const tl = world({ x: MINX - padB, y: MINY - padB });
+  const br = world({ x: MAXX + padB, y: MAXY + padB });
   const clip: Array<[number, number]> = [
-    [-MARGIN, -MARGIN],
-    [VW + MARGIN, -MARGIN],
-    [VW + MARGIN, VH + MARGIN],
-    [-MARGIN, VH + MARGIN],
+    [tl.x, tl.y],
+    [br.x, tl.y],
+    [br.x, br.y],
+    [tl.x, br.y],
   ];
   const trace = (poly: Array<[number, number]>): void => {
     g.beginPath();
@@ -1257,6 +1262,11 @@ function buildStaticLayer(): void {
       g.stroke();
     }
   }
+
+  // map boundary — a faint frame so the edge of the sector reads as intentional
+  g.strokeStyle = 'rgba(90,130,140,0.35)';
+  g.lineWidth = 1.5;
+  g.strokeRect(tl.x, tl.y, br.x - tl.x, br.y - tl.y);
 }
 
 /** Blit the cached static layer (device-pixel 1:1) beneath the live dynamic art. */
