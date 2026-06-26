@@ -19,6 +19,7 @@ function shippedData(): GameData {
     buildings: readJson('data/buildings.json'),
     events: readJson('data/events.json'),
     sectors: readJson('data/sectors.json'),
+    sectorKinds: readJson('data/sectorKinds.json'),
     planetTypes: readJson('data/planetTypes.json'),
     technologies: readJson('data/technologies.json'),
   });

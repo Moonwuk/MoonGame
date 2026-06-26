@@ -22,6 +22,7 @@ function loadShippedBundle(): Record<string, unknown> {
     buildings: readJson('buildings.json'),
     events: readJson('events.json'),
     sectors: readJson('sectors.json'),
+    sectorKinds: readJson('sectorKinds.json'),
     planetTypes: readJson('planetTypes.json'),
     technologies: readJson('technologies.json'),
   };

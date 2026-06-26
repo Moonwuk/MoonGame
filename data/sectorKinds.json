@@ -1,0 +1,6 @@
+{
+  "planet": { "name": "Planet", "capturable": true, "buildable": true, "orbit": true },
+  "asteroid": { "name": "Asteroid Field", "capturable": true, "buildable": true, "orbit": false },
+  "nebula": { "name": "Nebula", "capturable": true, "buildable": true, "orbit": true },
+  "empty": { "name": "Empty Space", "capturable": false, "buildable": false, "orbit": false }
+}

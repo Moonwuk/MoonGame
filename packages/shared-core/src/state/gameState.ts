@@ -95,6 +95,10 @@ export interface Planet {
   /** Sector terrain type id (resolved against game data `sectors`); its buffs
    *  /debuffs are applied through hooks. Undefined = plain space, no modifier. */
   terrain?: string;
+  /** Sector kind id (planet / asteroid / nebula / empty …; resolved against game
+   *  data `sectorKinds`) — decides capturable / buildable / orbit. Undefined
+   *  degrades to the permissive defaults (see `sectorKindDef`). */
+  kind?: string;
   /** Planet type id — the world's nature (resolved against game data
    *  `planetTypes`); production/defense modifiers are applied through hooks.
    *  Undefined = generic world, no modifier. */

@@ -5,6 +5,7 @@ import { timeScaleOf, type Context } from '../action/types';
 import { MS_PER_HOUR } from '../util/time';
 import { sumUnitStat } from '../util/stacks';
 import { requireOwnedIdleFleet } from '../util/fleet';
+import { isCapturable } from '../state/sectorKind';
 /** Hard cap on rounds so a zero-damage stalemate can't run forever (fail-secure). */
 const MAX_COMBAT_ROUNDS = 240;
 /** Fraction of a bombarding fleet's firepower that rains on the planet below. */
@@ -298,6 +299,9 @@ function capturePlanet(
   const fleet = h.state.fleets[fleetId];
   if (!planet || !fleet) {
     return;
+  }
+  if (!isCapturable(h.ctx.data, planet)) {
+    return; // empty space (sector kind not capturable) can't be owned, even after a fight
   }
   planet.owner = fleet.owner;
   // Only a successful ground assault leaves troops behind to garrison; a fleet

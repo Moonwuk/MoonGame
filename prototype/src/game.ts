@@ -14,6 +14,7 @@ import {
   economyModule,
   movementModule,
   combatModule,
+  captureOnArrivalModule,
   sectorModule,
   planetTypeModule,
   constructionModule,
@@ -136,6 +137,14 @@ export const data: GameData = parseGameData({
     empty_space: { name: 'Open space', speedBonus: 0.15, hpBonus: 0 },
     asteroid_field: { name: 'Asteroid field', speedBonus: -0.25, hpBonus: 0.1 },
     nebula: { name: 'Nebula', speedBonus: -0.1, hpBonus: 0.05 },
+  },
+  // Sector kinds (capturable/buildable/orbit) — mirrors SECTOR_TYPES so the kernel's
+  // capture-on-arrival treats empty void as uncapturable (matches data/sectorKinds.json).
+  sectorKinds: {
+    planet: { name: 'Planet', capturable: true, buildable: true, orbit: true },
+    asteroid: { name: 'Asteroid Field', capturable: true, buildable: true, orbit: false },
+    nebula: { name: 'Nebula', capturable: true, buildable: true, orbit: true },
+    empty: { name: 'Empty Space', capturable: false, buildable: false, orbit: false },
   },
   planetTypes: {
     terran: { name: 'Terran', productionBonus: 0, defenseBonus: 0.1 },
@@ -355,6 +364,7 @@ export function newGame(): GameState {
       position: { x: n.x, y: n.y },
       links: n.links,
       terrain: SECTOR_TYPES[n.sector]?.core ?? 'empty_space',
+      kind: n.sector, // planet / asteroid / nebula / empty — drives capturable (sectorKinds)
       planetType: n.type,
       resources: {},
       buildings: (n.buildings ?? []).map((b) => {
@@ -433,6 +443,7 @@ export const MODULES: GameModule[] = [
   economyModule,
   movementModule,
   combatModule,
+  captureOnArrivalModule, // walk-in capture now a kernel rule (was client-side seizeSector)
   constructionModule,
   armyModule,
   fleetLaunchModule,

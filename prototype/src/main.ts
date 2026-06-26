@@ -812,30 +812,13 @@ function handleEvents(events: DomainEvent[]) {
       case 'fleet.destroyed':
         note(`☠️ a ${NAME[p.owner as string]} fleet was destroyed`);
         break;
-      case 'fleet.transit':
-      case 'fleet.arrived':
-        seizeSector(p.at as string, p.fleetId as string);
-        break;
     }
   }
 }
 
-// A fleet moving through (or stopping at) a capturable sector that is undefended
-// and uncontested takes it on the spot — the province recolours. Defended sectors
-// (a garrison or fortress) need a real assault; empty space can't be owned at all.
-function seizeSector(at: string, fleetId: string) {
-  const f = s.fleets[fleetId];
-  const pl = s.planets[at];
-  if (!f || !pl || pl.owner === f.owner) return;
-  if (!SECTOR_TYPES[SECTOR_OF[at]]?.capturable) return;
-  if ((pl.garrison ?? []).some((u) => u.count > 0)) return;
-  const contested = Object.values(s.fleets).some(
-    (g) => g.owner !== f.owner && g.location === at && g.units.some((u) => u.count > 0),
-  );
-  if (contested) return;
-  pl.owner = f.owner;
-  note(`🚩 ${NAME[f.owner] ?? f.owner} seized ${at}`);
-}
+// Walk-in capture (undefended, uncontested, capturable sector) is now a kernel
+// rule — `captureOnArrivalModule` — so it applies on the authoritative server and
+// in single-player alike; the resulting `planet.captured` event is noted above.
 
 // --- red AI ------------------------------------------------------------------
 

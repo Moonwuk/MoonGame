@@ -32,6 +32,7 @@ export function validateMatchMap(map: MatchMap, data?: GameData): string[] {
   for (const [id, sec] of Object.entries(map.sectors)) {
     if (sec.owner != null && !map.players[sec.owner]) issues.push(`E_SECTOR_UNKNOWN_OWNER:${id}`);
     if (data) {
+      if (sec.kind && !data.sectorKinds[sec.kind]) issues.push(`E_UNKNOWN_KIND:${id}`);
       if (sec.terrain && !data.sectors[sec.terrain]) issues.push(`E_UNKNOWN_TERRAIN:${id}`);
       if (sec.planetType && !data.planetTypes[sec.planetType]) issues.push(`E_UNKNOWN_PLANET_TYPE:${id}`);
       for (const b of sec.buildings) if (!data.buildings[b.type]) issues.push(`E_UNKNOWN_BUILDING:${b.type}`);
@@ -142,6 +143,7 @@ export function buildStateFromMap(map: MatchMap, data: GameData, options: BuildF
     };
     if (sec.terrain) planet.terrain = sec.terrain;
     if (sec.planetType) planet.planetType = sec.planetType;
+    if (sec.kind) planet.kind = sec.kind;
     planets[id] = planet;
   }
 

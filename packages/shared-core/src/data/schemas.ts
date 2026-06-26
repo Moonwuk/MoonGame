@@ -186,6 +186,20 @@ export const TechnologyDefSchema = z.object({
   }),
 });
 
+/** A sector **kind** (planet / asteroid / nebula / empty …): the category that
+ *  decides whether a sector can be owned, built on, and whether it has an orbital
+ *  layer. Data-driven (map-roadmap.md M2.1) — add a kind by adding an entry, no
+ *  code change. Absent / unknown kind degrades to the permissive defaults below. */
+export const SectorKindDefSchema = z.object({
+  name: z.string().optional(),
+  /** Can this sector be owned (captured)? Empty space cannot. */
+  capturable: z.boolean().default(true),
+  /** Can structures be raised here? */
+  buildable: z.boolean().default(true),
+  /** Does it have the near/far orbital layer (cities, fortresses)? */
+  orbit: z.boolean().default(true),
+});
+
 export const GameDataSchema = z.object({
   version: z.string(),
   resources: z.array(z.string()).min(1),
@@ -194,6 +208,7 @@ export const GameDataSchema = z.object({
   buildings: z.record(z.string(), BuildingDefSchema),
   events: z.record(z.string(), EffectRuleSchema),
   sectors: z.record(z.string(), SectorTypeDefSchema).default({}),
+  sectorKinds: z.record(z.string(), SectorKindDefSchema).default({}),
   planetTypes: z.record(z.string(), PlanetTypeDefSchema).default({}),
   technologies: z.record(z.string(), TechnologyDefSchema).default({}),
 });
@@ -206,6 +221,7 @@ export type BuildingDef = z.infer<typeof BuildingDefSchema>;
 export type BuildingLevel = z.infer<typeof BuildingLevelSchema>;
 export type EffectRule = z.infer<typeof EffectRuleSchema>;
 export type SectorTypeDef = z.infer<typeof SectorTypeDefSchema>;
+export type SectorKindDef = z.infer<typeof SectorKindDefSchema>;
 export type PlanetTypeDef = z.infer<typeof PlanetTypeDefSchema>;
 export type TechnologyUnlocks = z.infer<typeof TechnologyUnlocksSchema>;
 export type TechnologyEffects = z.infer<typeof TechnologyEffectsSchema>;

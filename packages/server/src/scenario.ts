@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import {
   armyModule,
+  captureOnArrivalModule,
   combatModule,
   constructionModule,
   createInitialState,
@@ -43,6 +44,7 @@ export function loadShippedData(): GameData {
     buildings: readJson('buildings.json'),
     events: readJson('events.json'),
     sectors: readJson('sectors.json'),
+    sectorKinds: readJson('sectorKinds.json'),
     planetTypes: readJson('planetTypes.json'),
     technologies: readJson('technologies.json'),
   });
@@ -56,6 +58,7 @@ export const DEV_MODULES: GameModule[] = [
   economyModule,
   movementModule,
   combatModule,
+  captureOnArrivalModule, // walk-in capture of undefended neutral sectors (after combat)
   constructionModule,
   technologyModule,
   armyModule,

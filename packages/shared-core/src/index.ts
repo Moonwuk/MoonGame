@@ -47,6 +47,7 @@ export {
   validateMatchMap,
   type BuildFromMapOptions,
 } from './state/buildFromMap';
+export { sectorKindDef, isCapturable, isBuildable, hasOrbit } from './state/sectorKind';
 export { isBombarded, bombardedPlanets } from './state/orbit';
 export { diffState, applyDelta, type StateDelta } from './state/delta';
 export { visibleState, identifiedNodes } from './state/visibility';
@@ -105,6 +106,7 @@ export {
   BuildingLevelSchema,
   EffectRuleSchema,
   SectorTypeDefSchema,
+  SectorKindDefSchema,
   PlanetTypeDefSchema,
   TechnologyDefSchema,
   TechnologyEffectsSchema,
@@ -118,6 +120,7 @@ export {
   type BuildingLevel,
   type EffectRule,
   type SectorTypeDef,
+  type SectorKindDef,
   type PlanetTypeDef,
   type TechnologyDef,
   type TechnologyEffects,
@@ -135,6 +138,7 @@ export { requireOwnedIdleFleet, type IdleFleet } from './util/fleet';
 export { economyModule } from './modules/economy';
 export { movementModule } from './modules/movement';
 export { combatModule } from './modules/combat';
+export { captureOnArrivalModule } from './modules/captureOnArrival';
 export { sectorModule } from './modules/sector';
 export { planetTypeModule } from './modules/planetType';
 export { constructionModule } from './modules/construction';
