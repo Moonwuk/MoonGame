@@ -15,5 +15,11 @@
   },
   "devDependencies": {
     "@capacitor/cli": "^6.0.0"
+  },
+  "comments": {
+    "overrides": "Pin the transitive node-tar to a patched line (>=7.5.16) to clear the GHSA path-traversal / symlink / file-smuggling advisories that affect tar <=7.5.15. @capacitor/cli@6 declares tar ^6.1.11 but its only use is tar.extract({file,cwd}) (build-time template extraction), which is API-compatible with tar 7 — so we keep Capacitor 6 (the v6/JDK17 APK pipeline) instead of the breaking @capacitor/cli@8 bump."
+  },
+  "overrides": {
+    "tar": "^7.5.17"
   }
 }
