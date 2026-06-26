@@ -23,6 +23,7 @@ import {
   type GameState,
   type Planet,
   type Fleet,
+  type UnitStack,
   type Player,
   type Action,
   type Context,
@@ -289,10 +290,23 @@ function fleet(
   };
 }
 
-// --- fleet.launch: raise a mobile fleet from a planet's garrison -------------
+/** Fold one stack list into another, coalescing stacks that share the same unit
+ *  type *and* HP pool (full-health stacks have `hp` undefined and combine). */
+function mergeStacks(base: UnitStack[], add: UnitStack[]): UnitStack[] {
+  const out = base.map((st) => ({ ...st }));
+  for (const st of add) {
+    const match = out.find((o) => o.unit === st.unit && o.hp === st.hp);
+    if (match) match.count += st.count;
+    else out.push({ ...st });
+  }
+  return out;
+}
+
+// --- fleet.launch / fleet.merge: form and consolidate mobile fleets ----------
 // The core builds units into a planet's garrison; this small module lets a
 // player scramble those into a new fleet (ships → units, ground troops →
-// landing) so production feeds offense. A natural next addition to the core.
+// landing) so production feeds offense, and fuse two co-located fleets into one.
+// A natural next addition to the core.
 export const fleetLaunchModule: GameModule = {
   id: 'fleet-ops',
   version: '0.1.0',
@@ -336,6 +350,42 @@ export const fleetLaunchModule: GameModule = {
       };
       planet.garrison = [];
       h.emit('fleet.launched', { fleetId: id, planetId: planet.id, owner: action.playerId });
+    });
+
+    // Fuse `from` into `into` when both are docked, idle and in the same sector.
+    // Bringing the fleets together (flying one to the other) is the caller's job;
+    // by the time this action runs the two must already share a location.
+    api.onAction('fleet.merge', (action, h) => {
+      const payload = action.payload as { from?: string; into?: string };
+      if (typeof payload?.from !== 'string' || typeof payload?.into !== 'string') {
+        return h.reject('E_BAD_PAYLOAD');
+      }
+      if (payload.from === payload.into) {
+        return h.reject('E_SAME_FLEET');
+      }
+      const from = h.state.fleets[payload.from];
+      const into = h.state.fleets[payload.into];
+      if (!from || !into) {
+        return h.reject('E_NO_FLEET');
+      }
+      if (from.owner !== action.playerId || into.owner !== action.playerId) {
+        return h.reject('E_FORBIDDEN');
+      }
+      if (from.battleId || into.battleId) {
+        return h.reject('E_IN_BATTLE');
+      }
+      if (from.movement || into.movement || !from.location || from.location !== into.location) {
+        return h.reject('E_NOT_COLOCATED');
+      }
+      into.units = mergeStacks(into.units, from.units);
+      into.landing = mergeStacks(into.landing ?? [], from.landing ?? []);
+      delete h.state.fleets[payload.from];
+      h.emit('fleet.merged', {
+        from: payload.from,
+        into: payload.into,
+        owner: action.playerId,
+        at: into.location,
+      });
     });
   },
 };
@@ -493,6 +543,8 @@ export const unloadArmy = (playerId: string, fleetId: string, unit: string, coun
   act(playerId, 'army.unload', { fleetId, unit, count });
 export const launchFleet = (playerId: string, planetId: string) =>
   act(playerId, 'fleet.launch', { planetId });
+export const mergeFleet = (playerId: string, from: string, into: string) =>
+  act(playerId, 'fleet.merge', { from, into });
 export const buildBuilding = (playerId: string, planetId: string, building: string) =>
   act(playerId, 'building.construct', { planetId, building });
 export const upgradeBuilding = (playerId: string, planetId: string, building: string) =>

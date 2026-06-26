@@ -24,6 +24,7 @@ import {
   loadArmy,
   unloadArmy,
   launchFleet,
+  mergeFleet,
   buildBuilding,
   upgradeBuilding,
   buildUnit,
@@ -151,6 +152,11 @@ let selFleet: string | null = null;
 let selPlanet: string | null = null;
 let selFleets = new Set<string>();
 let aiming = false; // "Move" command armed → next world tap orders the move
+let merging = false; // "Merge" armed → next tap on a friendly fleet picks the anchor
+// Fleets ordered to merge but not yet co-located: each flies to its anchor and the
+// fusion fires once they share a docked sector (see resolvePendingMerges()).
+let pendingMerges: Array<{ mover: string; into: string }> = [];
+let additive = false; // Ctrl/⌘ held on the current tap → add to the fleet selection
 
 // --- multiplayer (net mode) --------------------------------------------------
 // When connected, the server is authoritative: snapshots replace `s`, orders are
@@ -800,7 +806,73 @@ function clearSelection() {
   selFleet = null;
   selPlanet = null;
   selFleets = new Set();
+  merging = false;
   lastPanelHtml = '';
+}
+
+/** Ctrl/⌘-click toggle: fold the current selection into a group and add/remove one. */
+function toggleFleetInSelection(id: string) {
+  if (s.fleets[id]?.owner !== ME) return;
+  const next = new Set(selFleets);
+  if (selFleet) next.add(selFleet);
+  if (next.has(id)) next.delete(id);
+  else next.add(id);
+  setFleetSelection([...next]);
+}
+
+/** Order `movers` to merge into `anchorId`. Co-located & idle fleets fuse at once;
+ *  distant ones are sent to the anchor's sector and finish on arrival (pending). */
+function orderMerge(movers: string[], anchorId: string) {
+  const anchor = s.fleets[anchorId];
+  if (!anchor || anchor.owner !== ME) return;
+  const dest = anchor.location ?? anchor.movement?.to ?? null;
+  let queued = 0;
+  for (const moverId of movers) {
+    if (moverId === anchorId) continue;
+    const m = s.fleets[moverId];
+    if (!m || m.owner !== ME) continue;
+    const coLocated =
+      !!m.location && m.location === anchor.location && !m.movement && !anchor.movement;
+    if (coLocated) {
+      playerOrder(mergeFleet(ME, moverId, anchorId));
+    } else {
+      pendingMerges = pendingMerges.filter((pm) => pm.mover !== moverId);
+      pendingMerges.push({ mover: moverId, into: anchorId });
+      if (dest && m.location !== dest) playerOrder(moveFleet(ME, moverId, dest));
+      queued++;
+    }
+  }
+  setFleetSelection([anchorId]); // keep the surviving fleet selected for follow-up
+  note(queued ? `⛬ ${queued} fleet(s) en route to merge` : '⛬ fleets merged');
+}
+
+/** Merge button on a multi-selection: pick a docked anchor, fold the rest into it. */
+function mergeGroup(ids: string[]) {
+  const fleets = ids.map((id) => s.fleets[id]).filter((f): f is Fleet => !!f);
+  if (fleets.length < 2) return;
+  const anchor = fleets.find((f) => f.location && !f.movement) ?? fleets[0]!;
+  orderMerge(
+    ids.filter((id) => id !== anchor.id),
+    anchor.id,
+  );
+}
+
+/** Drive in-flight merge orders: fuse on arrival, re-chase if the anchor moved. */
+function resolvePendingMerges() {
+  if (!pendingMerges.length) return;
+  pendingMerges = pendingMerges.filter(({ mover, into }) => {
+    const m = s.fleets[mover];
+    const a = s.fleets[into];
+    if (!m || !a) return false; // a fleet is gone (already merged / destroyed) → drop
+    if (m.battleId || a.battleId) return true; // hold the order through combat
+    if (m.location && a.location && m.location === a.location && !m.movement && !a.movement) {
+      playerOrder(mergeFleet(ME, mover, into));
+      return false; // co-located & idle → fused, order complete
+    }
+    const dest = a.location ?? a.movement?.to ?? null;
+    if (!m.movement && dest && m.location !== dest) playerOrder(moveFleet(ME, mover, dest));
+    return true;
+  });
 }
 function handleEvents(events: DomainEvent[]) {
   for (const e of events) {
@@ -832,6 +904,9 @@ function handleEvents(events: DomainEvent[]) {
         break;
       case 'fleet.launched':
         note(`🚀 ${NAME[p.owner as string]} launched a fleet from ${p.planetId}`);
+        break;
+      case 'fleet.merged':
+        if (p.owner === ME) note(`⛬ fleets merged at ${p.at}`);
         break;
       case 'fleet.destroyed':
         note(`☠️ a ${NAME[p.owner as string]} fleet was destroyed`);
@@ -1760,7 +1835,7 @@ function panelHtml(): string {
       'TASK GROUP',
       `${group.length} fleets · ${ships} ships · ${troops} troops`,
     );
-    h += `<div class="hint">Press <b>Move</b>, then tap a destination to send all selected fleets (they route and stop). Shift-drag on the map selects a fleet group.</div>`;
+    h += `<div class="hint">Press <b>Move</b>, then tap a destination to send all selected fleets (they route and stop). Press <b>Merge</b> to fuse the group into one (distant fleets fly in first). Shift-drag selects a group; Ctrl/⌘-click adds a fleet.</div>`;
     for (const f of group) {
       const loc = f.location ?? (f.movement ? `${f.movement.from}→${f.movement.to}` : '—');
       const nShips = sumUnits(f.units);
@@ -1832,7 +1907,7 @@ function panelHtml(): string {
             h += `<div class="row dim">no ground army here</div>`;
         }
       }
-      h += `<div class="hint">Press <b>Move</b> (command bar), then tap a destination — the fleet routes along the lanes there and stops. Tap a world without Move to inspect it.</div>`;
+      h += `<div class="hint">Press <b>Move</b> (command bar), then tap a destination — the fleet routes along the lanes there and stops. <b>Merge…</b> then tap another fleet to combine them (it flies over if they're apart). Tap a world without Move to inspect it.</div>`;
       h += btn('cancel', '', 'Deselect', true);
       return h;
     }
@@ -1976,6 +2051,7 @@ function renderCmdBar() {
   const ids = selectedFleetIds();
   if (ids.length === 0) {
     if (aiming) aiming = false;
+    if (merging) merging = false;
     cmdbar.classList.remove('show');
     lastCmdHtml = '';
     return;
@@ -1993,12 +2069,16 @@ function renderCmdBar() {
       SECTOR_TYPES[SECTOR_OF[f.location]]?.capturable, // empty space can't be taken
   );
   const descend = anyFar; // at least one far → primary orbit action is descend to near
+  // Merge: a group fuses in one tap; a lone fleet arms target-pick (needs a partner).
+  const myFleetTotal = Object.values(s.fleets).filter((f) => f.owner === ME).length;
+  const canMerge = ids.length >= 2 || (ids.length === 1 && myFleetTotal >= 2);
   const html =
     `<span class="cmdlabel">${ids.length > 1 ? ids.length + ' FLEETS' : 'FLEET'}</span>` +
     cmdBtn('move', '⤳', 'Move', aiming ? 'on' : '', false) +
     cmdBtn('stop', '■', 'Stop', 'danger', !anyMoving) +
     cmdBtn('attack', '⚔', 'Attack', '', !canAssault) +
-    cmdBtn(descend ? 'near' : 'far', descend ? '▼' : '▲', descend ? 'Near' : 'Far', '', !anyDocked);
+    cmdBtn(descend ? 'near' : 'far', descend ? '▼' : '▲', descend ? 'Near' : 'Far', '', !anyDocked) +
+    cmdBtn('merge', '⛬', ids.length > 1 ? 'Merge' : 'Merge…', merging ? 'on' : '', !canMerge);
   if (html !== lastCmdHtml) {
     cmdbar.innerHTML = html;
     lastCmdHtml = html;
@@ -2050,8 +2130,16 @@ cmdbar.addEventListener('click', (ev) => {
   if (!t || t.disabled) return;
   const cmd = t.dataset.cmd;
   const ids = selectedFleetIds();
+  if (cmd !== 'merge') merging = false; // any other command disarms merge-targeting
   if (cmd === 'move') {
     aiming = !aiming; // arm / disarm the move order
+  } else if (cmd === 'merge') {
+    if (ids.length >= 2) mergeGroup(ids);
+    else {
+      merging = !merging; // lone fleet → arm: next friendly-fleet tap is the anchor
+      aiming = false;
+      if (merging) note('⛬ pick a fleet to merge with');
+    }
   } else if (cmd === 'stop') {
     for (const id of ids) if (s.fleets[id]?.movement) playerOrder(stopFleet(ME, id));
   } else if (cmd === 'attack') {
@@ -2074,6 +2162,24 @@ cmdbar.addEventListener('click', (ev) => {
 
 // Tap/click selection at a screen point (drag-aware — see the pointer handlers).
 function selectAt(mx: number, my: number) {
+  // Merge armed: the next tap on a friendly fleet (not itself in the selection) is
+  // the anchor — the selected fleet(s) fly to it and fuse. Any other tap cancels.
+  if (merging) {
+    const movers = selectedFleetIds();
+    for (const f of Object.values(s.fleets)) {
+      if (f.owner !== ME || movers.includes(f.id)) continue;
+      const a = fleetAnchor(f);
+      if (a && Math.hypot(mx - a.x, my - a.y) < 16) {
+        orderMerge(movers, f.id);
+        merging = false;
+        lastPanelHtml = '';
+        return;
+      }
+    }
+    merging = false;
+    lastPanelHtml = '';
+    return;
+  }
   // Plain tap = selection. Movement happens only when "Move" is armed (aiming), so a
   // fleet selection never blocks picking a planet (and vice versa).
   if (!aiming) {
@@ -2081,7 +2187,8 @@ function selectAt(mx: number, my: number) {
       if (f.owner !== ME) continue;
       const a = fleetAnchor(f);
       if (a && Math.hypot(mx - a.x, my - a.y) < 16) {
-        setFleetSelection([f.id]); // (clears any selected planet)
+        if (additive) toggleFleetInSelection(f.id); // Ctrl/⌘ → extend the group
+        else setFleetSelection([f.id]); // (clears any selected planet)
         return;
       }
     }
@@ -2134,6 +2241,7 @@ canvas.addEventListener('pointerdown', (ev) => {
   if (pointers.size === 1) {
     dragStart = p;
     boxSelecting = ev.shiftKey;
+    additive = ev.ctrlKey || ev.metaKey; // Ctrl/⌘-click → add to the fleet selection
     selectionBox = boxSelecting ? { x1: p.x, y1: p.y, x2: p.x, y2: p.y } : null;
     dragged = false;
   } else if (pointers.size === 2) {
@@ -2339,6 +2447,7 @@ function frame(nowReal: number) {
     pumpBuildQueues();
     checkEnd();
   }
+  resolvePendingMerges(); // complete fleet merges whose movers have arrived
   vision = fogOn ? computeVision() : null; // dev fog projection for this frame
   if (vision) updateMemory(vision.identify); // variant B: remember what we see
   render(nowReal);
