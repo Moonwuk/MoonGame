@@ -452,3 +452,61 @@ describe('MatchRoom — manualStart lobby', () => {
     expect(lobbyOf(p2.messages.at(-1))?.started).toBe(true);
   });
 });
+
+// SRV-1: a rejected action must still flush the world-advance the room already
+// committed (otherwise scheduled arrivals/battles are lost until the next accept).
+const armModule: GameModule = {
+  id: 'arm-test',
+  version: '1.0.0',
+  setup(api) {
+    api.onAction('arm', (_action, h) => {
+      h.schedule(h.ctx.now + 1000, 'boom', {});
+    });
+    api.on('boom', (_event, h) => {
+      const p = h.state.players.p1;
+      if (p) p.name = 'BOOMED';
+      h.emit('boomed', { owner: 'p1' }); // owner so it passes the fog event filter
+    });
+    api.onAction('reject.me', (_action, h) => h.reject('E_NOPE'));
+  },
+};
+
+describe('MatchRoom — SRV-1 (advance events on a rejected action)', () => {
+  it('broadcasts the world-advance even when the triggering action is rejected', () => {
+    let real = 1000;
+    const r = new MatchRoom({
+      id: 'srv1',
+      initialState: testState(),
+      kernel: createKernel([armModule]),
+      data: testData(),
+      now: () => real,
+    });
+    const p1 = new MemoryPeer();
+    r.addPeer('p1', p1);
+
+    // arm a 'boom' for t=2000
+    r.submitAction('p1', { id: 'arm1', type: 'arm', playerId: 'p1', issuedAt: 1, payload: {} }, p1);
+    const mark = p1.messages.length;
+
+    // jump past the boom, then send a KNOWINGLY-REJECTED action
+    real = 3000;
+    const res = r.submitAction(
+      'p1',
+      { id: 'rej1', type: 'reject.me', playerId: 'p1', issuedAt: 1, payload: {} },
+      p1,
+    );
+    expect(res.ok).toBe(false);
+
+    const after = p1.messages.slice(mark);
+    // the advance fired 'boom' → a delta carrying 'boomed' was broadcast despite the reject
+    const delta = after.find((m) => m.type === 'delta') as
+      | { events: { type: string }[] }
+      | undefined;
+    expect(delta?.events.some((e) => e.type === 'boomed')).toBe(true);
+    expect(r.state.players.p1?.name).toBe('BOOMED');
+    // and the rejection itself was still delivered
+    expect(after.some((m) => m.type === 'rejection' && (m as { code?: string }).code === 'E_NOPE')).toBe(
+      true,
+    );
+  });
+});

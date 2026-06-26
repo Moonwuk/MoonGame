@@ -346,6 +346,11 @@ export class MatchRoom {
     const context = this.context(Math.max(serverNow, this.stateValue.time));
     const result = this.kernel.applyAction(this.stateValue, action, context);
     if (!result.ok) {
+      // SRV-1: the action is rejected, but `advance` above already COMMITTED the
+      // world forward and produced events (arrivals, battles, captures). Flush them
+      // so peers see the advanced world instead of losing it until the next accepted
+      // action — without a tick loop, that could be hours of game time.
+      if (advanced.events.length > 0) this.broadcastState(advanced.events);
       const receipt = this.recordReceipt(action, playerId, false, result.code);
       if (peer) this.sendRejection(peer, receipt);
       return { ok: false, seq: receipt.seq, events: [], code: receipt.code };

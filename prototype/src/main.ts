@@ -1288,42 +1288,121 @@ function drawBattlePulse(x: number, y: number, pulse: number) {
  * distance in MAP units; the projection is uniform so they read as true circles.
  * Only meaningful with fog on.
  */
+// Offscreen layer for compositing the UNION of radar circles into one clean
+// frontier (so overlapping ranges read as a single border, not a tangle of rings).
+let unionCv: HTMLCanvasElement | null = null;
+function unionCtx(): CanvasRenderingContext2D {
+  if (!unionCv) unionCv = document.createElement('canvas');
+  if (unionCv.width !== canvas.width || unionCv.height !== canvas.height) {
+    unionCv.width = canvas.width;
+    unionCv.height = canvas.height;
+  }
+  const g = unionCv.getContext('2d') as CanvasRenderingContext2D;
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.clearRect(0, 0, unionCv.width, unionCv.height);
+  g.setTransform(DPR, 0, 0, DPR, 0, 0); // draw in CSS px, matching the main canvas
+  return g;
+}
+
+/** Paint a set of screen circles as ONE merged region: a faint union fill plus a
+ *  crisp union outline. A circle fully inside another contributes nothing; an
+ *  outlier extends the frontier — exactly one "border of visibility". */
+function drawUnionTier(
+  circles: Array<{ x: number; y: number; r: number }>,
+  lineW: number,
+  fillA: number,
+  strokeA: number,
+): void {
+  if (!circles.length) return;
+  const arcs = (g: CanvasRenderingContext2D, inset: number): void => {
+    g.beginPath();
+    for (const c of circles) {
+      const r = c.r - inset;
+      if (r > 0) {
+        g.moveTo(c.x + r, c.y); // moveTo each ⇒ separate subpaths, no joining lines
+        g.arc(c.x, c.y, r, 0, TAU);
+      }
+    }
+  };
+  // Filled union, drawn as ONE path straight onto the map — overlaps merge under
+  // nonzero winding, so there are no internal seams.
+  if (fillA > 0) {
+    cx.fillStyle = rgba(LOCK, fillA);
+    arcs(cx, 0);
+    cx.fill();
+  }
+  // Crisp outline: fill the union white, erode an inset copy with destination-out
+  // → a ring tracing only the outer frontier; tint it, then blit 1:1 onto the map.
+  if (strokeA > 0 && lineW > 0) {
+    const g = unionCtx();
+    g.fillStyle = '#fff';
+    arcs(g, 0);
+    g.fill();
+    g.globalCompositeOperation = 'destination-out';
+    arcs(g, lineW);
+    g.fill();
+    g.globalCompositeOperation = 'source-in';
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    g.fillStyle = rgba(LOCK, strokeA);
+    g.fillRect(0, 0, unionCv!.width, unionCv!.height);
+    g.globalCompositeOperation = 'source-over';
+    cx.save();
+    cx.setTransform(1, 0, 0, 1, 0, 0);
+    cx.drawImage(unionCv as HTMLCanvasElement, 0, 0);
+    cx.restore();
+  }
+}
+
 function drawRadarCoverage() {
   if (!fogOn) return;
-  const sources: Array<{ x: number; y: number; r: number }> = [];
+  // My radar sources (planet arrays + radar-ships), tagged so a SELECTED entity can
+  // also show its own precise range on top of the merged frontier.
+  type Src = { x: number; y: number; r: number; sel: boolean };
+  const sources: Src[] = [];
+  const selFleetSet = new Set(selectedFleetIds());
   for (const p of Object.values(s.planets)) {
     if (p.owner !== ME) continue;
     const r = planetRadar(p);
-    if (r > 0) sources.push({ x: p.position.x, y: p.position.y, r });
+    if (r > 0) sources.push({ x: p.position.x, y: p.position.y, r, sel: selPlanet === p.id });
   }
   for (const f of Object.values(s.fleets)) {
     if (f.owner !== ME) continue;
     const r = fleetRadar(f);
     const node = r > 0 ? fleetNode(f) : null;
     const pos = node ? s.planets[node]?.position : null;
-    if (pos) sources.push({ x: pos.x, y: pos.y, r });
+    if (pos) sources.push({ x: pos.x, y: pos.y, r, sel: selFleetSet.has(f.id) });
   }
   if (!sources.length) return;
+  // Project map circles to screen circles (uniform projection ⇒ true circles).
+  const screen = (x: number, y: number, rr: number): { x: number; y: number; r: number } => {
+    const c = world({ x, y });
+    return { x: c.x, y: c.y, r: world({ x: x + rr, y }).x - c.x };
+  };
+  const outer = sources.map((v) => screen(v.x, v.y, v.r)).filter((c) => c.r > 0);
+  const inner = sources
+    .map((v) => screen(v.x, v.y, v.r * IDENTIFY_REACH_FRACTION))
+    .filter((c) => c.r > 0);
   cx.save();
-  for (const src of sources) {
-    const c = world({ x: src.x, y: src.y });
-    const ring = (rr: number, dash: number[], fillA: number, strokeA: number): void => {
-      const rx = world({ x: src.x + rr, y: src.y }).x - c.x;
-      const ry = world({ x: src.x, y: src.y + rr }).y - c.y;
-      if (!(rx > 0) || !(ry > 0)) return;
+  // The unified visibility frontier: outer (signatures) then inner (full reveal).
+  drawUnionTier(outer, 1.2, 0.03, 0.16);
+  drawUnionTier(inner, 1.4, 0.05, 0.3);
+  // A selected planet/fleet additionally shows ITS OWN two rings — crisp + dashed —
+  // so you can read one entity's exact reach out of the merged whole.
+  for (const v of sources) {
+    if (!v.sel) continue;
+    const c = world({ x: v.x, y: v.y });
+    const ring = (rr: number, dash: number[], a: number): void => {
+      const r = world({ x: v.x + rr, y: v.y }).x - c.x;
+      if (!(r > 0)) return;
       cx.beginPath();
-      cx.ellipse(c.x, c.y, rx, ry, 0, 0, TAU);
-      if (fillA > 0) {
-        cx.fillStyle = rgba(LOCK, fillA);
-        cx.fill();
-      }
+      cx.arc(c.x, c.y, r, 0, TAU);
       cx.setLineDash(dash);
-      cx.lineWidth = 1;
-      cx.strokeStyle = rgba(LOCK, strokeA);
+      cx.lineWidth = 1.3;
+      cx.strokeStyle = rgba(LOCK, a);
       cx.stroke();
     };
-    ring(src.r, [3, 7], 0.03, 0.18); // outer — signatures (fainter, dashed)
-    ring(src.r * IDENTIFY_REACH_FRACTION, [], 0.06, 0.34); // inner — full reveal (brighter, solid)
+    ring(v.r, [3, 6], 0.5); // outer — signatures
+    ring(v.r * IDENTIFY_REACH_FRACTION, [], 0.72); // inner — full reveal
   }
   cx.setLineDash([]);
   cx.restore();
@@ -2901,6 +2980,11 @@ srvInput.value =
     : location.port
       ? `ws://${location.host}`
       : `ws://${location.hostname || '127.0.0.1'}:8788`);
+// Remember the side you last commanded, so reopening the link drops you back onto
+// your own faction in one tap — a lightweight stand-in for accounts (full login /
+// durable identity is designed in docs/open-questions.md).
+const savedSide = localStorage.getItem('void.player');
+if (savedSide === 'p1' || savedSide === 'p2') whoInput.value = savedSide;
 
 $('csolo').addEventListener('click', () => {
   NET = false;
@@ -2937,6 +3021,7 @@ $('cgo').addEventListener('click', () => {
   const url = `${base}/matches/proto?player=${encodeURIComponent(who)}`;
   statusEl.textContent = `connecting → ${url}`; // show the resolved target so a bad URL is visible
   localStorage.setItem('void.server', base);
+  localStorage.setItem('void.player', who); // resume this side on the next visit
 
   // WS "open" only means the socket connected, not that the server admitted us — it
   // may still reject (slot taken / unknown player). Flip to "in the match" only on
