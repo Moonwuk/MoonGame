@@ -245,15 +245,16 @@ function fillSectors(): KeyNode[] {
       const y = gy + (hash(gy, gx) - 0.5) * GRID_STEP * 0.7;
       if (KEY.some((k) => Math.hypot(k.x - x, k.y - y) < 66)) continue;
       const r = hash(x * 0.37, y * 0.71);
-      // Mostly real provinces: ~45% worlds, ~25% asteroid fields, ~22% nebulae,
-      // ~8% void gaps (filtered out of MAP, so neighbours absorb the space).
+      // Worlds (cities) stay scarce — ~15%; the bulk is asteroid fields ~38% and
+      // nebulae ~32% (lighter to render and to hold), ~15% void gaps (filtered out
+      // of MAP, so neighbours absorb the space).
       const node: KeyNode = { id: `S${i++}`, owner: null, x, y, sector: 'empty' };
-      if (r < 0.45) {
+      if (r < 0.15) {
         node.sector = 'planet';
         node.type = FILL_PLANET_TYPES[Math.floor(hash(y * 1.7, x * 2.3) * FILL_PLANET_TYPES.length)];
-      } else if (r < 0.7) {
+      } else if (r < 0.53) {
         node.sector = 'asteroid';
-      } else if (r < 0.92) {
+      } else if (r < 0.85) {
         node.sector = 'nebula';
         node.type = 'barren';
       }

@@ -89,8 +89,6 @@ const UNIT_ICON: Record<string, string> = {
   scout: '◌',
   siege: '✦',
 };
-/** Accent colour for a sector type (from the data-driven registry). */
-const sectorColor = (type: string): string => SECTOR_TYPES[type]?.color ?? '#35d6e6';
 let ME = 'p1';
 type PlanetTab = 'ground' | 'ships' | 'buildings';
 type BuildLane = 'buildings' | 'units';
@@ -134,6 +132,41 @@ function rgba(hex: string, a: number): string {
   const g = parseInt(v.slice(2, 4), 16);
   const b = parseInt(v.slice(4, 6), 16);
   return `rgba(${r},${g},${b},${a})`;
+}
+
+// Cached radial-glow sprites: building a `createRadialGradient` per node every frame
+// (×60 provinces) is a major CPU cost, as is `shadowBlur`. Bake one soft glow disc
+// per (colour, radius) once and blit it with `drawImage` + `globalAlpha` instead —
+// drawImage is cheap, so the map glow scales to many provinces.
+const glowCache = new Map<string, HTMLCanvasElement>();
+function glowSprite(color: string, radius: number): HTMLCanvasElement {
+  const rad = Math.max(4, Math.round(radius));
+  const key = `${color}:${rad}`;
+  const hit = glowCache.get(key);
+  if (hit) return hit;
+  const cv = document.createElement('canvas');
+  const px = Math.ceil(rad * 2 * DPR);
+  cv.width = px;
+  cv.height = px;
+  const g = cv.getContext('2d') as CanvasRenderingContext2D;
+  g.setTransform(DPR, 0, 0, DPR, 0, 0);
+  const grd = g.createRadialGradient(rad, rad, 0, rad, rad, rad);
+  grd.addColorStop(0, rgba(color, 0.95));
+  grd.addColorStop(0.5, rgba(color, 0.32));
+  grd.addColorStop(1, rgba(color, 0));
+  g.fillStyle = grd;
+  g.fillRect(0, 0, rad * 2, rad * 2);
+  glowCache.set(key, cv);
+  return cv;
+}
+/** Blit a cached glow disc of `color` centred at (x,y), radius r, at opacity `a`. */
+function blitGlow(color: string, x: number, y: number, r: number, a: number): void {
+  if (a <= 0.004) return;
+  const spr = glowSprite(color, r);
+  const rad = Math.max(4, Math.round(r));
+  cx.globalAlpha = Math.min(1, a);
+  cx.drawImage(spr, x - rad, y - rad, rad * 2, rad * 2);
+  cx.globalAlpha = 1;
 }
 
 /** Total count across a stack of units (ships, garrison or landing troops). */
@@ -1221,17 +1254,6 @@ function targetBrackets(x: number, y: number, r: number, t: number) {
   cx.restore();
 }
 
-function glowRing(x: number, y: number, r: number, color: string, alpha: number) {
-  cx.save();
-  cx.shadowColor = color;
-  cx.shadowBlur = 14;
-  cx.strokeStyle = rgba(color, alpha);
-  cx.lineWidth = 1.2;
-  cx.beginPath();
-  cx.arc(x, y, r, 0, TAU);
-  cx.stroke();
-  cx.restore();
-}
 
 
 function drawBattlePulse(x: number, y: number, pulse: number) {
@@ -1428,7 +1450,10 @@ let selectionBox: { x1: number; y1: number; x2: number; y2: number } | null = nu
 // Voronoi tiling every frame.
 const bg = document.createElement('canvas');
 const bgx = bg.getContext('2d') as CanvasRenderingContext2D;
-let bgSig = '';
+let bgContent = ''; // viewport + ownership signature (camera-independent)
+let bgCam = { x: 0, y: 0, scale: 1 }; // camera the static layer was last baked at
+const lastCam = { x: NaN, y: NaN, scale: NaN };
+let camSettled = false; // true when the camera didn't move since last frame
 
 function ownersSig(): string {
   let out = '';
@@ -1461,9 +1486,15 @@ function clipHalfPlane(
 
 /** Rebuild the cached province map when the camera/ownership/viewport moves. */
 function buildStaticLayer(): void {
-  const sig = `${VW}x${VH}:${DPR.toFixed(2)}:${Math.round(cam.x)},${Math.round(cam.y)},${cam.scale.toFixed(3)}|${ownersSig()}`;
-  if (sig === bgSig && bg.width === Math.round(VW * DPR)) return;
-  bgSig = sig;
+  // Rebuild only when the content/size changes, or when the camera has SETTLED at a
+  // new spot. During an active pan/zoom we skip the O(n²) re-tessellation entirely
+  // and let blitStaticLayer follow the camera with the last bake (transformed).
+  const content = `${VW}x${VH}:${DPR.toFixed(2)}|${ownersSig()}`;
+  const sizeOk = bg.width === Math.round(VW * DPR);
+  const camSame = cam.x === bgCam.x && cam.y === bgCam.y && cam.scale === bgCam.scale;
+  if (sizeOk && content === bgContent && (camSame || !camSettled)) return;
+  bgContent = content;
+  bgCam = { x: cam.x, y: cam.y, scale: cam.scale };
   bg.width = Math.round(VW * DPR);
   bg.height = Math.round(VH * DPR);
   const g = bgx;
@@ -1597,8 +1628,18 @@ function buildStaticLayer(): void {
 function blitStaticLayer(): void {
   buildStaticLayer();
   cx.save();
-  cx.setTransform(1, 0, 0, 1, 0, 0);
-  cx.drawImage(bg, 0, 0);
+  cx.setTransform(1, 0, 0, 1, 0, 0); // backing pixels
+  if (cam.x === bgCam.x && cam.y === bgCam.y && cam.scale === bgCam.scale) {
+    cx.drawImage(bg, 0, 0); // baked at the current camera → 1:1
+  } else {
+    // active pan/zoom: follow the camera with the last (stale) bake, transformed —
+    // cheap drawImage instead of a full re-tessellation; a crisp rebuild lands on settle.
+    // Integer-align the offset so a pure pan (k=1) blits without subpixel resampling.
+    const k = cam.scale / bgCam.scale;
+    const tx = Math.round((cam.x - bgCam.x * k) * DPR);
+    const ty = Math.round((cam.y - bgCam.y * k) * DPR);
+    cx.drawImage(bg, tx, ty, Math.round(bg.width * k), Math.round(bg.height * k));
+  }
   cx.restore();
 }
 
@@ -1658,6 +1699,12 @@ function drawRadarRange(now: number): void {
 }
 
 function render(now: number) {
+  // Did the camera move since last frame? The static layer only re-tessellates once
+  // the camera comes to rest (see buildStaticLayer), so an active drag stays smooth.
+  camSettled = cam.x === lastCam.x && cam.y === lastCam.y && cam.scale === lastCam.scale;
+  lastCam.x = cam.x;
+  lastCam.y = cam.y;
+  lastCam.scale = cam.scale;
   cx.setTransform(DPR, 0, 0, DPR, 0, 0); // draw in CSS pixels, crisp on hi-DPI
   blitStaticLayer(); // cached backdrop + province political map
   drawScanSweep(now); // slow radar sweep — pure console chrome
@@ -1699,15 +1746,7 @@ function render(now: number) {
       const g = sweepGlow(c);
       if (g <= 0.03) continue;
       const col = known(n.id) || !fogOn ? ownerColor(p.owner) : '#6f8a93';
-      const rad = 24;
-      const grd = cx.createRadialGradient(c.x, c.y, 0, c.x, c.y, rad);
-      grd.addColorStop(0, rgba(col, 0.34 * g));
-      grd.addColorStop(0.55, rgba(col, 0.12 * g));
-      grd.addColorStop(1, rgba(col, 0));
-      cx.fillStyle = grd;
-      cx.beginPath();
-      cx.arc(c.x, c.y, rad, 0, TAU);
-      cx.fill();
+      blitGlow(col, c.x, c.y, 24, 0.42 * g); // cached glow disc (no per-node gradient)
     }
     cx.restore();
   }
@@ -1729,7 +1768,6 @@ function render(now: number) {
     }
     const showOwner = p.owner;
     const col = ownerColor(p.owner);
-    const sector = sectorColor(n.sector);
     const ownerPulse = 0.64 + 0.36 * Math.sin(now / 620 + n.x * 0.011 + n.y * 0.017);
 
     // empty-space sector: just a faint survey marker at its centre (no city, no
@@ -1757,13 +1795,7 @@ function render(now: number) {
     // a space fortress is raised here, which fortifies it (orbit + AA, must storm).
     if (n.sector === 'asteroid') {
       const fort = p.buildings.find((b) => b.type === 'starfort');
-      const glow = cx.createRadialGradient(c.x, c.y, 0, c.x, c.y, 30);
-      glow.addColorStop(0, rgba(col, p.owner ? 0.14 : 0.05));
-      glow.addColorStop(1, 'rgba(2,6,12,0)');
-      cx.fillStyle = glow;
-      cx.beginPath();
-      cx.arc(c.x, c.y, 30, 0, TAU);
-      cx.fill();
+      blitGlow(col, c.x, c.y, 30, p.owner ? 0.16 : 0.06); // cached glow disc
       cx.save();
       cx.strokeStyle = 'rgba(186,170,140,0.7)';
       cx.fillStyle = 'rgba(42,40,33,0.72)';
@@ -1788,9 +1820,7 @@ function render(now: number) {
       }
       cx.restore();
       // fat junction hub (the lanes converge here), owner-coloured
-      cx.save();
-      cx.shadowColor = col;
-      cx.shadowBlur = 8;
+      blitGlow(col, c.x, c.y, 13, p.owner ? 0.5 : 0.3); // cached bloom, not shadowBlur
       cx.fillStyle = rgba(col, 0.92);
       cx.beginPath();
       cx.arc(c.x, c.y, 4.2, 0, TAU);
@@ -1800,7 +1830,6 @@ function render(now: number) {
       cx.beginPath();
       cx.arc(c.x, c.y, 7.5 + 0.6 * ownerPulse, 0, TAU);
       cx.stroke();
-      cx.restore();
       // space fortress: a hexagonal bastion ring around the hub (with HP bar)
       if (fort) {
         cx.save();
@@ -1833,14 +1862,8 @@ function render(now: number) {
       continue;
     }
 
-    const aura = cx.createRadialGradient(c.x, c.y, 0, c.x, c.y, R + 34);
-    aura.addColorStop(0, rgba(col, showOwner ? 0.28 : 0.09));
-    aura.addColorStop(0.55, rgba(sector, 0.06 + 0.04 * ownerPulse));
-    aura.addColorStop(1, 'rgba(2,6,12,0)');
-    cx.fillStyle = aura;
-    cx.beginPath();
-    cx.arc(c.x, c.y, R + 35, 0, TAU);
-    cx.fill();
+    // territory aura — cached glow disc (no per-node gradient)
+    blitGlow(col, c.x, c.y, R + 34, showOwner ? 0.3 : 0.1);
 
     // sensor-range ring (dashed, faint)
     cx.save();
@@ -1885,10 +1908,9 @@ function render(now: number) {
       cx.restore();
     }
 
-    // wireframe body + glow + bright core
-    cx.save();
-    cx.shadowColor = col;
-    cx.shadowBlur = 10 + 7 * ownerPulse;
+    // wireframe body + bright core (glow comes from the cached aura/bloom discs,
+    // not shadowBlur — shadowBlur per node per frame is a major CPU cost)
+    blitGlow(col, c.x, c.y, R + 7, showOwner ? 0.22 : 0.12); // tight bloom at the ring
     cx.strokeStyle = col;
     cx.lineWidth = 2;
     cx.beginPath();
@@ -1898,9 +1920,6 @@ function render(now: number) {
     cx.beginPath();
     cx.arc(c.x, c.y, 2.6 + 1.2 * ownerPulse, 0, TAU);
     cx.fill();
-    cx.restore();
-
-    glowRing(c.x, c.y, R + 5 + 3 * ownerPulse, col, showOwner ? 0.16 : 0.08);
 
     // N/E/S/W crosshair ticks
     cx.strokeStyle = rgba(col, 0.7);
