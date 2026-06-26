@@ -12,11 +12,28 @@
 // client's `MAP` lines up 1:1 with the server's planets and the renderer needs
 // no changes. This is NOT the Stage-3 server: state lives in memory (a restart
 // loses the match) and the `?player=` handshake is unauthenticated.
+import { readFileSync, existsSync } from 'node:fs';
+import { networkInterfaces } from 'node:os';
 import { MatchRoom, createMultiplayerServer } from '../packages/server/src/index';
 import { newGame, kernel, data } from './src/game';
 
 const host = process.env.HOST ?? '127.0.0.1';
 const port = Number(process.env.PORT ?? 8788);
+
+// Serve the built prototype HTML at `/` so a peer just opens `http://host:port/`
+// (no file transfer; the connect overlay auto-fills the same-origin ws:// URL).
+const htmlPath = 'prototype/dist/void-dominion.html';
+const indexHtml = existsSync(htmlPath) ? readFileSync(htmlPath, 'utf8') : undefined;
+
+// First non-internal IPv4 — the address other devices on the same Wi-Fi dial.
+function lanIp(): string | null {
+  for (const ifaces of Object.values(networkInterfaces())) {
+    for (const i of ifaces ?? []) {
+      if (i.family === 'IPv4' && !i.internal) return i.address;
+    }
+  }
+  return null;
+}
 
 // World time starts at 0 and tracks real elapsed time since boot, so the in-game
 // clock reads "Day 1" at launch (rather than ~Day 20000 from a wall-clock epoch)
@@ -30,19 +47,30 @@ const room = new MatchRoom({
   now: () => Date.now() - bootTime,
 });
 
-const server = createMultiplayerServer({ room, host, port });
+const server = createMultiplayerServer({ room, host, port, indexHtml });
 const wsUrl = await server.listen();
 const httpUrl = wsUrl.replace(/^ws/, 'http').replace(/\/matches\/.*$/, '');
+
+const ip = lanIp();
+const onLan = host === '0.0.0.0' && ip;
+const localHttp = httpUrl.replace('0.0.0.0', 'localhost'); // 0.0.0.0 isn't openable
+const friendUrl = onLan ? `http://${ip}:${port}/` : null;
 
 process.stdout.write(
   [
     'Void Dominion — prototype dev server (in-memory, real core)',
-    `  health : ${httpUrl}/health`,
-    `  Azure  : ${wsUrl}?player=p1`,
-    `  Crimson: ${wsUrl}?player=p2`,
-    host === '0.0.0.0'
-      ? '  (bound to 0.0.0.0 — other devices connect via this machine’s LAN IP)'
-      : '  (set HOST=0.0.0.0 to reach this from another device / a tunnel)',
+    indexHtml
+      ? `  game   : ${localHttp}/   (open in a browser → Connect)`
+      : `  game   : run \`pnpm prototype\` first to serve the HTML at /`,
+    `  health : ${localHttp}/health`,
+    '',
+    '  Two-person test:',
+    `   • You:    open ${localHttp}/  → Connect → Azure (p1)`,
+    onLan
+      ? `   • Friend: open ${friendUrl}  (same Wi-Fi) → Connect → Crimson (p2)`
+      : '   • Friend: run `pnpm host` (binds 0.0.0.0 → prints a LAN URL), or tunnel the port for a remote friend — see docs/multiplayer.md',
+    '',
+    `  raw ws : ${wsUrl.replace('0.0.0.0', 'localhost')}?player=p1  ·  …?player=p2`,
     '',
   ].join('\n'),
 );

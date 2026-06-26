@@ -49,58 +49,77 @@ peers and that a peer reconstructs the exact authoritative state from `welcome` 
 deltas. The construction (data loader + `createDevMatch`) lives in
 `packages/server/src/scenario.ts`, reused by both the runner and the test.
 
-## Playing the real prototype together (and via the APK)
+## Playing the real prototype together — the 2-person test
 
-The section above connects clients to a minimal core harness (`dev:server`,
-green/red). To play the **actual prototype** — the map, the HUD, the whole
-console — as a two-player session, use the prototype dev server. It hosts the
-prototype's *own* world (same `kernel` + `data` + `newGame()`), so the client
-renders the live session exactly like single-player.
+The section above connects to a minimal core harness (`dev:server`, green/red). To
+play the **actual prototype** — the map, the HUD, the whole console — as a
+two-player session, use the prototype dev server. It hosts the prototype's *own*
+world (same `kernel` + `data` + `newGame()`), so the client renders the live
+session exactly like single-player, and it **serves the game HTML at `/`** so a
+peer needs no file at all.
+
+### One command to host
 
 ```bash
-pnpm dev:proto-server                          # 127.0.0.1:8788, match id "proto"
-HOST=0.0.0.0 PORT=8788 pnpm dev:proto-server   # reachable from other devices / a tunnel
+pnpm host        # builds the prototype HTML, serves it + the match on 0.0.0.0:8788
 ```
 
-It prints:
+It prints the URLs and detects your LAN IP, e.g.:
 
 ```
-health : http://127.0.0.1:8788/health
-Azure  : ws://127.0.0.1:8788/matches/proto?player=p1
-Crimson: ws://127.0.0.1:8788/matches/proto?player=p2
+  game   : http://localhost:8788/   (open in a browser → Connect)
+  Two-person test:
+   • You:    open http://localhost:8788/   → Connect → Azure (p1)
+   • Friend: open http://192.168.1.23:8788/  (same Wi-Fi) → Connect → Crimson (p2)
 ```
 
-The prototype now opens on a **connect overlay** (build it with `pnpm prototype`,
-open `prototype/dist/void-dominion.html`):
+(Under the hood that's `pnpm prototype` + `HOST=0.0.0.0 pnpm dev:proto-server`;
+`PORT=… pnpm host` changes the port.)
+
+The game opens on a **connect overlay**:
 
 - **Single player** — the local skirmish vs the AI, exactly as before.
-- **Connect** — paste the server URL, pick **Azure** (p1) or **Crimson** (p2),
-  and join the live session. The last URL is remembered (so the APK reconnects in
-  one tap). Whoever you join as renders **green** ("you"); the opponent is red.
+- **Connect** — the server URL is **pre-filled from the page's origin**, so just
+  pick **Azure** (p1) or **Crimson** (p2) and tap **Connect**. Whoever you join as
+  renders **green** ("you"); the opponent is red. The URL is remembered (the APK
+  reconnects in one tap).
 
-### Two phones, one session — the APK friend test
+### Path A — same Wi-Fi, zero install (easiest)
 
-The Capacitor APK (`mobile/`, see `mobile/README.md`) wraps this same prototype,
-so it ships with net mode built in. To test with a remote friend:
+1. Host runs `pnpm host` and reads off the two URLs.
+2. **You** open the `localhost` URL in a browser → Connect → Azure.
+3. **Friend** (same Wi-Fi) opens the `http://<LAN-IP>:8788/` URL in their phone/laptop
+   browser → Connect → Crimson.
+4. You're in one live session. (If the friend can't reach it, allow port 8788 through
+   the host's firewall.)
 
-1. **Run the server + a public tunnel** on your machine (the tunnel gives a
-   `wss://` URL, which mobile WebViews accept — a plain `ws://` would be blocked
-   as cleartext):
-   ```bash
-   HOST=0.0.0.0 PORT=8788 pnpm dev:proto-server
-   cloudflared tunnel --url http://localhost:8788   # or: ngrok http 8788
-   ```
-   Use the printed `https://…trycloudflare.com` host as `wss://…trycloudflare.com`.
-2. **Build the APK** (CI: Actions → "Android APK (prototype)" → download
-   `void-dominion-debug-apk`) and send `app-debug.apk` to your friend.
-3. Both install/sideload it. In the overlay, **both paste the same `wss://…` URL**;
-   you pick Azure, your friend picks Crimson; tap **Connect**.
-4. You are now in one live session: move fleets, build, assault — each side sees
-   the other's orders in real time, served by the authoritative core.
+### Path B — same Wi-Fi, via the APK
 
-Keep the server + tunnel running for the session (state is in-memory — a restart
-loses the match). Do **not** leave an unauthenticated server tunnelled long-term
-(auth is brick F7 / SE-0.1).
+The Capacitor APK (`mobile/`) wraps this same prototype and ships net mode built in;
+the debug build allows cleartext (`usesCleartextTraffic`), so it connects over plain
+`ws://` on a LAN — no tunnel needed.
+
+1. Host runs `pnpm host`.
+2. Get the APK: **Actions → "Android APK (prototype)" → download `void-dominion-debug-apk`**
+   (or trigger it manually via *Run workflow*); send `app-debug.apk` to your friend.
+3. Both sideload it. In the overlay each types `ws://<host-LAN-IP>:8788` (the host can
+   use `ws://localhost:8788`), one picks Azure, the other Crimson → **Connect**.
+
+### Path C — remote friend (different network)
+
+Keep `pnpm host` running and expose the port with a tunnel — it gives a `wss://` URL
+that works from anywhere (and from a mobile WebView):
+
+```bash
+cloudflared tunnel --url http://localhost:8788   # or: ngrok http 8788
+```
+
+Both (browser **or** APK) paste the printed `wss://…trycloudflare.com` URL; one picks
+Azure, the other Crimson. Or host it (Fly.io/Railway, per `docs/roadmap.md`).
+
+Keep the server (and tunnel) running for the session — state is in-memory, so a restart
+loses the match. Do **not** leave an unauthenticated server tunnelled long-term (auth is
+brick F7 / SE-0.1).
 
 ### Net-mode scope (first MP test)
 

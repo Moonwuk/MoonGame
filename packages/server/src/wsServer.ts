@@ -8,6 +8,10 @@ export interface MultiplayerServerOptions {
   host?: string;
   port?: number;
   pathPrefix?: string;
+  /** Optional HTML served at `/` and `/index.html` — lets a dev/proto server hand
+   *  the client the game itself, so a peer just opens `http://host:port/` (no file
+   *  transfer, and the connect overlay auto-fills the same-origin ws:// URL). */
+  indexHtml?: string;
 }
 
 export interface MultiplayerServerHandle {
@@ -34,10 +38,17 @@ export function createMultiplayerServer(
   const room = options.room;
   const wss = new WebSocketServer({ noServer: true, maxPayload: 32_768 });
 
+  const indexHtml = options.indexHtml;
   const httpServer = createServer((request, response) => {
-    if (request.url === '/health') {
+    const path = (request.url ?? '/').split('?')[0] ?? '/';
+    if (path === '/health') {
       response.writeHead(200, { 'content-type': 'application/json' });
       response.end(JSON.stringify({ ok: true, matchId: room.id, seq: room.sequence }));
+      return;
+    }
+    if (indexHtml !== undefined && (path === '/' || path === '/index.html')) {
+      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      response.end(indexHtml);
       return;
     }
     response.writeHead(404, { 'content-type': 'text/plain' });
