@@ -226,9 +226,12 @@ const KEY: KeyNode[] = [
   { id: 'SLAG', owner: null, x: 1020, y: 390, sector: 'asteroid' },
 ];
 
-// Fill the rest of the map with sectors on a jittered lattice: mostly empty space,
-// with the occasional neutral field/world to seize. Deterministic; bump the grid
-// density to get more sectors.
+// Fill the rest of the map with sectors on a jittered lattice. A dense Bytro-style
+// tessellation: most cells are real, capturable provinces (a mix of worlds, fields
+// and nebulae), with only the occasional void gap. Deterministic; drop GRID_STEP to
+// pack in even more provinces.
+const GRID_STEP = 88; // lattice spacing — smaller ⇒ more, smaller provinces
+const FILL_PLANET_TYPES = ['terran', 'barren', 'oceanic', 'volcanic', 'gas_giant'];
 function fillSectors(): KeyNode[] {
   const hash = (a: number, b: number): number => {
     const v = Math.sin(a * 12.9898 + b * 78.233) * 43758.5453;
@@ -236,15 +239,24 @@ function fillSectors(): KeyNode[] {
   };
   const out: KeyNode[] = [];
   let i = 0;
-  for (let gx = 60; gx <= 1130; gx += 120) {
-    for (let gy = 50; gy <= 520; gy += 120) {
-      const x = gx + (hash(gx, gy) - 0.5) * 70;
-      const y = gy + (hash(gy, gx) - 0.5) * 70;
-      if (KEY.some((k) => Math.hypot(k.x - x, k.y - y) < 90)) continue;
+  for (let gx = 60; gx <= 1130; gx += GRID_STEP) {
+    for (let gy = 50; gy <= 520; gy += GRID_STEP) {
+      const x = gx + (hash(gx, gy) - 0.5) * GRID_STEP * 0.7;
+      const y = gy + (hash(gy, gx) - 0.5) * GRID_STEP * 0.7;
+      if (KEY.some((k) => Math.hypot(k.x - x, k.y - y) < 66)) continue;
       const r = hash(x * 0.37, y * 0.71);
-      const sector = r < 0.1 ? 'asteroid' : r < 0.18 ? 'nebula' : 'empty';
-      const node: KeyNode = { id: `S${i++}`, owner: null, x, y, sector };
-      if (sector === 'nebula') node.type = 'barren';
+      // Mostly real provinces: ~45% worlds, ~25% asteroid fields, ~22% nebulae,
+      // ~8% void gaps (filtered out of MAP, so neighbours absorb the space).
+      const node: KeyNode = { id: `S${i++}`, owner: null, x, y, sector: 'empty' };
+      if (r < 0.45) {
+        node.sector = 'planet';
+        node.type = FILL_PLANET_TYPES[Math.floor(hash(y * 1.7, x * 2.3) * FILL_PLANET_TYPES.length)];
+      } else if (r < 0.7) {
+        node.sector = 'asteroid';
+      } else if (r < 0.92) {
+        node.sector = 'nebula';
+        node.type = 'barren';
+      }
       out.push(node);
     }
   }
