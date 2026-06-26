@@ -1,4 +1,11 @@
-import { applyDelta, type Action, type GameState, type PlayerId, type StateDelta } from '@void/shared-core';
+import {
+  applyDelta,
+  hashState,
+  type Action,
+  type GameState,
+  type PlayerId,
+  type StateDelta,
+} from '@void/shared-core';
 
 export type MultiplayerStatus = 'connecting' | 'open' | 'closed';
 
@@ -16,11 +23,23 @@ export interface MultiplayerSnapshot {
   waiting?: boolean;
 }
 
+/** A reconstruction mismatch: the server's authoritative `hash` of the visible
+ *  state did not equal the hash of what this client rebuilt from the snapshot/delta
+ *  — a desync (delta/codec drift, version skew, or determinism divergence). The
+ *  embedder should request a full resync. */
+export interface DesyncInfo {
+  seq: number;
+  expected: string;
+  actual: string;
+}
+
 export interface MultiplayerClientHandlers {
   onStatus?(status: MultiplayerStatus): void;
   onSnapshot?(snapshot: MultiplayerSnapshot): void;
   onRejection?(actionId: string, code: string): void;
   onError?(code: string): void;
+  /** Fired when the server's integrity `hash` disagrees with the rebuilt state. */
+  onDesync?(info: DesyncInfo): void;
 }
 
 interface InboundBase {
@@ -33,6 +52,8 @@ interface InboundBase {
   actionId?: string;
   code?: string;
   waiting?: boolean;
+  /** Authoritative hash of the visible state this message reconstructs to. */
+  hash?: string;
 }
 
 function decode(raw: string): InboundBase | null {
@@ -94,6 +115,7 @@ export class MultiplayerClient {
       this.lastState = message.state;
       this.matchId = message.matchId;
       this.playerId = message.playerId ?? this.playerId;
+      this.verifyIntegrity(message.seq, message.hash);
       this.handlers.onSnapshot?.({
         matchId: message.matchId,
         playerId: this.playerId,
@@ -112,6 +134,7 @@ export class MultiplayerClient {
     ) {
       // Incremental update — patch the baseline and surface the new full state.
       this.lastState = applyDelta(this.lastState, message.delta);
+      this.verifyIntegrity(message.seq, message.hash);
       this.handlers.onSnapshot?.({
         matchId: this.matchId,
         playerId: this.playerId,
@@ -127,6 +150,16 @@ export class MultiplayerClient {
     }
     if (message.type === 'error' && message.code) {
       this.handlers.onError?.(message.code);
+    }
+  }
+
+  /** Compare the server's authoritative state hash against the locally rebuilt
+   *  state; a mismatch is a desync the embedder should recover from with a resync. */
+  private verifyIntegrity(seq: number, expected: string | undefined): void {
+    if (expected === undefined || !this.lastState) return;
+    const actual = hashState(this.lastState);
+    if (actual !== expected) {
+      this.handlers.onDesync?.({ seq, expected, actual });
     }
   }
 

@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { createInitialState, diffState, type GameState } from '@void/shared-core';
+import { createInitialState, diffState, hashState, type GameState } from '@void/shared-core';
 import {
   MultiplayerClient,
+  type DesyncInfo,
   type MultiplayerSnapshot,
   type MultiplayerSocket,
   type MultiplayerStatus,
@@ -82,6 +83,37 @@ describe('MultiplayerClient', () => {
       JSON.stringify({ type: 'rejection', matchId: 'm', seq: 2, actionId: 'a1', code: 'E_FORBIDDEN' }),
     );
     expect(rejected).toEqual(['a1', 'E_FORBIDDEN']);
+  });
+
+  it('verifies the server integrity hash and flags a desync on mismatch', () => {
+    const socket = new FakeSocket();
+    const desyncs: DesyncInfo[] = [];
+    const client = new MultiplayerClient(socket, { onDesync: (i) => desyncs.push(i) });
+
+    const s0 = baseState(10);
+    const s1 = baseState(99);
+    const s2 = baseState(123);
+
+    // welcome + delta carrying the CORRECT authoritative hash → no desync.
+    client.receive(
+      JSON.stringify({ type: 'welcome', matchId: 'm', playerId: 'p1', seq: 0, serverTime: 0, state: s0, hash: hashState(s0) }),
+    );
+    client.receive(
+      JSON.stringify({ type: 'delta', matchId: 'm', seq: 1, serverTime: 0, delta: diffState(s0, s1), events: [], hash: hashState(s1) }),
+    );
+    expect(desyncs).toEqual([]);
+
+    // A delta whose hash does not match the reconstruction → desync flagged with
+    // the expected (server) and actual (locally recomputed) digests.
+    client.receive(
+      JSON.stringify({ type: 'delta', matchId: 'm', seq: 2, serverTime: 0, delta: diffState(s1, s2), events: [], hash: 'deadbeef000000' }),
+    );
+    expect(desyncs).toHaveLength(1);
+    expect(desyncs[0]).toMatchObject({ seq: 2, expected: 'deadbeef000000', actual: hashState(s2) });
+
+    // A delta WITHOUT a hash is not verified (backward-compatible) → still no new desync.
+    client.receive(JSON.stringify({ type: 'delta', matchId: 'm', seq: 3, serverTime: 0, delta: diffState(s2, s0), events: [] }));
+    expect(desyncs).toHaveLength(1);
   });
 
   it('sends actions as wire messages and closes the socket', () => {

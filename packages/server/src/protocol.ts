@@ -38,7 +38,16 @@ export interface LobbyField {
   waiting?: boolean;
 }
 
-export interface ServerWelcomeMessage extends VisibilityFields, LobbyField {
+/** Integrity check carried on every snapshot/delta: the server's authoritative
+ *  `hashState` of the per-player visible state this message reconstructs to. The
+ *  client recomputes the hash over its rebuilt state and compares — a mismatch is
+ *  a desync (delta/codec drift, version skew, or a determinism divergence) and
+ *  should trigger a resync (docs sprint-1 S1.6 / metrics-roadmap M1). */
+export interface IntegrityField {
+  hash?: string;
+}
+
+export interface ServerWelcomeMessage extends VisibilityFields, LobbyField, IntegrityField {
   type: 'welcome';
   matchId: string;
   playerId: PlayerId;
@@ -47,7 +56,7 @@ export interface ServerWelcomeMessage extends VisibilityFields, LobbyField {
   state: GameState;
 }
 
-export interface ServerStateMessage extends VisibilityFields, LobbyField {
+export interface ServerStateMessage extends VisibilityFields, LobbyField, IntegrityField {
   type: 'state';
   matchId: string;
   seq: number;
@@ -58,7 +67,7 @@ export interface ServerStateMessage extends VisibilityFields, LobbyField {
 
 /** Incremental update — only the entities/fields that changed since the peer's
  *  last `welcome`/`state` snapshot. A full `state` is sent on join and on resync. */
-export interface ServerDeltaMessage extends VisibilityFields, LobbyField {
+export interface ServerDeltaMessage extends VisibilityFields, LobbyField, IntegrityField {
   type: 'delta';
   matchId: string;
   seq: number;

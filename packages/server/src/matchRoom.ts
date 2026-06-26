@@ -8,7 +8,7 @@ import type {
   PlayerId,
   SignatureContact,
 } from '@void/shared-core';
-import { diffState, identifiedNodes, visibleState } from '@void/shared-core';
+import { diffState, hashState, identifiedNodes, visibleState } from '@void/shared-core';
 import {
   parseClientMessage,
   serializeServerMessage,
@@ -163,6 +163,7 @@ export class MatchRoom {
       seq: this.seq,
       serverTime: this.clock(),
       state: view.base,
+      hash: view.hash,
       signatures: view.signatures,
       remembered: view.remembered,
       ...(this.waiting ? { waiting: true } : {}),
@@ -172,14 +173,17 @@ export class MatchRoom {
   }
 
   /** What `playerId` may see right now: a clean visible `GameState` baseline
-   *  (fog applied, internal memory stripped) plus the fog extras for the wire. */
+   *  (fog applied, internal memory stripped), the fog extras for the wire, and the
+   *  authoritative `hashState` of that baseline so the peer can detect a desync. */
   private viewFor(playerId: PlayerId): {
     base: GameState;
     signatures: SignatureContact[];
     remembered: string[];
+    hash: string;
   } {
     const { signatures, remembered, ...base } = visibleState(this.stateValue, playerId, this.data);
-    return { base: base as GameState, signatures, remembered };
+    const baseState = base as GameState;
+    return { base: baseState, signatures, remembered, hash: hashState(baseState) };
   }
 
   removePeer(playerId: PlayerId, peer: RoomPeer): void {
@@ -266,6 +270,7 @@ export class MatchRoom {
       seq: this.seq,
       serverTime: this.clock(),
       state: view.base,
+      hash: view.hash,
       events: [],
       signatures: view.signatures,
       remembered: view.remembered,
@@ -316,6 +321,7 @@ export class MatchRoom {
         seq: this.seq,
         serverTime: now,
         delta: diffState(baseline, view.base),
+        hash: view.hash,
         events: events.filter((e) => this.eventVisibleTo(e, playerId, identify)),
         signatures: view.signatures,
         remembered: view.remembered,
