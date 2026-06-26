@@ -294,9 +294,6 @@ function projBase(p: { x: number; y: number }): { x: number; y: number } {
 // in screen pixels; only positions transform (a node-graph style zoom).
 const cam = { scale: 1, x: 0, y: 0 };
 const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
-const MAP_LINKS = MAP.flatMap((n) =>
-  n.links.filter((l) => n.id < l).map((l) => [n.id, l] as const),
-);
 // node sector type by id — drives asteroid-junction rendering + capture-by-arrival
 const SECTOR_OF: Record<string, string> = Object.fromEntries(MAP.map((n) => [n.id, n.sector]));
 function world(p: { x: number; y: number }): { x: number; y: number } {
@@ -974,34 +971,6 @@ function glowRing(x: number, y: number, r: number, color: string, alpha: number)
   cx.restore();
 }
 
-/** Live energy packets sliding along each on-screen hyperlane — the "alive" layer
- *  over the cached static network. Cheap: a couple of additive dots per lane. */
-function drawLaneEnergy(now: number) {
-  cx.save();
-  cx.globalCompositeOperation = 'lighter';
-  const t = (now / 2600) % 1;
-  for (const [from, to] of MAP_LINKS) {
-    const A = s.planets[from];
-    const B = s.planets[to];
-    if (!A || !B) continue;
-    const a = world(A.position);
-    const b = world(B.position);
-    if (!visible(a, 40) && !visible(b, 40)) continue;
-    const lane = A.owner && A.owner === B.owner ? ownerColor(A.owner) : '#7df0d0';
-    // deterministic per-lane phase so packets don't pulse in unison
-    const ph = (((a.x * 13.1 + a.y * 7.7) % 100) + 100) % 100 / 100;
-    for (let k = 0; k < 2; k++) {
-      const u = (t + ph + k * 0.5) % 1;
-      const x = a.x + (b.x - a.x) * u;
-      const y = a.y + (b.y - a.y) * u;
-      cx.fillStyle = rgba(lane, 0.5 * (1 - Math.abs(u - 0.5) * 1.4));
-      cx.beginPath();
-      cx.arc(x, y, 1.5, 0, TAU);
-      cx.fill();
-    }
-  }
-  cx.restore();
-}
 
 function drawBattlePulse(x: number, y: number, pulse: number) {
   cx.save();
@@ -1131,7 +1100,30 @@ function ownersSig(): string {
   return out;
 }
 
-/** Rebuild the cached territory+lane layer when the camera/ownership/viewport moves. */
+/** Clip a convex polygon to the half-plane a*x + b*y + c ≤ 0 (Sutherland–Hodgman).
+ *  Used to carve the weighted-Voronoi (power-diagram) province cells. */
+function clipHalfPlane(
+  poly: Array<[number, number]>,
+  a: number,
+  b: number,
+  c: number,
+): Array<[number, number]> {
+  const out: Array<[number, number]> = [];
+  for (let i = 0; i < poly.length; i++) {
+    const cur = poly[i]!;
+    const nxt = poly[(i + 1) % poly.length]!;
+    const dc = a * cur[0] + b * cur[1] + c;
+    const dn = a * nxt[0] + b * nxt[1] + c;
+    if (dc <= 0) out.push(cur);
+    if (dc < 0 !== dn < 0) {
+      const t = dc / (dc - dn);
+      out.push([cur[0] + t * (nxt[0] - cur[0]), cur[1] + t * (nxt[1] - cur[1])]);
+    }
+  }
+  return out;
+}
+
+/** Rebuild the cached province map when the camera/ownership/viewport moves. */
 function buildStaticLayer(): void {
   const sig = `${VW}x${VH}:${DPR.toFixed(2)}:${Math.round(cam.x)},${Math.round(cam.y)},${cam.scale.toFixed(3)}|${ownersSig()}`;
   if (sig === bgSig && bg.width === Math.round(VW * DPR)) return;
@@ -1176,54 +1168,53 @@ function buildStaticLayer(): void {
     g.fillRect(st.x * VW, st.y * VH, 1, 1);
   }
 
-  // 1) territory as soft "influence" glow around owned systems (additive blend) —
-  //    reads as overlapping spheres of control, not hard political cells.
-  g.save();
-  g.globalCompositeOperation = 'lighter';
-  // Influence radius scales with the sector's `size` (√, so area ∝ size): a bigger
-  // sector claims more territory, and where two glows meet — the visible border —
-  // sits proportionally to their sizes, so resizing one shifts its neighbours'.
-  const baseInfl = Math.max(48, 80 * cam.scale);
+  // PROVINCES — political map (Bytro-style). Every sector is a filled CELL of a
+  // weighted Voronoi (power diagram) over the sector centres: the cells tile the
+  // map and share borders, so a bigger `size` claims more territory and resizing
+  // one shifts the shared borders with its neighbours evenly. Adjacency IS the
+  // shared border — no lanes. (Empty void waypoints aren't real provinces → skipped.)
+  const W = 9000 * cam.scale * cam.scale; // size → weight (screen px²), zoom-consistent
+  const seeds: Array<{ x: number; y: number; w: number; owner: string | null }> = [];
   for (const n of MAP) {
+    if (n.sector === 'empty') continue;
     const p = s.planets[n.id];
-    if (!p || !p.owner) continue;
+    if (!p) continue;
     const c = world(n);
-    const infl = baseInfl * Math.sqrt(p.size ?? 1);
-    if (c.x < -infl || c.x > VW + infl || c.y < -infl || c.y > VH + infl) continue;
-    const col = ownerColor(p.owner);
-    const grd = g.createRadialGradient(c.x, c.y, 0, c.x, c.y, infl);
-    grd.addColorStop(0, rgba(col, 0.26));
-    grd.addColorStop(0.5, rgba(col, 0.08));
-    grd.addColorStop(1, rgba(col, 0));
-    g.fillStyle = grd;
-    g.beginPath();
-    g.arc(c.x, c.y, infl, 0, TAU);
-    g.fill();
+    seeds.push({ x: c.x, y: c.y, w: (p.size ?? 1) * W, owner: p.owner ?? null });
   }
-  g.restore();
-
-  // 2) hyperlane network — the hero. A soft glow underlay + a bright core, tinted
-  //    by ownership when a lane runs between two systems of the same power.
-  g.lineCap = 'round';
-  for (const [from, to] of MAP_LINKS) {
-    const A = s.planets[from];
-    const B = s.planets[to];
-    if (!A || !B) continue;
-    const a = world(A.position);
-    const b = world(B.position);
-    if ((a.x < 0 && b.x < 0) || (a.x > VW && b.x > VW) || (a.y < 0 && b.y < 0) || (a.y > VH && b.y > VH)) continue;
-    const lane = A.owner && A.owner === B.owner ? ownerColor(A.owner) : '#35d6e6';
-    g.strokeStyle = rgba(lane, 0.1);
-    g.lineWidth = 3.4;
+  const MARGIN = 2500;
+  const clip: Array<[number, number]> = [
+    [-MARGIN, -MARGIN],
+    [VW + MARGIN, -MARGIN],
+    [VW + MARGIN, VH + MARGIN],
+    [-MARGIN, VH + MARGIN],
+  ];
+  const trace = (poly: Array<[number, number]>): void => {
     g.beginPath();
-    g.moveTo(a.x, a.y);
-    g.lineTo(b.x, b.y);
-    g.stroke();
-    g.strokeStyle = rgba(lane, 0.5);
-    g.lineWidth = 1;
-    g.beginPath();
-    g.moveTo(a.x, a.y);
-    g.lineTo(b.x, b.y);
+    g.moveTo(poly[0]![0], poly[0]![1]);
+    for (let k = 1; k < poly.length; k++) g.lineTo(poly[k]![0], poly[k]![1]);
+    g.closePath();
+  };
+  for (let i = 0; i < seeds.length; i++) {
+    const si = seeds[i]!;
+    let poly: Array<[number, number]> = clip.map((q) => [q[0], q[1]]);
+    for (let j = 0; j < seeds.length && poly.length >= 3; j++) {
+      if (i === j) continue;
+      const sj = seeds[j]!;
+      // power-diagram half-plane: keep |x-ci|² - wi ≤ |x-cj|² - wj
+      const a = 2 * (sj.x - si.x);
+      const b = 2 * (sj.y - si.y);
+      const cc = si.x * si.x + si.y * si.y - si.w - (sj.x * sj.x + sj.y * sj.y - sj.w);
+      poly = clipHalfPlane(poly, a, b, cc);
+    }
+    if (poly.length < 3) continue;
+    const col = si.owner ? ownerColor(si.owner) : COLOR.null;
+    trace(poly);
+    g.fillStyle = rgba(col, si.owner ? 0.34 : 0.12);
+    g.fill();
+    trace(poly);
+    g.strokeStyle = rgba(si.owner ? ownerColor(si.owner) : '#4a6b78', si.owner ? 0.65 : 0.32);
+    g.lineWidth = 1.2;
     g.stroke();
   }
 }
@@ -1240,9 +1231,8 @@ function blitStaticLayer(): void {
 
 function render(now: number) {
   cx.setTransform(DPR, 0, 0, DPR, 0, 0); // draw in CSS pixels, crisp on hi-DPI
-  blitStaticLayer(); // cached backdrop + territory glow + hyperlane network
+  blitStaticLayer(); // cached backdrop + province political map
   drawScanSweep(now); // slow radar sweep — pure console chrome
-  drawLaneEnergy(now); // live energy packets flowing along the lanes
 
   drawFleetRoutes();
 
