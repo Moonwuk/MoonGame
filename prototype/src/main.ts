@@ -262,11 +262,39 @@ const NEBULAE = Array.from({ length: 5 }, (_, i) => {
 // The backdrop (deep-space + nebulae + radar grid + star ticks) is baked into the
 // cached static layer (see buildStaticLayer). This is the only live backdrop bit:
 // a slow radar sweep across the plotting table — pure command-console chrome.
+// Live sweep state (pivot + leading-edge angle), captured each frame so map blips
+// can light up as the arm crosses them (radar "ping" afterglow). sweepOn guards
+// engines without conic gradients (no visible sweep → no ping).
+let sweepCx = 0;
+let sweepCy = 0;
+let sweepAng = 0;
+let sweepOn = false;
+
+/** How brightly a contact at screen-point `c` is lit by the sweep: 1 the instant
+ *  the arm crosses it, fading linearly back to 0 just before the next pass (so the
+ *  imprint lingers a whole rotation). 0 when the sweep is inactive. */
+function sweepGlow(c: { x: number; y: number }): number {
+  if (!sweepOn) return 0;
+  const entAng = Math.atan2(c.y - sweepCy, c.x - sweepCx); // canvas-clockwise, matches the conic
+  let delta = (sweepAng - entAng) % TAU;
+  if (delta < 0) delta += TAU;
+  const t = 1 - delta / TAU;
+  return t * t; // ease so the just-crossed flash reads, with a lingering tail
+}
+
 function drawScanSweep(now: number) {
   if (!cx.createConicGradient) return; // graceful: skip on engines without it
-  const cxp = VW * 0.5;
-  const cyp = VH * 0.5;
+  // Pivot the sweep at the MAP centre (projected through the camera), not the
+  // screen centre — so it pans / zooms with the map instead of staying glued to
+  // the viewport.
+  const mc = world({ x: (MINX + MAXX) / 2, y: (MINY + MAXY) / 2 });
+  const cxp = mc.x;
+  const cyp = mc.y;
   const ang = (now / 7000) % TAU;
+  sweepCx = cxp;
+  sweepCy = cyp;
+  sweepAng = ang;
+  sweepOn = true;
   const grd = cx.createConicGradient(ang, cxp, cyp);
   // very subtle trailing wedge — barely-there in a still frame, reads as a slow
   // rotating radar sweep in motion (fades over ~0.4 turn behind the leading edge)
@@ -1561,6 +1589,37 @@ function render(now: number) {
   // selected sector: its radar detection radius (a physical circle in map space →
   // an axis-aligned ellipse on screen because the fit projection is non-uniform).
   drawRadarRange(now);
+
+  // radar ping afterglow: as the sweep arm crosses a contact it flares, then the
+  // imprint lingers (fading) until the arm comes back round — drawn behind the
+  // blips so it reads as the contact glowing, not an overlay. Skips void nodes and
+  // anything still fully unexplored.
+  if (sweepOn) {
+    cx.save();
+    cx.globalCompositeOperation = 'lighter';
+    for (const n of MAP) {
+      if (n.sector === 'empty') continue;
+      const p = s.planets[n.id];
+      if (!p) continue;
+      const c = world(n);
+      if (!visible(c, 60)) continue;
+      const seen = !fogOn || known(n.id) || memory.has(n.id);
+      if (!seen) continue;
+      const g = sweepGlow(c);
+      if (g <= 0.03) continue;
+      const col = known(n.id) || !fogOn ? ownerColor(p.owner) : '#6f8a93';
+      const rad = 24;
+      const grd = cx.createRadialGradient(c.x, c.y, 0, c.x, c.y, rad);
+      grd.addColorStop(0, rgba(col, 0.34 * g));
+      grd.addColorStop(0.55, rgba(col, 0.12 * g));
+      grd.addColorStop(1, rgba(col, 0));
+      cx.fillStyle = grd;
+      cx.beginPath();
+      cx.arc(c.x, c.y, rad, 0, TAU);
+      cx.fill();
+    }
+    cx.restore();
+  }
 
   // planets — wireframe blips with sensor rings + monospace callouts
   cx.textAlign = 'left';
