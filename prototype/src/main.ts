@@ -17,6 +17,7 @@ import {
   hpOfLevel,
   netIncome,
   moveFleet,
+  moveFleetEdge,
   stopFleet,
   orbitFleet,
   assaultFleet,
@@ -29,7 +30,12 @@ import {
   buildUnit,
   type StepOut,
 } from './game';
-import { buildingMaxLevel, estimateTravelHours, planRoute } from '../../packages/shared-core/src/index';
+import {
+  buildingMaxLevel,
+  estimateTravelHours,
+  fleetBaseSpeed,
+  planRoute,
+} from '../../packages/shared-core/src/index';
 import { MultiplayerClient } from '../../packages/client/src/index';
 import type {
   GameState,
@@ -480,12 +486,24 @@ function pumpBuildQueues(): void {
 }
 function fleetPos(f: Fleet): { x: number; y: number } | null {
   if (f.location) return s.planets[f.location]?.position ?? null;
+  // Parked at a continuous point ON a lane (stopped mid-march / marched to a point).
+  if (f.edge) {
+    const a = s.planets[f.edge.from]?.position;
+    const b = s.planets[f.edge.to]?.position;
+    if (!a || !b) return null;
+    return { x: a.x + (b.x - a.x) * f.edge.t, y: a.y + (b.y - a.y) * f.edge.t };
+  }
   const m = f.movement;
   if (!m) return null;
   const a = s.planets[m.from]?.position;
   const b = s.planets[m.to]?.position;
   if (!a || !b) return null;
-  const t = Math.min(1, Math.max(0, (s.time - m.departedAt) / (m.arrivesAt - m.departedAt)));
+  // The leg only covers the sub-segment [startT, endT] of the lane (a partial leg
+  // out of / into a parked position), so interpolate within those bounds.
+  const s0 = m.startT ?? 0;
+  const e0 = m.endT ?? 1;
+  const prog = Math.min(1, Math.max(0, (s.time - m.departedAt) / (m.arrivesAt - m.departedAt)));
+  const t = s0 + (e0 - s0) * prog;
   return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
 }
 /** The fleets the command bar / move order currently act on (mine only). */
@@ -505,9 +523,10 @@ function fleetAnchor(f: Fleet): { x: number; y: number; ang: number } | null {
     if (!mp) return null;
     const c = world(mp);
     let ang = -Math.PI / 2;
-    if (f.movement) {
-      const a = s.planets[f.movement.from]?.position;
-      const b = s.planets[f.movement.to]?.position;
+    const lane = f.movement ?? f.edge; // heading = along the lane it is on
+    if (lane) {
+      const a = s.planets[lane.from]?.position;
+      const b = s.planets[lane.to]?.position;
       if (a && b) {
         const wa = world(a);
         const wb = world(b);
@@ -538,9 +557,66 @@ function note(msg: string) {
   while (logLines.length > 9) logLines.shift();
 }
 
-/** The map node a fleet occupies / is travelling over (for visibility). */
+/** The map node a fleet occupies / is travelling over / is parked nearest to. */
 function fleetNode(f: Fleet): string | null {
-  return f.location ?? f.movement?.to ?? f.movement?.from ?? null;
+  if (f.location) return f.location;
+  if (f.movement) return f.movement.to ?? f.movement.from ?? null;
+  if (f.edge) return f.edge.t <= 0.5 ? f.edge.from : f.edge.to;
+  return null;
+}
+
+/** The closest point ON a lane to a screen point: which lane (`from`,`to`), the
+ *  fraction `t` along it and its screen position — or null if none within `maxPx`.
+ *  Lets the player march an army to any point on a road (Bytro continuous order). */
+function nearestLanePoint(
+  mx: number,
+  my: number,
+  maxPx = 14,
+): { from: string; to: string; t: number; x: number; y: number } | null {
+  let best = maxPx;
+  let found: { from: string; to: string; t: number; x: number; y: number } | null = null;
+  for (const p of Object.values(s.planets)) {
+    const a = world(p.position);
+    for (const mId of p.links ?? []) {
+      if (p.id >= mId) continue; // each undirected lane once
+      const mp = s.planets[mId];
+      if (!mp) continue;
+      const b = world(mp.position);
+      const vx = b.x - a.x;
+      const vy = b.y - a.y;
+      const len2 = vx * vx + vy * vy;
+      if (!len2) continue;
+      let t = ((mx - a.x) * vx + (my - a.y) * vy) / len2;
+      t = Math.min(1, Math.max(0, t));
+      const px = a.x + vx * t;
+      const py = a.y + vy * t;
+      const d = Math.hypot(mx - px, my - py);
+      if (d < best) {
+        best = d;
+        found = { from: p.id, to: mId, t, x: px, y: py };
+      }
+    }
+  }
+  return found;
+}
+
+/** For a march to a lane point: which endpoint the fleet routes through and the
+ *  total ETA (node route + the partial leg into the lane), mirroring the kernel's
+ *  cheaper-end choice. Used only for the move preview. */
+function laneAim(
+  f: Fleet,
+  from: string,
+  lane: { from: string; to: string; t: number },
+): { endId: string; hrs: number } {
+  const speed = fleetBaseSpeed(f, data) || 1;
+  const a = s.planets[lane.from]?.position;
+  const b = s.planets[lane.to]?.position;
+  const len = a && b ? Math.hypot(a.x - b.x, a.y - b.y) : 0;
+  const toNode = (to: string): number =>
+    from === to ? 0 : (estimateTravelHours(s, data, from, to, f) ?? Infinity);
+  const hFrom = toNode(lane.from) + (len * lane.t) / speed; // reach `from`, then advance t
+  const hTo = toNode(lane.to) + (len * (1 - lane.t)) / speed; // reach `to`, then back (1-t)
+  return hFrom <= hTo ? { endId: lane.from, hrs: hFrom } : { endId: lane.to, hrs: hTo };
 }
 
 // --- radar / signatures (prototype-local; a future core `signature` stat + a
@@ -1025,6 +1101,8 @@ function drawAimPreview() {
   if (!aiming || !aimPointer) return;
   const ids = selectedFleetIds();
   if (!ids.length) return;
+  // Prefer a node target; if none is near, aim at the closest point ON a lane —
+  // the army will route to that road and park there (Bytro continuous order).
   let target: { x: number; y: number } | null = null;
   let targetId: string | null = null;
   let best = 30;
@@ -1037,6 +1115,8 @@ function drawAimPreview() {
       targetId = n.id;
     }
   }
+  const laneTarget = targetId ? null : nearestLanePoint(aimPointer.x, aimPointer.y);
+  if (laneTarget) target = { x: laneTarget.x, y: laneTarget.y };
   const tip = target ?? aimPointer;
   cx.save();
   cx.strokeStyle = rgba(LOCK, 0.6);
@@ -1051,15 +1131,20 @@ function drawAimPreview() {
     if (!a) continue;
     // draw the ROUTED march path through province centres (Bytro-style), so you
     // see the actual road the army will take — not a straight line to the target.
-    const from = f.location ?? f.movement?.to ?? null;
+    const from = fleetNode(f);
+    // For a lane target, route to the endpoint the army enters through, then a
+    // final segment to the point on the road.
+    const routeEndId = laneTarget && from ? laneAim(f, from, laneTarget).endId : targetId;
     const pts: Array<{ x: number; y: number }> = [a];
-    if (from && targetId && targetId !== from) {
-      const route = planRoute(s, from, targetId);
-      if (route) for (const hop of route) {
-        const pl = s.planets[hop];
-        if (pl) pts.push(world(pl.position));
-      }
+    if (from && routeEndId && routeEndId !== from) {
+      const route = planRoute(s, from, routeEndId);
+      if (route)
+        for (const hop of route) {
+          const pl = s.planets[hop];
+          if (pl) pts.push(world(pl.position));
+        }
     }
+    if (laneTarget) pts.push({ x: laneTarget.x, y: laneTarget.y });
     if (pts.length === 1) pts.push(tip);
     cx.beginPath();
     cx.moveTo(pts[0]!.x, pts[0]!.y);
@@ -1069,14 +1154,18 @@ function drawAimPreview() {
   if (target) {
     cx.setLineDash([]);
     cx.beginPath();
-    cx.arc(tip.x, tip.y, 16, 0, TAU);
+    cx.arc(tip.x, tip.y, laneTarget ? 9 : 16, 0, TAU); // smaller pip for a road point
     cx.stroke();
     // travel-time estimate to this target for the first selected fleet (longer
     // route → more hours; the authoritative time is computed by the server).
     const f0 = s.fleets[ids[0]!];
-    const from = f0?.location ?? f0?.movement?.to ?? null;
-    const hrs = f0 && from && targetId ? estimateTravelHours(s, data, from, targetId, f0) : null;
-    if (hrs != null) {
+    const from = f0 ? fleetNode(f0) : null;
+    let hrs: number | null = null;
+    if (f0 && from) {
+      if (laneTarget) hrs = laneAim(f0, from, laneTarget).hrs;
+      else if (targetId) hrs = estimateTravelHours(s, data, from, targetId, f0);
+    }
+    if (hrs != null && Number.isFinite(hrs)) {
       cx.font = '11px ui-monospace,Menlo,monospace';
       cx.textAlign = 'center';
       cx.fillStyle = rgba(LOCK, 0.95);
@@ -1752,7 +1841,13 @@ function panelHtml(): string {
     );
     h += `<div class="hint">Press <b>Move</b>, then tap a destination to send all selected fleets (they route and stop). Shift-drag on the map selects a fleet group.</div>`;
     for (const f of group) {
-      const loc = f.location ?? (f.movement ? `${f.movement.from}→${f.movement.to}` : '—');
+      const loc =
+        f.location ??
+        (f.movement
+          ? `${f.movement.from}→${f.movement.to}`
+          : f.edge
+            ? `⟜ ${f.edge.from}–${f.edge.to}`
+            : '—');
       const nShips = sumUnits(f.units);
       const nTr = sumUnits(f.landing ?? []);
       h += `<div class="row" style="color:${ownerColor(f.owner)}">▲ ${f.id} <span class="dim">${loc}</span> · ${nShips}${nTr ? '+' + nTr : ''}</div>`;
@@ -1784,6 +1879,9 @@ function panelHtml(): string {
         const totalH = nextH + restH;
         const eta = totalH >= 1 ? `${totalH.toFixed(1)}h` : `${Math.ceil(totalH * 60)}m`;
         h += `<div class="row">↗ en route to <b>${esc(dest)}</b> · arrives in <b>${eta}</b></div>`;
+      } else if (f.edge) {
+        const pct = Math.round(f.edge.t * 100);
+        h += `<div class="row">⟜ holding on the <b>${esc(f.edge.from)}–${esc(f.edge.to)}</b> lane · ${pct}% across</div>`;
       }
 
       const here = planet(f.location);
@@ -1792,7 +1890,9 @@ function panelHtml(): string {
         h += `<div class="hint">${
           f.battleId
             ? 'Engaged — orbital battle in progress.'
-            : 'In transit — routing along the lanes. Collisions trigger an orbital battle.'
+            : f.edge
+              ? 'Parked on a lane — press Move to march on (it routes from here).'
+              : 'In transit — routing along the lanes. Collisions trigger an orbital battle.'
         }</div>`;
       } else {
         // enemy/neutral world you can act on — empty space is pass-through only
@@ -2109,9 +2209,17 @@ function selectAt(mx: number, my: number) {
       return;
     }
   }
-  // empty space: cancel an armed move, otherwise clear the selection
+  // Move armed but no node hit → if the tap landed on a road, march there: the
+  // army routes to that lane and parks at the exact point (Bytro continuous order).
   if (aiming) {
+    const lane = nearestLanePoint(mx, my);
+    if (lane) {
+      for (const fleetId of selectedFleetIds()) {
+        playerOrder(moveFleetEdge(ME, fleetId, { from: lane.from, to: lane.to, t: lane.t }));
+      }
+    }
     aiming = false;
+    lastPanelHtml = '';
     return;
   }
   clearSelection();

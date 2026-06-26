@@ -498,6 +498,13 @@ const act = (playerId: string, type: string, payload: unknown): Action => ({
 
 export const moveFleet = (playerId: string, fleetId: string, to: string) =>
   act(playerId, 'fleet.move', { fleetId, to });
+/** March to a continuous point ON a lane (Bytro-style): the army routes to the
+ *  road and parks at fraction `t` along (`from`,`to`) instead of at a node. */
+export const moveFleetEdge = (
+  playerId: string,
+  fleetId: string,
+  edge: { from: string; to: string; t: number },
+) => act(playerId, 'fleet.move', { fleetId, toEdge: edge });
 export const stopFleet = (playerId: string, fleetId: string) =>
   act(playerId, 'fleet.stop', { fleetId });
 export const orbitFleet = (playerId: string, fleetId: string, orbit: 'near' | 'far') =>
