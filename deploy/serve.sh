@@ -17,15 +17,26 @@ if [ -f deploy/server.env ]; then
   . deploy/server.env
   set +a
 fi
-PORT="${PORT:-8788}"
-SESSION="${SESSION:-void}"
+# Strip CR/LF so a file saved with Windows line endings (scp/paste) doesn't leave a
+# trailing \r that corrupts the port or silently breaks the token'd git pull.
+strip() { printf '%s' "${1//[$'\r\n']/}"; }
+PORT="$(strip "${PORT:-8788}")"
+SESSION="$(strip "${SESSION:-void}")"
+GIT_TOKEN="$(strip "${GIT_TOKEN:-}")"
 
 # Pull the latest code if a token is configured (non-fatal — fall back to local).
-if [ -n "${GIT_TOKEN:-}" ]; then
+# The token is fed through GIT_ASKPASS (an env var the helper reads), never put in
+# the git URL/argv, so it can't be read from `ps` / /proc/<pid>/cmdline.
+if [ -n "$GIT_TOKEN" ]; then
   branch="$(git rev-parse --abbrev-ref HEAD)"
   echo "→ pulling latest ($branch)…"
-  git pull "https://${GIT_TOKEN}@github.com/Moonwuk/Nygame.git" "$branch" \
+  askpass="$(mktemp)"
+  printf '#!/bin/sh\nexec printf "%%s" "$GIT_TOKEN"\n' >"$askpass"
+  chmod +x "$askpass"
+  GIT_TOKEN="$GIT_TOKEN" GIT_ASKPASS="$askpass" GIT_TERMINAL_PROMPT=0 \
+    git pull "https://x-access-token@github.com/Moonwuk/Nygame.git" "$branch" \
     || echo "  (pull failed — using the local checkout)"
+  rm -f "$askpass"
 fi
 
 echo "→ installing dependencies…"
@@ -36,11 +47,35 @@ pnpm install
 tmux kill-session -t "$SESSION" 2>/dev/null || true
 tmux new-session -d -s "$SESSION" "PORT=$PORT HOST=0.0.0.0 pnpm host"
 
-cat <<EOF
+# `tmux new-session -d` returns 0 the instant the session starts — it says nothing
+# about whether the server actually bound. Poll /health so we report the truth.
+printf '→ waiting for the server to come up'
+up=""
+for _ in $(seq 1 30); do
+  if command -v curl >/dev/null 2>&1 && curl -fsS "http://localhost:$PORT/health" >/dev/null 2>&1; then
+    up=1
+    break
+  fi
+  printf '.'
+  sleep 1
+done
+echo
 
-✓ Server (re)starting in tmux session "$SESSION" on port $PORT.
+if [ -n "$up" ]; then
+  cat <<EOF
+
+✓ Server up in tmux session "$SESSION" on port $PORT.
     logs   : tmux attach -t $SESSION      (detach: Ctrl-b then d)
     health : curl -sS http://localhost:$PORT/health
     share  : http://<this-server-public-ip>:$PORT/   → Connect → Azure (p1) / Crimson (p2)
 
 EOF
+else
+  cat <<EOF
+
+✗ Server did NOT answer http://localhost:$PORT/health within 30s.
+    see why : tmux attach -t $SESSION   (if "no such session", it crashed on start)
+    common  : port already in use (set PORT=…), or PORT<1024 without root.
+EOF
+  exit 1
+fi

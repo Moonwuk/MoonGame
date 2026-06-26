@@ -75,8 +75,16 @@ export function createMultiplayerServer(
   // alone waits for in-flight WebSocket connections forever (they never end on
   // their own), so a graceful restart has to close them itself.
   const sockets = new Set<WebSocket>();
+  // Liveness tracking. An ungraceful drop (phone Wi-Fi off, app killed, a tunnel
+  // dying) sends no TCP FIN, so 'close' never fires on its own — the peer lingers
+  // and keeps its player slot occupied, which (with `singlePeerPerPlayer`) would
+  // lock the real player out of their own match on reconnect. A ping/pong
+  // heartbeat reaps the dead socket: terminate() → 'close' → removePeer frees it.
+  const alive = new WeakMap<WebSocket, boolean>();
   wss.on('connection', (ws: WebSocket, _request: IncomingMessage, playerId: string) => {
     sockets.add(ws);
+    alive.set(ws, true);
+    ws.on('pong', () => alive.set(ws, true));
     room.addPeer(playerId, ws);
     ws.on('message', (data) => {
       const raw = typeof data === 'string' ? data : data.toString('utf8');
@@ -87,6 +95,21 @@ export function createMultiplayerServer(
       room.removePeer(playerId, ws);
     });
   });
+
+  // Each round: reap any socket that didn't answer last round's ping, then ping
+  // the rest. Reap window is one interval, so a slot frees within ~2×HEARTBEAT.
+  const HEARTBEAT_MS = 15_000;
+  const heartbeat = setInterval(() => {
+    for (const ws of sockets) {
+      if (alive.get(ws) === false) {
+        ws.terminate();
+        continue;
+      }
+      alive.set(ws, false);
+      ws.ping();
+    }
+  }, HEARTBEAT_MS);
+  heartbeat.unref(); // never keep the process alive just for the heartbeat
 
   return {
     httpServer,
@@ -105,6 +128,7 @@ export function createMultiplayerServer(
       }),
     close: () =>
       new Promise((resolve, reject) => {
+        clearInterval(heartbeat);
         // Graceful drain: ask every client to close (1001 "going away"), then
         // terminate any straggler after a short grace so close() always resolves.
         for (const ws of sockets) ws.close(1001, 'server shutting down');

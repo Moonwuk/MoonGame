@@ -2955,6 +2955,7 @@ $('cgo').addEventListener('click', () => {
         rttEma = rttEma === null ? rtt : rttEma * 0.7 + rtt * 0.3;
       },
       onSnapshot: (snap) => {
+        if (sock !== netSock) return; // a superseded socket must not touch globals
         if (!admitted) {
           // Server accepted us — NOW we're really in the match.
           admitted = true;
@@ -2992,6 +2993,7 @@ $('cgo').addEventListener('click', () => {
       onRejection: (_id, code) =>
         note('✖ ' + code.replace(/^E_/, '').toLowerCase().replace(/_/g, ' ')),
       onError: (code) => {
+        if (sock !== netSock) return; // ignore errors from a superseded socket
         if (!admitted && code === 'E_SLOT_TAKEN') {
           statusEl.textContent = `${NAME[who] ?? who} is already taken — pick the other side`;
         } else if (!admitted && code === 'E_UNKNOWN_PLAYER') {
@@ -3005,6 +3007,10 @@ $('cgo').addEventListener('click', () => {
   sock.onopen = () => client.open();
   sock.onmessage = (ev) => client.receive(String(ev.data));
   sock.onclose = () => {
+    // A superseded socket (the user clicked Connect again) must NOT tear down the
+    // fresh session — its late close would kill the new socket's ping timer and
+    // pop the overlay back over a healthy connection.
+    if (sock !== netSock) return;
     if (pingTimer) {
       clearInterval(pingTimer);
       pingTimer = null;
@@ -3020,6 +3026,7 @@ $('cgo').addEventListener('click', () => {
     // taken") in the status line instead of overwriting it with "disconnected".
   };
   sock.onerror = () => {
+    if (sock !== netSock) return; // ignore errors from a superseded socket
     statusEl.textContent = 'connection failed — is the server running / URL right?';
   };
 });
