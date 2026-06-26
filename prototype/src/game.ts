@@ -365,6 +365,8 @@ export function newGame(): GameState {
       links: n.links,
       terrain: SECTOR_TYPES[n.sector]?.core ?? 'empty_space',
       kind: n.sector, // planet / asteroid / nebula / empty — drives capturable (sectorKinds)
+      // relative territory weight — planets are the small sectors, fields/clouds bigger
+      size: n.sector === 'nebula' ? 1.5 : n.sector === 'asteroid' ? 1.3 : 1,
       planetType: n.type,
       resources: {},
       buildings: (n.buildings ?? []).map((b) => {

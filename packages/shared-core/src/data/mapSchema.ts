@@ -34,6 +34,10 @@ export const MapSectorSchema = z.object({
   terrain: z.string().optional(),
   /** World nature id → game data `planetTypes` (production / defense), if a planet. */
   planetType: z.string().optional(),
+  /** Relative size / weight (default 1): how much territory the sector claims —
+   *  borders with neighbours sit proportionally to size, so resizing one shifts
+   *  the neighbours' borders evenly. */
+  size: z.number().positive().default(1),
   /** Starting owner (a declared player id); null / absent = neutral. */
   owner: z.string().nullable().default(null),
   buildings: z.array(MapBuildingSchema).default([]),

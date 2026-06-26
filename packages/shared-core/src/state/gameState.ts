@@ -99,6 +99,10 @@ export interface Planet {
    *  data `sectorKinds`) — decides capturable / buildable / orbit. Undefined
    *  degrades to the permissive defaults (see `sectorKindDef`). */
   kind?: string;
+  /** Relative size / weight of the sector (default 1). Drives how much territory
+   *  it claims: a sector's border with a neighbour sits proportionally to their
+   *  sizes, so resizing one shifts its neighbours' borders evenly. Undefined = 1. */
+  size?: number;
   /** Planet type id — the world's nature (resolved against game data
    *  `planetTypes`); production/defense modifiers are applied through hooks.
    *  Undefined = generic world, no modifier. */

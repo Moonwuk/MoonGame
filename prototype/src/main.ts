@@ -29,7 +29,7 @@ import {
   buildUnit,
   type StepOut,
 } from './game';
-import { buildingMaxLevel } from '../../packages/shared-core/src/index';
+import { buildingMaxLevel, estimateTravelHours } from '../../packages/shared-core/src/index';
 import { MultiplayerClient } from '../../packages/client/src/index';
 import type {
   GameState,
@@ -1057,6 +1057,7 @@ function drawAimPreview() {
   const ids = selectedFleetIds();
   if (!ids.length) return;
   let target: { x: number; y: number } | null = null;
+  let targetId: string | null = null;
   let best = 30;
   for (const n of MAP) {
     const c = world(n);
@@ -1064,6 +1065,7 @@ function drawAimPreview() {
     if (d < best) {
       best = d;
       target = c;
+      targetId = n.id;
     }
   }
   const tip = target ?? aimPointer;
@@ -1088,6 +1090,17 @@ function drawAimPreview() {
     cx.beginPath();
     cx.arc(tip.x, tip.y, 16, 0, TAU);
     cx.stroke();
+    // travel-time estimate to this target for the first selected fleet (longer
+    // route → more hours; the authoritative time is computed by the server).
+    const f0 = s.fleets[ids[0]!];
+    const from = f0?.location ?? f0?.movement?.to ?? null;
+    const hrs = f0 && from && targetId ? estimateTravelHours(s, data, from, targetId, f0) : null;
+    if (hrs != null) {
+      cx.font = '11px ui-monospace,Menlo,monospace';
+      cx.textAlign = 'center';
+      cx.fillStyle = rgba(LOCK, 0.95);
+      cx.fillText(hrs >= 1 ? `~${hrs.toFixed(1)}h` : `~${Math.ceil(hrs * 60)}m`, tip.x, tip.y - 22);
+    }
   }
   cx.restore();
 }
@@ -1167,11 +1180,15 @@ function buildStaticLayer(): void {
   //    reads as overlapping spheres of control, not hard political cells.
   g.save();
   g.globalCompositeOperation = 'lighter';
-  const infl = Math.max(48, 80 * cam.scale);
+  // Influence radius scales with the sector's `size` (√, so area ∝ size): a bigger
+  // sector claims more territory, and where two glows meet — the visible border —
+  // sits proportionally to their sizes, so resizing one shifts its neighbours'.
+  const baseInfl = Math.max(48, 80 * cam.scale);
   for (const n of MAP) {
     const p = s.planets[n.id];
     if (!p || !p.owner) continue;
     const c = world(n);
+    const infl = baseInfl * Math.sqrt(p.size ?? 1);
     if (c.x < -infl || c.x > VW + infl || c.y < -infl || c.y > VH + infl) continue;
     const col = ownerColor(p.owner);
     const grd = g.createRadialGradient(c.x, c.y, 0, c.x, c.y, infl);
@@ -1717,6 +1734,17 @@ function panelHtml(): string {
         `${nShips} ships · ${nTr} troops · orbit ${orbit}${f.bombarding ? ' · ⊗ bombarding' : ''}`,
       );
       h += `<div class="pstats"><span>✦ ${shipList}</span></div><div class="row dim">Carrying: ${trList}</div>`;
+
+      if (f.movement) {
+        // total travel-time estimate to the final destination (next-hop ETA from
+        // the authoritative schedule + the remaining route at base speed).
+        const dest = f.movement.destination ?? f.movement.to;
+        const nextH = Math.max(0, (f.movement.arrivesAt - s.time) / HOUR);
+        const restH = dest !== f.movement.to ? (estimateTravelHours(s, data, f.movement.to, dest, f) ?? 0) : 0;
+        const totalH = nextH + restH;
+        const eta = totalH >= 1 ? `${totalH.toFixed(1)}h` : `${Math.ceil(totalH * 60)}m`;
+        h += `<div class="row">↗ en route to <b>${esc(dest)}</b> · arrives in <b>${eta}</b></div>`;
+      }
 
       const here = planet(f.location);
       const docked = !!here && !f.movement && !f.battleId;

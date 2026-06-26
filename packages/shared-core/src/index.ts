@@ -48,6 +48,12 @@ export {
   type BuildFromMapOptions,
 } from './state/buildFromMap';
 export { sectorKindDef, isCapturable, isBuildable, hasOrbit } from './state/sectorKind';
+export {
+  planRoute,
+  routeDistance,
+  fleetBaseSpeed,
+  estimateTravelHours,
+} from './state/route';
 export { isBombarded, bombardedPlanets } from './state/orbit';
 export { diffState, applyDelta, type StateDelta } from './state/delta';
 export { visibleState, identifiedNodes } from './state/visibility';

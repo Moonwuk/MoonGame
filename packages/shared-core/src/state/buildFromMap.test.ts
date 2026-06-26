@@ -80,7 +80,7 @@ describe('validateMatchMap — neighbour-only paths + integrity (M1.3)', () => {
 
   it('flags a disconnected sector', () => {
     const map = exampleMap();
-    map.sectors.isle = { position: { x: 999, y: 999 }, kind: 'planet', owner: null, buildings: [], garrison: [] };
+    map.sectors.isle = { position: { x: 999, y: 999 }, kind: 'planet', size: 1, owner: null, buildings: [], garrison: [] };
     expect(validateMatchMap(map, data)).toContain('E_MAP_DISCONNECTED');
   });
 

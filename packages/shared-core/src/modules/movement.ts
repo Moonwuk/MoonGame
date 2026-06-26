@@ -1,91 +1,13 @@
 import type { GameModule, HandlerContext } from '../kernel/module';
 import type { Fleet, GameState, PlanetId } from '../state/gameState';
-import type { GameData } from '../data/schemas';
 import { timeScaleOf } from '../action/types';
 import { MS_PER_HOUR } from '../util/time';
 import { requireOwnedIdleFleet } from '../util/fleet';
+import { distance, fleetBaseSpeed, planRoute } from '../state/route';
 
 interface MovePayload {
   fleetId: string;
   to: string;
-}
-
-function distance(a: { x: number; y: number }, b: { x: number; y: number }): number {
-  const dx = a.x - b.x;
-  const dy = a.y - b.y;
-  return Math.sqrt(dx * dx + dy * dy);
-}
-
-/** Fleet speed = the slowest unit in it (data-driven), 0 if it cannot move. */
-function fleetBaseSpeed(fleet: Fleet, data: GameData): number {
-  let speed = Infinity;
-  for (const stack of fleet.units) {
-    const def = data.units[stack.unit];
-    if (def) {
-      speed = Math.min(speed, def.stats.speed);
-    }
-  }
-  return Number.isFinite(speed) ? speed : 0;
-}
-
-/**
- * Dijkstra over the lane graph (planets + `links`, weighted by distance).
- * Returns the hops after `fromId` up to and including `toId`, or null if there
- * is no route. Deterministic: ties broken by planet id.
- */
-function shortestPath(state: GameState, fromId: PlanetId, toId: PlanetId): PlanetId[] | null {
-  if (fromId === toId) {
-    return [];
-  }
-  const dist = new Map<string, number>();
-  const prev = new Map<string, string>();
-  const visited = new Set<string>();
-  dist.set(fromId, 0);
-
-  for (;;) {
-    let u: string | null = null;
-    let best = Infinity;
-    for (const [node, d] of dist) {
-      if (visited.has(node)) {
-        continue;
-      }
-      if (u === null || d < best || (d === best && node < u)) {
-        best = d;
-        u = node;
-      }
-    }
-    if (u === null || u === toId) {
-      break;
-    }
-    visited.add(u);
-    const planet = state.planets[u];
-    if (!planet) {
-      continue;
-    }
-    for (const v of [...(planet.links ?? [])].sort()) {
-      const vp = state.planets[v];
-      if (!vp || visited.has(v)) {
-        continue;
-      }
-      const nd = best + distance(planet.position, vp.position);
-      const cur = dist.get(v);
-      if (cur === undefined || nd < cur) {
-        dist.set(v, nd);
-        prev.set(v, u);
-      }
-    }
-  }
-
-  if (!dist.has(toId)) {
-    return null;
-  }
-  const path: string[] = [];
-  let cur: string | undefined = toId;
-  while (cur !== undefined && cur !== fromId) {
-    path.unshift(cur);
-    cur = prev.get(cur);
-  }
-  return cur === fromId ? path : null;
 }
 
 /**
@@ -104,7 +26,7 @@ class RouteCache {
       // Return a copy so the caller can't mutate our cache.
       return cached ? [...cached] : null;
     }
-    const result = shortestPath(state, from, to);
+    const result = planRoute(state, from, to);
     this.cache.set(key, result);
     // Return a copy; the cache holds the authoritative reference.
     return result ? [...result] : null;

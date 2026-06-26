@@ -144,6 +144,7 @@ export function buildStateFromMap(map: MatchMap, data: GameData, options: BuildF
     if (sec.terrain) planet.terrain = sec.terrain;
     if (sec.planetType) planet.planetType = sec.planetType;
     if (sec.kind) planet.kind = sec.kind;
+    if (sec.size !== 1) planet.size = sec.size;
     planets[id] = planet;
   }
 
