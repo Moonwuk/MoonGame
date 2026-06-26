@@ -1205,6 +1205,43 @@ function drawProvinces(): void {
   cx.restore();
 }
 
+/** Draw the radar detection radius of the selected sector. Radar reach is a
+ *  physical distance in map units; `world()` projects it (per-axis, non-uniform)
+ *  into an on-screen ellipse so its edge lines up with which nodes it actually
+ *  covers. Nothing is drawn for a sector that projects no radar. */
+function drawRadarRange(now: number): void {
+  if (!selPlanet) return;
+  const p = s.planets[selPlanet];
+  if (!p) return;
+  const reach = planetRadar(p);
+  if (reach <= 0) return;
+  const c = world(p.position);
+  const ex = world({ x: p.position.x + reach, y: p.position.y });
+  const ey = world({ x: p.position.x, y: p.position.y + reach });
+  const rx = Math.abs(ex.x - c.x);
+  const ry = Math.abs(ey.y - c.y);
+  const pulse = 0.5 + 0.5 * Math.sin(now / 600);
+  cx.save();
+  cx.fillStyle = rgba('#5ff0c0', 0.05);
+  cx.beginPath();
+  cx.ellipse(c.x, c.y, rx, ry, 0, 0, TAU);
+  cx.fill();
+  cx.setLineDash([6, 7]);
+  cx.lineDashOffset = -now / 60;
+  cx.strokeStyle = rgba('#5ff0c0', 0.42 + 0.22 * pulse);
+  cx.lineWidth = 1.4;
+  cx.shadowColor = '#5ff0c0';
+  cx.shadowBlur = 6;
+  cx.stroke();
+  cx.setLineDash([]);
+  cx.shadowBlur = 0;
+  cx.fillStyle = rgba('#aef6e6', 0.9);
+  cx.font = '700 10px ui-monospace,Menlo,monospace';
+  cx.textAlign = 'left';
+  cx.fillText(`◌ RADAR ${reach}`, c.x + rx + 7, c.y + 3);
+  cx.restore();
+}
+
 function render(now: number) {
   cx.setTransform(DPR, 0, 0, DPR, 0, 0); // draw in CSS pixels, crisp on hi-DPI
   drawScope(now);
@@ -1233,6 +1270,10 @@ function render(now: number) {
     if (!visible(c, 120)) continue;
     drawBattlePulse(c.x, c.y, wave);
   }
+
+  // selected sector: its radar detection radius (a physical circle in map space →
+  // an axis-aligned ellipse on screen because the fit projection is non-uniform).
+  drawRadarRange(now);
 
   // planets — wireframe blips with sensor rings + monospace callouts
   cx.textAlign = 'left';
