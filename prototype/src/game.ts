@@ -24,6 +24,7 @@ import {
   type GameState,
   type Planet,
   type Fleet,
+  type UnitStack,
   type Player,
   type Action,
   type Context,
@@ -304,10 +305,39 @@ function fleet(
   };
 }
 
-// --- fleet.launch: raise a mobile fleet from a planet's garrison -------------
+/** Move up to `count` of `unit` out of `src` (mutates src, pruning emptied
+ *  stacks) and return the removed stacks. Outside combat a unit type is a single
+ *  full-health stack, but this stays correct if combat has split it by HP. */
+function takeFromStacks(src: UnitStack[], unit: string, count: number): UnitStack[] {
+  let remaining = count;
+  const taken: UnitStack[] = [];
+  for (const st of src) {
+    if (st.unit !== unit || remaining <= 0) continue;
+    const move = Math.min(st.count, remaining);
+    st.count -= move;
+    remaining -= move;
+    taken.push(st.hp === undefined ? { unit, count: move } : { unit, count: move, hp: st.hp });
+  }
+  return taken;
+}
+
+/** Fold one stack list into another, coalescing stacks that share the same unit
+ *  type *and* HP pool (full-health stacks have `hp` undefined and combine). */
+function mergeStacks(base: UnitStack[], add: UnitStack[]): UnitStack[] {
+  const out = base.map((st) => ({ ...st }));
+  for (const st of add) {
+    const match = out.find((o) => o.unit === st.unit && o.hp === st.hp);
+    if (match) match.count += st.count;
+    else out.push({ ...st });
+  }
+  return out;
+}
+
+// --- fleet.launch / fleet.merge: form and consolidate mobile fleets ----------
 // The core builds units into a planet's garrison; this small module lets a
 // player scramble those into a new fleet (ships → units, ground troops →
-// landing) so production feeds offense. A natural next addition to the core.
+// landing) so production feeds offense, and fuse two co-located fleets into one.
+// A natural next addition to the core.
 export const fleetLaunchModule: GameModule = {
   id: 'fleet-ops',
   version: '0.1.0',
@@ -351,6 +381,111 @@ export const fleetLaunchModule: GameModule = {
       };
       planet.garrison = [];
       h.emit('fleet.launched', { fleetId: id, planetId: planet.id, owner: action.playerId });
+    });
+
+    // Fuse `from` into `into` when both are docked, idle and in the same sector.
+    // Bringing the fleets together (flying one to the other) is the caller's job;
+    // by the time this action runs the two must already share a location.
+    api.onAction('fleet.merge', (action, h) => {
+      const payload = action.payload as { from?: string; into?: string };
+      if (typeof payload?.from !== 'string' || typeof payload?.into !== 'string') {
+        return h.reject('E_BAD_PAYLOAD');
+      }
+      if (payload.from === payload.into) {
+        return h.reject('E_SAME_FLEET');
+      }
+      const from = h.state.fleets[payload.from];
+      const into = h.state.fleets[payload.into];
+      if (!from || !into) {
+        return h.reject('E_NO_FLEET');
+      }
+      if (from.owner !== action.playerId || into.owner !== action.playerId) {
+        return h.reject('E_FORBIDDEN');
+      }
+      if (from.battleId || into.battleId) {
+        return h.reject('E_IN_BATTLE');
+      }
+      if (from.movement || into.movement || !from.location || from.location !== into.location) {
+        return h.reject('E_NOT_COLOCATED');
+      }
+      into.units = mergeStacks(into.units, from.units);
+      into.landing = mergeStacks(into.landing ?? [], from.landing ?? []);
+      delete h.state.fleets[payload.from];
+      h.emit('fleet.merged', {
+        from: payload.from,
+        into: payload.into,
+        owner: action.playerId,
+        at: into.location,
+      });
+    });
+
+    // Peel a chosen set of ships off a docked, idle fleet into a fresh fleet that
+    // spawns in the same sector (same orbit). The split must keep ≥1 ship behind
+    // and move ≥1 out; carried ground troops stay with the original.
+    api.onAction('fleet.split', (action, h) => {
+      const payload = action.payload as {
+        fleetId?: string;
+        take?: Array<{ unit?: string; count?: number }>;
+      };
+      if (typeof payload?.fleetId !== 'string' || !Array.isArray(payload.take)) {
+        return h.reject('E_BAD_PAYLOAD');
+      }
+      const fleet = h.state.fleets[payload.fleetId];
+      if (!fleet) {
+        return h.reject('E_NO_FLEET');
+      }
+      if (fleet.owner !== action.playerId) {
+        return h.reject('E_FORBIDDEN');
+      }
+      if (fleet.battleId) {
+        return h.reject('E_IN_BATTLE');
+      }
+      if (fleet.movement || !fleet.location) {
+        return h.reject('E_IN_TRANSIT');
+      }
+      const want = new Map<string, number>();
+      for (const t of payload.take) {
+        if (typeof t?.unit !== 'string' || typeof t?.count !== 'number' || t.count <= 0) {
+          return h.reject('E_BAD_PAYLOAD');
+        }
+        want.set(t.unit, (want.get(t.unit) ?? 0) + Math.floor(t.count));
+      }
+      const have = (unit: string) =>
+        fleet.units.filter((st) => st.unit === unit).reduce((a, st) => a + st.count, 0);
+      let takeTotal = 0;
+      for (const [unit, n] of want) {
+        if (n > have(unit)) return h.reject('E_NOT_ENOUGH');
+        takeTotal += n;
+      }
+      const shipsTotal = fleet.units.reduce((a, st) => a + st.count, 0);
+      if (takeTotal <= 0) {
+        return h.reject('E_SPLIT_EMPTY');
+      }
+      if (takeTotal >= shipsTotal) {
+        return h.reject('E_SPLIT_ALL'); // must leave at least one ship in the original
+      }
+      let taken: UnitStack[] = [];
+      for (const [unit, n] of want) taken = taken.concat(takeFromStacks(fleet.units, unit, n));
+      fleet.units = fleet.units.filter((st) => st.count > 0);
+      const seq = Object.keys(h.state.fleets).length;
+      const id = `fleet:${action.playerId}:${h.ctx.now}:${seq}`;
+      h.state.fleets[id] = {
+        id,
+        owner: action.playerId,
+        location: fleet.location,
+        movement: null,
+        units: taken,
+        landing: [],
+        traits: [],
+        battleId: null,
+        ...(fleet.orbit ? { orbit: fleet.orbit } : {}),
+      };
+      h.emit('fleet.split', {
+        from: payload.fleetId,
+        to: id,
+        owner: action.playerId,
+        at: fleet.location,
+      });
     });
   },
 };
@@ -519,6 +654,13 @@ export const unloadArmy = (playerId: string, fleetId: string, unit: string, coun
   act(playerId, 'army.unload', { fleetId, unit, count });
 export const launchFleet = (playerId: string, planetId: string) =>
   act(playerId, 'fleet.launch', { planetId });
+export const mergeFleet = (playerId: string, from: string, into: string) =>
+  act(playerId, 'fleet.merge', { from, into });
+export const splitFleet = (
+  playerId: string,
+  fleetId: string,
+  take: Array<{ unit: string; count: number }>,
+) => act(playerId, 'fleet.split', { fleetId, take });
 export const buildBuilding = (playerId: string, planetId: string, building: string) =>
   act(playerId, 'building.construct', { planetId, building });
 export const upgradeBuilding = (playerId: string, planetId: string, building: string) =>

@@ -25,6 +25,8 @@ import {
   loadArmy,
   unloadArmy,
   launchFleet,
+  mergeFleet,
+  splitFleet,
   buildBuilding,
   upgradeBuilding,
   buildUnit,
@@ -156,6 +158,13 @@ let selFleet: string | null = null;
 let selPlanet: string | null = null;
 let selFleets = new Set<string>();
 let aiming = false; // "Move" command armed → next world tap orders the move
+let merging = false; // "Merge" armed → next tap on a friendly fleet picks the anchor
+// Fleets ordered to merge but not yet co-located: each flies to its anchor and the
+// fusion fires once they share a docked sector (see resolvePendingMerges()).
+let pendingMerges: Array<{ mover: string; into: string }> = [];
+let additive = false; // Ctrl/⌘ held on the current tap → add to the fleet selection
+// Split-fleet dialog: which fleet, and how many of each ship type peel off.
+let splitState: { fleetId: string; take: Record<string, number> } | null = null;
 
 // --- multiplayer (net mode) --------------------------------------------------
 // When connected, the server is authoritative: snapshots replace `s`, orders are
@@ -170,6 +179,7 @@ const logLines: string[] = [];
 let lastAiAt = 0;
 let lastPanelHtml = '';
 let lastCmdHtml = '';
+let lastSplitHtml = '';
 let lastHudHtml = '';
 let lastClockText = '';
 let lastDayTimerText = '';
@@ -194,6 +204,7 @@ const bannerEl = $('banner');
 const dayTimer = $('daytimer');
 const alertBadge = $('alertbadge');
 const cmdbar = $('cmdbar');
+const splitdlg = $('splitdlg');
 const burger = $('burger');
 const scrim = $('scrim');
 const topClock = $('topclock');
@@ -810,6 +821,7 @@ function drawSignature(f: Fleet, now: number): void {
 function apply(out: StepOut) {
   s = out.state;
   if (selFleet && !s.fleets[selFleet]) selFleet = null;
+  if (splitState && !s.fleets[splitState.fleetId]) splitState = null; // fleet gone → close
   selFleets = new Set([...selFleets].filter((id) => s.fleets[id]?.owner === ME));
   handleEvents(out.events);
 }
@@ -849,7 +861,74 @@ function clearSelection() {
   selFleet = null;
   selPlanet = null;
   selFleets = new Set();
+  merging = false;
+  splitState = null;
   lastPanelHtml = '';
+}
+
+/** Ctrl/⌘-click toggle: fold the current selection into a group and add/remove one. */
+function toggleFleetInSelection(id: string) {
+  if (s.fleets[id]?.owner !== ME) return;
+  const next = new Set(selFleets);
+  if (selFleet) next.add(selFleet);
+  if (next.has(id)) next.delete(id);
+  else next.add(id);
+  setFleetSelection([...next]);
+}
+
+/** Order `movers` to merge into `anchorId`. Co-located & idle fleets fuse at once;
+ *  distant ones are sent to the anchor's sector and finish on arrival (pending). */
+function orderMerge(movers: string[], anchorId: string) {
+  const anchor = s.fleets[anchorId];
+  if (!anchor || anchor.owner !== ME) return;
+  const dest = anchor.location ?? anchor.movement?.to ?? null;
+  let queued = 0;
+  for (const moverId of movers) {
+    if (moverId === anchorId) continue;
+    const m = s.fleets[moverId];
+    if (!m || m.owner !== ME) continue;
+    const coLocated =
+      !!m.location && m.location === anchor.location && !m.movement && !anchor.movement;
+    if (coLocated) {
+      playerOrder(mergeFleet(ME, moverId, anchorId));
+    } else {
+      pendingMerges = pendingMerges.filter((pm) => pm.mover !== moverId);
+      pendingMerges.push({ mover: moverId, into: anchorId });
+      if (dest && m.location !== dest) playerOrder(moveFleet(ME, moverId, dest));
+      queued++;
+    }
+  }
+  setFleetSelection([anchorId]); // keep the surviving fleet selected for follow-up
+  note(queued ? `⛬ ${queued} fleet(s) en route to merge` : '⛬ fleets merged');
+}
+
+/** Merge button on a multi-selection: pick a docked anchor, fold the rest into it. */
+function mergeGroup(ids: string[]) {
+  const fleets = ids.map((id) => s.fleets[id]).filter((f): f is Fleet => !!f);
+  if (fleets.length < 2) return;
+  const anchor = fleets.find((f) => f.location && !f.movement) ?? fleets[0]!;
+  orderMerge(
+    ids.filter((id) => id !== anchor.id),
+    anchor.id,
+  );
+}
+
+/** Drive in-flight merge orders: fuse on arrival, re-chase if the anchor moved. */
+function resolvePendingMerges() {
+  if (!pendingMerges.length) return;
+  pendingMerges = pendingMerges.filter(({ mover, into }) => {
+    const m = s.fleets[mover];
+    const a = s.fleets[into];
+    if (!m || !a) return false; // a fleet is gone (already merged / destroyed) → drop
+    if (m.battleId || a.battleId) return true; // hold the order through combat
+    if (m.location && a.location && m.location === a.location && !m.movement && !a.movement) {
+      playerOrder(mergeFleet(ME, mover, into));
+      return false; // co-located & idle → fused, order complete
+    }
+    const dest = a.location ?? a.movement?.to ?? null;
+    if (!m.movement && dest && m.location !== dest) playerOrder(moveFleet(ME, mover, dest));
+    return true;
+  });
 }
 function handleEvents(events: DomainEvent[]) {
   for (const e of events) {
@@ -881,6 +960,12 @@ function handleEvents(events: DomainEvent[]) {
         break;
       case 'fleet.launched':
         note(`🚀 ${NAME[p.owner as string]} launched a fleet from ${p.planetId}`);
+        break;
+      case 'fleet.merged':
+        if (p.owner === ME) note(`⛬ fleets merged at ${p.at}`);
+        break;
+      case 'fleet.split':
+        if (p.owner === ME) note(`⊟ fleet split at ${p.at}`);
         break;
       case 'fleet.destroyed':
         note(`☠️ a ${NAME[p.owner as string]} fleet was destroyed`);
@@ -1408,6 +1493,44 @@ function blitStaticLayer(): void {
   cx.restore();
 }
 
+/** Draw the radar detection radius of the selected sector. Radar reach is a
+ *  physical distance in map units; `world()` projects it (per-axis, non-uniform)
+ *  into an on-screen ellipse so its edge lines up with which nodes it actually
+ *  covers. Nothing is drawn for a sector that projects no radar.
+ *  (Complements `drawRadarCoverage` — that shows ALL my sources persistently;
+ *  this labels the one selected sector's radius on tap.) */
+function drawRadarRange(now: number): void {
+  if (!selPlanet) return;
+  const p = s.planets[selPlanet];
+  if (!p) return;
+  const reach = planetRadar(p);
+  if (reach <= 0) return;
+  const c = world(p.position);
+  const ex = world({ x: p.position.x + reach, y: p.position.y });
+  const ey = world({ x: p.position.x, y: p.position.y + reach });
+  const rx = Math.abs(ex.x - c.x);
+  const ry = Math.abs(ey.y - c.y);
+  const pulse = 0.5 + 0.5 * Math.sin(now / 600);
+  cx.save();
+  cx.fillStyle = rgba('#5ff0c0', 0.05);
+  cx.beginPath();
+  cx.ellipse(c.x, c.y, rx, ry, 0, 0, TAU);
+  cx.fill();
+  cx.setLineDash([6, 7]);
+  cx.lineDashOffset = -now / 60;
+  cx.strokeStyle = rgba('#5ff0c0', 0.42 + 0.22 * pulse);
+  cx.lineWidth = 1.4;
+  cx.shadowColor = '#5ff0c0';
+  cx.shadowBlur = 6;
+  cx.stroke();
+  cx.setLineDash([]);
+  cx.shadowBlur = 0;
+  cx.fillStyle = rgba('#aef6e6', 0.9);
+  cx.font = '700 10px ui-monospace,Menlo,monospace';
+  cx.textAlign = 'left';
+  cx.fillText(`◌ RADAR ${reach}`, c.x + rx + 7, c.y + 3);
+  cx.restore();
+}
 
 function render(now: number) {
   cx.setTransform(DPR, 0, 0, DPR, 0, 0); // draw in CSS pixels, crisp on hi-DPI
@@ -1427,6 +1550,10 @@ function render(now: number) {
     if (!visible(c, 120)) continue;
     drawBattlePulse(c.x, c.y, wave);
   }
+
+  // selected sector: its radar detection radius (a physical circle in map space →
+  // an axis-aligned ellipse on screen because the fit projection is non-uniform).
+  drawRadarRange(now);
 
   // planets — wireframe blips with sensor rings + monospace callouts
   cx.textAlign = 'left';
@@ -1814,6 +1941,15 @@ function render(now: number) {
 function btn(act: string, arg: string, label: string, ok: boolean): string {
   return `<button class="b" data-act="${esc(act)}" data-arg="${esc(arg)}" ${ok ? '' : 'disabled'}>${esc(label)}</button>`;
 }
+/** Wrap a panel section so the desktop multi-column layout never splits it across
+ *  columns. Sections are laid out side-by-side on wide screens, stacked on phones. */
+function block(inner: string): string {
+  return `<div class="block">${inner}</div>`;
+}
+/** Lay a set of sections into the responsive multi-column body (see `.pcols` CSS). */
+function pcols(blocks: string[]): string {
+  return `<div class="pcols">${blocks.map(block).join('')}</div>`;
+}
 function cardHeader(color: string, title: string, sub: string): string {
   return `<div class="phead">
     <span class="pflag" style="background:${color}"></span>
@@ -1881,7 +2017,7 @@ function panelHtml(): string {
       'TASK GROUP',
       `${group.length} fleets · ${ships} ships · ${troops} troops`,
     );
-    h += `<div class="hint">Press <b>Move</b>, then tap a destination to send all selected fleets (they route and stop). Shift-drag on the map selects a fleet group.</div>`;
+    h += `<div class="hint">Press <b>Move</b>, then tap a destination to send all selected fleets (they route and stop). Press <b>Merge</b> to fuse the group into one (distant fleets fly in first). Shift-drag selects a group; Ctrl/⌘-click adds a fleet.</div>`;
     for (const f of group) {
       const loc =
         f.location ??
@@ -1939,43 +2075,48 @@ function panelHtml(): string {
       } else {
         // enemy/neutral world you can act on — empty space is pass-through only
         const hostile = here!.owner !== f.owner && (SECTOR_TYPES[SECTOR_OF[here!.id]]?.capturable ?? false);
+        const cols: string[] = [];
         // orbit toggle
-        h += `<div class="sec">Orbit · ${esc(here!.id)}</div><div class="row">`;
-        h += btn('orbit', 'near', '▼ Descend (near)', orbit !== 'near');
-        h += btn('orbit', 'far', '▲ Pull back (far)', orbit !== 'far');
-        h += `</div>`;
+        let ob = `<div class="sec">Orbit · ${esc(here!.id)}</div><div class="row">`;
+        ob += btn('orbit', 'near', '▼ Descend (near)', orbit !== 'near');
+        ob += btn('orbit', 'far', '▲ Pull back (far)', orbit !== 'far');
+        ob += `</div>`;
+        cols.push(ob);
         if (hostile) {
-          h += `<div class="row">`;
-          h += btn(
+          let at = `<div class="sec">Strike</div><div class="row">`;
+          at += btn(
             'bombard',
             f.bombarding ? 'off' : 'on',
             f.bombarding ? '⊗ Stop bombard' : '⊗ Bombard',
             orbit === 'near' && nShips > 0,
           );
-          h += btn('assault', '', '⚔ Assault', orbit === 'near');
-          h += `</div>`;
-          h += `<div class="hint">Near orbit lets you bombard (wears buildings &amp; freezes their output) but the garrison's AA reaches you; far orbit is safe. Assault lands your carried troops against the garrison.</div>`;
+          at += btn('assault', '', '⚔ Assault', orbit === 'near');
+          at += `</div>`;
+          at += `<div class="hint">Near orbit lets you bombard (wears buildings &amp; freezes their output) but the garrison's AA reaches you; far orbit is safe. Assault lands your carried troops against the garrison.</div>`;
+          cols.push(at);
         }
         // load / unload ground army at your own world
         if (here!.owner === ME) {
-          h += `<div class="sec">Ground army ⇄ garrison</div>`;
+          let ga = `<div class="sec">Ground army ⇄ garrison</div>`;
           const groundHere = here!.garrison.filter((st) => isGround(st.unit));
           const carried = f.landing ?? [];
           if (groundHere.length) {
-            h += `<div class="row">`;
-            for (const st of groundHere) h += btn('load', st.unit, `▲ Load ${st.unit}`, true);
-            h += `</div>`;
+            ga += `<div class="row">`;
+            for (const st of groundHere) ga += btn('load', st.unit, `▲ Load ${st.unit}`, true);
+            ga += `</div>`;
           }
           if (carried.length) {
-            h += `<div class="row">`;
-            for (const st of carried) h += btn('unload', st.unit, `▼ Unload ${st.unit}`, true);
-            h += `</div>`;
+            ga += `<div class="row">`;
+            for (const st of carried) ga += btn('unload', st.unit, `▼ Unload ${st.unit}`, true);
+            ga += `</div>`;
           }
           if (!groundHere.length && !carried.length)
-            h += `<div class="row dim">no ground army here</div>`;
+            ga += `<div class="row dim">no ground army here</div>`;
+          cols.push(ga);
         }
+        h += pcols(cols);
       }
-      h += `<div class="hint">Press <b>Move</b> (command bar), then tap a destination — the fleet routes along the lanes there and stops. Tap a world without Move to inspect it.</div>`;
+      h += `<div class="hint">Press <b>Move</b> (command bar), then tap a destination — the fleet routes there and stops. <b>Merge…</b> tap another fleet to combine; <b>Split</b> peels ships into a new fleet.</div>`;
       h += btn('cancel', '', 'Deselect', true);
       return h;
     }
@@ -2031,71 +2172,83 @@ function panelHtml(): string {
     ships.length + here.length,
   )}${tabButton('buildings', 'Buildings', p.buildings.length)}</div>`;
 
+  // Tab content is split into self-contained blocks; on desktop they flow into
+  // side-by-side columns (filling the wide panel), on phones they stack vertically.
+  const cols: string[] = [];
   if (planetTab === 'ground') {
-    h += `<div class="sec">Ground units</div>`;
-    h += unitRows(ground);
+    cols.push(`<div class="sec">Ground units</div>` + unitRows(ground));
     if (mine) {
       const groundBuilds = BUILD_UNITS.filter((u) => isGround(u));
-      h += `<div class="sec">Ground conveyor</div>`;
-      h += conveyorHtml(p.id, 'units');
-      h += buildButtons(p.id, groundBuilds, 'unit');
+      cols.push(
+        `<div class="sec">Ground conveyor</div>` +
+          conveyorHtml(p.id, 'units') +
+          buildButtons(p.id, groundBuilds, 'unit'),
+      );
     }
-    h += `<div class="hint">Ground units defend planets and can be loaded onto fleets from the fleet panel.</div>`;
+    cols.push(
+      `<div class="hint">Ground units defend planets and can be loaded onto fleets from the fleet panel.</div>`,
+    );
   } else if (planetTab === 'ships') {
-    h += `<div class="sec">Spacecraft in garrison</div>`;
-    h += unitRows(ships);
+    let garr = `<div class="sec">Spacecraft in garrison</div>` + unitRows(ships);
     if (mine && ships.length) {
-      h += `<div class="row">${btn('launch', p.id, '🚀 Launch fleet from garrison', true)}</div>`;
+      garr += `<div class="row">${btn('launch', p.id, '🚀 Launch fleet from garrison', true)}</div>`;
     }
+    cols.push(garr);
     if (here.length) {
-      h += `<div class="sec">Fleets in orbit</div>`;
+      let orbit = `<div class="sec">Fleets in orbit</div>`;
       for (const f of here) {
         const fShips = sumUnits(f.units);
         const tr = sumUnits(f.landing ?? []);
         const sel = f.owner === ME ? btn('selfleet', f.id, 'Select →', true) : '';
-        h += `<div class="asset-row" style="color:${ownerColor(f.owner)}"><span class="bicon">▲</span><b>${fShips} ships${tr ? ' +' + tr + ' troops' : ''}</b><span class="dim">orbit ${f.orbit ?? 'far'}</span>${sel}</div>`;
+        orbit += `<div class="asset-row" style="color:${ownerColor(f.owner)}"><span class="bicon">▲</span><b>${fShips} ships${tr ? ' +' + tr + ' troops' : ''}</b><span class="dim">orbit ${f.orbit ?? 'far'}</span>${sel}</div>`;
       }
+      cols.push(orbit);
     }
     if (mine) {
       const shipBuilds = BUILD_UNITS.filter((u) => isShip(u));
-      h += `<div class="sec">Shipyard conveyor</div>`;
-      h += conveyorHtml(p.id, 'units');
-      h += buildButtons(p.id, shipBuilds, 'unit');
+      cols.push(
+        `<div class="sec">Shipyard conveyor</div>` +
+          conveyorHtml(p.id, 'units') +
+          buildButtons(p.id, shipBuilds, 'unit'),
+      );
     }
-    h += `<div class="hint">Built spacecraft join the garrison first; launch creates a mobile fleet.</div>`;
+    cols.push(
+      `<div class="hint">Built spacecraft join the garrison first; launch creates a mobile fleet.</div>`,
+    );
   } else {
-    h += `<div class="sec">Building conveyor</div>`;
-    if (mine) {
-      h += conveyorHtml(p.id, 'buildings');
-    } else {
-      h += `<div class="row dim">enemy construction telemetry unavailable</div>`;
-    }
-    h += `<div class="sec">Buildings</div>`;
-    if (p.buildings.length === 0) h += `<div class="row dim">none</div>`;
+    cols.push(
+      `<div class="sec">Building conveyor</div>` +
+        (mine
+          ? conveyorHtml(p.id, 'buildings')
+          : `<div class="row dim">enemy construction telemetry unavailable</div>`),
+    );
+    let blds = `<div class="sec">Buildings</div>`;
+    if (p.buildings.length === 0) blds += `<div class="row dim">none</div>`;
     for (const b of p.buildings) {
       const def = data.buildings[b.type];
       const max = def ? buildingMaxLevel(def) : 1;
-      h += `<div class="asset-row"><span class="bicon">${BUILD_ICON[b.type] ?? '▪'}</span><b>${def?.name ?? b.type}</b><span class="dim">L${b.level}/${max} · hp ${floor(b.hp)}/${hpOfLevel(b.type, b.level)}</span>`;
+      blds += `<div class="asset-row"><span class="bicon">${BUILD_ICON[b.type] ?? '▪'}</span><b>${def?.name ?? b.type}</b><span class="dim">L${b.level}/${max} · hp ${floor(b.hp)}/${hpOfLevel(b.type, b.level)}</span>`;
       if (mine && b.level < max) {
         const c = def?.upgrades[b.level - 1]?.cost;
-        h += btn('upgrade', b.type, `▲ Upgrade ${cost(c)}`, afford(c));
+        blds += btn('upgrade', b.type, `▲ Upgrade ${cost(c)}`, afford(c));
       }
-      h += `</div>`;
+      blds += `</div>`;
     }
     if (mine) {
       // an asteroid junction can only raise a space fortress; a city builds the rest
       const buildable = SECTOR_OF[p.id] === 'asteroid' ? ['starfort'] : BUILDABLE;
       const missing = buildable.filter((t) => !p.buildings.some((b) => b.type === t));
-      if (missing.length) {
-        h += buildButtons(p.id, missing, 'building');
-      }
+      if (missing.length) blds += buildButtons(p.id, missing, 'building');
     }
+    cols.push(blds);
   }
-  return h;
+  return h + pcols(cols);
 }
 
 function renderPanel() {
-  const open = selFleet !== null || selPlanet !== null || selFleets.size > 0;
+  // While arming a merge target, collapse the panel so the map (and the fleet to
+  // merge with) is fully tappable — important on phones where the sheet covers it.
+  const open = !merging && (selFleet !== null || selPlanet !== null || selFleets.size > 0);
   side.style.display = open ? 'block' : 'none';
   document.body.classList.toggle('sheet-open', open); // mobile: hide log/comms under the sheet
   if (!open) {
@@ -2119,6 +2272,7 @@ function renderCmdBar() {
   const ids = selectedFleetIds();
   if (ids.length === 0) {
     if (aiming) aiming = false;
+    if (merging) merging = false;
     cmdbar.classList.remove('show');
     lastCmdHtml = '';
     return;
@@ -2136,18 +2290,128 @@ function renderCmdBar() {
       SECTOR_TYPES[SECTOR_OF[f.location]]?.capturable, // empty space can't be taken
   );
   const descend = anyFar; // at least one far → primary orbit action is descend to near
+  // Merge: a group fuses in one tap; a lone fleet arms target-pick (needs a partner).
+  const myFleetTotal = Object.values(s.fleets).filter((f) => f.owner === ME).length;
+  const canMerge = ids.length >= 2 || (ids.length === 1 && myFleetTotal >= 2);
+  // Split: only a single docked fleet with ≥2 ships can shed some into a new fleet.
+  const lone = ids.length === 1 && fleets[0] ? fleets[0] : null;
+  const canSplit = !!lone && !!lone.location && !lone.movement && !lone.battleId && sumUnits(lone.units) >= 2;
   const html =
     `<span class="cmdlabel">${ids.length > 1 ? ids.length + ' FLEETS' : 'FLEET'}</span>` +
     cmdBtn('move', '⤳', 'Move', aiming ? 'on' : '', false) +
     cmdBtn('stop', '■', 'Stop', 'danger', !anyMoving) +
     cmdBtn('attack', '⚔', 'Attack', '', !canAssault) +
-    cmdBtn(descend ? 'near' : 'far', descend ? '▼' : '▲', descend ? 'Near' : 'Far', '', !anyDocked);
+    cmdBtn(descend ? 'near' : 'far', descend ? '▼' : '▲', descend ? 'Near' : 'Far', '', !anyDocked) +
+    cmdBtn('merge', '⛬', ids.length > 1 ? 'Merge' : 'Merge…', merging ? 'on' : '', !canMerge) +
+    cmdBtn('split', '⊟', 'Split', splitState ? 'on' : '', !canSplit);
   if (html !== lastCmdHtml) {
     cmdbar.innerHTML = html;
     lastCmdHtml = html;
   }
   cmdbar.classList.add('show');
 }
+
+/** Ship counts (by type) of a fleet — the rows of the split dialog. */
+function fleetShipCounts(f: Fleet): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const st of f.units) out[st.unit] = (out[st.unit] ?? 0) + st.count;
+  return out;
+}
+
+/** The "Split fleet" modal: per ship type, +1 / +10 / All (and −1) move ships into
+ *  a new fleet; Confirm peels them off into the same sector. Closes itself if the
+ *  fleet is deselected, vanishes, or starts moving. */
+function renderSplitDialog() {
+  if (splitState && splitState.fleetId !== selFleet) splitState = null; // selection moved on
+  const f = splitState ? s.fleets[splitState.fleetId] : undefined;
+  if (!splitState || !f || f.movement || f.battleId) {
+    splitState = null;
+    if (splitdlg.style.display !== 'none') splitdlg.style.display = 'none';
+    lastSplitHtml = '';
+    return;
+  }
+  const counts = fleetShipCounts(f);
+  let takeTotal = 0;
+  let total = 0;
+  let rows = '';
+  for (const unit of Object.keys(counts)) {
+    const have = counts[unit] ?? 0;
+    total += have;
+    const tk = Math.min(splitState.take[unit] ?? 0, have);
+    splitState.take[unit] = tk;
+    takeTotal += tk;
+    rows += `<div class="srow">
+      <span class="sname"><span class="bicon">${unitIcon(unit)}</span>${esc(displayUnit(unit))}</span>
+      <b class="scur">${have - tk}</b>
+      <span class="sbtns">
+        <button data-sx="dec" data-unit="${esc(unit)}" data-n="1" ${tk <= 0 ? 'disabled' : ''}>−1</button>
+        <button data-sx="inc" data-unit="${esc(unit)}" data-n="1" ${tk >= have ? 'disabled' : ''}>+1</button>
+        <button data-sx="inc" data-unit="${esc(unit)}" data-n="10" ${tk >= have ? 'disabled' : ''}>+10</button>
+        <button data-sx="all" data-unit="${esc(unit)}" ${tk >= have ? 'disabled' : ''}>All</button>
+      </span>
+      <b class="snew">→ ${tk}</b>
+    </div>`;
+  }
+  const valid = takeTotal > 0 && takeTotal < total;
+  const html = `<div class="sbox">
+    <div class="shead">SPLIT FLEET <b>${esc(splitState.fleetId)}</b></div>
+    <div class="ssub">Peel ships into a new fleet — it stays in the same sector. At least one ship stays behind; carried troops stay with the original.</div>
+    <div class="srows">${rows}</div>
+    <div class="sfoot">new fleet: <b>${takeTotal}</b> ships · original keeps <b>${total - takeTotal}</b></div>
+    <div class="sactions">
+      <button data-sx="confirm" class="cbtn" ${valid ? '' : 'disabled'}>Confirm</button>
+      <button data-sx="cancel" class="cbtn ghost">Cancel</button>
+    </div>
+  </div>`;
+  if (html !== lastSplitHtml) {
+    splitdlg.innerHTML = html;
+    lastSplitHtml = html;
+  }
+  splitdlg.style.display = 'flex';
+}
+
+splitdlg.addEventListener('click', (ev) => {
+  if (ev.target === splitdlg && splitState) {
+    // click on the dimmed backdrop (outside the box) cancels
+    splitState = null;
+    renderSplitDialog();
+    lastCmdHtml = '';
+    renderCmdBar();
+    return;
+  }
+  const t = (ev.target as HTMLElement).closest('button') as HTMLButtonElement | null;
+  if (!t || t.disabled || !splitState) return;
+  const sx = t.dataset.sx;
+  if (sx === 'cancel') {
+    splitState = null;
+    renderSplitDialog();
+    lastCmdHtml = '';
+    renderCmdBar();
+    return;
+  }
+  if (sx === 'confirm') {
+    const take = Object.entries(splitState.take)
+      .filter(([, n]) => n > 0)
+      .map(([unit, count]) => ({ unit, count }));
+    if (take.length) playerOrder(splitFleet(ME, splitState.fleetId, take));
+    splitState = null;
+    renderSplitDialog();
+    lastCmdHtml = '';
+    lastPanelHtml = '';
+    renderCmdBar();
+    renderPanel();
+    return;
+  }
+  const unit = t.dataset.unit ?? '';
+  const f = s.fleets[splitState.fleetId];
+  if (!f) return;
+  const have = fleetShipCounts(f)[unit] ?? 0;
+  const cur = splitState.take[unit] ?? 0;
+  if (sx === 'inc') splitState.take[unit] = Math.min(have, cur + Number(t.dataset.n));
+  else if (sx === 'dec') splitState.take[unit] = Math.max(0, cur - Number(t.dataset.n));
+  else if (sx === 'all') splitState.take[unit] = have;
+  renderSplitDialog();
+});
 
 side.addEventListener('click', (ev) => {
   const t = (ev.target as HTMLElement).closest('button') as HTMLButtonElement | null;
@@ -2193,8 +2457,16 @@ cmdbar.addEventListener('click', (ev) => {
   if (!t || t.disabled) return;
   const cmd = t.dataset.cmd;
   const ids = selectedFleetIds();
+  if (cmd !== 'merge') merging = false; // any other command disarms merge-targeting
   if (cmd === 'move') {
     aiming = !aiming; // arm / disarm the move order
+  } else if (cmd === 'merge') {
+    if (ids.length >= 2) mergeGroup(ids);
+    else {
+      merging = !merging; // lone fleet → arm: next friendly-fleet tap is the anchor
+      aiming = false;
+      if (merging) note('⛬ pick a fleet to merge with');
+    }
   } else if (cmd === 'stop') {
     for (const id of ids) if (s.fleets[id]?.movement) playerOrder(stopFleet(ME, id));
   } else if (cmd === 'attack') {
@@ -2206,6 +2478,13 @@ cmdbar.addEventListener('click', (ev) => {
       if (f?.location && !f.movement) playerOrder(orbitFleet(ME, id, cmd));
     }
     aiming = false;
+  } else if (cmd === 'split') {
+    const id = ids[0];
+    if (id) {
+      splitState = splitState ? null : { fleetId: id, take: {} }; // toggle the dialog
+      aiming = false;
+      renderSplitDialog();
+    }
   }
   lastCmdHtml = '';
   lastPanelHtml = '';
@@ -2217,6 +2496,24 @@ cmdbar.addEventListener('click', (ev) => {
 
 // Tap/click selection at a screen point (drag-aware — see the pointer handlers).
 function selectAt(mx: number, my: number) {
+  // Merge armed: the next tap on a friendly fleet (not itself in the selection) is
+  // the anchor — the selected fleet(s) fly to it and fuse. Any other tap cancels.
+  if (merging) {
+    const movers = selectedFleetIds();
+    for (const f of Object.values(s.fleets)) {
+      if (f.owner !== ME || movers.includes(f.id)) continue;
+      const a = fleetAnchor(f);
+      if (a && Math.hypot(mx - a.x, my - a.y) < 16) {
+        orderMerge(movers, f.id);
+        merging = false;
+        lastPanelHtml = '';
+        return;
+      }
+    }
+    merging = false;
+    lastPanelHtml = '';
+    return;
+  }
   // Plain tap = selection. Movement happens only when "Move" is armed (aiming), so a
   // fleet selection never blocks picking a planet (and vice versa).
   if (!aiming) {
@@ -2224,7 +2521,8 @@ function selectAt(mx: number, my: number) {
       if (f.owner !== ME) continue;
       const a = fleetAnchor(f);
       if (a && Math.hypot(mx - a.x, my - a.y) < 16) {
-        setFleetSelection([f.id]); // (clears any selected planet)
+        if (additive) toggleFleetInSelection(f.id); // Ctrl/⌘ → extend the group
+        else setFleetSelection([f.id]); // (clears any selected planet)
         return;
       }
     }
@@ -2285,6 +2583,7 @@ canvas.addEventListener('pointerdown', (ev) => {
   if (pointers.size === 1) {
     dragStart = p;
     boxSelecting = ev.shiftKey;
+    additive = ev.ctrlKey || ev.metaKey; // Ctrl/⌘-click → add to the fleet selection
     selectionBox = boxSelecting ? { x1: p.x, y1: p.y, x2: p.x, y2: p.y } : null;
     dragged = false;
   } else if (pointers.size === 2) {
@@ -2490,11 +2789,13 @@ function frame(nowReal: number) {
     pumpBuildQueues();
     checkEnd();
   }
+  resolvePendingMerges(); // complete fleet merges whose movers have arrived
   vision = fogOn ? computeVision() : null; // dev fog projection for this frame
   if (vision) updateMemory(vision.identify); // variant B: remember what we see
   render(nowReal);
   renderPanel();
   renderCmdBar();
+  renderSplitDialog();
   // top bar (Iron Order-style resource readouts with +/h deltas)
   const d = floor(s.time / DAY) + 1;
   const h = floor((s.time % DAY) / HOUR);
