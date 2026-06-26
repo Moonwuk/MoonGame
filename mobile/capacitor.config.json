@@ -1,5 +1,9 @@
 {
   "appId": "com.voiddominion.prototype",
   "appName": "Void Dominion",
-  "webDir": "www"
+  "webDir": "www",
+  "server": {
+    "androidScheme": "http",
+    "cleartext": true
+  }
 }
