@@ -14,6 +14,8 @@ export interface MultiplayerSnapshot {
   state: GameState;
   /** True while the match is paused waiting for the required players to connect. */
   waiting?: boolean;
+  /** Server's `hashState` of this view, if sent — compare to detect desync. */
+  hash?: string;
 }
 
 export interface MultiplayerClientHandlers {
@@ -21,6 +23,10 @@ export interface MultiplayerClientHandlers {
   onSnapshot?(snapshot: MultiplayerSnapshot): void;
   onRejection?(actionId: string, code: string): void;
   onError?(code: string): void;
+  /** Latency reply to a `ping`. `serverTime` is the server clock; `clientTime` is
+   *  the value we sent (absent if we pinged without one) — the caller, which owns
+   *  the clock, computes round-trip as `now − clientTime`. */
+  onPong?(serverTime: number, clientTime?: number): void;
 }
 
 interface InboundBase {
@@ -33,6 +39,9 @@ interface InboundBase {
   actionId?: string;
   code?: string;
   waiting?: boolean;
+  hash?: string;
+  serverTime?: number;
+  clientTime?: number;
 }
 
 function decode(raw: string): InboundBase | null {
@@ -100,6 +109,7 @@ export class MultiplayerClient {
         seq: message.seq,
         state: message.state,
         waiting: message.waiting,
+        hash: message.hash,
       });
       return;
     }
@@ -118,7 +128,12 @@ export class MultiplayerClient {
         seq: message.seq,
         state: this.lastState,
         waiting: message.waiting,
+        hash: message.hash,
       });
+      return;
+    }
+    if (message.type === 'pong' && typeof message.serverTime === 'number') {
+      this.handlers.onPong?.(message.serverTime, message.clientTime);
       return;
     }
     if (message.type === 'rejection' && message.actionId && message.code) {

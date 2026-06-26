@@ -8,7 +8,7 @@ import type {
   PlayerId,
   SignatureContact,
 } from '@void/shared-core';
-import { diffState, identifiedNodes, visibleState } from '@void/shared-core';
+import { diffState, hashState, identifiedNodes, visibleState } from '@void/shared-core';
 import {
   parseClientMessage,
   serializeServerMessage,
@@ -34,6 +34,11 @@ export interface MatchRoomOptions {
    *  connected, and re-freezes if one drops (`now` is then read as raw wall-clock
    *  and only accrues while all are present). Omit ⇒ the clock runs freely. */
   waitForPlayers?: PlayerId[];
+  /** Attach `hashState(view)` to each snapshot so the client can detect desync.
+   *  Opt-in (it hashes the per-player view on every broadcast). */
+  emitStateHash?: boolean;
+  /** Observation-only room-event stream for metrics/playtest logging (M0). */
+  observe?: (event: RoomObservation) => void;
 }
 
 export interface ActionReceipt {
@@ -43,6 +48,15 @@ export interface ActionReceipt {
   ok: boolean;
   code?: string;
 }
+
+/** Observation-only stream of room events for metrics/playtest logging (M0). The
+ *  callback never feeds back into the room — it just sees what happened. */
+export type RoomObservation =
+  | { kind: 'join'; playerId: PlayerId }
+  | { kind: 'leave'; playerId: PlayerId }
+  | { kind: 'lobby'; waiting: boolean }
+  | { kind: 'action'; playerId: PlayerId; type: string; ok: boolean; seq: number; code?: string }
+  | { kind: 'end'; winner: PlayerId | null; reason?: string };
 
 export interface SubmitResult {
   ok: boolean;
@@ -70,6 +84,9 @@ export class MatchRoom {
   private readonly waitFor: ReadonlySet<PlayerId> | null;
   private lobbyAccrued = 0; // game-ms accrued while running
   private lobbyRunningSince: number | null = null; // raw ms when running began, else null
+  private readonly emitStateHash: boolean;
+  private readonly observe?: (event: RoomObservation) => void;
+  private endObserved = false; // 'end' is reported once
   private readonly peers = new Map<PlayerId, Set<RoomPeer>>();
   private readonly receipts = new Map<string, ActionReceipt>();
   private seq = 0;
@@ -91,6 +108,24 @@ export class MatchRoom {
       options.waitForPlayers && options.waitForPlayers.length > 0
         ? new Set(options.waitForPlayers)
         : null;
+    this.emitStateHash = options.emitStateHash ?? false;
+    this.observe = options.observe;
+  }
+
+  /** `hashState` of a per-player view, for the desync field (only when enabled). */
+  private hashField(view: GameState): { hash?: string } {
+    return this.emitStateHash ? { hash: hashState(view) } : {};
+  }
+
+  /** Report a match end exactly once (after an action ends it). */
+  private observeEndIfNeeded(): void {
+    if (this.endObserved || this.stateValue.match.status !== 'ended') return;
+    this.endObserved = true;
+    this.observe?.({
+      kind: 'end',
+      winner: this.stateValue.match.winner,
+      ...(this.stateValue.match.reason ? { reason: this.stateValue.match.reason } : {}),
+    });
   }
 
   /** Whether every required player is currently connected (always true when no
@@ -122,11 +157,13 @@ export class MatchRoom {
     const running = this.lobbyRunning;
     if (running && this.lobbyRunningSince === null) {
       this.lobbyRunningSince = this.now(); // start / resume
+      this.observe?.({ kind: 'lobby', waiting: false });
       return true;
     }
     if (!running && this.lobbyRunningSince !== null) {
       this.lobbyAccrued += this.now() - this.lobbyRunningSince; // freeze
       this.lobbyRunningSince = null;
+      this.observe?.({ kind: 'lobby', waiting: true });
       return true;
     }
     return false;
@@ -153,6 +190,7 @@ export class MatchRoom {
     const playerPeers = this.peers.get(playerId) ?? new Set<RoomPeer>();
     playerPeers.add(peer);
     this.peers.set(playerId, playerPeers);
+    this.observe?.({ kind: 'join', playerId });
     const flipped = this.syncLobbyClock(); // last player in? the match resumes
     const view = this.viewFor(playerId);
     this.lastVisible.set(playerId, view.base);
@@ -165,6 +203,7 @@ export class MatchRoom {
       state: view.base,
       signatures: view.signatures,
       remembered: view.remembered,
+      ...this.hashField(view.base),
       ...(this.waiting ? { waiting: true } : {}),
     });
     if (flipped) this.broadcastState([]); // tell the already-present peer the wait ended
@@ -186,7 +225,10 @@ export class MatchRoom {
     const playerPeers = this.peers.get(playerId);
     if (!playerPeers) return;
     playerPeers.delete(peer);
-    if (playerPeers.size === 0) this.peers.delete(playerId);
+    if (playerPeers.size === 0) {
+      this.peers.delete(playerId);
+      this.observe?.({ kind: 'leave', playerId });
+    }
     if (this.syncLobbyClock()) this.broadcastState([]); // a required player dropped → freeze + notify
   }
 
@@ -252,6 +294,7 @@ export class MatchRoom {
     const receipt = this.recordReceipt(action, playerId, true);
     const events = [...advanced.events, ...result.events];
     this.broadcastState(events);
+    this.observeEndIfNeeded();
     return { ok: true, seq: receipt.seq, events };
   }
 
@@ -269,6 +312,7 @@ export class MatchRoom {
       events: [],
       signatures: view.signatures,
       remembered: view.remembered,
+      ...this.hashField(view.base),
       ...(this.waiting ? { waiting: true } : {}),
     };
   }
@@ -297,6 +341,14 @@ export class MatchRoom {
         ? { actionId: action.id, playerId, seq: this.seq, ok }
         : { actionId: action.id, playerId, seq: this.seq, ok, code };
     this.receipts.set(action.id, receipt);
+    this.observe?.({
+      kind: 'action',
+      playerId,
+      type: action.type,
+      ok,
+      seq: this.seq,
+      ...(code ? { code } : {}),
+    });
     return receipt;
   }
 
@@ -319,6 +371,7 @@ export class MatchRoom {
         events: events.filter((e) => this.eventVisibleTo(e, playerId, identify)),
         signatures: view.signatures,
         remembered: view.remembered,
+        ...this.hashField(view.base),
         ...(waiting ? { waiting: true } : {}),
       };
       this.lastVisible.set(playerId, view.base);

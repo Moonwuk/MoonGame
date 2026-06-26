@@ -12,10 +12,40 @@
 // client's `MAP` lines up 1:1 with the server's planets and the renderer needs
 // no changes. This is NOT the Stage-3 server: state lives in memory (a restart
 // loses the match) and the `?player=` handshake is unauthenticated.
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, appendFileSync, mkdirSync } from 'node:fs';
 import { networkInterfaces } from 'node:os';
-import { MatchRoom, createMultiplayerServer } from '../packages/server/src/index';
+import { MatchRoom, createMultiplayerServer, type RoomObservation } from '../packages/server/src/index';
 import { newGame, kernel, data } from './src/game';
+
+// --- M0 playtest log: append every room event (join/leave/lobby/action/end) to a
+// per-run JSONL, and keep counters for an on-exit summary. Pure observation.
+mkdirSync('playtest-logs', { recursive: true });
+const logFile = `playtest-logs/proto-${Date.now()}.jsonl`;
+const stats = {
+  joins: 0,
+  leaves: 0,
+  actions: 0,
+  ok: 0,
+  rejects: 0,
+  byCode: {} as Record<string, number>,
+  byType: {} as Record<string, number>,
+  end: null as RoomObservation | null,
+};
+const observe = (ev: RoomObservation): void => {
+  appendFileSync(logFile, JSON.stringify({ t: Date.now(), ...ev }) + '\n');
+  if (ev.kind === 'join') stats.joins++;
+  else if (ev.kind === 'leave') stats.leaves++;
+  else if (ev.kind === 'end') stats.end = ev;
+  else if (ev.kind === 'action') {
+    stats.actions++;
+    stats.byType[ev.type] = (stats.byType[ev.type] ?? 0) + 1;
+    if (ev.ok) stats.ok++;
+    else {
+      stats.rejects++;
+      if (ev.code) stats.byCode[ev.code] = (stats.byCode[ev.code] ?? 0) + 1;
+    }
+  }
+};
 
 const host = process.env.HOST ?? '127.0.0.1';
 const port = Number(process.env.PORT ?? 8788);
@@ -46,6 +76,8 @@ const room = new MatchRoom({
   data,
   now: () => Date.now(),
   waitForPlayers: ['p1', 'p2'],
+  emitStateHash: true, // attach hashState(view) so the client overlay can flag desync
+  observe, // M0: log every room event to JSONL + count for the on-exit summary
 });
 
 const server = createMultiplayerServer({ room, host, port, indexHtml });
@@ -76,7 +108,33 @@ process.stdout.write(
   ].join('\n'),
 );
 
+// On Ctrl-C: print the playtest summary (counts gathered by `observe`) and where
+// the raw JSONL landed, then close cleanly — the per-match data survives the run.
+const printSummary = (): void => {
+  const end = stats.end;
+  const fmt = (m: Record<string, number>): string =>
+    Object.entries(m)
+      .map(([k, n]) => `${k}=${n}`)
+      .join(' ') || '—';
+  process.stdout.write(
+    [
+      '',
+      '── playtest summary ──────────────────────────────',
+      `  joins ${stats.joins} · leaves ${stats.leaves} · actions ${stats.actions} (ok ${stats.ok} · rejects ${stats.rejects})`,
+      `  by type   : ${fmt(stats.byType)}`,
+      `  by reject : ${fmt(stats.byCode)}`,
+      end && end.kind === 'end'
+        ? `  match end : winner ${end.winner ?? '—'}${end.reason ? ` (${end.reason})` : ''}`
+        : '  match end : —',
+      `  log file  : ${logFile}`,
+      '──────────────────────────────────────────────────',
+      '',
+    ].join('\n'),
+  );
+};
+
 const shutdown = (): void => {
+  printSummary();
   void server.close().then(() => process.exit(0));
 };
 process.on('SIGINT', shutdown);

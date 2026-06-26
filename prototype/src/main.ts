@@ -36,6 +36,7 @@ import {
   buildingMaxLevel,
   estimateTravelHours,
   fleetBaseSpeed,
+  hashState,
   planRoute,
 } from '../../packages/shared-core/src/index';
 import { MultiplayerClient } from '../../packages/client/src/index';
@@ -205,6 +206,12 @@ let splitState: { fleetId: string; take: Record<string, number> } | null = null;
 let NET = false;
 let netClient: MultiplayerClient | null = null;
 let netSock: WebSocket | null = null;
+// M0 net telemetry (dev overlay): smoothed round-trip ms, and a desync check that
+// compares our reconstructed view to the server's hash on every snapshot.
+let rttEma: number | null = null;
+let pingTimer: ReturnType<typeof setInterval> | null = null;
+let netDesync = false; // last snapshot's hash mismatched (server vs our rebuild)
+let netDesyncCount = 0; // how many snapshots have mismatched this session
 let aimPointer: { x: number; y: number } | null = null; // last canvas pointer (for the move preview)
 let planetTab: PlanetTab = 'buildings';
 const buildQueues: Record<string, PlanetBuildQueue> = {};
@@ -2921,11 +2928,27 @@ $('cgo').addEventListener('click', () => {
           clearSelection();
           showConnect(false);
           note(`● connected as ${NAME[who] ?? who}`);
+          // Latency probe: ping every 2s with a client timestamp the pong echoes.
+          if (pingTimer) clearInterval(pingTimer);
+          pingTimer = setInterval(() => client.ping(performance.now()), 2000);
+          client.ping(performance.now()); // seed an RTT reading immediately
         }
+      },
+      onPong: (_serverTime, clientTime) => {
+        if (clientTime === undefined) return;
+        const rtt = performance.now() - clientTime;
+        rttEma = rttEma === null ? rtt : rttEma * 0.7 + rtt * 0.3;
       },
       onSnapshot: (snap) => {
         s = snap.state;
         if (snap.playerId) ME = snap.playerId;
+        // Desync check (M0): the server tags each snapshot with hashState(view); we
+        // hash our just-reconstructed view and compare. Mismatch ⇒ the client and
+        // server disagree — the core invariant we most want to catch on a playtest.
+        if (snap.hash !== undefined) {
+          netDesync = hashState(snap.state) !== snap.hash;
+          if (netDesync) netDesyncCount++;
+        }
         // mirror apply()'s selection cleanup (we replace `s` directly here)
         if (selFleet && !s.fleets[selFleet]) selFleet = null;
         selFleets = new Set([...selFleets].filter((id) => s.fleets[id]?.owner === ME));
@@ -2949,6 +2972,11 @@ $('cgo').addEventListener('click', () => {
   sock.onmessage = (ev) => client.receive(String(ev.data));
   sock.onclose = () => {
     statusEl.textContent = 'disconnected';
+    if (pingTimer) {
+      clearInterval(pingTimer);
+      pingTimer = null;
+    }
+    rttEma = null;
     if (NET) {
       NET = false;
       note('● disconnected from server');
@@ -3002,9 +3030,17 @@ function frame(nowReal: number) {
     dayTimer.textContent = dayTimerText;
     lastDayTimerText = dayTimerText;
   }
-  const fpsText = `${Math.round(fpsEma)} FPS`;
+  // Dev net overlay (M0): FPS always; when connected, append round-trip latency and
+  // a desync flag (✓ in sync with the server, ✗ + running mismatch count if not).
+  let fpsText = `${Math.round(fpsEma)} FPS`;
+  if (NET) {
+    const rtt = rttEma === null ? '· · ms' : `${Math.round(rttEma)} ms`;
+    const sync = netDesync ? `desync ✗ ${netDesyncCount}` : 'sync ✓';
+    fpsText += ` · ${rtt} · ${sync}`;
+  }
   if (fpsText !== lastFpsText) {
     fpsEl.textContent = fpsText;
+    fpsEl.style.color = NET && netDesync ? 'var(--red, #ff5a4d)' : '';
     lastFpsText = fpsText;
   }
   const r = s.players[ME]?.resources ?? {};

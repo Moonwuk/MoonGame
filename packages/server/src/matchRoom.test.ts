@@ -3,6 +3,7 @@ import {
   applyDelta,
   createInitialState,
   createKernel,
+  hashState,
   parseGameData,
   type Action,
   type GameData,
@@ -10,7 +11,7 @@ import {
   type GameState,
   type Player,
 } from '@void/shared-core';
-import { MatchRoom, type RoomPeer } from './matchRoom';
+import { MatchRoom, type RoomObservation, type RoomPeer } from './matchRoom';
 import type { ServerMessage } from './protocol';
 
 class MemoryPeer implements RoomPeer {
@@ -171,6 +172,121 @@ describe('MatchRoom', () => {
 
     expect(p1.messages[1]).toMatchObject({ type: 'error', code: 'E_BAD_MESSAGE' });
     expect(r.state.players.p1?.name).toBe('Valid');
+  });
+});
+
+// Ends the match on a `match.surrender` action so observeEndIfNeeded fires.
+const surrenderModule: GameModule = {
+  id: 'surrender-test',
+  version: '1.0.0',
+  setup(api) {
+    api.onAction('match.surrender', (action, h) => {
+      const other = action.playerId === 'p1' ? 'p2' : 'p1';
+      h.state.match.status = 'ended';
+      h.state.match.winner = other;
+      h.state.match.reason = 'elimination';
+      h.emit('match.ended', { winner: other });
+    });
+  },
+};
+
+function surrenderAction(id: string, playerId: string): Action {
+  return { id, type: 'match.surrender', playerId, issuedAt: 1, payload: {} };
+}
+
+describe('MatchRoom — observation & state hash (M0)', () => {
+  function observed(options?: { emitStateHash?: boolean }): {
+    r: MatchRoom;
+    events: RoomObservation[];
+  } {
+    const events: RoomObservation[] = [];
+    const r = new MatchRoom({
+      id: 'obs',
+      initialState: testState(),
+      kernel: createKernel([renameModule, surrenderModule]),
+      data: testData(),
+      now: () => 10,
+      observe: (e) => events.push(e),
+      ...(options?.emitStateHash ? { emitStateHash: true } : {}),
+    });
+    return { r, events };
+  }
+
+  it('reports join, action (ok + reject) and leave to the observer', () => {
+    const { r, events } = observed();
+    const p1 = new MemoryPeer();
+    r.addPeer('p1', p1);
+    r.submitAction('p1', action('a1', 'p1', 'Commander'), p1); // ok
+    r.submitAction('p1', action('a2', 'p1', ''), p1); // rejected (empty name)
+    r.removePeer('p1', p1);
+
+    expect(events).toEqual([
+      { kind: 'join', playerId: 'p1' },
+      { kind: 'action', playerId: 'p1', type: 'player.rename', ok: true, seq: 1 },
+      { kind: 'action', playerId: 'p1', type: 'player.rename', ok: false, seq: 2, code: 'E_BAD_PAYLOAD' },
+      { kind: 'leave', playerId: 'p1' },
+    ]);
+  });
+
+  it('reports a match end exactly once', () => {
+    const { r, events } = observed();
+    const p1 = new MemoryPeer();
+    const p2 = new MemoryPeer();
+    r.addPeer('p1', p1);
+    r.addPeer('p2', p2);
+    r.submitAction('p1', surrenderAction('s1', 'p1'), p1);
+    // a deduped retry of the same ending action must not re-report the end
+    r.submitAction('p1', surrenderAction('s1', 'p1'), p1);
+
+    const ends = events.filter((e) => e.kind === 'end');
+    expect(ends).toEqual([{ kind: 'end', winner: 'p2', reason: 'elimination' }]);
+  });
+
+  it('reports lobby running/paused flips when a gate is configured', () => {
+    const events: RoomObservation[] = [];
+    const r = new MatchRoom({
+      id: 'obs-lobby',
+      initialState: testState(),
+      kernel: createKernel([renameModule]),
+      data: testData(),
+      now: () => 10,
+      waitForPlayers: ['p1', 'p2'],
+      observe: (e) => events.push(e),
+    });
+    const p1 = new MemoryPeer();
+    const p2 = new MemoryPeer();
+    r.addPeer('p1', p1); // still waiting — no flip
+    r.addPeer('p2', p2); // both in → running
+    r.removePeer('p2', p2); // one dropped → paused
+
+    expect(events.filter((e) => e.kind === 'lobby')).toEqual([
+      { kind: 'lobby', waiting: false },
+      { kind: 'lobby', waiting: true },
+    ]);
+  });
+
+  it('omits the hash field unless emitStateHash is set', () => {
+    const { r } = observed();
+    const p1 = new MemoryPeer();
+    r.addPeer('p1', p1);
+    expect(p1.messages[0]).not.toHaveProperty('hash');
+  });
+
+  it('attaches a hash the client can verify against its reconstructed state', () => {
+    const { r } = observed({ emitStateHash: true });
+    const p1 = new MemoryPeer();
+    r.addPeer('p1', p1);
+    const welcome = p1.messages[0];
+    if (welcome?.type !== 'welcome') throw new Error('expected a welcome snapshot');
+    expect(typeof (welcome as { hash?: string }).hash).toBe('string');
+
+    let clientState = welcome.state;
+    r.submitAction('p1', action('a1', 'p1', 'Commander'), p1);
+    const delta = p1.messages.at(-1);
+    if (delta?.type !== 'delta') throw new Error('expected a delta');
+    clientState = applyDelta(clientState, delta.delta);
+    // the desync check the overlay runs: our rebuild hashes to the server's tag
+    expect(hashState(clientState)).toBe((delta as { hash?: string }).hash);
   });
 });
 

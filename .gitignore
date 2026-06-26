@@ -12,6 +12,9 @@ coverage/
 *.log
 npm-debug.log*
 
+# Playtest capture (per-run JSONL from the prototype dev server — M0)
+playtest-logs/
+
 # Env / secrets (never commit — see docs/architecture.md A04)
 .env
 .env.*

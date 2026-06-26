@@ -2,6 +2,7 @@ export {
   MatchRoom,
   type ActionReceipt,
   type MatchRoomOptions,
+  type RoomObservation,
   type RoomPeer,
   type SubmitResult,
 } from './matchRoom';

@@ -38,7 +38,14 @@ export interface LobbyField {
   waiting?: boolean;
 }
 
-export interface ServerWelcomeMessage extends VisibilityFields, LobbyField {
+/** Optional `hashState` of the player's authoritative view, attached to snapshots
+ *  when the room has `emitStateHash` on. The client hashes its reconstructed state
+ *  and compares — a mismatch is a desync (a metrics signal, not a wire requirement). */
+export interface HashField {
+  hash?: string;
+}
+
+export interface ServerWelcomeMessage extends VisibilityFields, LobbyField, HashField {
   type: 'welcome';
   matchId: string;
   playerId: PlayerId;
@@ -47,7 +54,7 @@ export interface ServerWelcomeMessage extends VisibilityFields, LobbyField {
   state: GameState;
 }
 
-export interface ServerStateMessage extends VisibilityFields, LobbyField {
+export interface ServerStateMessage extends VisibilityFields, LobbyField, HashField {
   type: 'state';
   matchId: string;
   seq: number;
@@ -58,7 +65,7 @@ export interface ServerStateMessage extends VisibilityFields, LobbyField {
 
 /** Incremental update — only the entities/fields that changed since the peer's
  *  last `welcome`/`state` snapshot. A full `state` is sent on join and on resync. */
-export interface ServerDeltaMessage extends VisibilityFields, LobbyField {
+export interface ServerDeltaMessage extends VisibilityFields, LobbyField, HashField {
   type: 'delta';
   matchId: string;
   seq: number;
