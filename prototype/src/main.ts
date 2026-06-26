@@ -59,7 +59,6 @@ function ownerColor(owner: string | null | undefined): string {
   if (owner === ME) return COLOR.p1;
   return COLOR.p2;
 }
-const LANE = 'rgba(73,196,206,0.20)';
 const GRID = 'rgba(46,150,160,0.07)';
 const LOCK = '#7df0d0'; // selection / targeting reticle accent
 const TAU = Math.PI * 2;
@@ -243,49 +242,26 @@ const NEBULAE = Array.from({ length: 5 }, (_, i) => {
   };
 });
 
-// The map is a radar plotting table: a coordinate grid that pans and scales with
-// the camera, plus faint star ticks.
-function drawScope(now: number) {
-  const w = VW;
-  const h = VH;
-  cx.fillStyle = '#02060c';
-  cx.fillRect(0, 0, w, h);
-
-  // slow background clouds, drawn before the tactical grid
-  for (const n of NEBULAE) {
-    const breathe = 0.75 + 0.25 * Math.sin(now / 2400 + n.phase);
-    const r = n.r * breathe * (MOBILE ? 0.7 : 1);
-    const g = cx.createRadialGradient(n.x * w, n.y * h, 0, n.x * w, n.y * h, r);
-    g.addColorStop(0, rgba(n.color, 0.055));
-    g.addColorStop(0.45, rgba(n.color, 0.022));
-    g.addColorStop(1, 'rgba(2,6,12,0)');
-    cx.fillStyle = g;
-    cx.fillRect(0, 0, w, h);
-  }
-
-  // panning / zooming coordinate grid
-  const gap = Math.max(28, 56 * cam.scale);
-  const gx = ((cam.x % gap) + gap) % gap;
-  const gy = ((cam.y % gap) + gap) % gap;
-  cx.lineWidth = 1;
-  cx.strokeStyle = GRID;
-  cx.beginPath();
-  for (let x = gx; x <= w; x += gap) {
-    cx.moveTo(x, 0);
-    cx.lineTo(x, h);
-  }
-  for (let y = gy; y <= h; y += gap) {
-    cx.moveTo(0, y);
-    cx.lineTo(w, y);
-  }
-  cx.stroke();
-
-  // star ticks
-  for (const st of STARS) {
-    const twinkle = 0.65 + 0.35 * Math.sin(now / 900 + st.phase);
-    cx.fillStyle = rgba('#9fe6e0', st.b * twinkle);
-    cx.fillRect(st.x * w, st.y * h, 1, 1);
-  }
+// The backdrop (deep-space + nebulae + radar grid + star ticks) is baked into the
+// cached static layer (see buildStaticLayer). This is the only live backdrop bit:
+// a slow radar sweep across the plotting table — pure command-console chrome.
+function drawScanSweep(now: number) {
+  if (!cx.createConicGradient) return; // graceful: skip on engines without it
+  const cxp = VW * 0.5;
+  const cyp = VH * 0.5;
+  const ang = (now / 7000) % TAU;
+  const grd = cx.createConicGradient(ang, cxp, cyp);
+  // very subtle trailing wedge — barely-there in a still frame, reads as a slow
+  // rotating radar sweep in motion (fades over ~0.4 turn behind the leading edge)
+  grd.addColorStop(0, 'rgba(53,214,230,0.032)');
+  grd.addColorStop(0.16, 'rgba(53,214,230,0.008)');
+  grd.addColorStop(0.4, 'rgba(53,214,230,0)');
+  grd.addColorStop(1, 'rgba(53,214,230,0)');
+  cx.save();
+  cx.globalCompositeOperation = 'lighter';
+  cx.fillStyle = grd;
+  cx.fillRect(0, 0, VW, VH);
+  cx.restore();
 }
 
 // Project a map-space point into the on-screen play area (inside the HUD insets).
@@ -1015,16 +991,32 @@ function glowRing(x: number, y: number, r: number, color: string, alpha: number)
   cx.restore();
 }
 
-function drawWarpLane(a: { x: number; y: number }, b: { x: number; y: number }) {
+/** Live energy packets sliding along each on-screen hyperlane — the "alive" layer
+ *  over the cached static network. Cheap: a couple of additive dots per lane. */
+function drawLaneEnergy(now: number) {
   cx.save();
-  cx.strokeStyle = LANE;
-  cx.lineWidth = 1;
-  cx.shadowColor = 'rgba(53,214,230,0.5)';
-  cx.shadowBlur = 4;
-  cx.beginPath();
-  cx.moveTo(a.x, a.y);
-  cx.lineTo(b.x, b.y);
-  cx.stroke();
+  cx.globalCompositeOperation = 'lighter';
+  const t = (now / 2600) % 1;
+  for (const [from, to] of MAP_LINKS) {
+    const A = s.planets[from];
+    const B = s.planets[to];
+    if (!A || !B) continue;
+    const a = world(A.position);
+    const b = world(B.position);
+    if (!visible(a, 40) && !visible(b, 40)) continue;
+    const lane = A.owner && A.owner === B.owner ? ownerColor(A.owner) : '#7df0d0';
+    // deterministic per-lane phase so packets don't pulse in unison
+    const ph = (((a.x * 13.1 + a.y * 7.7) % 100) + 100) % 100 / 100;
+    for (let k = 0; k < 2; k++) {
+      const u = (t + ph + k * 0.5) % 1;
+      const x = a.x + (b.x - a.x) * u;
+      const y = a.y + (b.y - a.y) * u;
+      cx.fillStyle = rgba(lane, 0.5 * (1 - Math.abs(u - 0.5) * 1.4));
+      cx.beginPath();
+      cx.arc(x, y, 1.5, 0, TAU);
+      cx.fill();
+    }
+  }
   cx.restore();
 }
 
@@ -1127,131 +1119,130 @@ let selectionBox: { x1: number; y1: number; x2: number; y2: number } | null = nu
  * under the camera each frame — so it covers the whole map, scales without
  * stretching, and never shimmers. Rebuilt only on viewport / ownership change.
  */
-interface ProvCell {
-  owner: string;
-  col: string;
-  poly: Array<[number, number]>;
-}
-let provCells: ProvCell[] = [];
-let provSig = '';
+// --- holographic static layer (territory + hyperlanes), camera-baked & cached --
+// The expensive world-space art — influence glows + the hyperlane network — is
+// rendered once into an offscreen canvas and re-blitted every frame; it rebuilds
+// only when the camera, ownership or viewport changes. Idle frames cost a single
+// drawImage, so the map holds 60fps instead of re-tracing the whole graph + a
+// Voronoi tiling every frame.
+const bg = document.createElement('canvas');
+const bgx = bg.getContext('2d') as CanvasRenderingContext2D;
+let bgSig = '';
 
-/** Clip a convex polygon to the half-plane a*x + b*y + c <= 0 (Sutherland–Hodgman). */
-function clipHalfPlane(
-  poly: Array<[number, number]>,
-  a: number,
-  b: number,
-  c: number,
-): Array<[number, number]> {
-  const out: Array<[number, number]> = [];
-  for (let i = 0; i < poly.length; i++) {
-    const cur = poly[i]!;
-    const nxt = poly[(i + 1) % poly.length]!;
-    const dc = a * cur[0] + b * cur[1] + c;
-    const dn = a * nxt[0] + b * nxt[1] + c;
-    if (dc <= 0) out.push(cur);
-    if ((dc < 0) !== (dn < 0)) {
-      const t = dc / (dc - dn);
-      out.push([cur[0] + t * (nxt[0] - cur[0]), cur[1] + t * (nxt[1] - cur[1])]);
-    }
-  }
+function ownersSig(): string {
+  let out = '';
+  for (const n of MAP) out += (s.planets[n.id]?.owner ?? '·') + ',';
   return out;
 }
 
-function buildProvinces(): void {
-  const owners = MAP.map((n) => s.planets[n.id]?.owner ?? 'null').join(',');
-  const sig = `${VW}x${VH}:${MOBILE ? 1 : 0}|${owners}`;
-  if (sig === provSig) {
-    return;
+/** Rebuild the cached territory+lane layer when the camera/ownership/viewport moves. */
+function buildStaticLayer(): void {
+  const sig = `${VW}x${VH}:${DPR.toFixed(2)}:${Math.round(cam.x)},${Math.round(cam.y)},${cam.scale.toFixed(3)}|${ownersSig()}`;
+  if (sig === bgSig && bg.width === Math.round(VW * DPR)) return;
+  bgSig = sig;
+  bg.width = Math.round(VW * DPR);
+  bg.height = Math.round(VH * DPR);
+  const g = bgx;
+  g.setTransform(DPR, 0, 0, DPR, 0, 0);
+  g.clearRect(0, 0, VW, VH);
+
+  // 0) backdrop — deep-space fill + slow nebula clouds + a radar plotting grid +
+  //    faint star ticks. Baked here (not per-frame) so idle frames stay cheap; the
+  //    "alive" motion comes from the live layers (lane packets, scan sweep, fleets).
+  g.fillStyle = '#02060c';
+  g.fillRect(0, 0, VW, VH);
+  for (const neb of NEBULAE) {
+    const r = neb.r * (MOBILE ? 0.7 : 1);
+    const grd = g.createRadialGradient(neb.x * VW, neb.y * VH, 0, neb.x * VW, neb.y * VH, r);
+    grd.addColorStop(0, rgba(neb.color, 0.06));
+    grd.addColorStop(0.45, rgba(neb.color, 0.024));
+    grd.addColorStop(1, 'rgba(2,6,12,0)');
+    g.fillStyle = grd;
+    g.fillRect(0, 0, VW, VH);
   }
-  provSig = sig;
-  // every sector is a cell; empty sectors are an uncapturable neutral wash, the
-  // rest take their owner's colour (political map).
-  const seeds = MAP.map((n) => {
-    const b = projBase(n);
-    if (n.sector === 'empty') return { x: b.x, y: b.y, key: 'void', col: VOID_COLOR };
-    const o = s.planets[n.id]?.owner ?? 'null';
-    return { x: b.x, y: b.y, key: o, col: ownerColor(s.planets[n.id]?.owner) };
-  });
-  let minX = Infinity;
-  let minY = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
-  for (const sd of seeds) {
-    minX = Math.min(minX, sd.x);
-    maxX = Math.max(maxX, sd.x);
-    minY = Math.min(minY, sd.y);
-    maxY = Math.max(maxY, sd.y);
+  const gap = Math.max(28, 56 * cam.scale);
+  const ox = ((cam.x % gap) + gap) % gap;
+  const oy = ((cam.y % gap) + gap) % gap;
+  g.lineWidth = 1;
+  g.strokeStyle = GRID;
+  g.beginPath();
+  for (let x = ox; x <= VW; x += gap) {
+    g.moveTo(x, 0);
+    g.lineTo(x, VH);
   }
-  // A clip rectangle far larger than the seed span, so the cells tile well beyond
-  // the screen at any pan/zoom — the territory always fills the whole map.
-  const m = 4000;
-  const rect: Array<[number, number]> = [
-    [minX - m, minY - m],
-    [maxX + m, minY - m],
-    [maxX + m, maxY + m],
-    [minX - m, maxY + m],
-  ];
-  provCells = [];
-  for (let i = 0; i < seeds.length; i++) {
-    const si = seeds[i]!;
-    let poly: Array<[number, number]> = rect.map((p) => [p[0], p[1]]);
-    for (let j = 0; j < seeds.length && poly.length >= 3; j++) {
-      if (j === i) continue;
-      const sj = seeds[j]!;
-      const a = 2 * (sj.x - si.x);
-      const b = 2 * (sj.y - si.y);
-      const c = si.x * si.x + si.y * si.y - (sj.x * sj.x + sj.y * sj.y);
-      poly = clipHalfPlane(poly, a, b, c);
-    }
-    if (poly.length >= 3) {
-      provCells.push({ owner: si.key, col: si.col, poly });
-    }
+  for (let y = oy; y <= VH; y += gap) {
+    g.moveTo(0, y);
+    g.lineTo(VW, y);
+  }
+  g.stroke();
+  for (const st of STARS) {
+    g.fillStyle = rgba('#9fe6e0', st.b);
+    g.fillRect(st.x * VW, st.y * VH, 1, 1);
+  }
+
+  // 1) territory as soft "influence" glow around owned systems (additive blend) —
+  //    reads as overlapping spheres of control, not hard political cells.
+  g.save();
+  g.globalCompositeOperation = 'lighter';
+  const infl = Math.max(48, 80 * cam.scale);
+  for (const n of MAP) {
+    const p = s.planets[n.id];
+    if (!p || !p.owner) continue;
+    const c = world(n);
+    if (c.x < -infl || c.x > VW + infl || c.y < -infl || c.y > VH + infl) continue;
+    const col = ownerColor(p.owner);
+    const grd = g.createRadialGradient(c.x, c.y, 0, c.x, c.y, infl);
+    grd.addColorStop(0, rgba(col, 0.26));
+    grd.addColorStop(0.5, rgba(col, 0.08));
+    grd.addColorStop(1, rgba(col, 0));
+    g.fillStyle = grd;
+    g.beginPath();
+    g.arc(c.x, c.y, infl, 0, TAU);
+    g.fill();
+  }
+  g.restore();
+
+  // 2) hyperlane network — the hero. A soft glow underlay + a bright core, tinted
+  //    by ownership when a lane runs between two systems of the same power.
+  g.lineCap = 'round';
+  for (const [from, to] of MAP_LINKS) {
+    const A = s.planets[from];
+    const B = s.planets[to];
+    if (!A || !B) continue;
+    const a = world(A.position);
+    const b = world(B.position);
+    if ((a.x < 0 && b.x < 0) || (a.x > VW && b.x > VW) || (a.y < 0 && b.y < 0) || (a.y > VH && b.y > VH)) continue;
+    const lane = A.owner && A.owner === B.owner ? ownerColor(A.owner) : '#35d6e6';
+    g.strokeStyle = rgba(lane, 0.1);
+    g.lineWidth = 3.4;
+    g.beginPath();
+    g.moveTo(a.x, a.y);
+    g.lineTo(b.x, b.y);
+    g.stroke();
+    g.strokeStyle = rgba(lane, 0.5);
+    g.lineWidth = 1;
+    g.beginPath();
+    g.moveTo(a.x, a.y);
+    g.lineTo(b.x, b.y);
+    g.stroke();
   }
 }
 
-function drawProvinces(): void {
-  buildProvinces();
-  // Draw in base space under the live camera (translate+scale matches world()),
-  // so the vector cells pan/zoom locked to the planets — no shimmer, no stretch.
+/** Blit the cached static layer (device-pixel 1:1) beneath the live dynamic art. */
+function blitStaticLayer(): void {
+  buildStaticLayer();
   cx.save();
-  cx.translate(cam.x, cam.y);
-  cx.scale(cam.scale, cam.scale);
-  const trace = (poly: Array<[number, number]>): void => {
-    cx.beginPath();
-    cx.moveTo(poly[0]![0], poly[0]![1]);
-    for (let i = 1; i < poly.length; i++) cx.lineTo(poly[i]![0], poly[i]![1]);
-    cx.closePath();
-  };
-  for (const cell of provCells) {
-    trace(cell.poly);
-    cx.fillStyle = rgba(cell.col, cell.owner === 'void' ? 0.05 : 0.11);
-    cx.fill();
-  }
-  // faint province borders — vector, so ~1px on screen at any zoom
-  cx.lineWidth = 1 / cam.scale;
-  cx.strokeStyle = rgba('#7df0d0', 0.16);
-  for (const cell of provCells) {
-    trace(cell.poly);
-    cx.stroke();
-  }
+  cx.setTransform(1, 0, 0, 1, 0, 0);
+  cx.drawImage(bg, 0, 0);
   cx.restore();
 }
 
+
 function render(now: number) {
   cx.setTransform(DPR, 0, 0, DPR, 0, 0); // draw in CSS pixels, crisp on hi-DPI
-  drawScope(now);
-  drawProvinces();
-
-  // jump lanes — cached links with animated energy packets
-  for (const [from, to] of MAP_LINKS) {
-    const aPlanet = s.planets[from];
-    const bPlanet = s.planets[to];
-    if (!aPlanet || !bPlanet) continue;
-    const a = world(aPlanet.position);
-    const b = world(bPlanet.position);
-    if (!visible(a, 120) && !visible(b, 120)) continue;
-    drawWarpLane(a, b);
-  }
+  blitStaticLayer(); // cached backdrop + territory glow + hyperlane network
+  drawScanSweep(now); // slow radar sweep — pure console chrome
+  drawLaneEnergy(now); // live energy packets flowing along the lanes
 
   drawFleetRoutes();
 
@@ -1388,7 +1379,7 @@ function render(now: number) {
     }
 
     const aura = cx.createRadialGradient(c.x, c.y, 0, c.x, c.y, R + 34);
-    aura.addColorStop(0, rgba(col, showOwner ? 0.18 : 0.08));
+    aura.addColorStop(0, rgba(col, showOwner ? 0.28 : 0.09));
     aura.addColorStop(0.55, rgba(sector, 0.06 + 0.04 * ownerPulse));
     aura.addColorStop(1, 'rgba(2,6,12,0)');
     cx.fillStyle = aura;
