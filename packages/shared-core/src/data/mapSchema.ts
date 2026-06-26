@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { ResourceBagSchema } from './schemas';
+
 /**
  * Map-as-content (map-roadmap.md M1.1). A **map** is a data-driven match setup:
  * a graph of **sectors** (the atomic unit — a capture point with paths to its
@@ -47,7 +49,7 @@ export const MapSectorSchema = z.object({
 const MapPlayerSchema = z.object({
   name: z.string(),
   faction: z.string(),
-  resources: z.record(z.string(), z.number()).default({}),
+  resources: ResourceBagSchema.default({}),
 });
 
 const MapFleetSchema = z.object({

@@ -202,12 +202,18 @@ export class Kernel {
 
       const next = earliestDue(committed.scheduled, ctx.now);
       if (next) {
-        // Accrue continuous time from the current instant up to the event.
+        // Accrue continuous time up to the event FIRST, then loop to re-read the
+        // head. `accrue` emits `time.advanced`, whose handlers may legitimately
+        // schedule new (possibly earlier) events — so the captured `next` must NOT
+        // be carried across the accrue boundary, or we'd drop the fresher head and
+        // dispatch a stale one (events out of (at, seq) order). Once accrued, the
+        // head is due at the current instant and handled by the branch below.
         if (next.at > committed.time) {
           committed = this.accrue(committed, ctx, next.at, events, failures);
+          continue;
         }
-        // Remove the head event (always at index 0 in sorted order) before
-        // dispatch so a failing handler cannot get the timeline stuck.
+        // Head is due now (at === committed.time): remove it (index 0 in sorted
+        // order) before dispatch so a failing handler cannot wedge the timeline.
         const base: GameState = {
           ...committed,
           scheduled: committed.scheduled.slice(1),
@@ -284,7 +290,10 @@ export class Kernel {
         queue.push(event);
       },
       schedule: (at, type, payload) => {
-        const safeAt = at < draft.time ? draft.time : at;
+        // Clamp against THIS step's instant, not draft.time (which is only stamped
+        // to stepTime at the end of runStep — during the handler it's still the
+        // previous committed time, which would let an event land in the past).
+        const safeAt = at < stepTime ? stepTime : at;
         const seq = draft.scheduleSeq++;
         const event: ScheduledEvent = { id: `evt:${seq}`, at: safeAt, type, payload: payload ?? null, seq };
         // Sorted insert keeps the array in (at, seq) order so earliestDue is O(1).

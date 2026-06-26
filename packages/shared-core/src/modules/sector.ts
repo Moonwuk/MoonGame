@@ -51,7 +51,9 @@ export const sectorModule: GameModule = {
       // Sector toughness: everyone in the sector effectively gains HP, modelled
       // as reduced incoming damage (same survivability, no pool rescaling).
       const type = planet.terrain ? h.ctx.data.sectors[planet.terrain] : undefined;
-      if (type && type.hpBonus !== 0) {
+      // Guard 1 + bonus > 0 too: a hpBonus of -1 would divide by zero (Infinity),
+      // < -1 would flip the sign — mirrors the planetType.ts twin.
+      if (type && type.hpBonus !== 0 && 1 + type.hpBonus > 0) {
         result /= 1 + type.hpBonus;
       }
       // Home advantage: the side owning this sector hits harder.

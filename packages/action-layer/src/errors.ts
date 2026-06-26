@@ -2,7 +2,6 @@ export type ActionLayerErrorCode =
   | 'E_BAD_PAYLOAD'
   | 'E_BAD_ACTION_ID'
   | 'E_FORBIDDEN'
-  | 'E_DUPLICATE'
   | 'E_REPLAY'
   | 'E_OUT_OF_ORDER';
 

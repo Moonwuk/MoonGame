@@ -12,7 +12,7 @@ function emptyScore(): MatchScore {
 
 /** Tallies a unit list: every unit raises the headcount (used for the alive
  *  check), but only super-units add to the score (ordinary military never does). */
-function addUnits(score: MatchScore, stacks: readonly UnitStack[], data: GameData): void {
+function tallyUnits(score: MatchScore, stacks: readonly UnitStack[], data: GameData): void {
   for (const stack of stacks) {
     score.units += stack.count;
     const def = data.units[stack.unit];
@@ -55,7 +55,7 @@ function computeScores(h: HandlerContext): Record<PlayerId, MatchScore> {
         score.total += def.scoreValue * building.level;
       }
     }
-    addUnits(score, planet.garrison, data);
+    tallyUnits(score, planet.garrison, data);
   }
 
   for (const fleet of Object.values(h.state.fleets)) {
@@ -64,8 +64,8 @@ function computeScores(h: HandlerContext): Record<PlayerId, MatchScore> {
       continue;
     }
     score.fleets += 1;
-    addUnits(score, fleet.units, data);
-    addUnits(score, fleet.landing ?? [], data);
+    tallyUnits(score, fleet.units, data);
+    tallyUnits(score, fleet.landing ?? [], data);
   }
 
   return scores;

@@ -307,8 +307,9 @@ export const constructionModule: GameModule = {
         return; // planet gone or captured mid-build → investment forfeited
       }
       if (isBombarded(h.state, planet.id)) {
-        // production frozen under bombardment → re-defer until it lifts
-        h.schedule(h.ctx.now + MS_PER_HOUR, 'construction.complete', p);
+        // production frozen under bombardment → re-defer until it lifts (scale the
+        // retry by timeScale like every other duration, so a fast match isn't stuck)
+        h.schedule(h.ctx.now + MS_PER_HOUR / timeScaleOf(h.ctx), 'construction.complete', p);
         return;
       }
       if (p.kind === 'building' && typeof p.building === 'string') {

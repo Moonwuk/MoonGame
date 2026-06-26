@@ -2,7 +2,16 @@ import type { GameState } from './gameState';
 
 const COLLECTIONS = ['players', 'planets', 'fleets', 'battles'] as const;
 type Collection = (typeof COLLECTIONS)[number];
-const META_KEYS = ['version', 'time', 'match', 'rng', 'battleSeq', 'scheduled', 'scheduleSeq'] as const;
+const META_KEYS = [
+  'version',
+  'time',
+  'match',
+  'rng',
+  'battleSeq',
+  'scheduled',
+  'scheduleSeq',
+  'fog',
+] as const;
 
 /**
  * A minimal patch between two `GameState`s: per keyed collection only the

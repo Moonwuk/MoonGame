@@ -375,7 +375,12 @@ function finishBattle(h: HandlerContext, battle: Battle, stalemate = false): voi
   if (battle.phase === 'orbital') {
     if (battle.attacker.ref.kind === 'fleet' && aAlive) {
       const f = h.state.fleets[battle.attacker.ref.fleetId];
-      if (f) f.orbit = 'far'; // victor holds the far orbit — take the planet via fleet.assault
+      // Victor holds the far orbit — and you can't bombard from far, so clear it
+      // too (the fleet.orbit action enforces the same invariant).
+      if (f) {
+        f.orbit = 'far';
+        f.bombarding = false;
+      }
       engageFleets(h, battle.attacker.ref.fleetId, battle.location); // clear any other defender
     }
   }
@@ -499,6 +504,7 @@ export const combatModule: GameModule = {
       const fleet = h.state.fleets[fleetId];
       if (fleet && !fleet.battleId) {
         fleet.orbit = 'far'; // arrive into the safe far orbit; assault is deliberate
+        fleet.bombarding = false; // can't bombard from far (keep the invariant)
       }
       engageFleets(h, fleetId, at);
     });

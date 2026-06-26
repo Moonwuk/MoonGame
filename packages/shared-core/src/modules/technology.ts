@@ -3,9 +3,8 @@ import { timeScaleOf } from '../action/types';
 import type { GameData, ResourceBag, TechnologyDef } from '../data/schemas';
 import type { GameModule, HandlerContext } from '../kernel/module';
 import type { Player, PlayerTechnologyState } from '../state/gameState';
+import { MS_PER_HOUR } from '../util/time';
 import { canAfford, payCost } from '../util/treasury';
-
-const MS_PER_HOUR = 3_600_000;
 
 interface ResearchPayload {
   technology: string;

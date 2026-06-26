@@ -124,6 +124,16 @@ const infiniteModule: GameModule = {
   },
 };
 
+// On an action, schedules an event in the PAST (before the action instant). The
+// kernel must clamp it UP to the step instant — never land it behind `state.time`.
+const armPastModule: GameModule = {
+  id: 'arm-past',
+  version: '1.0.0',
+  setup(api) {
+    api.onAction('arm.past', (_a, h) => h.schedule(500, 'late'));
+  },
+};
+
 // Schedules events from an action payload (exercises schedule() via applyAction).
 const plannerModule: GameModule = {
   id: 'planner',
@@ -255,5 +265,16 @@ describe('advanceTo — real-time timeline (docs/architecture.md §4.1)', () => 
 
     const r = okAdvance(kernel.advanceTo(planned.state, ctx(150)));
     expect(domainTypes(r.events)).toEqual(['ping']);
+  });
+
+  it('KRN-2: schedule() clamps a past instant up to the step, never behind state.time', () => {
+    const kernel = createKernel([armPastModule]);
+    // action at t=1000 over a state still at t=0; the handler schedules at t=500
+    const r = kernel.applyAction(stateWith({ time: 0 }), action('arm.past', null), ctx(1000));
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const late = r.state.scheduled.find((e) => e.type === 'late');
+    expect(late?.at).toBe(1000); // clamped UP to the action instant, not left at 500
+    expect(r.state.scheduled.every((e) => e.at >= r.state.time)).toBe(true); // none in the past
   });
 });
