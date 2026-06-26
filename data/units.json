@@ -5,6 +5,7 @@
     "line": "rear",
     "traits": [],
     "abilities": ["long_range_scan"],
+    "signature": 1,
     "cost": { "metal": 40 },
     "upkeep": { "credits": 2 }
   },
@@ -14,6 +15,7 @@
     "line": "front",
     "traits": [],
     "abilities": [],
+    "signature": 4,
     "cost": { "metal": 220, "credits": 80 },
     "upkeep": { "credits": 8 }
   },
@@ -23,6 +25,7 @@
     "line": "rear",
     "traits": ["artillery"],
     "abilities": [],
+    "signature": 5,
     "cost": { "metal": 260, "credits": 140 },
     "upkeep": { "credits": 12 }
   },
@@ -33,6 +36,7 @@
     "line": "rear",
     "traits": [],
     "abilities": [],
+    "signature": 4,
     "cost": { "metal": 180, "credits": 40 },
     "upkeep": { "credits": 5 }
   },
@@ -43,6 +47,7 @@
     "line": "front",
     "traits": [],
     "abilities": [],
+    "signature": 1,
     "cost": { "metal": 40 },
     "upkeep": { "credits": 1 }
   },
@@ -53,6 +58,7 @@
     "line": "front",
     "traits": [],
     "abilities": [],
+    "signature": 1,
     "cost": { "metal": 60, "credits": 20 },
     "upkeep": { "credits": 2 }
   },
@@ -63,6 +69,7 @@
     "line": "front",
     "traits": [],
     "abilities": [],
+    "signature": 2,
     "cost": { "metal": 140, "credits": 40 },
     "upkeep": { "credits": 4 }
   },
@@ -73,6 +80,7 @@
     "line": "rear",
     "traits": [],
     "abilities": [],
+    "signature": 2,
     "cost": { "metal": 120, "credits": 40 },
     "upkeep": { "credits": 3 }
   },
@@ -82,6 +90,7 @@
     "line": "front",
     "traits": ["infect_planet", "no_food_cost"],
     "abilities": ["spread_biomass"],
+    "signature": 4,
     "cost": { "biomass": 200, "dark_matter": 50 },
     "upkeep": { "biomass": 6 }
   },
@@ -91,6 +100,7 @@
     "line": "mid",
     "traits": ["reanimate_on_kill"],
     "abilities": [],
+    "signature": 2,
     "cost": { "dark_matter": 30 },
     "upkeep": { "dark_matter": 2 }
   }

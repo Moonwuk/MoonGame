@@ -43,6 +43,7 @@ export const data: GameData = parseGameData({
     scout: {
       faction: 'blue',
       stats: { attack: 5, defense: 4, speed: 64, hp: 12, cargoCapacity: 1 },
+      signature: 1, // quiet recon hull
       cost: { metal: 20 },
       buildTimeHours: 1,
       upkeep: { credits: 1 },
@@ -51,6 +52,7 @@ export const data: GameData = parseGameData({
       faction: 'blue',
       stats: { attack: 16, defense: 14, speed: 40, hp: 60, cargoCapacity: 5 },
       line: 'front',
+      signature: 4, // big warship — broadcasts
       cost: { metal: 60, credits: 20 },
       buildTimeHours: 3,
       upkeep: { credits: 4 },
@@ -59,6 +61,7 @@ export const data: GameData = parseGameData({
       faction: 'blue',
       stats: { attack: 30, defense: 6, speed: 30, hp: 40, range: 3 },
       traits: ['artillery'],
+      signature: 5, // huge siege platform — loudest
       cost: { metal: 90, credits: 40 },
       buildTimeHours: 5,
       upkeep: { credits: 6 },
@@ -68,6 +71,7 @@ export const data: GameData = parseGameData({
       stats: { attack: 12, defense: 12, speed: 52, hp: 24 },
       domain: 'ground',
       traits: ['ground'],
+      signature: 1, // ground trooper — faint
       cost: { metal: 30 },
       buildTimeHours: 2,
       upkeep: { credits: 2 },
@@ -78,6 +82,7 @@ export const data: GameData = parseGameData({
       domain: 'ground',
       traits: ['ground', 'immobile'], // a fixed emplacement — can't be lifted onto a fleet
       line: 'rear',
+      signature: 2, // emplacement — moderate return
       cost: { metal: 110, credits: 30 },
       buildTimeHours: 4,
       upkeep: { credits: 3 },

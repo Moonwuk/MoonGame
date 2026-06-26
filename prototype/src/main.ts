@@ -269,6 +269,13 @@ let sweepCx = 0;
 let sweepCy = 0;
 let sweepAng = 0;
 let sweepOn = false;
+let sweepPrevAng = -1; // previous frame's arm angle, for "did the arm cross X" tests
+const SWEEP_DIV = 1600; // sweep angular rate: ang = now / SWEEP_DIV
+const SWEEP_PERIOD = TAU * SWEEP_DIV; // ms for a full rotation (~10s) — the radar refresh tick
+/** Radar contacts as PAINTED BY THE SWEEP: a signature is refreshed only as the arm
+ *  crosses it, then lingers at that last-swept spot (a dim ghost) until the next
+ *  pass repaints it — so radar gives periodic snapshots, never a live feed. */
+const radarMemory = new Map<string, { node: string; size: 'S' | 'M' | 'L'; at: number }>();
 
 /** How brightly a contact at screen-point `c` is lit by the sweep: 1 the instant
  *  the arm crosses it, fading linearly back to 0 just before the next pass (so the
@@ -290,7 +297,7 @@ function drawScanSweep(now: number) {
   const mc = world({ x: (MINX + MAXX) / 2, y: (MINY + MAXY) / 2 });
   const cxp = mc.x;
   const cyp = mc.y;
-  const ang = (now / 7000) % TAU;
+  const ang = (now / SWEEP_DIV) % TAU;
   sweepCx = cxp;
   sweepCy = cyp;
   sweepAng = ang;
@@ -307,6 +314,59 @@ function drawScanSweep(now: number) {
   cx.fillStyle = grd;
   cx.fillRect(0, 0, VW, VH);
   cx.restore();
+}
+
+/** Did the sweep arm cross screen-angle `target` between last frame and this one? */
+function sweptThisFrame(target: number): boolean {
+  if (sweepPrevAng < 0) return false;
+  const d = (sweepAng - sweepPrevAng + TAU) % TAU; // arc the arm swept this frame
+  if (d <= 0) return false;
+  const t = (((target % TAU) + TAU) % TAU - sweepPrevAng + TAU) % TAU;
+  return t > 0 && t <= d;
+}
+
+/** Refresh radar contacts the arm crossed this frame: snapshot each radar-only enemy
+ *  fleet's spot + coarse size when the sweep paints it. Runs every frame. */
+function updateRadarContacts(now: number): void {
+  if (!sweepOn) return;
+  if (vision) {
+    for (const f of Object.values(s.fleets)) {
+      if (f.owner === ME) continue;
+      const fn = fleetNode(f);
+      if (!fn || known(fn) || !radarHas(fn)) continue; // identified or out of radar → not a signature
+      const node = s.planets[fn];
+      if (!node) continue;
+      const pos = world(node.position);
+      if (sweptThisFrame(Math.atan2(pos.y - sweepCy, pos.x - sweepCx))) {
+        radarMemory.set(f.id, { node: fn, size: sigClass(fleetSignature(f)), at: now });
+      }
+    }
+  }
+  sweepPrevAng = sweepAng;
+}
+
+/** Draw the remembered radar contacts: a bright flash when freshly swept, settling
+ *  to a dim last-known ghost held until the next pass repaints it; dropped once a full
+ *  rotation passes with no repaint (the contact has moved on / is gone). */
+function drawRadarContacts(now: number): void {
+  const FLOOR = 0.32; // dim ghost level the imprint holds between passes
+  const FLASH = 1400; // ms of bright flash right after the arm paints it
+  for (const [id, m] of radarMemory) {
+    const age = now - m.at;
+    if (age > SWEEP_PERIOD * 1.25) {
+      radarMemory.delete(id); // a whole turn with no repaint → contact lost
+      continue;
+    }
+    const node = s.planets[m.node];
+    if (!node) {
+      radarMemory.delete(id);
+      continue;
+    }
+    const pos = world(node.position);
+    if (!visible(pos, 120)) continue;
+    const bright = FLOOR + (1 - FLOOR) * Math.max(0, 1 - age / FLASH);
+    drawSignatureAt(pos, m.size, bright, now);
+  }
 }
 
 // Project a map-space point into the on-screen play area (inside the HUD insets).
@@ -665,10 +725,9 @@ function laneAim(
   return hFrom <= hTo ? { endId: lane.from, hrs: hFrom } : { endId: lane.to, hrs: hTo };
 }
 
-// --- radar / signatures (prototype-local; a future core `signature` stat + a
-//     `radar.source` hook will move these into data) -------------------------
-// How "loud" each unit is to enemy radar — big hulls broadcast, recon is quiet.
-const SIGNATURE: Record<string, number> = { scout: 1, marine: 1, orbital_aa: 2, cruiser: 4, siege: 5 };
+// --- radar / signatures ------------------------------------------------------
+// Per-unit radar "loudness" now lives in the content (`data.units[u].signature`,
+// shared-core schema) — big hulls broadcast, recon is quiet.
 // Radar-ship classes: a fleet carrying one projects radar this far (DISTANCE, map units).
 const RADAR_SHIP: Record<string, number> = { scout: 350 };
 // Radar-array detection radius (DISTANCE, map units) by building level.
@@ -678,10 +737,10 @@ const SENSOR_HOPS = 1; // identify (full-detail) range from any owned node / fle
 // full identification within the inner half (mirrors shared-core visibility).
 const IDENTIFY_REACH_FRACTION = 0.5;
 
-/** Total radar signature of a fleet = Σ count × per-unit signature. */
+/** Total radar signature of a fleet = Σ count × per-unit signature (from content). */
 function fleetSignature(f: Fleet): number {
   let sig = 0;
-  for (const st of f.units) sig += st.count * (SIGNATURE[st.unit] ?? 1);
+  for (const st of f.units) sig += st.count * (data.units[st.unit]?.signature ?? 1);
   return sig;
 }
 /** Coarse size bucket shown for a radar contact (reuses the count-label idea). */
@@ -835,18 +894,16 @@ function drawFogMarker(c: { x: number; y: number }, id: string, mem: Snapshot | 
   cx.restore();
 }
 
-/** Draw an enemy fleet detected by radar only — a coarse amber signature blip
- *  (size bucket S/M/L from its signature strength), with no identity. */
-function drawSignature(f: Fleet, now: number): void {
-  const A = fleetAnchor(f);
-  if (!A || !visible(A, 120)) return;
-  const cls = sigClass(fleetSignature(f));
+/** Draw a coarse amber signature blip (size bucket S/M/L) at a screen point, no
+ *  identity. `fade` (0..1) dims it — radar contacts are painted by the sweep and
+ *  fade between passes (see drawRadarContacts). */
+function drawSignatureAt(pos: { x: number; y: number }, cls: 'S' | 'M' | 'L', fade: number, now: number): void {
   const r = cls === 'L' ? 9 : cls === 'M' ? 7 : 5;
-  const pulse = 0.5 + 0.5 * Math.sin(now / 200 + A.x * 0.05);
+  const pulse = 0.5 + 0.5 * Math.sin(now / 200 + pos.x * 0.05);
   cx.save();
-  cx.translate(A.x, A.y);
-  cx.strokeStyle = rgba('#ffb43a', 0.5 + 0.3 * pulse); // amber = unidentified contact
-  cx.fillStyle = rgba('#ffb43a', 0.1 + 0.08 * pulse);
+  cx.translate(pos.x, pos.y);
+  cx.strokeStyle = rgba('#ffb43a', (0.5 + 0.3 * pulse) * fade); // amber = unidentified contact
+  cx.fillStyle = rgba('#ffb43a', (0.1 + 0.08 * pulse) * fade);
   cx.lineWidth = 1.3;
   cx.beginPath(); // diamond
   cx.moveTo(0, -r);
@@ -856,7 +913,7 @@ function drawSignature(f: Fleet, now: number): void {
   cx.closePath();
   cx.fill();
   cx.stroke();
-  cx.fillStyle = rgba('#ffd98a', 0.92);
+  cx.fillStyle = rgba('#ffd98a', 0.92 * fade);
   cx.font = '700 9px ui-monospace,Menlo,monospace';
   cx.textAlign = 'center';
   cx.fillText('◆' + cls, 0, r + 12);
@@ -1604,6 +1661,7 @@ function render(now: number) {
   cx.setTransform(DPR, 0, 0, DPR, 0, 0); // draw in CSS pixels, crisp on hi-DPI
   blitStaticLayer(); // cached backdrop + province political map
   drawScanSweep(now); // slow radar sweep — pure console chrome
+  updateRadarContacts(now); // the arm paints enemy signatures as it crosses them
   drawRadarCoverage(); // my sensor reach (radar arrays + ships)
 
   drawFleetRoutes();
@@ -1918,8 +1976,8 @@ function render(now: number) {
     if (f.owner !== ME) {
       const fn = fleetNode(f);
       if (!known(fn)) {
-        // not identified: a radar contact shows only a coarse signature, not the fleet
-        if (radarHas(fn)) drawSignature(f, now);
+        // not identified: a radar contact is shown only as a swept signature
+        // (drawRadarContacts), painted by the arm and remembered — never live here.
         continue;
       }
     }
@@ -2017,6 +2075,8 @@ function render(now: number) {
       cx.fillText(f.orbit === 'near' ? 'N' : 'F', A.x, A.y - 12);
     }
   }
+
+  drawRadarContacts(now); // swept enemy signatures — last-known ghosts until repainted
 
   if (selectionBox) {
     const x = Math.min(selectionBox.x1, selectionBox.x2);
