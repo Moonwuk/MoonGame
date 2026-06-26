@@ -1063,6 +1063,47 @@ function drawBattlePulse(x: number, y: number, pulse: number) {
   cx.restore();
 }
 
+/**
+ * Faint rings for my own radar reach (planet arrays + radar-ships). The reach is
+ * a Euclidean distance in MAP units (array L1/L2/L3 = 300/500/700), so on the
+ * projected map it reads as an ellipse — projecting the radius on each axis
+ * matches how `withinRadius` actually senses (a true circle in map space). Makes
+ * "what my sensors cover" tangible; only meaningful with fog on.
+ */
+function drawRadarCoverage() {
+  if (!fogOn) return;
+  const sources: Array<{ x: number; y: number; r: number }> = [];
+  for (const p of Object.values(s.planets)) {
+    if (p.owner !== ME) continue;
+    const r = planetRadar(p);
+    if (r > 0) sources.push({ x: p.position.x, y: p.position.y, r });
+  }
+  for (const f of Object.values(s.fleets)) {
+    if (f.owner !== ME) continue;
+    const r = fleetRadar(f);
+    const node = r > 0 ? fleetNode(f) : null;
+    const pos = node ? s.planets[node]?.position : null;
+    if (pos) sources.push({ x: pos.x, y: pos.y, r });
+  }
+  if (!sources.length) return;
+  cx.save();
+  for (const src of sources) {
+    const c = world({ x: src.x, y: src.y });
+    const rx = world({ x: src.x + src.r, y: src.y }).x - c.x;
+    const ry = world({ x: src.x, y: src.y + src.r }).y - c.y;
+    if (!(rx > 0) || !(ry > 0)) continue;
+    cx.beginPath();
+    cx.ellipse(c.x, c.y, rx, ry, 0, 0, TAU);
+    cx.fillStyle = rgba(LOCK, 0.04);
+    cx.fill();
+    cx.setLineDash([3, 7]);
+    cx.lineWidth = 1;
+    cx.strokeStyle = rgba(LOCK, 0.22);
+    cx.stroke();
+  }
+  cx.restore();
+}
+
 /** The planned route of every moving fleet of mine — dashed, brighter if selected. */
 function drawFleetRoutes() {
   for (const f of Object.values(s.fleets)) {
@@ -1372,6 +1413,7 @@ function render(now: number) {
   cx.setTransform(DPR, 0, 0, DPR, 0, 0); // draw in CSS pixels, crisp on hi-DPI
   blitStaticLayer(); // cached backdrop + province political map
   drawScanSweep(now); // slow radar sweep — pure console chrome
+  drawRadarCoverage(); // my sensor reach (radar arrays + ships)
 
   drawFleetRoutes();
 
