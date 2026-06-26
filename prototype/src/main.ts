@@ -29,7 +29,7 @@ import {
   buildUnit,
   type StepOut,
 } from './game';
-import { buildingMaxLevel, estimateTravelHours } from '../../packages/shared-core/src/index';
+import { buildingMaxLevel, estimateTravelHours, planRoute } from '../../packages/shared-core/src/index';
 import { MultiplayerClient } from '../../packages/client/src/index';
 import type {
   GameState,
@@ -1049,9 +1049,21 @@ function drawAimPreview() {
     if (!f) continue;
     const a = fleetAnchor(f);
     if (!a) continue;
+    // draw the ROUTED march path through province centres (Bytro-style), so you
+    // see the actual road the army will take — not a straight line to the target.
+    const from = f.location ?? f.movement?.to ?? null;
+    const pts: Array<{ x: number; y: number }> = [a];
+    if (from && targetId && targetId !== from) {
+      const route = planRoute(s, from, targetId);
+      if (route) for (const hop of route) {
+        const pl = s.planets[hop];
+        if (pl) pts.push(world(pl.position));
+      }
+    }
+    if (pts.length === 1) pts.push(tip);
     cx.beginPath();
-    cx.moveTo(a.x, a.y);
-    cx.lineTo(tip.x, tip.y);
+    cx.moveTo(pts[0]!.x, pts[0]!.y);
+    for (let i = 1; i < pts.length; i++) cx.lineTo(pts[i]!.x, pts[i]!.y);
     cx.stroke();
   }
   if (target) {
