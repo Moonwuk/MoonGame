@@ -188,6 +188,8 @@ export function visibleState(state: GameState, viewerId: PlayerId, data: GameDat
       else planet.terrain = snap.terrain;
       if (snap.planetType === undefined) delete planet.planetType;
       else planet.planetType = snap.planetType;
+      if (snap.kind === undefined) delete planet.kind;
+      else planet.kind = snap.kind;
       remembered.push(planet.id);
     } else {
       planet.owner = null;
@@ -196,6 +198,7 @@ export function visibleState(state: GameState, viewerId: PlayerId, data: GameDat
       planet.resources = {};
       delete planet.terrain;
       delete planet.planetType;
+      delete planet.kind;
     }
   }
   remembered.sort();

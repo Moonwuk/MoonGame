@@ -48,7 +48,14 @@ export {
   validateMatchMap,
   type BuildFromMapOptions,
 } from './state/buildFromMap';
-export { sectorKindDef, isCapturable, isBuildable, hasOrbit } from './state/sectorKind';
+export {
+  sectorKindDef,
+  isCapturable,
+  isBuildable,
+  hasOrbit,
+  allowedBuildings,
+  sectorAppearance,
+} from './state/sectorKind';
 export {
   planRoute,
   routeDistance,
@@ -128,6 +135,7 @@ export {
   type EffectRule,
   type SectorTypeDef,
   type SectorKindDef,
+  type SectorKindAppearance,
   type PlanetTypeDef,
   type TechnologyDef,
   type TechnologyEffects,

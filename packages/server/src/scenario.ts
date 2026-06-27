@@ -91,6 +91,7 @@ function planet(
   y: number,
   links: string[],
   planetType: string,
+  kind = 'planet', // every node is a province; planets are one province type among many
 ): Planet {
   return {
     id,
@@ -99,6 +100,7 @@ function planet(
     links,
     terrain: 'empty_space',
     planetType,
+    kind,
     resources: {},
     buildings: [],
     garrison: [],

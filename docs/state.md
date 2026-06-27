@@ -201,12 +201,20 @@ E_ORBIT_CONTESTED, E_NO_TROOPS, E_OWN_PLANET, E_NO_PLANET, E_FLEET_BUSY,…`.
   на планету; юниты идут в гарнизон. Коды: `E_BAD_PAYLOAD, E_NO_PLANET,
 E_FORBIDDEN, E_UNKNOWN_BUILDING/UNIT, E_ALREADY_BUILT, E_ALREADY_QUEUED,
 E_NO_BUILDING, E_MAX_LEVEL, E_INSUFFICIENT, E_BOMBARDED, E_WRONG_SECTOR`.
-- **Ростер по типу провинции:** у постройки поле `BuildingDef.allowedKinds` (виды
-  сектора, `data/sectorKinds`); пусто = где угодно. `building.construct` проверяет, что
-  `planet.kind` ∈ `allowedKinds`, иначе `E_WRONG_SECTOR` (kind не задан → пермиссивно).
+- **Ростер по типу провинции (province-centric):** `sectorKinds[kind].allowedBuildings`
+  — единый источник «что здесь строится», редактируется в одном месте. `building.construct`
+  проверяет `building ∈ allowedBuildings`, иначе `E_WRONG_SECTOR`. Отсутствует/`undefined`
+  = любое здание (kind не задан → пермиссивно); явный `[]` = строить нельзя (empty/debris).
   Так у каждого типа свои постройки: **планета** — всё; **астероид** — шахты/радар/форт;
   **туманность** — радар/форт; **`void_station`** — верфь/космопорт/радар/форт (без шахт/казарм).
-- На `construction.complete`: добавляет здание/уровень/юнитов **если ещё владеешь
+- **`sectorKinds` = единый реестр типов провинций** (планета — тоже провинция): на каждый kind
+  — структурные флаги (`capturable/buildable/orbit`) + ростер (`allowedBuildings`) + вид на карте
+  (`appearance{color,label,shape}`, резолвится по kind на клиенте, в `GameState` не хранится).
+  Аксессоры: `allowedBuildings(data, planet)`, `sectorAppearance(data, planet)`. Экономические
+  слои (`terrain`/`planetType`: производство/защита/скорость/HP/очки) остаются ортогональными.
+  `PlanetSnapshot.kind` снапшотится в тумане → неразведанный узел не утекает истинным типом,
+  а вспомненный показывает запомненный. Прототип красит провинцию по `appearance.color` и
+  показывает тип + ростер в панели.
   планетой** (иначе вложение сгорает); **под бомбардировкой — пауза** (re-defer).
 - Хук `combat.damage`: **бонус обороны гарнизона** = сумма `defenseBonus`
   зданий (наземная фаза). На `combat.round` (наземный штурм) и на

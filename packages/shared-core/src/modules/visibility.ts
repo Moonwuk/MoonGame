@@ -22,6 +22,7 @@ function snapshot(state: GameState, planetId: PlanetId, now: number): PlanetSnap
   };
   if (planet.terrain !== undefined) snap.terrain = planet.terrain;
   if (planet.planetType !== undefined) snap.planetType = planet.planetType;
+  if (planet.kind !== undefined) snap.kind = planet.kind;
   return snap;
 }
 

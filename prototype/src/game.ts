@@ -191,11 +191,14 @@ export interface SectorType {
   buildable: boolean;
   orbit: boolean;
   color: string;
+  /** Province-centric build roster (the buildings raisable here). Absent = the
+   *  default `BUILDABLE` set. Mirrors core `sectorKinds.allowedBuildings`. */
+  allowedBuildings?: string[];
 }
 export const SECTOR_TYPES: Record<string, SectorType> = {
   planet: { name: 'Planet', core: 'empty_space', capturable: true, buildable: true, orbit: true, color: '#5fd0ff' },
   nebula: { name: 'Nebula', core: 'nebula', capturable: true, buildable: true, orbit: true, color: '#8f6dff' },
-  asteroid: { name: 'Asteroid Field', core: 'asteroid_field', capturable: true, buildable: true, orbit: false, color: '#d6a645' },
+  asteroid: { name: 'Asteroid Field', core: 'asteroid_field', capturable: true, buildable: true, orbit: false, color: '#d6a645', allowedBuildings: ['starfort'] },
   empty: { name: 'Empty Space', core: 'empty_space', capturable: false, buildable: false, orbit: false, color: '#46606e' },
   // new terrains — each maps to a core `data.sectors` entry for its speed/HP bonus
   ion_storm: { name: 'Ion Storm', core: 'ion_storm', capturable: true, buildable: true, orbit: true, color: '#6fe3ff' },

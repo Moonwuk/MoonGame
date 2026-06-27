@@ -169,3 +169,40 @@ describe('visibleState (fog of war as a security boundary)', () => {
     expect(view.planets.Y?.garrison).toHaveLength(1);
   });
 });
+
+describe('visibleState — province kind is fog-gated (no appearance leak)', () => {
+  // p1 sees only its lone fleet at X; the distant enemy node E (kind void_station) is
+  // unseen. Its TRUE kind must not leak — else a client would render its real
+  // appearance through the fog.
+  function state(fog?: GameState['fog']): GameState {
+    const base = createInitialState({ seed: 'fogkind', version: { data: '0.1.0', manifest: '1' } });
+    const s: GameState = {
+      ...base,
+      players: { p1: player('p1'), p2: player('p2') },
+      planets: {
+        X: planet('X', null, [], { position: { x: 0, y: 0 }, kind: 'empty' }),
+        E: planet('E', 'p2', [], { position: { x: 9000, y: 0 }, kind: 'void_station' }),
+      },
+      fleets: { lone: fleet('lone', 'p1', 'X', [['cruiser', 1]]) },
+    };
+    if (fog) s.fog = fog;
+    return s;
+  }
+
+  it('an unseen node never ships its true kind', () => {
+    const view = visibleState(state(), 'p1', data);
+    expect(view.planets.E?.kind).toBeUndefined();
+    expect(JSON.stringify(view)).not.toContain('void_station');
+  });
+
+  it('a remembered node shows its snapshotted kind, not the live one', () => {
+    // p1 remembers E as plain `empty` (older snapshot); it has since become void_station.
+    const view = visibleState(
+      state({ p1: { E: { owner: null, garrison: [], buildings: [], kind: 'empty', at: 0 } } }),
+      'p1',
+      data,
+    );
+    expect(view.planets.E?.kind).toBe('empty'); // remembered, not the live void_station
+    expect(view.remembered).toContain('E');
+  });
+});

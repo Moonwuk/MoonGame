@@ -271,6 +271,9 @@ export interface PlanetSnapshot {
   buildings: BuildingInstance[];
   terrain?: string;
   planetType?: string;
+  /** Province type (`kind`) at snapshot time — so a remembered node renders its
+   *  last-known appearance, and an unseen node never leaks its true kind. */
+  kind?: string;
   /** Simulation time (ms) this snapshot was taken. */
   at: number;
 }

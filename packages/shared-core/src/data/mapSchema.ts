@@ -28,9 +28,9 @@ const MapBuildingSchema = z.object({
 
 export const MapSectorSchema = z.object({
   position: PositionSchema,
-  /** Sector kind (planet / asteroid / nebula / empty). Carried for authoring;
-   *  the core gains a first-class kind field + registry in M2.1 (capturable /
-   *  buildable / orbit flags). Until then the loader does not project it. */
+  /** Province type (planet / asteroid / nebula / void_station / empty …). Projected to
+   *  `Planet.kind` by the loader and resolved against game data `sectorKinds` —
+   *  capturable / buildable / orbit + the build roster + map appearance. */
   kind: z.string().default('planet'),
   /** Terrain id → resolved against game data `sectors` (speed / HP modifiers). */
   terrain: z.string().optional(),

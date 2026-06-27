@@ -1737,7 +1737,7 @@ function buildStaticLayer(): void {
     const accent = SECTOR_TYPES[si.kind]?.color;
     if (accent) {
       trace(poly);
-      g.fillStyle = rgba(accent, 0.06);
+      g.fillStyle = rgba(accent, 0.16); // province-type tint reads through the owner fill
       g.fill();
     }
     cells.push({ poly, tags, owner: si.owner, idx: i });
@@ -2526,12 +2526,14 @@ function panelHtml(): string {
   const sec = data.sectors[p.terrain ?? '']?.name ?? p.terrain ?? '—';
   const pt = p.planetType ? data.planetTypes[p.planetType] : undefined;
   const ptName = pt?.name ?? p.planetType ?? '—';
+  // Province type (the structural kind) — shown so the map's provinces read clearly.
+  const kindName = SECTOR_TYPES[SECTOR_OF[p.id]]?.name ?? SECTOR_OF[p.id] ?? '—';
   const ground = p.garrison.filter((st) => isGround(st.unit));
   const ships = p.garrison.filter((st) => isShip(st.unit));
   const gcount = sumUnits(p.garrison);
   const here = Object.values(s.fleets).filter((f) => f.location === p.id);
   let h =
-    cardHeader(ownerColor(p.owner), p.id, `${p.owner ? NAME[p.owner] : 'Neutral'} · ${ptName} · ${sec}`) +
+    cardHeader(ownerColor(p.owner), p.id, `${p.owner ? NAME[p.owner] : 'Neutral'} · ${kindName} · ${ptName} · ${sec}`) +
     `<div class="pstats"><span>⚔ ${gcount} garrison</span><span>${unitIcon('marine')} ${sumUnits(ground)} ground</span><span>${unitIcon('cruiser')} ${sumUnits(ships)} ships</span><span>▣ ${p.buildings.length} built</span></div>`;
   if (pt && (pt.productionBonus !== 0 || pt.defenseBonus !== 0)) {
     const pct = (n: number) => (n >= 0 ? '+' : '') + Math.round(n * 100) + '%';
@@ -2610,8 +2612,9 @@ function panelHtml(): string {
       blds += `</div>`;
     }
     if (mine) {
-      // an asteroid junction can only raise a space fortress; a city builds the rest
-      const buildable = SECTOR_OF[p.id] === 'asteroid' ? ['starfort'] : BUILDABLE;
+      // Province-centric roster (data-driven): each province type lists what it can
+      // raise (SECTOR_TYPES.allowedBuildings); absent = the default BUILDABLE set.
+      const buildable = SECTOR_TYPES[SECTOR_OF[p.id]]?.allowedBuildings ?? BUILDABLE;
       const missing = buildable.filter((t) => !p.buildings.some((b) => b.type === t));
       if (missing.length) blds += buildButtons(p.id, missing, 'building');
     }

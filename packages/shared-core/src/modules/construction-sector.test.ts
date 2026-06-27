@@ -5,22 +5,24 @@ import { createInitialState, type GameState, type Planet, type Player } from '..
 import { parseGameData, type GameData } from '../data/schemas';
 import type { Action, ApplyResult, Context } from '../action/types';
 
-// Per-province building roster: each building declares the sector kinds it fits.
+// Per-province building roster lives on the PROVINCE type (sectorKinds.allowedBuildings),
+// the single editable source of "what can I build here". undefined roster = any building.
 const data: GameData = parseGameData({
   version: '0.1.0',
   resources: ['metal'],
   units: {},
   factions: {},
   buildings: {
-    mine: { name: 'Mine', allowedKinds: ['planet', 'asteroid'] },
-    shipyard: { name: 'Shipyard', allowedKinds: ['planet', 'void_station'] },
-    radar: { name: 'Radar', radarRange: 300 }, // allowedKinds default [] = anywhere
+    mine: { name: 'Mine' },
+    shipyard: { name: 'Shipyard' },
+    radar: { name: 'Radar', radarRange: 300 },
   },
   events: {},
   sectorKinds: {
-    planet: { capturable: true, buildable: true, orbit: true },
-    asteroid: { capturable: true, buildable: true, orbit: false },
-    void_station: { capturable: true, buildable: true, orbit: false },
+    planet: { allowedBuildings: ['mine', 'shipyard', 'radar'] },
+    asteroid: { allowedBuildings: ['mine', 'radar'] },
+    void_station: { allowedBuildings: ['shipyard', 'radar'] },
+    // (no `unzoned` entry — a kind-less node hits the permissive default below)
   },
 });
 const ctx: Context = { now: 0, data };
@@ -54,28 +56,23 @@ function code(r: ApplyResult): string | true {
   return r.ok ? true : r.code;
 }
 
-describe('construction — per-province building roster (allowedKinds)', () => {
+describe('construction — per-province building roster (sectorKinds.allowedBuildings)', () => {
   const kernel = createKernel([constructionModule]);
   const st = world();
 
-  it('allows a building only on its sector kinds', () => {
-    expect(code(kernel.applyAction(st, build('P', 'mine'), ctx))).toBe(true); // planet ✓
-    expect(code(kernel.applyAction(st, build('A', 'mine'), ctx))).toBe(true); // asteroid ✓
-    expect(code(kernel.applyAction(st, build('V', 'mine'), ctx))).toBe('E_WRONG_SECTOR'); // void ✗
+  it('allows a building only on province types whose roster lists it', () => {
+    expect(code(kernel.applyAction(st, build('P', 'mine'), ctx))).toBe(true); // planet roster ✓
+    expect(code(kernel.applyAction(st, build('A', 'mine'), ctx))).toBe(true); // asteroid roster ✓
+    expect(code(kernel.applyAction(st, build('V', 'mine'), ctx))).toBe('E_WRONG_SECTOR'); // void roster ✗
   });
 
   it('a void station takes outpost structures (shipyard/radar) but not ground mines', () => {
     expect(code(kernel.applyAction(st, build('V', 'shipyard'), ctx))).toBe(true);
-    expect(code(kernel.applyAction(st, build('V', 'radar'), ctx))).toBe(true); // [] = anywhere
+    expect(code(kernel.applyAction(st, build('V', 'radar'), ctx))).toBe(true);
     expect(code(kernel.applyAction(st, build('A', 'shipyard'), ctx))).toBe('E_WRONG_SECTOR');
   });
 
-  it('an unrestricted building (radar) fits every province type', () => {
-    expect(code(kernel.applyAction(st, build('P', 'radar'), ctx))).toBe(true);
-    expect(code(kernel.applyAction(st, build('A', 'radar'), ctx))).toBe(true);
-  });
-
-  it('a kind-less node degrades permissively (legacy scenarios unaffected)', () => {
+  it('a kind-less node degrades permissively (any building — legacy scenarios unaffected)', () => {
     expect(code(kernel.applyAction(st, build('legacy', 'mine'), ctx))).toBe(true);
     expect(code(kernel.applyAction(st, build('legacy', 'shipyard'), ctx))).toBe(true);
   });
