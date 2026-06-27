@@ -27,12 +27,14 @@ import {
   launchFleet,
   mergeFleet,
   splitFleet,
+  engageFleet,
   buildBuilding,
   upgradeBuilding,
   buildUnit,
   type StepOut,
 } from './game';
 import {
+  buildingLevel,
   buildingMaxLevel,
   estimateTravelHours,
   fleetBaseSpeed,
@@ -222,6 +224,9 @@ let reconnecting = false;
 let reconnectAttempts = 0;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let aimPointer: { x: number; y: number } | null = null; // last canvas pointer (for the move preview)
+let hoverFleet: string | null = null; // fleet id under the pointer (desktop only)
+let hoverPlanet: string | null = null; // planet id under the pointer (desktop only)
+let hoverObj: string | null = null; // side-panel object under the pointer (data-desc key)
 let planetTab: PlanetTab = 'buildings';
 const buildQueues: Record<string, PlanetBuildQueue> = {};
 const logLines: string[] = [];
@@ -231,7 +236,8 @@ let lastCmdHtml = '';
 let lastSplitHtml = '';
 let lastHudHtml = '';
 let lastClockText = '';
-let lastDayTimerText = '';
+let lastHoverHtml = '';
+let lastObjDescHtml = '';
 let lastLogHtml = '';
 let lastAlertText = '';
 // --- fog of war (DEV-ONLY, temporary preview of core "variant A") ------------
@@ -250,7 +256,7 @@ const logEl = $('log');
 const clock = $('clock');
 const purse = $('purse');
 const bannerEl = $('banner');
-const dayTimer = $('daytimer');
+const hovercard = $('hovercard');
 const alertBadge = $('alertbadge');
 const cmdbar = $('cmdbar');
 const splitdlg = $('splitdlg');
@@ -1192,6 +1198,25 @@ function autoEngage() {
     if (enemyHere) continue; // let the auto orbital battle settle first
     if (f.orbit !== 'near') apply(order(s, orbitFleet(f.owner, f.id, 'near'), s.time));
     apply(order(s, assaultFleet(f.owner, f.id), s.time));
+  }
+}
+
+// Safety-net: detect two docked enemy fleets sharing a sector without a battle
+// and force-engage them. Catches the case where both fleets were in-transit when
+// the other arrived, so the combat module's arrival handler found no enemy.
+function checkFleetClashes() {
+  const fleets = Object.values(s.fleets);
+  for (const f of fleets) {
+    if (!f.location || f.movement || f.battleId) continue;
+    for (const g of fleets) {
+      if (g.id <= f.id) continue; // avoid processing the same pair twice
+      if (!g.location || g.movement || g.battleId) continue;
+      if (f.owner === g.owner || f.location !== g.location) continue;
+      // Two idle enemy fleets in the same sector — start a battle from the ME side
+      const myFleet = f.owner === ME ? f : g.owner === ME ? g : f;
+      const foeFleet = myFleet === f ? g : f;
+      apply(order(s, engageFleet(myFleet.owner, myFleet.id, foeFleet.id), s.time));
+    }
   }
 }
 
@@ -2341,8 +2366,9 @@ function render(now: number) {
 
 // --- side panel --------------------------------------------------------------
 
-function btn(act: string, arg: string, label: string, ok: boolean): string {
-  return `<button class="b" data-act="${esc(act)}" data-arg="${esc(arg)}" ${ok ? '' : 'disabled'}>${esc(label)}</button>`;
+function btn(act: string, arg: string, label: string, ok: boolean, desc?: string): string {
+  const d = desc ? ` data-desc="${esc(desc)}"` : '';
+  return `<button class="b" data-act="${esc(act)}" data-arg="${esc(arg)}"${d} ${ok ? '' : 'disabled'}>${esc(label)}</button>`;
 }
 /** Wrap a panel section so the desktop multi-column layout never splits it across
  *  columns. Sections are laid out side-by-side on wide screens, stacked on phones. */
@@ -2371,7 +2397,7 @@ function unitRows(stacks: Array<{ unit: string; count: number }>): string {
   return stacks
     .map(
       (st) =>
-        `<div class="asset-row"><span class="bicon">${unitIcon(st.unit)}</span><b>${st.count}× ${displayUnit(st.unit)}</b><span class="dim">${isGround(st.unit) ? 'ground' : 'space'}</span></div>`,
+        `<div class="asset-row" data-desc="u:${esc(st.unit)}"><span class="bicon">${unitIcon(st.unit)}</span><b>${st.count}× ${displayUnit(st.unit)}</b><span class="dim">${isGround(st.unit) ? 'ground' : 'space'}</span></div>`,
     )
     .join('');
 }
@@ -2405,7 +2431,8 @@ function buildButtons(planetId: string, ids: string[], kind: 'building' | 'unit'
       kind === 'unit'
         ? `${icon} ${displayUnit(id)} ${cost(c)}`
         : `${icon} ${data.buildings[id]?.name ?? id} ${cost(c)}`;
-    html += btn(kind === 'unit' ? 'unit' : 'build', id, label, s.planets[planetId]?.owner === ME);
+    const desc = kind === 'unit' ? `u:${id}` : `b:${id}:1`;
+    html += btn(kind === 'unit' ? 'unit' : 'build', id, label, s.planets[planetId]?.owner === ME, desc);
   }
   return html + `</div>`;
 }
@@ -2606,7 +2633,7 @@ function panelHtml(): string {
         const fShips = sumUnits(f.units);
         const tr = sumUnits(f.landing ?? []);
         const sel = f.owner === ME ? btn('selfleet', f.id, 'Select →', true) : '';
-        orbit += `<div class="asset-row" style="color:${ownerColor(f.owner)}"><span class="bicon">▲</span><b>${fShips} ships${tr ? ' +' + tr + ' troops' : ''}</b><span class="dim">orbit ${f.orbit ?? 'far'}</span>${sel}</div>`;
+        orbit += `<div class="asset-row" data-desc="fleet" style="color:${ownerColor(f.owner)}"><span class="bicon">▲</span><b>${fShips} ships${tr ? ' +' + tr + ' troops' : ''}</b><span class="dim">orbit ${f.orbit ?? 'far'}</span>${sel}</div>`;
       }
       cols.push(orbit);
     }
@@ -2633,10 +2660,11 @@ function panelHtml(): string {
     for (const b of p.buildings) {
       const def = data.buildings[b.type];
       const max = def ? buildingMaxLevel(def) : 1;
-      blds += `<div class="asset-row"><span class="bicon">${BUILD_ICON[b.type] ?? '▪'}</span><b>${def?.name ?? b.type}</b><span class="dim">L${b.level}/${max} · hp ${floor(b.hp)}/${hpOfLevel(b.type, b.level)}</span>`;
+      blds += `<div class="asset-row" data-desc="b:${b.type}:${b.level}"><span class="bicon">${BUILD_ICON[b.type] ?? '▪'}</span><b>${def?.name ?? b.type}</b><span class="dim">L${b.level}/${max} · hp ${floor(b.hp)}/${hpOfLevel(b.type, b.level)}</span>`;
       if (mine && b.level < max) {
         const c = def?.upgrades[b.level - 1]?.cost;
-        blds += btn('upgrade', b.type, `▲ Upgrade ${cost(c)}`, afford(c));
+        // hovering Upgrade previews the NEXT level's dossier (output it will unlock)
+        blds += btn('upgrade', b.type, `▲ Upgrade ${cost(c)}`, afford(c), `b:${b.type}:${b.level + 1}`);
       }
       blds += `</div>`;
     }
@@ -2651,21 +2679,216 @@ function panelHtml(): string {
   return h + pcols(cols);
 }
 
+// --- object dossiers (side-panel hover descriptions) -------------------------
+// Loosely-coupled lore + live-stat blurbs for the things you can hover in the
+// side panel. Keyed by a `data-desc` string ("b:<id>:<lvl>" buildings, "u:<id>"
+// units, "fleet"); each returns a name + HTML body where live numbers are wrapped
+// in <em class="hl"> (rendered yellow). When you add a new buildable or unit,
+// add a case here too — the panel wires the hover up from the data-desc tag.
+interface Dossier {
+  name: string;
+  body: string;
+}
+const hl = (v: string | number): string => `<em class="hl">${v}</em>`;
+
+function buildingDossier(id: string, level: number): Dossier | null {
+  const def = data.buildings[id];
+  if (!def) return null;
+  const lv = buildingLevel(def, Math.max(1, level));
+  const pct = (n: number) => `+${Math.round(n * 100)}%`;
+  const metal = lv.produces.metal ?? 0;
+  const credits = lv.produces.credits ?? 0;
+  switch (id) {
+    case 'mine':
+      return {
+        name: def.name,
+        body: `Буровая платформа, вгрызающаяся в рудное тело планеты. Добывает ${hl(metal)} металла в час. Каждый новый горизонт вскрывает более плотную жилу — выработка растёт в полтора раза, и из этого металла куётся весь флот.`,
+      };
+    case 'refinery':
+      return {
+        name: def.name,
+        body: `Перерабатывающий комплекс, превращающий руду и логистику в ликвидные кредиты — ${hl(credits)} в час. Топливо для имперской бюрократии, верфей и наёмных эскадр.`,
+      };
+    case 'barracks':
+      return {
+        name: def.name,
+        body: `Гарнизонный учебный лагерь. Куёт наземные подразделения и держит планетарную оборону в тонусе. Мир без казарм беззащитен перед первой же десантной волной.`,
+      };
+    case 'radar':
+      return {
+        name: def.name,
+        body: `Сеть глубокого сканирования. Просвечивает пустоту в радиусе ${hl(lv.radarRange ?? 0)} и ловит чужие сигнатуры задолго до того, как они выйдут на дистанцию удара. Апгрейд раздвигает горизонт обнаружения.`,
+      };
+    case 'fort':
+      return {
+        name: def.name,
+        body: `Эшелонированный планетарный бастион. Поднимает оборону гарнизона на ${hl(pct(lv.defenseBonus ?? 0))} и держит ${hl(lv.hp)} структурной прочности под орбитальным огнём. Последний рубеж осаждённого мира.`,
+      };
+    case 'starfort':
+      return {
+        name: def.name,
+        body: `Автономная крепость, вмороженная в астероидное поле: ${hl(pct(lv.defenseBonus ?? 0))} к обороне и ${hl(lv.hp)} прочности. Превращает безликий перекрёсток в укреплённый узел с орбитой и ПКО — взять его можно только штурмом.`,
+      };
+    default:
+      return { name: def.name, body: 'Планетарное сооружение.' };
+  }
+}
+
+function unitDossier(id: string): Dossier | null {
+  const def = data.units[id];
+  if (!def) return null;
+  const st = def.stats;
+  switch (id) {
+    case 'scout':
+      return {
+        name: 'Scout',
+        body: `Лёгкий разведывательный корпус. Быстрый (ход ${hl(st.speed)}) и почти неслышный (сигнатура ${hl(def.signature ?? 1)}) — чертит карту пустоты там, куда боится соваться линейный флот.`,
+      };
+    case 'cruiser':
+      return {
+        name: 'Cruiser',
+        body: `Рабочая лошадь линейного флота: ${hl(st.attack)} атаки, ${hl(st.hp)} корпуса и трюм на ${hl(st.cargoCapacity ?? 0)}. Универсальный боевой корабль, одинаково уверенный в обороне и в наступлении.`,
+      };
+    case 'siege':
+      return {
+        name: 'Siege Platform',
+        body: `Тяжёлая осадная платформа: ${hl(st.attack)} урона с дистанции ${hl(st.range ?? 0)}, но тонкая броня (${hl(st.defense)} защиты). Её место за спинами крейсеров, откуда она крушит укрепления и верфи.`,
+      };
+    case 'marine':
+      return {
+        name: 'Marine',
+        body: `Десантная пехота, ${hl(st.attack)}/${hl(st.defense)} в наземном бою. Грузится на флот и высаживается, чтобы захватывать миры, которые орбита лишь подавляет огнём.`,
+      };
+    case 'orbital_aa':
+      return {
+        name: 'Orbital AA',
+        body: `Стационарная зенитная батарея — неподвижна, но выдаёт ${hl(st.aaDamage ?? 0)} урона по кораблям на низкой орбите. Кошмар для бомбардировщиков, повисших над планетой.`,
+      };
+    default:
+      return { name: displayUnit(id), body: 'Боевая единица.' };
+  }
+}
+
+function objDossier(key: string): Dossier | null {
+  if (key === 'fleet') {
+    return {
+      name: 'Fleet',
+      body: 'Мобильное оперативное соединение кораблей. Выберите его, чтобы отдавать приказы на манёвр, орбиту и удар по врагу.',
+    };
+  }
+  const [kind, id, lvl] = key.split(':');
+  if (kind === 'b') return buildingDossier(id, Number(lvl) || 1);
+  if (kind === 'u') return unitDossier(id);
+  return null;
+}
+
+/** Right-docked description pane HTML for the currently hovered menu object. */
+function objDescHtml(): string {
+  const d = hoverObj ? objDossier(hoverObj) : null;
+  if (!d) {
+    return `<div class="pd-empty">Наведи на объект слева — здесь появится его досье.</div>`;
+  }
+  const lvl = hoverObj && hoverObj.startsWith('b:') ? Number(hoverObj.split(':')[2]) || 0 : 0;
+  const title = lvl ? `${esc(d.name)} ${hl(lvl)}` : esc(d.name);
+  return `<div class="pd-title">${title}</div><div class="pd-body">${d.body}</div>`;
+}
+
+function renderObjDesc(): void {
+  const pane = document.getElementById('pdesc');
+  if (!pane) return;
+  const html = objDescHtml();
+  if (html === lastObjDescHtml) return;
+  lastObjDescHtml = html;
+  pane.innerHTML = html;
+}
+
+function hoverCardHtml(): string {
+  if (hoverFleet) {
+    const f = s.fleets[hoverFleet];
+    if (!f) return '';
+    const owner = s.players[f.owner]?.name ?? f.owner;
+    const col = ownerColor(f.owner);
+    const ships = sumUnits(f.units);
+    const troops = f.landing ? sumUnits(f.landing) : 0;
+    const status = f.battleId ? 'In battle' : f.movement ? 'In transit' : 'Docked';
+    const dest = f.movement ? (f.movement.destination ?? f.movement.to) : f.location ?? '—';
+    const unitRows = f.units
+      .filter((u) => u.count > 0)
+      .map((u) => `<div class="hc-row"><span class="hc-key">${esc(u.unit)}</span><span class="hc-val">${u.count}</span></div>`)
+      .join('');
+    return `<div class="hc-title" style="color:${col}">FLEET</div>
+<div class="hc-row"><span class="hc-key">Owner</span><span class="hc-val">${esc(owner)}</span></div>
+<div class="hc-row"><span class="hc-key">Status</span><span class="hc-val">${status}</span></div>
+<div class="hc-row"><span class="hc-key">${f.movement ? 'Destination' : 'Location'}</span><span class="hc-val">${esc(dest)}</span></div>
+<div class="hc-row"><span class="hc-key">Ships</span><span class="hc-val">${ships}</span></div>
+${troops > 0 ? `<div class="hc-row"><span class="hc-key">Troops</span><span class="hc-val">${troops}</span></div>` : ''}
+${unitRows ? `<div class="hc-sub">Composition</div>${unitRows}` : ''}`;
+  }
+  if (hoverPlanet) {
+    const p = s.planets[hoverPlanet];
+    if (!p) return '';
+    const n = MAP.find((m) => m.id === hoverPlanet);
+    const owner = p.owner ? (s.players[p.owner]?.name ?? p.owner) : 'Neutral';
+    const col = ownerColor(p.owner);
+    const stype = SECTOR_TYPES[n?.sector ?? '']?.name ?? n?.sector ?? '—';
+    const ptype = p.planetType ? (data.planetTypes[p.planetType]?.name ?? p.planetType) : '—';
+    const garrison = (p.garrison ?? []).reduce((a, u) => a + u.count, 0);
+    const buildings = p.buildings.map((b) => {
+      const def = data.buildings[b.type];
+      return `<div class="hc-row"><span class="hc-key">${esc(def?.name ?? b.type)} Lv${b.level}</span><span class="hc-val">${b.hp}/${hpOfLevel(b.type, b.level)} HP</span></div>`;
+    }).join('');
+    const res = Object.entries(p.resources ?? {})
+      .filter(([, v]) => (v as number) > 0)
+      .map(([k, v]) => `<div class="hc-row"><span class="hc-key">${esc(k)}</span><span class="hc-val">${Math.round(v as number)}</span></div>`)
+      .join('');
+    const radBonus = p.planetType ? (data.planetTypes[p.planetType]?.productionBonus ?? 0) : 0;
+    return `<div class="hc-title" style="color:${col}">${esc(hoverPlanet)}</div>
+<div class="hc-row"><span class="hc-key">Owner</span><span class="hc-val">${esc(owner)}</span></div>
+<div class="hc-row"><span class="hc-key">Sector</span><span class="hc-val">${esc(stype)}</span></div>
+<div class="hc-row"><span class="hc-key">Planet type</span><span class="hc-val">${esc(ptype)}</span></div>
+${radBonus ? `<div class="hc-row"><span class="hc-key">Prod. bonus</span><span class="hc-val">${radBonus >= 0 ? '+' : ''}${Math.round(radBonus * 100)}%</span></div>` : ''}
+${garrison > 0 ? `<div class="hc-row"><span class="hc-key">Garrison</span><span class="hc-val">${garrison} troops</span></div>` : ''}
+${res ? `<div class="hc-sub">Stockpile</div>${res}` : ''}
+${buildings ? `<div class="hc-sub">Infrastructure</div>${buildings}` : ''}`;
+  }
+  return '';
+}
+
+function renderHoverCard() {
+  if (MOBILE) { hovercard.classList.remove('show'); return; }
+  const html = hoverCardHtml();
+  if (html === lastHoverHtml) return;
+  lastHoverHtml = html;
+  if (!html) {
+    hovercard.classList.remove('show');
+  } else {
+    hovercard.innerHTML = html;
+    hovercard.classList.add('show');
+  }
+}
+
 function renderPanel() {
   // While arming a merge target, collapse the panel so the map (and the fleet to
   // merge with) is fully tappable — important on phones where the sheet covers it.
   const open = !merging && (selFleet !== null || selPlanet !== null || selFleets.size > 0);
-  side.style.display = open ? 'block' : 'none';
+  side.style.display = open ? 'flex' : 'none';
   document.body.classList.toggle('sheet-open', open); // mobile: hide log/comms under the sheet
   if (!open) {
     lastPanelHtml = '';
+    lastObjDescHtml = '';
+    hoverObj = null;
     return;
   }
   const html = panelHtml();
   if (html !== lastPanelHtml) {
-    side.innerHTML = html;
+    // Scrollable content on the left, a fixed dossier pane glued to the right edge
+    // (filling the panel's empty space — see #side / .pdesc CSS). Re-rendering the
+    // content rebuilds #pdesc, so force the dossier to repaint against the new DOM.
+    side.innerHTML = `<div class="pscroll">${html}</div><aside class="pdesc" id="pdesc"></aside>`;
     lastPanelHtml = html;
+    lastObjDescHtml = '';
   }
+  renderObjDesc();
 }
 
 function cmdBtn(cmd: string, icon: string, label: string, cls: string, disabled: boolean): string {
@@ -2856,6 +3079,25 @@ side.addEventListener('click', (ev) => {
   }
   lastPanelHtml = '';
   renderPanel();
+});
+
+// Side-panel object hover → live dossier in the right-docked pane (desktop only;
+// touch has no hover, so the pane just stays on its default prompt there).
+side.addEventListener('pointermove', (ev) => {
+  if (MOBILE) return;
+  const t = ev.target as HTMLElement;
+  if (t.closest('#pdesc')) return; // over the dossier itself — keep what's shown
+  const key = (t.closest('[data-desc]') as HTMLElement | null)?.dataset.desc ?? null;
+  if (key !== hoverObj) {
+    hoverObj = key;
+    renderObjDesc();
+  }
+});
+side.addEventListener('pointerleave', () => {
+  if (hoverObj !== null) {
+    hoverObj = null;
+    renderObjDesc();
+  }
 });
 
 cmdbar.addEventListener('click', (ev) => {
@@ -3067,9 +3309,34 @@ canvas.addEventListener('dblclick', () => {
   cam.x = 0;
   cam.y = 0;
 });
-// track the pointer for the "Move" preview line (hover on desktop, drag on touch)
+// track the pointer for the "Move" preview line and hover tooltip (desktop only)
 canvas.addEventListener('pointermove', (ev) => {
   aimPointer = ptXY(ev);
+  if (MOBILE) return;
+  const { x: mx, y: my } = aimPointer;
+  let newHoverFleet: string | null = null;
+  let newHoverPlanet: string | null = null;
+  for (const f of Object.values(s.fleets)) {
+    const a = fleetAnchor(f);
+    if (a && Math.hypot(mx - a.x, my - a.y) < 18) {
+      newHoverFleet = f.id;
+      break;
+    }
+  }
+  if (!newHoverFleet) {
+    for (const n of MAP) {
+      const c = world(n);
+      if (Math.hypot(mx - c.x, my - c.y) < 24) {
+        newHoverPlanet = n.id;
+        break;
+      }
+    }
+  }
+  if (newHoverFleet !== hoverFleet || newHoverPlanet !== hoverPlanet) {
+    hoverFleet = newHoverFleet;
+    hoverPlanet = newHoverPlanet;
+    lastHoverHtml = '';
+  }
 });
 
 // --- top bar / speed ---------------------------------------------------------
@@ -3079,18 +3346,6 @@ for (const b of Array.from(document.querySelectorAll('[data-speed]'))) {
     speed = Number((b as HTMLElement).dataset.speed);
     for (const x of Array.from(document.querySelectorAll('[data-speed]')))
       x.classList.toggle('on', Number((x as HTMLElement).dataset.speed) === speed);
-  });
-}
-
-// Dev-only fog-of-war toggle (temporary — removed once core visibleState lands).
-const fogBtn = Array.from(document.querySelectorAll('[data-fog]'))[0] as HTMLElement | undefined;
-if (fogBtn) {
-  fogBtn.classList.toggle('on', fogOn);
-  fogBtn.addEventListener('click', () => {
-    fogOn = !fogOn;
-    fogBtn.classList.toggle('on', fogOn);
-    lastPanelHtml = ''; // force the side panel to re-evaluate visibility
-    note(fogOn ? 'fog of war: ON (variant A — here & now)' : 'fog of war: OFF (omniscient)');
   });
 }
 
@@ -3372,6 +3627,7 @@ function frame(nowReal: number) {
     const target = s.time + (dt / 1000) * speed * HOUR;
     apply(advance(s, target));
     autoEngage();
+    checkFleetClashes();
     runAI();
     pumpBuildQueues();
     checkEnd();
@@ -3381,6 +3637,7 @@ function frame(nowReal: number) {
   if (vision) updateMemory(vision.identify); // variant B: remember what we see
   render(nowReal);
   renderPanel();
+  renderHoverCard();
   renderCmdBar();
   renderSplitDialog();
   renderLobby();
@@ -3393,11 +3650,6 @@ function frame(nowReal: number) {
     clock.textContent = clockText;
     topClock.textContent = clockText;
     lastClockText = clockText;
-  }
-  const dayTimerText = `Day ${d} — next cycle in ${24 - h}h`;
-  if (dayTimerText !== lastDayTimerText) {
-    dayTimer.textContent = dayTimerText;
-    lastDayTimerText = dayTimerText;
   }
   // Dev net overlay (M0): FPS always; when connected, append round-trip latency and
   // a desync flag (✓ in sync with the server, ✗ + running mismatch count if not).

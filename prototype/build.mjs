@@ -38,6 +38,21 @@ body::before{content:"";position:fixed;inset:0;z-index:1;pointer-events:none;mix
   background:repeating-linear-gradient(0deg,rgba(0,0,0,0) 0 2px,rgba(0,0,0,.16) 2px 3px);}
 #map{position:fixed;inset:0;z-index:0;display:block;touch-action:none;}
 
+/* themed scrollbars — angular neon thumb on a dark grid track, in the HUD's tactical key.
+   Firefox gets the colour pair; WebKit gets the full glow/gradient treatment. */
+*{scrollbar-width:thin;scrollbar-color:var(--cyan-dim) rgba(2,9,13,.5);}
+::-webkit-scrollbar{width:10px;height:10px;}
+::-webkit-scrollbar-track{background:rgba(2,9,13,.55);
+  box-shadow:inset 1px 0 0 var(--line),inset -1px 0 0 var(--line);}
+::-webkit-scrollbar-thumb{border-radius:1px;border:1px solid var(--cyan-dim);
+  background:linear-gradient(180deg,rgba(53,214,230,.5),rgba(28,111,120,.6));
+  box-shadow:inset 0 0 6px rgba(53,214,230,.3),0 0 4px rgba(53,214,230,.15);}
+::-webkit-scrollbar-thumb:hover{border-color:var(--cyan);
+  background:linear-gradient(180deg,var(--cyan),var(--cyan-dim));
+  box-shadow:0 0 10px rgba(53,214,230,.6),inset 0 0 6px rgba(53,214,230,.45);}
+::-webkit-scrollbar-thumb:active{background:linear-gradient(180deg,#8ff4fa,var(--cyan));}
+::-webkit-scrollbar-corner{background:transparent;}
+
 #top{position:fixed;top:0;left:0;right:0;height:46px;z-index:30;display:flex;align-items:center;
   background:linear-gradient(180deg,rgba(3,13,18,.94),rgba(2,8,12,.82));border-bottom:1px solid var(--line-hi);
   box-shadow:0 0 22px rgba(40,200,210,.10),inset 0 -1px 0 rgba(53,214,230,.28);}
@@ -59,7 +74,8 @@ body::before{content:"";position:fixed;inset:0;z-index:1;pointer-events:none;mix
 .res em.up{color:var(--up);}.res em.dn{color:var(--dn);}
 #speedbar{position:fixed;right:14px;bottom:14px;z-index:24;display:flex;align-items:center;gap:4px;
   padding:5px 7px;background:rgba(3,12,16,.78);border:1px solid var(--line-hi);border-radius:3px;
-  box-shadow:0 0 16px rgba(40,200,210,.10);}
+  box-shadow:0 0 16px rgba(40,200,210,.10);transition:bottom .2s ease;}
+body.sheet-open #speedbar{bottom:calc(34vh + 12px);}
 #fps{position:fixed;top:50px;right:10px;z-index:25;pointer-events:none;
   font:700 10px ui-monospace,Menlo,monospace;color:var(--grn);opacity:.72;letter-spacing:.5px;
   text-shadow:0 0 6px rgba(0,0,0,.85);}
@@ -68,7 +84,6 @@ body::before{content:"";position:fixed;inset:0;z-index:1;pointer-events:none;mix
   background:transparent;color:var(--cyan-dim);border:1px solid var(--line-hi);}
 .spd button.on{background:rgba(53,214,230,.16);color:var(--cyan);border-color:var(--cyan);box-shadow:0 0 10px rgba(53,214,230,.4);}
 .spd .sep{width:1px;height:18px;background:var(--line-hi);margin:0 4px;flex:0 0 auto;}
-.spd button[data-fog]{min-width:40px;letter-spacing:1px;font-weight:700;}
 #cmdbar{position:fixed;left:50%;transform:translateX(-50%);bottom:14px;z-index:26;display:none;align-items:center;
   gap:6px;padding:6px 8px;background:rgba(3,12,16,.88);border:1px solid var(--line-hi);border-radius:3px;
   box-shadow:0 0 22px rgba(40,200,210,.14);}
@@ -84,6 +99,8 @@ body::before{content:"";position:fixed;inset:0;z-index:1;pointer-events:none;mix
 #cmdbar button.on{background:rgba(53,214,230,.18);border-color:var(--cyan);}
 #cmdbar button.danger{color:var(--red);border-color:#7a2a22;}
 #cmdbar button.danger:hover:not(:disabled){background:rgba(255,90,77,.12);box-shadow:0 0 10px rgba(255,90,77,.3);}
+/* panel is glued to the bottom edge — lift the fleet command bar above it (mobile overrides below) */
+body.sheet-open #cmdbar{bottom:calc(34vh + 12px);}
 
 #devline{position:fixed;top:46px;left:0;right:0;height:18px;z-index:24;display:flex;align-items:center;gap:12px;
   padding:0 14px;background:rgba(2,8,11,.5);color:var(--cyan-dim);font-size:10px;letter-spacing:1px;
@@ -99,10 +116,20 @@ body::before{content:"";position:fixed;inset:0;z-index:1;pointer-events:none;mix
   background:var(--red);color:#180605;font:700 9px/15px ui-monospace,monospace;text-align:center;
   box-shadow:0 0 8px rgba(255,90,77,.7);}
 
-#side{position:fixed;left:58px;right:14px;bottom:56px;top:auto;width:auto;max-height:34vh;overflow:auto;z-index:20;
-  display:none;padding:13px 15px;touch-action:pan-y;background:var(--glass);border:1px solid var(--line-hi);
+#side{position:fixed;left:58px;right:14px;bottom:0;top:auto;width:auto;max-height:34vh;overflow:hidden;z-index:20;
+  display:none;align-items:stretch;padding:0;background:var(--glass);border:1px solid var(--line-hi);
   box-shadow:0 0 26px rgba(0,0,0,.6),0 0 0 1px rgba(53,214,230,.08),inset 0 0 30px rgba(53,214,230,.04);
   clip-path:polygon(0 9px,9px 0,100% 0,100% calc(100% - 9px),calc(100% - 9px) 100%,0 100%);}
+/* scrollable content (left) + a dossier pane glued to the right edge, filling the
+   panel's otherwise-empty space. The pane shows the hovered object's description. */
+.pscroll{flex:1 1 auto;min-width:0;overflow:auto;padding:13px 15px;touch-action:pan-y;}
+.pdesc{flex:0 0 236px;overflow:auto;padding:14px 15px;border-left:1px solid var(--line-hi);
+  background:rgba(53,214,230,.035);}
+.pdesc .pd-title{font-size:14px;font-weight:700;letter-spacing:1.5px;color:#eafffb;margin-bottom:9px;
+  padding-bottom:7px;border-bottom:1px solid var(--line);}
+.pdesc .pd-body{font-size:12px;line-height:1.65;color:#9fc9c4;}
+.pdesc .pd-empty{font-size:11px;line-height:1.6;color:var(--dim);font-style:italic;}
+.pdesc .hl{font-style:normal;font-weight:700;color:var(--amber);text-shadow:0 0 7px rgba(255,180,58,.35);}
 #side .sec{margin:14px 0 6px;font-size:10px;text-transform:uppercase;letter-spacing:2px;color:var(--grn-dim);
   border-bottom:1px solid var(--line);padding-bottom:4px;}
 #side .row{margin:4px 0;}
@@ -125,7 +152,12 @@ body::before{content:"";position:fixed;inset:0;z-index:1;pointer-events:none;mix
 .ptab.on{color:var(--cyan);border-color:var(--cyan);background:rgba(53,214,230,.14);box-shadow:0 0 12px rgba(53,214,230,.2);}
 /* wrap (don't overflow) so a trailing Select/Upgrade button never laps onto the
    neighbouring column when the panel is laid out in narrow multi-column blocks */
-.asset-row{display:flex;align-items:center;gap:8px;margin:5px 0;min-height:24px;flex-wrap:wrap;}
+/* thin outline so each menu object reads as one discrete, selectable card; the
+   border warms up on hover, echoing the dossier that lights up on the right. */
+.asset-row{display:flex;align-items:center;gap:8px;margin:5px 0;min-height:24px;flex-wrap:wrap;
+  padding:5px 8px;border:1px solid var(--line);border-radius:2px;background:rgba(53,214,230,.02);
+  transition:border-color .12s ease,background .12s ease;}
+.asset-row:hover{border-color:var(--cyan-dim);background:rgba(53,214,230,.07);}
 .asset-row b{flex:1 1 auto;min-width:96px;font-size:12px;}
 .asset-row .b{margin-left:auto;}
 .bicon{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;margin-right:7px;
@@ -184,8 +216,16 @@ button.b:disabled{opacity:.32;cursor:not-allowed;color:var(--dim);border-color:v
 #botleft{position:fixed;left:6px;bottom:8px;z-index:24;display:flex;align-items:center;gap:8px;}
 .chat{width:40px;height:40px;cursor:pointer;font-size:16px;border-radius:2px;
   background:rgba(2,9,13,.7);border:1px solid var(--line-hi);color:var(--cyan-dim);}
-#daytimer{color:var(--dim);font-size:11px;background:rgba(2,9,13,.6);padding:6px 11px;border:1px solid var(--line);
-  border-radius:2px;white-space:nowrap;letter-spacing:.5px;}
+#hovercard{position:fixed;top:70px;right:14px;width:220px;z-index:22;pointer-events:none;
+  padding:12px 14px;background:rgba(3,12,16,.88);border:1px solid var(--line-hi);border-radius:3px;
+  box-shadow:0 0 18px rgba(40,200,210,.12);font-size:11px;line-height:1.55;display:none;}
+#hovercard.show{display:block;}
+#hovercard .hc-title{color:var(--cyan);font-size:12px;font-weight:700;letter-spacing:1.5px;margin-bottom:7px;border-bottom:1px solid var(--line);padding-bottom:5px;}
+#hovercard .hc-row{display:flex;justify-content:space-between;gap:8px;margin:2px 0;}
+#hovercard .hc-key{color:var(--dim);letter-spacing:.5px;}
+#hovercard .hc-val{color:var(--ink);font-weight:700;text-align:right;}
+#hovercard .hc-sub{color:var(--cyan-dim);font-size:10px;margin-top:5px;}
+@media (max-width:720px){#hovercard{display:none!important;}}
 #log{position:fixed;left:58px;bottom:58px;width:360px;height:92px;z-index:20;overflow:auto;touch-action:pan-y;
   padding:7px 11px;background:rgba(2,9,13,.72);border:1px solid var(--line);border-left:2px solid var(--grn-dim);
   font:11px/1.55 ui-monospace,Menlo,monospace;color:#73b6a2;scrollbar-width:thin;}
@@ -240,6 +280,9 @@ body.sheet-open #log{display:none;}
 
   #side{right:0;left:0;bottom:0;top:auto;width:auto;max-height:50vh;z-index:28;clip-path:none;
     border-left:0;border-right:0;border-top:1px solid var(--cyan);}
+  /* phones have no hover and no room — drop the dossier pane, content fills width */
+  .pdesc{display:none;}
+  .pscroll{padding:13px 14px;}
   /* phones: no horizontal columns — a single readable top-to-bottom stack */
   .pcols{column-width:auto;column-count:1;column-rule:none;}
   .pcols .block{margin-bottom:0;}
@@ -335,13 +378,13 @@ const html = `<!doctype html>
     <button title="Alerts">⚠<span class="rlabel">Alerts</span><span class="badge" id="alertbadge" style="display:none">0</span></button>
   </nav>
   <div id="log"></div>
-  <footer id="botleft"><button class="chat" title="Comms">◈</button><span id="daytimer">Day 1</span></footer>
+  <footer id="botleft"><button class="chat" title="Comms">◈</button></footer>
 </div>
 <aside id="side"></aside>
 <div id="speedbar" class="spd">
   <button data-speed="0">‖</button><button data-speed="2" class="on">▶</button><button data-speed="6">▶▶</button>
-  <span class="sep"></span><button data-fog title="Fog of war — dev preview (variant A)">FOG</button>
 </div>
+<div id="hovercard"></div>
 <div id="cmdbar"></div>
 <div id="splitdlg"></div>
 <div id="fps"></div>
