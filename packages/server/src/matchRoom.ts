@@ -24,6 +24,10 @@ export interface RoomPeer {
   send(data: string): void;
   close?(code?: number, reason?: string): void;
   readonly readyState?: number;
+  /** Bytes queued but not yet flushed to the socket (a `ws` getter). When this
+   *  backs up the peer isn't draining — the room drops it rather than grow memory
+   *  unbounded. Absent (e.g. an in-memory test peer) ⇒ backpressure is not enforced. */
+  readonly bufferedAmount?: number;
 }
 
 export interface MatchRoomOptions {
@@ -119,6 +123,10 @@ export interface SubmitResult {
 }
 
 const OPEN = 1;
+/** Backpressure cap: drop a peer whose unflushed outbound buffer exceeds this (it
+ *  isn't draining — a fast sender outrunning a slow receiver). Deltas are KB-sized,
+ *  so 1 MiB is hundreds of un-acked updates — a genuinely stuck client, not a blip. */
+const MAX_BUFFERED_BYTES = 1_048_576;
 
 function canSend(peer: RoomPeer): boolean {
   return peer.readyState === undefined || peer.readyState === OPEN;
@@ -774,6 +782,15 @@ export class MatchRoom {
   }
 
   private send(peer: RoomPeer, message: ServerMessage): void {
-    if (canSend(peer)) peer.send(serializeServerMessage(message));
+    if (!canSend(peer)) return;
+    // Backpressure: a peer whose buffer is backing up isn't draining — keep queuing
+    // and the server's memory grows without bound (a fast sender flooding a slow
+    // receiver). Drop it; the client auto-reconnects and gets a fresh `welcome` (a
+    // full resync), so it can't desync from the delta we skip here.
+    if (peer.bufferedAmount !== undefined && peer.bufferedAmount > MAX_BUFFERED_BYTES) {
+      peer.close?.(1013, 'backpressure');
+      return;
+    }
+    peer.send(serializeServerMessage(message));
   }
 }

@@ -758,3 +758,23 @@ describe('MatchRoom — timeScale (playtest fast-forward clock)', () => {
     expect(r.msUntilNextEvent()).toBe(10);
   });
 });
+
+describe('MatchRoom — backpressure (drop a peer that stops draining)', () => {
+  it('closes a peer whose outbound buffer exceeds the cap instead of sending', () => {
+    const r = room();
+    let closed: number | undefined;
+    let sent = 0;
+    const slow: RoomPeer = {
+      bufferedAmount: 2_000_000, // over the 1 MiB cap → not draining
+      send: () => {
+        sent += 1;
+      },
+      close: (code) => {
+        closed = code;
+      },
+    };
+    r.addPeer('p1', slow); // the welcome broadcast hits the backpressure guard
+    expect(closed).toBe(1013); // dropped with "try again later"
+    expect(sent).toBe(0); // nothing queued onto the stuck peer
+  });
+});
