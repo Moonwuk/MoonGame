@@ -155,6 +155,7 @@ export { sectorModule } from './modules/sector';
 export { planetTypeModule } from './modules/planetType';
 export { constructionModule } from './modules/construction';
 export { technologyModule } from './modules/technology';
+export { factionModule } from './modules/faction';
 export { armyModule } from './modules/army';
 export { victoryModule } from './modules/victory';
 export { visibilityModule } from './modules/visibility';

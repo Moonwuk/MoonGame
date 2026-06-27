@@ -7,6 +7,7 @@ import {
   createInitialState,
   createKernel,
   economyModule,
+  factionModule,
   heroModule,
   movementModule,
   parseGameData,
@@ -64,6 +65,7 @@ export const DEV_MODULES: GameModule[] = [
   captureOnArrivalModule, // walk-in capture of undefended neutral sectors (after combat)
   constructionModule,
   technologyModule,
+  factionModule, // always-on faction passives (production / speed / combat) via hooks
   armyModule,
   victoryModule,
   visibilityModule, // fog-of-war memory (variant B): records last-seen worlds
