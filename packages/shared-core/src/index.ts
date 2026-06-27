@@ -50,7 +50,14 @@ export {
   validateMatchMap,
   type BuildFromMapOptions,
 } from './state/buildFromMap';
-export { sectorKindDef, isCapturable, isBuildable, hasOrbit } from './state/sectorKind';
+export {
+  sectorKindDef,
+  isCapturable,
+  isBuildable,
+  hasOrbit,
+  allowedBuildings,
+  sectorAppearance,
+} from './state/sectorKind';
 export {
   planRoute,
   routeDistance,
@@ -130,6 +137,7 @@ export {
   type EffectRule,
   type SectorTypeDef,
   type SectorKindDef,
+  type SectorKindAppearance,
   type PlanetTypeDef,
   type TechnologyDef,
   type TechnologyEffects,
@@ -151,6 +159,7 @@ export { captureOnArrivalModule } from './modules/captureOnArrival';
 export { sectorModule } from './modules/sector';
 export { planetTypeModule } from './modules/planetType';
 export { constructionModule } from './modules/construction';
+export { stationModule } from './modules/station';
 export { technologyModule } from './modules/technology';
 export { armyModule } from './modules/army';
 export { victoryModule } from './modules/victory';

@@ -1,16 +1,25 @@
-import type { GameData, SectorKindDef } from '../data/schemas';
+import type { GameData, SectorKindAppearance, SectorKindDef } from '../data/schemas';
 import type { Planet } from './gameState';
 
 /**
- * Sector-kind accessors (map-roadmap.md M2.1). A sector's `kind` decides whether
- * it can be captured, built on, and whether it has an orbital layer. Resolved
- * against game data `sectorKinds`; an absent or unknown kind degrades to the
- * permissive default (capturable + buildable + orbit) so worlds without kind
- * data — the existing scenarios — keep behaving exactly as before (invariant:
- * every extension point degrades gracefully, no module/data → base default).
+ * Province-type accessors (map-roadmap.md M2.1). A province's `kind` is the single
+ * registry deciding whether it can be captured, built on, **what** it can be built
+ * with (`allowedBuildings` roster), and how it looks on the map (`appearance`).
+ * Resolved against game data `sectorKinds`; an absent or unknown kind degrades to the
+ * permissive default so worlds without kind data — the existing scenarios — keep
+ * behaving exactly as before (invariant: every extension point degrades gracefully).
  */
 
-const DEFAULT_KIND: SectorKindDef = { capturable: true, buildable: true, orbit: true };
+/** Permissive default. `allowedBuildings: undefined` is load-bearing — it is the
+ *  "ANY building" signal the construction gate reads (NOT `[]`, which means "none"). */
+const DEFAULT_APPEARANCE: SectorKindAppearance = { color: '#46606e', shape: 'city' };
+const DEFAULT_KIND: SectorKindDef = {
+  capturable: true,
+  buildable: true,
+  orbit: true,
+  allowedBuildings: undefined,
+  appearance: DEFAULT_APPEARANCE,
+};
 
 /** The kind definition for a sector, or the permissive default. */
 export function sectorKindDef(data: GameData, planet: Pick<Planet, 'kind'>): SectorKindDef {
@@ -31,4 +40,18 @@ export function isBuildable(data: GameData, planet: Pick<Planet, 'kind'>): boole
 /** Does this sector have the near/far orbital layer? */
 export function hasOrbit(data: GameData, planet: Pick<Planet, 'kind'>): boolean {
   return sectorKindDef(data, planet).orbit;
+}
+
+/** The build roster of this province type — the building ids it may host, or
+ *  `undefined` = any building (permissive). Explicit `[]` = no construction here. */
+export function allowedBuildings(
+  data: GameData,
+  planet: Pick<Planet, 'kind'>,
+): string[] | undefined {
+  return sectorKindDef(data, planet).allowedBuildings;
+}
+
+/** Map appearance (color / label / shape) of this province type; neutral default if absent. */
+export function sectorAppearance(data: GameData, planet: Pick<Planet, 'kind'>): SectorKindAppearance {
+  return sectorKindDef(data, planet).appearance;
 }

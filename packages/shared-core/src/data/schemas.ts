@@ -186,18 +186,38 @@ export const TechnologyDefSchema = z.object({
   }),
 });
 
-/** A sector **kind** (planet / asteroid / nebula / empty …): the category that
- *  decides whether a sector can be owned, built on, and whether it has an orbital
- *  layer. Data-driven (map-roadmap.md M2.1) — add a kind by adding an entry, no
- *  code change. Absent / unknown kind degrades to the permissive defaults below. */
+/** How a province type draws on the map — resolved by kind id on the client, never
+ *  stored on `Planet` (keeps `GameState` minimal). A missing field degrades to a
+ *  neutral default, never a crash. */
+export const SectorKindAppearanceSchema = z.object({
+  /** Map accent fill / glyph tint (hex). */
+  color: z.string().default('#46606e'),
+  /** On-map callout. Falls back to the kind's `name`, then the kind id. */
+  label: z.string().optional(),
+  /** On-map marker family. */
+  shape: z.enum(['city', 'junction', 'marker', 'station']).default('city'),
+});
+
+/** A sector **kind** = a **province type** (planet / asteroid / nebula / void_station
+ *  / empty …): the single registry that decides whether a province can be owned, built
+ *  on, what it can be built with, and how it looks on the map. Data-driven
+ *  (map-roadmap.md M2.1) — add a province type by adding an entry, no code change.
+ *  Absent / unknown kind degrades to the permissive defaults below. */
 export const SectorKindDefSchema = z.object({
   name: z.string().optional(),
-  /** Can this sector be owned (captured)? Empty space cannot. */
+  /** Can this province be owned (captured)? Empty space cannot. */
   capturable: z.boolean().default(true),
   /** Can structures be raised here? */
   buildable: z.boolean().default(true),
   /** Does it have the near/far orbital layer (cities, fortresses)? */
   orbit: z.boolean().default(true),
+  /** Province-centric build roster: the building ids raisable on this province type.
+   *  Absent/undefined = ANY building (the permissive default, so kind-less / roster-less
+   *  worlds keep building as before). Explicit `[]` = no construction here (empty /
+   *  debris). Enforced in the construction module (`E_WRONG_SECTOR`). */
+  allowedBuildings: z.array(z.string()).optional(),
+  /** Map appearance (color / label / shape); neutral default if absent. */
+  appearance: SectorKindAppearanceSchema.default({ color: '#46606e', shape: 'city' }),
 });
 
 export const GameDataSchema = z.object({
@@ -222,6 +242,7 @@ export type BuildingLevel = z.infer<typeof BuildingLevelSchema>;
 export type EffectRule = z.infer<typeof EffectRuleSchema>;
 export type SectorTypeDef = z.infer<typeof SectorTypeDefSchema>;
 export type SectorKindDef = z.infer<typeof SectorKindDefSchema>;
+export type SectorKindAppearance = z.infer<typeof SectorKindAppearanceSchema>;
 export type PlanetTypeDef = z.infer<typeof PlanetTypeDefSchema>;
 export type TechnologyUnlocks = z.infer<typeof TechnologyUnlocksSchema>;
 export type TechnologyEffects = z.infer<typeof TechnologyEffectsSchema>;

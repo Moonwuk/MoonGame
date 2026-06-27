@@ -240,11 +240,11 @@ let lastHoverHtml = '';
 let lastObjDescHtml = '';
 let lastLogHtml = '';
 let lastAlertText = '';
-// --- fog of war (DEV-ONLY, temporary preview of core "variant A") ------------
+// --- fog of war (renderer projection; always on) -----------------------------
 // Client-side projection just for the renderer — NOT the real security boundary
-// (that is `visibleState` in shared-core, built later). Toggle in the speed bar.
-let fogOn = true; // default on so the effect is visible
-let vision: Vision | null = null; // identify + radar sets for this frame; null = no fog
+// (that is `visibleState` in shared-core). Fog is always on: ships are near-blind,
+// sight comes from owned worlds + radar (see `computeVision`).
+let vision: Vision | null = null; // identify + radar sets for this frame
 
 // --- dom ---------------------------------------------------------------------
 
@@ -800,7 +800,7 @@ function laneAim(
 const RADAR_SHIP: Record<string, number> = { scout: 350 };
 // Radar-array detection radius (DISTANCE, map units) by building level.
 const RADAR_LEVEL_DIST = [0, 300, 500, 700];
-const SENSOR_HOPS = 1; // identify (full-detail) range from any owned node / fleet (jumps)
+const SENSOR_HOPS = 1; // identify (full-detail) range from an owned WORLD (jumps); fleets see their own node only
 // A radar projects two concentric ranges: signatures out to its full reach, and
 // full identification within the inner half (mirrors shared-core visibility).
 const IDENTIFY_REACH_FRACTION = 0.5;
@@ -883,7 +883,7 @@ function computeVision(): Vision {
     if (f.owner === ME) {
       const node = fleetNode(f);
       if (!node) continue;
-      floodHops(node, SENSOR_HOPS, identify);
+      floodHops(node, 0, identify); // own node only — ships are near-blind (mirrors FLEET_IDENTIFY_HOPS)
       const rr = fleetRadar(f);
       if (rr > 0) {
         withinRadius(node, rr, radar); // signatures (outer)
@@ -1399,7 +1399,6 @@ function drawUnionTier(
 }
 
 function drawRadarCoverage() {
-  if (!fogOn) return;
   // My radar sources (planet arrays + radar-ships), tagged so a SELECTED entity can
   // also show its own precise range on top of the merged frontier.
   type Src = { x: number; y: number; r: number; sel: boolean };
@@ -1780,7 +1779,7 @@ function buildStaticLayer(): void {
     const accent = SECTOR_TYPES[si.kind]?.color;
     if (accent) {
       trace(poly);
-      g.fillStyle = rgba(accent, 0.06);
+      g.fillStyle = rgba(accent, 0.16); // province-type tint reads through the owner fill
       g.fill();
     }
     cells.push({ poly, tags, owner: si.owner, idx: i });
@@ -1991,11 +1990,11 @@ function render(now: number) {
       if (!p) continue;
       const c = world(n);
       if (!visible(c, 60)) continue;
-      const seen = !fogOn || known(n.id) || memory.has(n.id);
+      const seen = known(n.id) || memory.has(n.id);
       if (!seen) continue;
       const g = sweepGlow(c);
       if (g <= 0.03) continue;
-      const col = known(n.id) || !fogOn ? ownerColor(p.owner) : '#6f8a93';
+      const col = known(n.id) ? ownerColor(p.owner) : '#6f8a93';
       blitGlow(col, c.x, c.y, 24, 0.42 * g); // cached glow disc (no per-node gradient)
     }
     cx.restore();
@@ -2012,7 +2011,7 @@ function render(now: number) {
     const kn = known(n.id);
     // Variant B: fog hides capturable systems (void cells stay as pure geometry).
     // Unknown → a remembered last-known blip, or an "unexplored" marker.
-    if (fogOn && n.sector !== 'empty' && !kn) {
+    if (n.sector !== 'empty' && !kn) {
       drawFogMarker(c, n.id, memory.get(n.id));
       continue;
     }
@@ -2584,12 +2583,14 @@ function panelHtml(): string {
   const sec = data.sectors[p.terrain ?? '']?.name ?? p.terrain ?? '—';
   const pt = p.planetType ? data.planetTypes[p.planetType] : undefined;
   const ptName = pt?.name ?? p.planetType ?? '—';
+  // Province type (the structural kind) — shown so the map's provinces read clearly.
+  const kindName = SECTOR_TYPES[SECTOR_OF[p.id]]?.name ?? SECTOR_OF[p.id] ?? '—';
   const ground = p.garrison.filter((st) => isGround(st.unit));
   const ships = p.garrison.filter((st) => isShip(st.unit));
   const gcount = sumUnits(p.garrison);
   const here = Object.values(s.fleets).filter((f) => f.location === p.id);
   let h =
-    cardHeader(ownerColor(p.owner), p.id, `${p.owner ? NAME[p.owner] : 'Neutral'} · ${ptName} · ${sec}`) +
+    cardHeader(ownerColor(p.owner), p.id, `${p.owner ? NAME[p.owner] : 'Neutral'} · ${kindName} · ${ptName} · ${sec}`) +
     `<div class="pstats"><span>⚔ ${gcount} garrison</span><span>${unitIcon('marine')} ${sumUnits(ground)} ground</span><span>${unitIcon('cruiser')} ${sumUnits(ships)} ships</span><span>▣ ${p.buildings.length} built</span></div>`;
   if (pt && (pt.productionBonus !== 0 || pt.defenseBonus !== 0)) {
     const pct = (n: number) => (n >= 0 ? '+' : '') + Math.round(n * 100) + '%';
@@ -2669,8 +2670,9 @@ function panelHtml(): string {
       blds += `</div>`;
     }
     if (mine) {
-      // an asteroid junction can only raise a space fortress; a city builds the rest
-      const buildable = SECTOR_OF[p.id] === 'asteroid' ? ['starfort'] : BUILDABLE;
+      // Province-centric roster (data-driven): each province type lists what it can
+      // raise (SECTOR_TYPES.allowedBuildings); absent = the default BUILDABLE set.
+      const buildable = SECTOR_TYPES[SECTOR_OF[p.id]]?.allowedBuildings ?? BUILDABLE;
       const missing = buildable.filter((t) => !p.buildings.some((b) => b.type === t));
       if (missing.length) blds += buildButtons(p.id, missing, 'building');
     }
@@ -3633,7 +3635,7 @@ function frame(nowReal: number) {
     checkEnd();
   }
   resolvePendingMerges(); // complete fleet merges whose movers have arrived
-  vision = fogOn ? computeVision() : null; // dev fog projection for this frame
+  vision = computeVision(); // fog projection for this frame (always on)
   if (vision) updateMemory(vision.identify); // variant B: remember what we see
   render(nowReal);
   renderPanel();

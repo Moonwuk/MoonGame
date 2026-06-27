@@ -6,7 +6,7 @@
 > `deep-technical-roadmap.md`, `multiplayer.md`, `metagame.md`, `map-roadmap.md`, корневой `CLAUDE.md` / `CONTRIBUTING.md`.
 >
 > **Ветка:** feature-ветка · **PR:** создаётся после изменений.
-> **Гейт:** `pnpm run check` (lint + typecheck + test). **Тесты: 304 зелёных**.
+> **Гейт:** `pnpm run check` (lint + typecheck + test). **Тесты: 349 зелёных** (4 skip, 43 файла).
 
 ---
 
@@ -219,14 +219,42 @@ E_ORBIT_CONTESTED, E_NO_TROOPS, E_OWN_PLANET, E_NO_PLANET, E_FLEET_BUSY,…`.
   `construction.complete` (`buildTimeHours`×timeScale). Одно здание каждого типа
   на планету; юниты идут в гарнизон. Коды: `E_BAD_PAYLOAD, E_NO_PLANET,
 E_FORBIDDEN, E_UNKNOWN_BUILDING/UNIT, E_ALREADY_BUILT, E_ALREADY_QUEUED,
-E_NO_BUILDING, E_MAX_LEVEL, E_INSUFFICIENT, E_BOMBARDED`.
-- На `construction.complete`: добавляет здание/уровень/юнитов **если ещё владеешь
+E_NO_BUILDING, E_MAX_LEVEL, E_INSUFFICIENT, E_BOMBARDED, E_WRONG_SECTOR`.
+- **Ростер по типу провинции (province-centric):** `sectorKinds[kind].allowedBuildings`
+  — единый источник «что здесь строится», редактируется в одном месте. `building.construct`
+  проверяет `building ∈ allowedBuildings`, иначе `E_WRONG_SECTOR`. Отсутствует/`undefined`
+  = любое здание (kind не задан → пермиссивно); явный `[]` = строить нельзя (empty/debris).
+  Так у каждого типа свои постройки: **планета** — всё; **астероид** — шахты/радар/форт;
+  **туманность** — радар/форт; **`void_station`** — верфь/космопорт/радар/форт (без шахт/казарм).
+- **`sectorKinds` = единый реестр типов провинций** (планета — тоже провинция): на каждый kind
+  — структурные флаги (`capturable/buildable/orbit`) + ростер (`allowedBuildings`) + вид на карте
+  (`appearance{color,label,shape}`, резолвится по kind на клиенте, в `GameState` не хранится).
+  Аксессоры: `allowedBuildings(data, planet)`, `sectorAppearance(data, planet)`. Экономические
+  слои (`terrain`/`planetType`: производство/защита/скорость/HP/очки) остаются ортогональными.
+  `PlanetSnapshot.kind` снапшотится в тумане → неразведанный узел не утекает истинным типом,
+  а вспомненный показывает запомненный. Прототип красит провинцию по `appearance.color` и
+  показывает тип + ростер в панели.
   планетой** (иначе вложение сгорает); **под бомбардировкой — пауза** (re-defer).
 - Хук `combat.damage`: **бонус обороны гарнизона** = сумма `defenseBonus`
   зданий (наземная фаза). На `combat.round` (наземный штурм) и на
   `planet.bombarded` — **износ/разрушение зданий** (`building.destroyed`).
 - События: `construction.started, building.constructed/upgraded/destroyed,
 unit.built`.
+
+### station (`station`) — аванпосты в пустом космосе
+
+Контекст: корабли теперь **почти слепые** (`visibility.ts`: identify-флуд флота = 0
+прыжков, видит только свой узел; миры — 1 прыжок). Разведка — через **радар**
+(постройка `radar` или юнит с `radarRange`). Чтобы вынести радар/форт **в пустоту**,
+нужен аванпост: пустой космос нельзя ни захватить, ни застраивать (`sectorKinds.empty`).
+
+Действие **`station.deploy {planetId}`** — закрепить станцию на **пустом** узле из
+стоящего там своего флота: узел становится владеемым застраиваемым **`void_station`**
+(`sectorKinds`: capturable/buildable), оплата вперёд из казны. Дальше обычной
+`building.construct` на нём поднимается радар/форт/прочее. Станция — настоящий узел:
+оставишь без гарнизона — враг заходит (capture-on-arrival). Коды: `E_BAD_PAYLOAD,
+E_NO_PLANET, E_NOT_EMPTY, E_FORBIDDEN, E_NO_ANCHOR, E_INSUFFICIENT`. Событие
+`station.deployed`. Новый модуль + данные, ядро не тронуто.
 
 ### army (`army`) — разделение флота и наземной армии + транспорт
 

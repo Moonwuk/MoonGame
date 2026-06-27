@@ -3,6 +3,7 @@ import type { BuildingInstance, Planet, Player } from '../state/gameState';
 import type { GameData, ResourceBag } from '../data/schemas';
 import { buildingLevel, buildingMaxLevel } from '../data/schemas';
 import { isBombarded } from '../state/orbit';
+import { allowedBuildings } from '../state/sectorKind';
 import type { Action } from '../action/types';
 import { timeScaleOf } from '../action/types';
 import { canAfford, payCost } from '../util/treasury';
@@ -170,6 +171,14 @@ export const constructionModule: GameModule = {
       const def = h.ctx.data.buildings[payload.building];
       if (!def) {
         return h.reject('E_UNKNOWN_BUILDING');
+      }
+      // Province-type roster: each province type lists the buildings it may host
+      // (`allowedBuildings`). undefined roster (kind-less / unknown / roster-less) = any
+      // building — kind-less scenario worlds keep building exactly as before. An explicit
+      // `[]` means "no construction here" (empty / debris).
+      const roster = allowedBuildings(h.ctx.data, planet);
+      if (roster !== undefined && !roster.includes(payload.building)) {
+        return h.reject('E_WRONG_SECTOR'); // this structure does not fit this province type
       }
       requireUnlocked(h, action.playerId, 'building', payload.building);
       if (planet.buildings.some((b) => b.type === payload.building)) {

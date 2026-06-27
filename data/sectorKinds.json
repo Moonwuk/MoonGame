@@ -1,8 +1,58 @@
 {
-  "planet": { "name": "Planet", "capturable": true, "buildable": true, "orbit": true },
-  "asteroid": { "name": "Asteroid Field", "capturable": true, "buildable": true, "orbit": false },
-  "nebula": { "name": "Nebula", "capturable": true, "buildable": true, "orbit": true },
-  "empty": { "name": "Empty Space", "capturable": false, "buildable": false, "orbit": false },
-  "debris_field": { "name": "Debris Field", "capturable": false, "buildable": false, "orbit": false },
-  "dead_world": { "name": "Dead World", "capturable": false, "buildable": false, "orbit": false }
+  "planet": {
+    "name": "Planet",
+    "capturable": true,
+    "buildable": true,
+    "orbit": true,
+    "allowedBuildings": ["mine_t1", "mine_t2", "shipyard", "biomass_pit", "barracks", "spaceport", "radar", "fort"],
+    "appearance": { "color": "#5fd0ff", "label": "planet", "shape": "city" }
+  },
+  "asteroid": {
+    "name": "Asteroid Field",
+    "capturable": true,
+    "buildable": true,
+    "orbit": false,
+    "allowedBuildings": ["mine_t1", "mine_t2", "radar", "fort"],
+    "appearance": { "color": "#d6a645", "label": "asteroid field", "shape": "junction" }
+  },
+  "nebula": {
+    "name": "Nebula",
+    "capturable": true,
+    "buildable": true,
+    "orbit": true,
+    "allowedBuildings": ["radar", "fort"],
+    "appearance": { "color": "#8f6dff", "label": "nebula", "shape": "city" }
+  },
+  "empty": {
+    "name": "Empty Space",
+    "capturable": false,
+    "buildable": false,
+    "orbit": false,
+    "allowedBuildings": [],
+    "appearance": { "color": "#46606e", "label": "survey marker", "shape": "marker" }
+  },
+  "debris_field": {
+    "name": "Debris Field",
+    "capturable": false,
+    "buildable": false,
+    "orbit": false,
+    "allowedBuildings": [],
+    "appearance": { "color": "#2f4a59", "label": "debris field", "shape": "junction" }
+  },
+  "dead_world": {
+    "name": "Dead World",
+    "capturable": false,
+    "buildable": false,
+    "orbit": false,
+    "allowedBuildings": [],
+    "appearance": { "color": "#5a4a4a", "label": "dead world", "shape": "city" }
+  },
+  "void_station": {
+    "name": "Void Station",
+    "capturable": true,
+    "buildable": true,
+    "orbit": false,
+    "allowedBuildings": ["shipyard", "spaceport", "radar", "fort"],
+    "appearance": { "color": "#5f8f8c", "label": "void fortress", "shape": "station" }
+  }
 }

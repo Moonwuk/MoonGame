@@ -12,6 +12,7 @@ import {
   parseGameData,
   planetTypeModule,
   sectorModule,
+  stationModule,
   technologyModule,
   victoryModule,
   visibilityModule,
@@ -63,6 +64,7 @@ export const DEV_MODULES: GameModule[] = [
   combatModule,
   captureOnArrivalModule, // walk-in capture of undefended neutral sectors (after combat)
   constructionModule,
+  stationModule, // deploy void stations on empty nodes (then build radar/fort there)
   technologyModule,
   armyModule,
   victoryModule,
@@ -92,6 +94,7 @@ function planet(
   y: number,
   links: string[],
   planetType: string,
+  kind = 'planet', // every node is a province; planets are one province type among many
 ): Planet {
   return {
     id,
@@ -100,6 +103,7 @@ function planet(
     links,
     terrain: 'empty_space',
     planetType,
+    kind,
     resources: {},
     buildings: [],
     garrison: [],
