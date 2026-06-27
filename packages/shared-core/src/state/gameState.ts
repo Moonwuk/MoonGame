@@ -281,10 +281,17 @@ export interface GameState {
  *  cooldowns. Acts from its current node (`location`); relocates with `hero.move`. */
 export interface Hero {
   owner: PlayerId;
-  /** The node the hero currently occupies (abilities act from/around here). */
+  /** Display name — the player's projection of themselves (their nick). Cosmetic;
+   *  set at match seed. Absent ⇒ the client falls back to the owner's name. */
+  name?: string;
+  /** The node the hero currently occupies / respawns at (abilities act from here,
+   *  the projection hero returns here after dying). */
   location: PlanetId;
-  /** Per-ability `readyAt` timestamp (ms): the ability is on cooldown while now < it. */
+  /** Per-ability `readyAt` timestamp (ms): the ability is on cooldown while now < it.
+   *  The projection hero's death timer lives under the `respawn` key. */
   cooldowns: Record<string, number>;
+  /** False while the hero is dead and awaiting respawn; absent/true ⇒ alive. */
+  alive?: boolean;
 }
 
 /** A temporary lane a hero opened: a real, routable graph edge between two nodes for

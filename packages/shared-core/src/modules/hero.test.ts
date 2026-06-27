@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { createKernel } from '../kernel/kernel';
+import type { GameModule } from '../kernel/module';
 import { heroModule } from './hero';
 import { movementModule } from './movement';
+import { combatModule } from './combat';
 import {
   createInitialState,
   type Fleet,
@@ -18,6 +20,14 @@ const data: GameData = parseGameData({
   resources: ['metal'],
   units: {
     scout: { faction: 'x', stats: { attack: 1, defense: 1, speed: 10, hp: 6 } },
+    warship: { faction: 'x', stats: { attack: 20, defense: 20, speed: 5, hp: 200 }, line: 'front' },
+    // The projection hero: tanky, no offence of its own — its value is the fleet aura.
+    hero: {
+      faction: 'x',
+      stats: { attack: 0, defense: 0, speed: 5, hp: 120 },
+      line: 'front',
+      traits: ['hero'],
+    },
   },
   factions: {},
   buildings: { mine: { name: 'Mine', produces: { metal: 10 } } },
@@ -263,5 +273,98 @@ describe('hero — planet annihilation', () => {
         kernel.applyAction(first.state, act('planet.annihilate', 'p1', { planetId: 'B' }, 2), ctx(HOUR)),
       ),
     ).toBe('E_COOLDOWN');
+  });
+});
+
+// Fixture: emit `fleet.arrived` so combat's engageFleets starts an orbital battle.
+const arriveModule: GameModule = {
+  id: 'test-arrive',
+  version: '1.0.0',
+  setup(api) {
+    api.onAction('arrive', (a, h) => {
+      const fleetId = (a.payload as { fleetId: string }).fleetId;
+      h.emit('fleet.arrived', { fleetId, at: h.state.fleets[fleetId]?.location });
+    });
+  },
+};
+
+describe('hero — fleet combat aura (+5%)', () => {
+  it('a hero-carrying fleet hits 5% harder; a heroless fleet does not', () => {
+    const kernel = createKernel([heroModule, combatModule, arriveModule]);
+    const s = createInitialState({ seed: 'aura', version: { data: '0.1.0', manifest: '1' } });
+    const st: GameState = {
+      ...s,
+      players: { p1: player('p1'), p2: player('p2') },
+      planets: { P: planet('P', null, 0, 0, [], 'planet') },
+      fleets: {
+        A: { id: 'A', owner: 'p1', location: 'P', movement: null, traits: [], units: [{ unit: 'warship', count: 1 }, { unit: 'hero', count: 1 }] },
+        D: { id: 'D', owner: 'p2', location: 'P', movement: null, traits: [], units: [{ unit: 'warship', count: 1 }] },
+      },
+    };
+    const started = okApply(kernel.applyAction(st, act('arrive', 'p1', { fleetId: 'A' }), ctx(0)));
+    const r = okAdvance(kernel.advanceTo(started.state, ctx(HOUR))); // one round
+    const round = r.events.find((e) => e.type === 'combat.round');
+    const p = round?.payload as { dmgToDefender: number; dmgToAttacker: number };
+    expect(p.dmgToDefender).toBe(21); // A (attacker, has hero): 20 attack × 1.05
+    expect(p.dmgToAttacker).toBe(20); // D (defender, no hero): 20 defense, unbuffed
+  });
+});
+
+describe('hero — death and respawn', () => {
+  function arena(): GameState {
+    const s = createInitialState({ seed: 'respawn', version: { data: '0.1.0', manifest: '1' } });
+    return {
+      ...s,
+      players: { p1: player('p1'), p2: player('p2') },
+      planets: {
+        P: planet('P', null, 0, 0, [], 'planet'), // the battlefield
+        HOME: planet('HOME', 'p1', 50, 0, [], 'planet'), // p1's home → respawn point
+      },
+      fleets: {
+        // p1's lone hero ship meets a far stronger enemy and is destroyed.
+        F: { id: 'F', owner: 'p1', location: 'P', movement: null, traits: [], units: [{ unit: 'hero', count: 1 }] },
+        D: { id: 'D', owner: 'p2', location: 'P', movement: null, traits: [], units: [{ unit: 'killer', count: 1 }] },
+      },
+      heroes: { p1: { owner: 'p1', name: 'Ada', location: 'HOME', cooldowns: {}, alive: true } },
+    };
+  }
+
+  it('kills the hero, schedules a respawn, then re-forms it at home', () => {
+    // A one-shot enemy: defense 150 return-fire flattens the hero's 120 hp in round 1.
+    const killerData: GameData = parseGameData({
+      version: '0.1.0',
+      resources: ['metal'],
+      units: {
+        hero: { faction: 'x', stats: { attack: 0, defense: 0, speed: 5, hp: 120 }, line: 'front', traits: ['hero'] },
+        killer: { faction: 'x', stats: { attack: 150, defense: 150, speed: 5, hp: 300 }, line: 'front' },
+      },
+      factions: {},
+      buildings: {},
+      events: {},
+      sectorKinds: { planet: { capturable: true, buildable: true, orbit: true } },
+      planetTypes: { terran: { scoreValue: 0 } },
+    });
+    const kctx = (now: number): Context => ({ now, data: killerData });
+    const kernel = createKernel([heroModule, combatModule, arriveModule]);
+
+    const started = okApply(kernel.applyAction(arena(), act('arrive', 'p1', { fleetId: 'F' }), kctx(0)));
+    const dead = okAdvance(kernel.advanceTo(started.state, kctx(2 * HOUR)));
+
+    // The hero died: entity flagged dead, a respawn is scheduled, no hero unit remains.
+    expect(dead.state.heroes?.p1?.alive).toBe(false);
+    expect(dead.state.scheduled.some((e) => e.type === 'hero.respawn')).toBe(true);
+    expect(
+      Object.values(dead.state.fleets).some((f) => f.units.some((u) => u.unit === 'hero')),
+    ).toBe(false);
+    expect(dead.events.map((e) => e.type)).toContain('hero.died');
+
+    // After the 24h cooldown the hero re-forms as a fresh fleet at HOME.
+    const reborn = okAdvance(kernel.advanceTo(dead.state, kctx(30 * HOUR)));
+    expect(reborn.state.heroes?.p1?.alive).toBe(true);
+    const heroFleet = Object.values(reborn.state.fleets).find(
+      (f) => f.owner === 'p1' && f.units.some((u) => u.unit === 'hero' && u.count > 0),
+    );
+    expect(heroFleet?.location).toBe('HOME');
+    expect(reborn.events.map((e) => e.type)).toContain('hero.respawned');
   });
 });

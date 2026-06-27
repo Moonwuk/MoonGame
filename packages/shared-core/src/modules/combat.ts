@@ -159,6 +159,15 @@ function applyDamageToSide(
     ref.kind === 'garrison'
       ? { at: location, planetId: ref.planetId }
       : { at: location, fleetId: ref.fleetId };
+  // Tag the casualty's owner NOW: a wiped fleet is deleted before the `unit.died`
+  // event drains, so listeners (heroes / score / reanimate) can't re-find it.
+  const owner =
+    ref.kind === 'garrison'
+      ? h.state.planets[ref.planetId]?.owner
+      : h.state.fleets[ref.fleetId]?.owner;
+  if (owner != null) {
+    source.owner = owner;
+  }
   setSideUnits(h.state, ref, applyDamage(h, units, dmg, data, source));
 }
 

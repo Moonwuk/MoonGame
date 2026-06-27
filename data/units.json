@@ -103,5 +103,15 @@
     "signature": 2,
     "cost": { "dark_matter": 30 },
     "upkeep": { "dark_matter": 2 }
+  },
+  "hero": {
+    "faction": "vanguard",
+    "stats": { "attack": 12, "defense": 12, "speed": 6, "hp": 120 },
+    "line": "front",
+    "traits": ["hero"],
+    "abilities": [],
+    "signature": 6,
+    "cost": { "metal": 400, "credits": 200 },
+    "upkeep": { "credits": 10 }
   }
 }

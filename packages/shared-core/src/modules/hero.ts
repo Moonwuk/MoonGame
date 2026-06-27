@@ -1,6 +1,6 @@
 import { timeScaleOf } from '../action/types';
 import type { GameModule, HandlerContext } from '../kernel/module';
-import type { GameState, Hero, PlanetId, PlayerId, TempLane } from '../state/gameState';
+import type { Fleet, GameState, Hero, PlanetId, PlayerId, TempLane } from '../state/gameState';
 import { distance } from '../state/route';
 import { isCapturable } from '../state/sectorKind';
 import { MS_PER_HOUR } from '../util/time';
@@ -32,9 +32,26 @@ const ANNIHILATE_RANGE = 500;
 const ANNIHILATE_COOLDOWN_HOURS = 48;
 const DEAD_KIND = 'dead_world';
 const DEAD_PLANET_TYPE = 'dead_world';
+// Projection hero — the player's first hero: a ship that rides in a fleet, granting
+// it a flat combat aura, and returns to its home world a while after dying.
+const HERO_TRAIT = 'hero';
+const HERO_UNIT = 'hero';
+/** Flat combat bonus the hero grants its whole fleet (both attack and defense). */
+const HERO_COMBAT_BONUS = 0.05;
+/** Game-hours before a slain projection hero respawns at its home world. */
+const HERO_RESPAWN_HOURS = 24;
 
 function heroOf(state: GameState, playerId: PlayerId): Hero | undefined {
   return state.heroes?.[playerId];
+}
+
+/** Does this fleet currently carry a living hero unit? (drives the fleet aura). */
+function fleetHasHero(h: HandlerContext, fleetId: string): boolean {
+  const fleet = h.state.fleets[fleetId];
+  if (!fleet) return false;
+  return fleet.units.some(
+    (s) => s.count > 0 && (h.ctx.data.units[s.unit]?.traits.includes(HERO_TRAIT) ?? false),
+  );
 }
 
 /** ms from now after `hours`, compressed by the match timeScale like every duration. */
@@ -174,6 +191,65 @@ export const heroModule: GameModule = {
           ((l.from === from && l.to === to) || (l.from === to && l.to === from)),
       );
       return lane ? speed * (1 + lane.speedBonus) : speed;
+    });
+
+    // --- projection hero: fleet combat aura + death/respawn --------------------
+
+    // +5% to a fleet that carries the hero. combat.damage fires once per side per
+    // round; `args.attacker` is the owner DEALING this hit, so buffing that side's
+    // fleet covers both its attack (vs the foe) and its return-fire defense.
+    api.hook<number>('combat.damage', (base, args, h) => {
+      const { battleId, attacker } = (args ?? {}) as { battleId?: string; attacker?: string };
+      if (typeof battleId !== 'string' || typeof attacker !== 'string') return base;
+      const battle = h.state.battles[battleId];
+      if (!battle) return base;
+      const side = battle.attacker.owner === attacker ? battle.attacker : battle.defender;
+      if (side.ref.kind !== 'fleet') return base; // the aura is a fleet bonus only
+      return fleetHasHero(h, side.ref.fleetId) ? base * (1 + HERO_COMBAT_BONUS) : base;
+    });
+
+    // The hero went down (its ship was destroyed) → start the respawn timer once.
+    // `unit.died` carries the owner (the fleet may already be gone by drain time).
+    api.on('unit.died', (event, h) => {
+      const { unit, owner } = (event.payload ?? {}) as { unit?: string; owner?: string };
+      if (unit !== HERO_UNIT || typeof owner !== 'string') return;
+      const hero = heroOf(h.state, owner);
+      if (!hero || hero.alive === false) return; // no hero entity, or already respawning
+      hero.alive = false;
+      const respawnAt = after(h, HERO_RESPAWN_HOURS);
+      hero.cooldowns = hero.cooldowns ?? {};
+      hero.cooldowns.respawn = respawnAt;
+      h.schedule(respawnAt, 'hero.respawn', { owner });
+      h.emit('hero.died', { owner, at: h.ctx.now });
+    });
+
+    // Respawn: the hero re-forms as a fresh one-ship fleet at its home world (or any
+    // world the player still holds). With no territory left it stays dead.
+    api.on('hero.respawn', (event, h) => {
+      const { owner } = (event.payload ?? {}) as { owner?: string };
+      if (typeof owner !== 'string') return;
+      const hero = heroOf(h.state, owner);
+      if (!hero || hero.alive) return;
+      const home = h.state.planets[hero.location]?.owner === owner ? hero.location : undefined;
+      const at =
+        home ?? Object.keys(h.state.planets).sort().find((id) => h.state.planets[id]?.owner === owner);
+      if (at === undefined) return; // homeless → remains dead (likely being eliminated)
+      const seq = (h.state.heroSeq ?? 0) + 1;
+      h.state.heroSeq = seq;
+      const fleetId = `hero:${owner}:${seq}`;
+      const newFleet: Fleet = {
+        id: fleetId,
+        owner,
+        location: at,
+        movement: null,
+        units: [{ unit: HERO_UNIT, count: 1 }],
+        traits: [],
+        orbit: 'far',
+      };
+      h.state.fleets[fleetId] = newFleet;
+      hero.alive = true;
+      hero.location = at;
+      h.emit('hero.respawned', { owner, fleetId, at });
     });
   },
 };
