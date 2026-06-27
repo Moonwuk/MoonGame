@@ -1,6 +1,13 @@
 import type { Pool } from 'pg';
 import type { PlayerId } from '@void/shared-core';
-import type { AccountStore, MatchSnapshot, MatchStore, SeatAssignment } from './types';
+import type {
+  AccountStore,
+  MatchSnapshot,
+  MatchStore,
+  ReceiptStore,
+  SeatAssignment,
+  StoredReceipt,
+} from './types';
 
 /** Create the tables (idempotent). JSONB discipline: the queryable fields (status,
  *  data_version, seq) are normalized COLUMNS; only the opaque match `state` is JSONB,
@@ -27,6 +34,17 @@ export async function migrate(pool: Pool): Promise<void> {
     );
     -- a side is held by at most one nick per room (so two nicks can't take p1)
     CREATE UNIQUE INDEX IF NOT EXISTS seats_room_player_idx ON seats (room, player_id);
+
+    CREATE TABLE IF NOT EXISTS receipts (
+      match_id   text NOT NULL,
+      action_id  text NOT NULL,
+      player_id  text NOT NULL,
+      seq        integer NOT NULL,
+      ok         boolean NOT NULL,
+      code       text,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      PRIMARY KEY (match_id, action_id)
+    );
   `);
 }
 
@@ -118,5 +136,41 @@ export class PostgresAccountStore implements AccountStore {
       }
     }
     return null; // every seat taken
+  }
+}
+
+interface ReceiptRow {
+  action_id: string;
+  player_id: string;
+  seq: number;
+  ok: boolean;
+  code: string | null;
+}
+
+export class PostgresReceiptStore implements ReceiptStore {
+  constructor(private readonly pool: Pool) {}
+
+  async loadAll(matchId: string): Promise<StoredReceipt[]> {
+    const r = await this.pool.query<ReceiptRow>(
+      `SELECT action_id, player_id, seq, ok, code FROM receipts WHERE match_id = $1`,
+      [matchId],
+    );
+    return r.rows.map((row) => ({
+      actionId: row.action_id,
+      playerId: row.player_id,
+      seq: row.seq,
+      ok: row.ok,
+      ...(row.code !== null ? { code: row.code } : {}),
+    }));
+  }
+
+  async save(matchId: string, receipt: StoredReceipt): Promise<void> {
+    // Receipts are immutable — first write wins; a re-save of the same action is a no-op.
+    await this.pool.query(
+      `INSERT INTO receipts (match_id, action_id, player_id, seq, ok, code)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (match_id, action_id) DO NOTHING`,
+      [matchId, receipt.actionId, receipt.playerId, receipt.seq, receipt.ok, receipt.code ?? null],
+    );
   }
 }

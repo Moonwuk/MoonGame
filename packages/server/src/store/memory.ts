@@ -1,5 +1,12 @@
 import type { PlayerId } from '@void/shared-core';
-import type { AccountStore, MatchSnapshot, MatchStore, SeatAssignment } from './types';
+import type {
+  AccountStore,
+  MatchSnapshot,
+  MatchStore,
+  ReceiptStore,
+  SeatAssignment,
+  StoredReceipt,
+} from './types';
 
 /** In-memory match store — the default for dev/tests (a restart still loses the
  *  match; for durability use the Postgres adapter). Clones on save so the stored
@@ -42,6 +49,25 @@ export class MemoryAccountStore implements AccountStore {
     if (!free) return Promise.resolve(null); // room full
     byNick.set(nick, free);
     return Promise.resolve({ playerId: free, isNew: true });
+  }
+}
+
+/** In-memory receipt store — `matchId → actionId → receipt`. */
+export class MemoryReceiptStore implements ReceiptStore {
+  private readonly byMatch = new Map<string, Map<string, StoredReceipt>>();
+
+  loadAll(matchId: string): Promise<StoredReceipt[]> {
+    return Promise.resolve([...(this.byMatch.get(matchId)?.values() ?? [])]);
+  }
+
+  save(matchId: string, receipt: StoredReceipt): Promise<void> {
+    let m = this.byMatch.get(matchId);
+    if (!m) {
+      m = new Map();
+      this.byMatch.set(matchId, m);
+    }
+    if (!m.has(receipt.actionId)) m.set(receipt.actionId, receipt); // receipts are immutable
+    return Promise.resolve();
   }
 }
 

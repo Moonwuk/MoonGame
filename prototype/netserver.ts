@@ -20,11 +20,14 @@ import {
   createMultiplayerServer,
   MemoryAccountStore,
   MemoryMatchStore,
+  MemoryReceiptStore,
   PostgresAccountStore,
   PostgresMatchStore,
+  PostgresReceiptStore,
   migrate,
   type AccountStore,
   type MatchStore,
+  type ReceiptStore,
   type RoomObservation,
 } from '../packages/server/src/index';
 import { newGame, kernel, data } from './src/game';
@@ -57,9 +60,22 @@ const observe = (ev: RoomObservation): void => {
       stats.rejects++;
       if (ev.code) stats.byCode[ev.code] = (stats.byCode[ev.code] ?? 0) + 1;
     }
+    // Persist the receipt so a retried action stays deduped across a restart.
+    void receiptStore.save('proto', {
+      actionId: ev.actionId,
+      playerId: ev.playerId,
+      seq: ev.seq,
+      ok: ev.ok,
+      ...(ev.code ? { code: ev.code } : {}),
+    });
   }
-  // Persist after anything that changes the world or the lobby (debounced below).
-  if (ev.kind === 'action' || ev.kind === 'lobby' || ev.kind === 'end') scheduleSave();
+  // Persist after anything that changes the world or the lobby (debounced below),
+  // and re-arm the offline wakeup: an action may schedule or consume events, and a
+  // lobby Start releases the frozen clock — both move the next-event time.
+  if (ev.kind === 'action' || ev.kind === 'lobby' || ev.kind === 'end') {
+    scheduleSave();
+    armWakeup();
+  }
 };
 
 const host = process.env.HOST ?? '127.0.0.1';
@@ -101,17 +117,22 @@ const DATABASE_URL = process.env.DATABASE_URL;
 let pool: InstanceType<typeof Pool> | null = null;
 let matchStore: MatchStore;
 let accountStore: AccountStore;
+let receiptStore: ReceiptStore;
 if (DATABASE_URL) {
   pool = new Pool({ connectionString: DATABASE_URL });
   await migrate(pool);
   matchStore = new PostgresMatchStore(pool);
   accountStore = new PostgresAccountStore(pool);
+  receiptStore = new PostgresReceiptStore(pool);
 } else {
   matchStore = new MemoryMatchStore();
   accountStore = new MemoryAccountStore();
+  receiptStore = new MemoryReceiptStore();
 }
 const restored = await matchStore.load('proto');
 const initialState = restored?.state ?? newGame();
+// Rehydrate idempotency receipts so a retried action stays deduped across a restart.
+const initialReceipts = await receiptStore.loadAll('proto');
 
 // Lobby gate: the world clock starts at 0 ("Day 1") and stays frozen until the host
 // presses Start. On restore mid-match we skip the lobby and resume the running game.
@@ -126,6 +147,7 @@ const room = new MatchRoom({
   singlePeerPerPlayer: true, // 1v1: each side is one connection — no two-people-as-Azure
   emitStateHash: true, // attach hashState(view) so the client overlay can flag desync
   observe, // M0: log every room event to JSONL + count for the on-exit summary
+  initialReceipts, // rehydrated idempotency (deduped action stays deduped after restart)
 });
 
 // Snapshot the world after changes, debounced so a burst of actions is one write.
@@ -156,6 +178,35 @@ async function doSave(): Promise<void> {
     process.stderr.write(`snapshot save failed: ${(e as Error)?.message ?? String(e)}\n`);
   }
   saving = false;
+}
+
+// Offline scheduler (PA-4.1): a single-process wakeup driver so the world runs
+// 24/7 even with nobody connected. The in-state schedule is mirrored as ONE
+// pending timer set to the soonest event; when it fires we `tick()` the room
+// (advance + broadcast the arrivals/battles/captures that came due) and re-arm.
+// `setTimeout` overflows past ~24.8 days, so a far-future event is capped to
+// MAX_TIMER_MS and we re-arm — a long sleep taken in hops. Note: NO downtime
+// catch-up — the room resumes its clock at the saved `state.time` (initiallyStarted),
+// so the gap while the process was down is simply skipped, not replayed. The
+// distributed/durable evolution is a job queue on Postgres (pg-boss): one shared
+// "wake match X at T" job across many server processes instead of one in-memory
+// timer per room — see docs/persistence-accounts-roadmap.md (PA-4).
+const MAX_TIMER_MS = 60 * 60_000; // 1h cap (setTimeout overflow + clock-drift safety)
+let wakeTimer: ReturnType<typeof setTimeout> | null = null;
+function armWakeup(): void {
+  if (wakeTimer) {
+    clearTimeout(wakeTimer);
+    wakeTimer = null;
+  }
+  const ms = room.msUntilNextEvent();
+  if (ms === null) return; // nothing scheduled, or the lobby clock is frozen
+  wakeTimer = setTimeout(onWake, Math.min(ms, MAX_TIMER_MS));
+}
+function onWake(): void {
+  wakeTimer = null;
+  room.tick(); // fire whatever is now due (a no-op if a capped timer fired early)
+  scheduleSave(); // persist the advanced world
+  armWakeup(); // re-arm for the next event (or the remainder of a long sleep)
 }
 
 const server = createMultiplayerServer({ room, host, port, indexHtml, accountStore });
@@ -211,6 +262,10 @@ if (unreachableOnly) {
 lines.push('', `  raw ws : ${wsUrl.replace('0.0.0.0', 'localhost')}?player=p1  ·  …?player=p2`, '');
 process.stdout.write(lines.join('\n'));
 
+// Start the offline heartbeat: if a restored match already has a due/pending event,
+// this arms the first wake (no burst — the clock resumes at the saved time).
+armWakeup();
+
 // On Ctrl-C: print the playtest summary (counts gathered by `observe`) and where
 // the raw JSONL landed, then close cleanly — the per-match data survives the run.
 const printSummary = (): void => {
@@ -241,6 +296,10 @@ const shutdown = (): void => {
   if (saveTimer) {
     clearTimeout(saveTimer);
     saveTimer = null;
+  }
+  if (wakeTimer) {
+    clearTimeout(wakeTimer);
+    wakeTimer = null;
   }
   void (async () => {
     await doSave(); // final flush so the latest state is durable before we exit

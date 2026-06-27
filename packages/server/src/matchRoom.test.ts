@@ -222,8 +222,16 @@ describe('MatchRoom — observation & state hash (M0)', () => {
 
     expect(events).toEqual([
       { kind: 'join', playerId: 'p1' },
-      { kind: 'action', playerId: 'p1', type: 'player.rename', ok: true, seq: 1 },
-      { kind: 'action', playerId: 'p1', type: 'player.rename', ok: false, seq: 2, code: 'E_BAD_PAYLOAD' },
+      { kind: 'action', actionId: 'a1', playerId: 'p1', type: 'player.rename', ok: true, seq: 1 },
+      {
+        kind: 'action',
+        actionId: 'a2',
+        playerId: 'p1',
+        type: 'player.rename',
+        ok: false,
+        seq: 2,
+        code: 'E_BAD_PAYLOAD',
+      },
       { kind: 'leave', playerId: 'p1' },
     ]);
   });
@@ -496,6 +504,33 @@ const armModule: GameModule = {
   },
 };
 
+describe('MatchRoom — durable idempotency (initialReceipts)', () => {
+  it('a receipt seeded from a prior run dedupes a retried action (no re-apply)', () => {
+    // before the "crash": apply a1 and capture its receipt
+    const r1 = room();
+    const p1 = new MemoryPeer();
+    r1.addPeer('p1', p1);
+    const first = r1.submitAction('p1', action('a1', 'p1', 'Commander'), p1);
+    expect(first.ok).toBe(true);
+
+    // after the "restart": a fresh room seeded with that receipt. We deliberately
+    // start from the PRE-action state (name 'One') so a re-apply would be visible.
+    const r2 = new MatchRoom({
+      id: 'test-room',
+      initialState: testState(),
+      kernel: createKernel([renameModule]),
+      data: testData(),
+      now: () => 10,
+      initialReceipts: [{ actionId: 'a1', playerId: 'p1', seq: first.seq, ok: true }],
+    });
+    const p1b = new MemoryPeer();
+    r2.addPeer('p1', p1b);
+    const retry = r2.submitAction('p1', action('a1', 'p1', 'Commander'), p1b);
+    expect(retry).toMatchObject({ ok: true, seq: first.seq }); // served from the receipt
+    expect(r2.state.players.p1?.name).toBe('One'); // NOT re-applied
+  });
+});
+
 describe('MatchRoom — SRV-1 (advance events on a rejected action)', () => {
   it('broadcasts the world-advance even when the triggering action is rejected', () => {
     let real = 1000;
@@ -533,5 +568,83 @@ describe('MatchRoom — SRV-1 (advance events on a rejected action)', () => {
     expect(after.some((m) => m.type === 'rejection' && (m as { code?: string }).code === 'E_NOPE')).toBe(
       true,
     );
+  });
+});
+
+// PA-4.1: the world must run 24/7 — scheduled events (arrivals/battles/captures)
+// fire even with no player connected. `msUntilNextEvent` tells a wakeup driver when
+// to call `tick`, which advances the world and broadcasts with no action. Reuses
+// `armModule`: an `arm` action schedules a `boom` 1000ms out that renames p1.
+const armAction = (id: string): Action => ({
+  id,
+  type: 'arm',
+  playerId: 'p1',
+  issuedAt: 1,
+  payload: {},
+});
+
+describe('MatchRoom — offline scheduler (tick / msUntilNextEvent)', () => {
+  function armed(start = 1000): { r: MatchRoom; set: (ms: number) => void } {
+    let real = start;
+    const r = new MatchRoom({
+      id: 'sched',
+      initialState: testState(),
+      kernel: createKernel([armModule]),
+      data: testData(),
+      now: () => real,
+    });
+    return { r, set: (ms) => (real = ms) };
+  }
+
+  it('reports no wakeup when nothing is scheduled', () => {
+    expect(armed().r.msUntilNextEvent()).toBeNull();
+  });
+
+  it('reports the ms until the soonest scheduled event', () => {
+    const { r } = armed(1000);
+    const p1 = new MemoryPeer();
+    r.addPeer('p1', p1);
+    r.submitAction('p1', armAction('arm1'), p1); // schedules boom at now(1000)+1000
+    expect(r.msUntilNextEvent()).toBe(1000); // 2000 − 1000
+  });
+
+  it('tick() fires a due event with no action, broadcasts it, then has nothing left', () => {
+    const { r, set } = armed(1000);
+    const p1 = new MemoryPeer();
+    r.addPeer('p1', p1);
+    r.submitAction('p1', armAction('arm1'), p1);
+    expect(r.state.players.p1?.name).toBe('One'); // not yet boomed
+    const mark = p1.messages.length;
+
+    // wall-clock jumps past the boom; the driver wakes the room — no action sent
+    set(2500);
+    expect(r.msUntilNextEvent()).toBe(0); // overdue
+    r.tick();
+
+    expect(r.state.players.p1?.name).toBe('BOOMED'); // fired with no action
+    const delta = p1.messages.slice(mark).find((m) => m.type === 'delta') as
+      | { events: { type: string }[] }
+      | undefined;
+    expect(delta?.events.some((e) => e.type === 'boomed')).toBe(true);
+    expect(r.msUntilNextEvent()).toBeNull(); // consumed → idle again
+  });
+
+  it('does not wake or advance while the lobby clock is frozen', () => {
+    let real = 1000;
+    const r = new MatchRoom({
+      id: 'sched-lobby',
+      initialState: testState(),
+      kernel: createKernel([armModule]),
+      data: testData(),
+      now: () => real,
+      manualStart: true,
+    });
+    const p1 = new MemoryPeer();
+    r.addPeer('p1', p1); // host, but not started → clock frozen
+    r.submitAction('p1', armAction('arm1'), p1);
+    expect(r.msUntilNextEvent()).toBeNull(); // frozen → nothing to wake for
+    real = 9000;
+    r.tick();
+    expect(r.state.players.p1?.name).toBe('One'); // tick is a no-op while frozen
   });
 });

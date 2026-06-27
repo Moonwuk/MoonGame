@@ -41,3 +41,21 @@ export interface AccountStore {
   ): Promise<SeatAssignment | null>;
   close?(): Promise<void>;
 }
+
+/** An action receipt as stored for idempotency — structurally an `ActionReceipt`. */
+export interface StoredReceipt {
+  actionId: string;
+  playerId: PlayerId;
+  seq: number;
+  ok: boolean;
+  code?: string;
+}
+
+/** Durable idempotency: action receipts persisted so a retried action isn't applied
+ *  twice across a restart. The room keeps an in-memory map for the synchronous dedup
+ *  check; this store rehydrates it on boot and records each new receipt. */
+export interface ReceiptStore {
+  loadAll(matchId: string): Promise<StoredReceipt[]>;
+  save(matchId: string, receipt: StoredReceipt): Promise<void>;
+  close?(): Promise<void>;
+}
