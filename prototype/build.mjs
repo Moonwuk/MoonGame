@@ -59,7 +59,8 @@ body::before{content:"";position:fixed;inset:0;z-index:1;pointer-events:none;mix
 .res em.up{color:var(--up);}.res em.dn{color:var(--dn);}
 #speedbar{position:fixed;right:14px;bottom:14px;z-index:24;display:flex;align-items:center;gap:4px;
   padding:5px 7px;background:rgba(3,12,16,.78);border:1px solid var(--line-hi);border-radius:3px;
-  box-shadow:0 0 16px rgba(40,200,210,.10);}
+  box-shadow:0 0 16px rgba(40,200,210,.10);transition:bottom .2s ease;}
+body.sheet-open #speedbar{bottom:calc(34vh + 64px);}
 #fps{position:fixed;top:50px;right:10px;z-index:25;pointer-events:none;
   font:700 10px ui-monospace,Menlo,monospace;color:var(--grn);opacity:.72;letter-spacing:.5px;
   text-shadow:0 0 6px rgba(0,0,0,.85);}
@@ -68,7 +69,6 @@ body::before{content:"";position:fixed;inset:0;z-index:1;pointer-events:none;mix
   background:transparent;color:var(--cyan-dim);border:1px solid var(--line-hi);}
 .spd button.on{background:rgba(53,214,230,.16);color:var(--cyan);border-color:var(--cyan);box-shadow:0 0 10px rgba(53,214,230,.4);}
 .spd .sep{width:1px;height:18px;background:var(--line-hi);margin:0 4px;flex:0 0 auto;}
-.spd button[data-fog]{min-width:40px;letter-spacing:1px;font-weight:700;}
 #cmdbar{position:fixed;left:50%;transform:translateX(-50%);bottom:14px;z-index:26;display:none;align-items:center;
   gap:6px;padding:6px 8px;background:rgba(3,12,16,.88);border:1px solid var(--line-hi);border-radius:3px;
   box-shadow:0 0 22px rgba(40,200,210,.14);}
@@ -184,8 +184,16 @@ button.b:disabled{opacity:.32;cursor:not-allowed;color:var(--dim);border-color:v
 #botleft{position:fixed;left:6px;bottom:8px;z-index:24;display:flex;align-items:center;gap:8px;}
 .chat{width:40px;height:40px;cursor:pointer;font-size:16px;border-radius:2px;
   background:rgba(2,9,13,.7);border:1px solid var(--line-hi);color:var(--cyan-dim);}
-#daytimer{color:var(--dim);font-size:11px;background:rgba(2,9,13,.6);padding:6px 11px;border:1px solid var(--line);
-  border-radius:2px;white-space:nowrap;letter-spacing:.5px;}
+#hovercard{position:fixed;top:70px;right:14px;width:220px;z-index:22;pointer-events:none;
+  padding:12px 14px;background:rgba(3,12,16,.88);border:1px solid var(--line-hi);border-radius:3px;
+  box-shadow:0 0 18px rgba(40,200,210,.12);font-size:11px;line-height:1.55;display:none;}
+#hovercard.show{display:block;}
+#hovercard .hc-title{color:var(--cyan);font-size:12px;font-weight:700;letter-spacing:1.5px;margin-bottom:7px;border-bottom:1px solid var(--line);padding-bottom:5px;}
+#hovercard .hc-row{display:flex;justify-content:space-between;gap:8px;margin:2px 0;}
+#hovercard .hc-key{color:var(--dim);letter-spacing:.5px;}
+#hovercard .hc-val{color:var(--ink);font-weight:700;text-align:right;}
+#hovercard .hc-sub{color:var(--cyan-dim);font-size:10px;margin-top:5px;}
+@media (max-width:720px){#hovercard{display:none!important;}}
 #log{position:fixed;left:58px;bottom:58px;width:360px;height:92px;z-index:20;overflow:auto;touch-action:pan-y;
   padding:7px 11px;background:rgba(2,9,13,.72);border:1px solid var(--line);border-left:2px solid var(--grn-dim);
   font:11px/1.55 ui-monospace,Menlo,monospace;color:#73b6a2;scrollbar-width:thin;}
@@ -335,13 +343,13 @@ const html = `<!doctype html>
     <button title="Alerts">⚠<span class="rlabel">Alerts</span><span class="badge" id="alertbadge" style="display:none">0</span></button>
   </nav>
   <div id="log"></div>
-  <footer id="botleft"><button class="chat" title="Comms">◈</button><span id="daytimer">Day 1</span></footer>
+  <footer id="botleft"><button class="chat" title="Comms">◈</button></footer>
 </div>
 <aside id="side"></aside>
 <div id="speedbar" class="spd">
   <button data-speed="0">‖</button><button data-speed="2" class="on">▶</button><button data-speed="6">▶▶</button>
-  <span class="sep"></span><button data-fog title="Fog of war — dev preview (variant A)">FOG</button>
 </div>
+<div id="hovercard"></div>
 <div id="cmdbar"></div>
 <div id="splitdlg"></div>
 <div id="fps"></div>

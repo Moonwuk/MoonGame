@@ -29,6 +29,7 @@ import {
   type Action,
   type Context,
   type DomainEvent,
+  type Battle,
 } from '../../packages/shared-core/src/index';
 
 export const HOUR = 3_600_000;
@@ -505,6 +506,45 @@ export const fleetLaunchModule: GameModule = {
         at: fleet.location,
       });
     });
+
+    api.onAction('fleet.engage', (action, h) => {
+      const payload = action.payload as { fleetId?: string; targetId?: string };
+      if (typeof payload?.fleetId !== 'string' || typeof payload?.targetId !== 'string') {
+        return h.reject('E_BAD_PAYLOAD');
+      }
+      if (payload.fleetId === payload.targetId) return h.reject('E_SAME_FLEET');
+      const f = h.state.fleets[payload.fleetId];
+      const target = h.state.fleets[payload.targetId];
+      if (!f || !target) return h.reject('E_NO_FLEET');
+      if (f.owner !== action.playerId) return h.reject('E_FORBIDDEN');
+      if (f.owner === target.owner) return h.reject('E_FORBIDDEN');
+      if (f.battleId || target.battleId) return h.reject('E_IN_BATTLE');
+      if (!f.location || f.movement || target.movement || f.location !== target.location) {
+        return h.reject('E_NOT_COLOCATED');
+      }
+      const battleId = `battle:${h.state.battleSeq++}`;
+      const battle: Battle = {
+        id: battleId,
+        location: f.location,
+        phase: 'orbital',
+        attacker: { ref: { kind: 'fleet', fleetId: f.id }, owner: f.owner },
+        defender: { ref: { kind: 'fleet', fleetId: target.id }, owner: target.owner },
+        round: 0,
+      };
+      h.state.battles[battleId] = battle;
+      f.battleId = battleId;
+      f.movement = null;
+      target.battleId = battleId;
+      target.movement = null;
+      h.schedule(h.ctx.now + HOUR, 'combat.tick', { battleId });
+      h.emit('battle.started', {
+        battleId,
+        location: f.location,
+        phase: 'orbital',
+        attacker: f.owner,
+        defender: target.owner,
+      });
+    });
   },
 };
 
@@ -685,3 +725,5 @@ export const upgradeBuilding = (playerId: string, planetId: string, building: st
   act(playerId, 'building.upgrade', { planetId, building });
 export const buildUnit = (playerId: string, planetId: string, unit: string, count = 1) =>
   act(playerId, 'unit.build', { planetId, unit, count });
+export const engageFleet = (playerId: string, fleetId: string, targetId: string) =>
+  act(playerId, 'fleet.engage', { fleetId, targetId });

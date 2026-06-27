@@ -27,6 +27,7 @@ import {
   launchFleet,
   mergeFleet,
   splitFleet,
+  engageFleet,
   buildBuilding,
   upgradeBuilding,
   buildUnit,
@@ -221,6 +222,8 @@ let reconnecting = false;
 let reconnectAttempts = 0;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let aimPointer: { x: number; y: number } | null = null; // last canvas pointer (for the move preview)
+let hoverFleet: string | null = null; // fleet id under the pointer (desktop only)
+let hoverPlanet: string | null = null; // planet id under the pointer (desktop only)
 let planetTab: PlanetTab = 'buildings';
 const buildQueues: Record<string, PlanetBuildQueue> = {};
 const logLines: string[] = [];
@@ -230,7 +233,7 @@ let lastCmdHtml = '';
 let lastSplitHtml = '';
 let lastHudHtml = '';
 let lastClockText = '';
-let lastDayTimerText = '';
+let lastHoverHtml = '';
 let lastLogHtml = '';
 let lastAlertText = '';
 // --- fog of war (DEV-ONLY, temporary preview of core "variant A") ------------
@@ -249,7 +252,7 @@ const logEl = $('log');
 const clock = $('clock');
 const purse = $('purse');
 const bannerEl = $('banner');
-const dayTimer = $('daytimer');
+const hovercard = $('hovercard');
 const alertBadge = $('alertbadge');
 const cmdbar = $('cmdbar');
 const splitdlg = $('splitdlg');
@@ -1178,6 +1181,25 @@ function autoEngage() {
     if (enemyHere) continue; // let the auto orbital battle settle first
     if (f.orbit !== 'near') apply(order(s, orbitFleet(f.owner, f.id, 'near'), s.time));
     apply(order(s, assaultFleet(f.owner, f.id), s.time));
+  }
+}
+
+// Safety-net: detect two docked enemy fleets sharing a sector without a battle
+// and force-engage them. Catches the case where both fleets were in-transit when
+// the other arrived, so the combat module's arrival handler found no enemy.
+function checkFleetClashes() {
+  const fleets = Object.values(s.fleets);
+  for (const f of fleets) {
+    if (!f.location || f.movement || f.battleId) continue;
+    for (const g of fleets) {
+      if (g.id <= f.id) continue; // avoid processing the same pair twice
+      if (!g.location || g.movement || g.battleId) continue;
+      if (f.owner === g.owner || f.location !== g.location) continue;
+      // Two idle enemy fleets in the same sector — start a battle from the ME side
+      const myFleet = f.owner === ME ? f : g.owner === ME ? g : f;
+      const foeFleet = myFleet === f ? g : f;
+      apply(order(s, engageFleet(myFleet.owner, myFleet.id, foeFleet.id), s.time));
+    }
   }
 }
 
@@ -2517,6 +2539,71 @@ function panelHtml(): string {
   return h + pcols(cols);
 }
 
+function hoverCardHtml(): string {
+  if (hoverFleet) {
+    const f = s.fleets[hoverFleet];
+    if (!f) return '';
+    const owner = s.players[f.owner]?.name ?? f.owner;
+    const col = ownerColor(f.owner);
+    const ships = sumUnits(f.units);
+    const troops = f.landing ? sumUnits(f.landing) : 0;
+    const status = f.battleId ? 'In battle' : f.movement ? 'In transit' : 'Docked';
+    const dest = f.movement ? (f.movement.destination ?? f.movement.to) : f.location ?? '—';
+    const unitRows = f.units
+      .filter((u) => u.count > 0)
+      .map((u) => `<div class="hc-row"><span class="hc-key">${esc(u.unit)}</span><span class="hc-val">${u.count}</span></div>`)
+      .join('');
+    return `<div class="hc-title" style="color:${col}">FLEET</div>
+<div class="hc-row"><span class="hc-key">Owner</span><span class="hc-val">${esc(owner)}</span></div>
+<div class="hc-row"><span class="hc-key">Status</span><span class="hc-val">${status}</span></div>
+<div class="hc-row"><span class="hc-key">${f.movement ? 'Destination' : 'Location'}</span><span class="hc-val">${esc(dest)}</span></div>
+<div class="hc-row"><span class="hc-key">Ships</span><span class="hc-val">${ships}</span></div>
+${troops > 0 ? `<div class="hc-row"><span class="hc-key">Troops</span><span class="hc-val">${troops}</span></div>` : ''}
+${unitRows ? `<div class="hc-sub">Composition</div>${unitRows}` : ''}`;
+  }
+  if (hoverPlanet) {
+    const p = s.planets[hoverPlanet];
+    if (!p) return '';
+    const n = MAP.find((m) => m.id === hoverPlanet);
+    const owner = p.owner ? (s.players[p.owner]?.name ?? p.owner) : 'Neutral';
+    const col = ownerColor(p.owner);
+    const stype = SECTOR_TYPES[n?.sector ?? '']?.label ?? n?.sector ?? '—';
+    const ptype = p.planetType ? (data.planetTypes[p.planetType]?.name ?? p.planetType) : '—';
+    const garrison = (p.garrison ?? []).reduce((a, u) => a + u.count, 0);
+    const buildings = p.buildings.map((b) => {
+      const def = data.buildings[b.type];
+      return `<div class="hc-row"><span class="hc-key">${esc(def?.name ?? b.type)} Lv${b.level}</span><span class="hc-val">${b.hp}/${hpOfLevel(b.type, b.level)} HP</span></div>`;
+    }).join('');
+    const res = Object.entries(p.resources ?? {})
+      .filter(([, v]) => (v as number) > 0)
+      .map(([k, v]) => `<div class="hc-row"><span class="hc-key">${esc(k)}</span><span class="hc-val">${Math.round(v as number)}</span></div>`)
+      .join('');
+    const radBonus = p.planetType ? (data.planetTypes[p.planetType]?.productionBonus ?? 0) : 0;
+    return `<div class="hc-title" style="color:${col}">${esc(hoverPlanet)}</div>
+<div class="hc-row"><span class="hc-key">Owner</span><span class="hc-val">${esc(owner)}</span></div>
+<div class="hc-row"><span class="hc-key">Sector</span><span class="hc-val">${esc(stype)}</span></div>
+<div class="hc-row"><span class="hc-key">Planet type</span><span class="hc-val">${esc(ptype)}</span></div>
+${radBonus ? `<div class="hc-row"><span class="hc-key">Prod. bonus</span><span class="hc-val">+${Math.round(radBonus * 100)}%</span></div>` : ''}
+${garrison > 0 ? `<div class="hc-row"><span class="hc-key">Garrison</span><span class="hc-val">${garrison} troops</span></div>` : ''}
+${res ? `<div class="hc-sub">Stockpile</div>${res}` : ''}
+${buildings ? `<div class="hc-sub">Infrastructure</div>${buildings}` : ''}`;
+  }
+  return '';
+}
+
+function renderHoverCard() {
+  if (MOBILE) { hovercard.classList.remove('show'); return; }
+  const html = hoverCardHtml();
+  if (html === lastHoverHtml) return;
+  lastHoverHtml = html;
+  if (!html) {
+    hovercard.classList.remove('show');
+  } else {
+    hovercard.innerHTML = html;
+    hovercard.classList.add('show');
+  }
+}
+
 function renderPanel() {
   // While arming a merge target, collapse the panel so the map (and the fleet to
   // merge with) is fully tappable — important on phones where the sheet covers it.
@@ -2933,9 +3020,34 @@ canvas.addEventListener('dblclick', () => {
   cam.x = 0;
   cam.y = 0;
 });
-// track the pointer for the "Move" preview line (hover on desktop, drag on touch)
+// track the pointer for the "Move" preview line and hover tooltip (desktop only)
 canvas.addEventListener('pointermove', (ev) => {
   aimPointer = ptXY(ev);
+  if (MOBILE) return;
+  const { x: mx, y: my } = aimPointer;
+  let newHoverFleet: string | null = null;
+  let newHoverPlanet: string | null = null;
+  for (const f of Object.values(s.fleets)) {
+    const a = fleetAnchor(f);
+    if (a && Math.hypot(mx - a.x, my - a.y) < 18) {
+      newHoverFleet = f.id;
+      break;
+    }
+  }
+  if (!newHoverFleet) {
+    for (const n of MAP) {
+      const c = world(n);
+      if (Math.hypot(mx - c.x, my - c.y) < 24) {
+        newHoverPlanet = n.id;
+        break;
+      }
+    }
+  }
+  if (newHoverFleet !== hoverFleet || newHoverPlanet !== hoverPlanet) {
+    hoverFleet = newHoverFleet;
+    hoverPlanet = newHoverPlanet;
+    lastHoverHtml = '';
+  }
 });
 
 // --- top bar / speed ---------------------------------------------------------
@@ -2945,18 +3057,6 @@ for (const b of Array.from(document.querySelectorAll('[data-speed]'))) {
     speed = Number((b as HTMLElement).dataset.speed);
     for (const x of Array.from(document.querySelectorAll('[data-speed]')))
       x.classList.toggle('on', Number((x as HTMLElement).dataset.speed) === speed);
-  });
-}
-
-// Dev-only fog-of-war toggle (temporary — removed once core visibleState lands).
-const fogBtn = Array.from(document.querySelectorAll('[data-fog]'))[0] as HTMLElement | undefined;
-if (fogBtn) {
-  fogBtn.classList.toggle('on', fogOn);
-  fogBtn.addEventListener('click', () => {
-    fogOn = !fogOn;
-    fogBtn.classList.toggle('on', fogOn);
-    lastPanelHtml = ''; // force the side panel to re-evaluate visibility
-    note(fogOn ? 'fog of war: ON (variant A — here & now)' : 'fog of war: OFF (omniscient)');
   });
 }
 
@@ -3238,6 +3338,7 @@ function frame(nowReal: number) {
     const target = s.time + (dt / 1000) * speed * HOUR;
     apply(advance(s, target));
     autoEngage();
+    checkFleetClashes();
     runAI();
     pumpBuildQueues();
     checkEnd();
@@ -3247,6 +3348,7 @@ function frame(nowReal: number) {
   if (vision) updateMemory(vision.identify); // variant B: remember what we see
   render(nowReal);
   renderPanel();
+  renderHoverCard();
   renderCmdBar();
   renderSplitDialog();
   renderLobby();
@@ -3258,11 +3360,6 @@ function frame(nowReal: number) {
     clock.textContent = clockText;
     topClock.textContent = clockText;
     lastClockText = clockText;
-  }
-  const dayTimerText = `Day ${d} — next cycle in ${24 - h}h`;
-  if (dayTimerText !== lastDayTimerText) {
-    dayTimer.textContent = dayTimerText;
-    lastDayTimerText = dayTimerText;
   }
   // Dev net overlay (M0): FPS always; when connected, append round-trip latency and
   // a desync flag (✓ in sync with the server, ✗ + running mismatch count if not).
