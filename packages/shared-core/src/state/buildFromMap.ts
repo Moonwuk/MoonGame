@@ -12,7 +12,11 @@ import { createInitialState, type Fleet, type GameState, type Planet, type Playe
  */
 
 function dist(a: { x: number; y: number }, b: { x: number; y: number }): number {
-  return Math.hypot(a.x - b.x, a.y - b.y);
+  // Plain sqrt (not Math.hypot): correctly-rounded √ is bit-exact across JS engines,
+  // matching state/route.ts so map geometry agrees with runtime distances (determinism).
+  const dx = a.x - b.x;
+  const dy = a.y - b.y;
+  return Math.sqrt(dx * dx + dy * dy);
 }
 
 /**
