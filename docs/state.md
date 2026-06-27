@@ -72,7 +72,7 @@ packages/action-layer/src/
   data/          schemas.ts (zod-схемы + parseGameData, buildingLevel/buildingMaxLevel)
   rng/           rng.ts (sfc32)
   util/          clone.ts (deepClone/deepFreeze), treasury.ts (canAfford/payCost — shared by construction & technology)
-  modules/       economy, movement, sector, planetType, technology, combat, construction, army, victory, visibility  (+ *.test.ts)
+  modules/       economy, movement, sector, planetType, technology, combat, construction, army, victory, visibility, hero  (+ *.test.ts)
   examples/      skirmish.test.ts (демо-сценарий + SVG)
   index.ts       баррель (экспорт публичного API)
 data/            manifest, resources, units, buildings, factions, events, sectors, planetTypes, technologies (.json)
@@ -99,6 +99,9 @@ prototype/       src/game.ts, src/main.ts (UI), src/smoke.ts, build.mjs, uitest.
 - `scheduled: ScheduledEvent[]` `{id, at, type, payload, seq}`, счётчики
   `battleSeq`, `scheduleSeq`.
 - `UnitStack {unit, count, hp?}` (поле `hp` — пул HP стека во время боя).
+- `heroes?: Record<id, Hero>` (`{owner, location, cooldowns}`), `tempLanes?: TempLane[]`
+  (временные публичные трассы), `topology?` (версия графа для инвалидации `RouteCache`),
+  `heroSeq?` (счётчик id лейнов) — модуль `hero`.
 
 **Время:** все длительности — через `schedule(at,…)`; `timeScale` (MatchConfig)
 делит реальные длительности (×1/×2/×4). `time.advanced` спаны дают накопление.
@@ -241,6 +244,40 @@ E_IMMOBILE, E_FLEET_BUSY, E_FORBIDDEN, E_NO_PLANET, E_UNKNOWN_UNIT, E_BAD_PAYLOA
 десант). `controlledPlanets`/`fleets`/`units` остаются счётчиками; «жив ли игрок» для
 elimination считается по ним (планеты+флоты+юниты > 0), **независимо** от `total` —
 флот без территории не считается «мёртвым».
+
+### hero (`hero`) — герой-сущность игрока + способности
+
+Per-player **сущность** (`GameState.heroes[playerId]: {owner, location, cooldowns}`,
+один герой на игрока) со своей позицией на карте; способности действуют из/вокруг
+текущего узла. Состояние JSON-сериализуемо, длительности через `schedule`, бонус —
+через хук; ядро не меняется.
+
+- Действие **`hero.move {to}`** — передислокация героя в **свой** мир. Коды:
+  `E_BAD_PAYLOAD, E_NO_HERO, E_NO_PLANET, E_FORBIDDEN`.
+- Действие **`hero.path.create {to}`** — открыть **временную публичную трассу** от узла
+  героя к ближайшему (≤ `PATH_RANGE` = 600): **реальное ребро графа** (добавляется в
+  `Planet.links` в обе стороны, маршрутизируемо всеми) на `PATH_DURATION_HOURS` = 6 ч, по
+  которому **флоты владельца** идут с бонусом скорости `PATH_SPEED_BONUS` = +50%. Лейн
+  лежит в `GameState.tempLanes[]`, истечение — отложенный `hero.path.expire`; кэш
+  маршрутов инвалидируется через **`GameState.topology`** (версия топологии, бампится при
+  любой смене `links`). Кулдаун `PATH_COOLDOWN_HOURS` = 12 ч. Коды: `E_BAD_PAYLOAD,
+  E_NO_HERO, E_SAME_LOCATION, E_NO_PLANET, E_OUT_OF_RANGE, E_COOLDOWN`.
+- Событие **`hero.path.expire`** снимает лейн и **убирает ребро только если его добавил
+  именно этот лейн** (`addedLink`) и его не держит другой живой лейн; бампит `topology`.
+- Действие **`planet.annihilate {planetId}`** — уничтожение мира в радиусе
+  (`ANNIHILATE_RANGE` = 500): узел **остаётся** (сквозь него можно лететь), но
+  `kind`/`planetType` → неперехватываемый **`dead_world`**, гарнизон+здания снесены,
+  владелец сброшен (`victory` пересчитает счёт сам). Кулдаун `ANNIHILATE_COOLDOWN_HOURS`
+  = 48 ч. Коды: `E_BAD_PAYLOAD, E_NO_HERO, E_NO_PLANET, E_NOT_DESTRUCTIBLE, E_OUT_OF_RANGE,
+  E_COOLDOWN`.
+- Хук `fleet.speed`: ×(1+`speedBonus`) для леги, идущей вдоль активного лейна владельца
+  флота. Без модуля способностей/лейнов нет (мягкая деградация).
+
+Герой **приватен**: `visibleState` отдаёт игроку только его собственного (позиция +
+кулдауны), чужих вырезает; `tempLanes` остаются — это публичная топология (реальные
+`links`). `dead_world` есть в `data/sectorKinds.json` (неперехватываемый) и
+`data/planetTypes.json` (нулевые бонусы/счёт). Сидируется в dev-сценарии (`scenario.ts`):
+по герою на игрока в его `home_*`.
 
 ### видимость / туман войны (`state/visibility.ts`) — граница безопасности
 

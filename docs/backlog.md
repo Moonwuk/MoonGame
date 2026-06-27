@@ -110,6 +110,34 @@
 - **H3** 🔒(B1) Предматчевый экран: выбор фракции / технологий.
 - **H4** ⏳ Конструктор наземной армии (UI).
 
+## Блок HERO · Ядро: герои `[core]` `[data]`
+
+> Дизайн — [`heroes.md`](heroes.md). Принцип: **всё — данные, движок один**
+> (`heroModule` интерпретирует JSON; экзотика — через `capability` `hero.effect.<type>`).
+> Герой = корабль (переиспользует `movement`/`combat`). Скелет (HERO-0) уже есть.
+
+- **HERO-0** ✅ Скелет: герой-позиция (`GameState.heroes`/`tempLanes`/`topology`),
+  `heroModule` с `hero.move`/`hero.path.create`/`planet.annihilate`, `dead_world`,
+  приватность в `visibleState`, кэш маршрутов по `topology`. 11 тестов (PR #31).
+- **HERO-1** ⏳ `[data]` Схемы + `data/heroes.json` (архетипы), `data/heroAbilities.json`
+  (тип-эффект/cooldown/range/params); загрузчик дополнен; `parseGameData` валидирует. Тесты схем.
+- **HERO-2** 🔒(HERO-1) Движок: герой → **корабль** (`Hero.fleetId`, `traits:['hero']`),
+  миграция `location`→флот, `on('fleet.destroyed')` → `hero.died` + `respawnAt`. Тесты.
+- **HERO-3** 🔒(HERO-2) `hero.spawn {heroId, at}` — спавн на своём мире, кэп **3/игрок**,
+  респаун-кулдаун. Коды `E_HERO_ALIVE/E_RESPAWN_COOLDOWN/E_HERO_CAP/...`. Тесты.
+- **HERO-4** 🔒(HERO-1) Обобщённый `hero.ability {heroId, abilityId, target}` + диспетчер по
+  `type` (+ `capability hero.effect.<type>`); `path.create`/`annihilate` → типы-эффекты в данных. Тесты.
+- **HERO-5** 🔒(HERO-1) Пассивки из данных → хуки (`fleet.speed`/`combat.damage`) с `scope`
+  (баф усиления флота). `data/heroPassives.json`. Тесты.
+- **HERO-6** 🔒(HERO-2) Фитинги корабля: `data/heroFittings.json` + `hero.fit` (слоты,
+  модификаторы статов / выдаёт способность). Тесты.
+- **HERO-7** 🔒(HERO-4) Дерево навыков: `data/heroSkillTrees.json` (ветки **transhuman**/
+  **psionic**) + `hero.skill.unlock` (валидация `requires`/ветки); бонусы к способностям/статам. Тесты.
+- **HERO-8** 🔒(HERO-4) Способность спавна **на флоте / у союзника** (тип-эффект,
+  ослабляет проверку `at` в `hero.spawn`; союзник — через будущую `MatchRoom.areAllied`/дипломатию D1). Тесты.
+- **HERO-9** 🔒(HERO-3) Ростер: пред-матч выбор до 3 героев (config, как фракция/тех C3) +
+  сборка старта. Тесты. _(зависит от open-question «ростер» в `heroes.md`)_
+
 ## Кросс-каттинг
 
 - **PERF-1** ✅ **Сведено и проверено** (ветка devin `engine-optimization`, влита):
