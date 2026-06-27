@@ -38,6 +38,21 @@ body::before{content:"";position:fixed;inset:0;z-index:1;pointer-events:none;mix
   background:repeating-linear-gradient(0deg,rgba(0,0,0,0) 0 2px,rgba(0,0,0,.16) 2px 3px);}
 #map{position:fixed;inset:0;z-index:0;display:block;touch-action:none;}
 
+/* themed scrollbars — angular neon thumb on a dark grid track, in the HUD's tactical key.
+   Firefox gets the colour pair; WebKit gets the full glow/gradient treatment. */
+*{scrollbar-width:thin;scrollbar-color:var(--cyan-dim) rgba(2,9,13,.5);}
+::-webkit-scrollbar{width:10px;height:10px;}
+::-webkit-scrollbar-track{background:rgba(2,9,13,.55);
+  box-shadow:inset 1px 0 0 var(--line),inset -1px 0 0 var(--line);}
+::-webkit-scrollbar-thumb{border-radius:1px;border:1px solid var(--cyan-dim);
+  background:linear-gradient(180deg,rgba(53,214,230,.5),rgba(28,111,120,.6));
+  box-shadow:inset 0 0 6px rgba(53,214,230,.3),0 0 4px rgba(53,214,230,.15);}
+::-webkit-scrollbar-thumb:hover{border-color:var(--cyan);
+  background:linear-gradient(180deg,var(--cyan),var(--cyan-dim));
+  box-shadow:0 0 10px rgba(53,214,230,.6),inset 0 0 6px rgba(53,214,230,.45);}
+::-webkit-scrollbar-thumb:active{background:linear-gradient(180deg,#8ff4fa,var(--cyan));}
+::-webkit-scrollbar-corner{background:transparent;}
+
 #top{position:fixed;top:0;left:0;right:0;height:46px;z-index:30;display:flex;align-items:center;
   background:linear-gradient(180deg,rgba(3,13,18,.94),rgba(2,8,12,.82));border-bottom:1px solid var(--line-hi);
   box-shadow:0 0 22px rgba(40,200,210,.10),inset 0 -1px 0 rgba(53,214,230,.28);}
@@ -60,7 +75,7 @@ body::before{content:"";position:fixed;inset:0;z-index:1;pointer-events:none;mix
 #speedbar{position:fixed;right:14px;bottom:14px;z-index:24;display:flex;align-items:center;gap:4px;
   padding:5px 7px;background:rgba(3,12,16,.78);border:1px solid var(--line-hi);border-radius:3px;
   box-shadow:0 0 16px rgba(40,200,210,.10);transition:bottom .2s ease;}
-body.sheet-open #speedbar{bottom:calc(34vh + 64px);}
+body.sheet-open #speedbar{bottom:calc(34vh + 12px);}
 #fps{position:fixed;top:50px;right:10px;z-index:25;pointer-events:none;
   font:700 10px ui-monospace,Menlo,monospace;color:var(--grn);opacity:.72;letter-spacing:.5px;
   text-shadow:0 0 6px rgba(0,0,0,.85);}
@@ -84,6 +99,8 @@ body.sheet-open #speedbar{bottom:calc(34vh + 64px);}
 #cmdbar button.on{background:rgba(53,214,230,.18);border-color:var(--cyan);}
 #cmdbar button.danger{color:var(--red);border-color:#7a2a22;}
 #cmdbar button.danger:hover:not(:disabled){background:rgba(255,90,77,.12);box-shadow:0 0 10px rgba(255,90,77,.3);}
+/* panel is glued to the bottom edge — lift the fleet command bar above it (mobile overrides below) */
+body.sheet-open #cmdbar{bottom:calc(34vh + 12px);}
 
 #devline{position:fixed;top:46px;left:0;right:0;height:18px;z-index:24;display:flex;align-items:center;gap:12px;
   padding:0 14px;background:rgba(2,8,11,.5);color:var(--cyan-dim);font-size:10px;letter-spacing:1px;
@@ -99,7 +116,7 @@ body.sheet-open #speedbar{bottom:calc(34vh + 64px);}
   background:var(--red);color:#180605;font:700 9px/15px ui-monospace,monospace;text-align:center;
   box-shadow:0 0 8px rgba(255,90,77,.7);}
 
-#side{position:fixed;left:58px;right:14px;bottom:56px;top:auto;width:auto;max-height:34vh;overflow:auto;z-index:20;
+#side{position:fixed;left:58px;right:14px;bottom:0;top:auto;width:auto;max-height:34vh;overflow:auto;z-index:20;
   display:none;padding:13px 15px;touch-action:pan-y;background:var(--glass);border:1px solid var(--line-hi);
   box-shadow:0 0 26px rgba(0,0,0,.6),0 0 0 1px rgba(53,214,230,.08),inset 0 0 30px rgba(53,214,230,.04);
   clip-path:polygon(0 9px,9px 0,100% 0,100% calc(100% - 9px),calc(100% - 9px) 100%,0 100%);}
