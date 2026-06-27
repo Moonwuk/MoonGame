@@ -3357,7 +3357,8 @@ function frame(nowReal: number) {
   // top bar (Iron Order-style resource readouts with +/h deltas)
   const d = floor(s.time / DAY) + 1;
   const h = floor((s.time % DAY) / HOUR);
-  const clockText = `Day ${d} · ${String(h).padStart(2, '0')}:00`;
+  const min = floor((s.time % HOUR) / 60000);
+  const clockText = `Day ${d} · ${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
   if (clockText !== lastClockText) {
     clock.textContent = clockText;
     topClock.textContent = clockText;

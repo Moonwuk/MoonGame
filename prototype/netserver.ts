@@ -47,11 +47,16 @@ const stats = {
   byType: {} as Record<string, number>,
   end: null as RoomObservation | null,
 };
+let connected = 0; // live players currently connected (drives the running-match heartbeat)
 const observe = (ev: RoomObservation): void => {
   appendFileSync(logFile, JSON.stringify({ t: Date.now(), ...ev }) + '\n');
-  if (ev.kind === 'join') stats.joins++;
-  else if (ev.kind === 'leave') stats.leaves++;
-  else if (ev.kind === 'end') stats.end = ev;
+  if (ev.kind === 'join') {
+    stats.joins++;
+    connected++;
+  } else if (ev.kind === 'leave') {
+    stats.leaves++;
+    connected = Math.max(0, connected - 1);
+  } else if (ev.kind === 'end') stats.end = ev;
   else if (ev.kind === 'action') {
     stats.actions++;
     stats.byType[ev.type] = (stats.byType[ev.type] ?? 0) + 1;
@@ -72,10 +77,10 @@ const observe = (ev: RoomObservation): void => {
   // Persist after anything that changes the world or the lobby (debounced below),
   // and re-arm the offline wakeup: an action may schedule or consume events, and a
   // lobby Start releases the frozen clock — both move the next-event time.
-  if (ev.kind === 'action' || ev.kind === 'lobby' || ev.kind === 'end') {
-    scheduleSave();
-    armWakeup();
-  }
+  if (ev.kind === 'action' || ev.kind === 'lobby' || ev.kind === 'end') scheduleSave();
+  // Re-arm on EVERY room event: an action may (un)schedule events, a lobby Start releases
+  // the clock, and a join/leave starts/stops the live-player heartbeat below.
+  armWakeup();
 };
 
 const host = process.env.HOST ?? '127.0.0.1';
@@ -197,15 +202,23 @@ async function doSave(): Promise<void> {
 // "wake match X at T" job across many server processes instead of one in-memory
 // timer per room — see docs/persistence-accounts-roadmap.md (PA-4).
 const MAX_TIMER_MS = 60 * 60_000; // 1h cap (setTimeout overflow + clock-drift safety)
+// While a STARTED match has connected players, tick at least this often even if the
+// schedule is momentarily empty — otherwise the world only advances when someone issues
+// an order (submitAction), so the published clock/economy/in-flight fleets freeze
+// on-screen between actions. newGame() starts with NO scheduled events, so without this
+// the very first thing players see after Start is a frozen "Day 1 00:00".
+const HEARTBEAT_MS = 1_000;
 let wakeTimer: ReturnType<typeof setTimeout> | null = null;
 function armWakeup(): void {
   if (wakeTimer) {
     clearTimeout(wakeTimer);
     wakeTimer = null;
   }
-  const ms = room.msUntilNextEvent();
-  if (ms === null) return; // nothing scheduled, or the lobby clock is frozen
-  wakeTimer = setTimeout(onWake, Math.min(ms, MAX_TIMER_MS));
+  const ev = room.msUntilNextEvent(); // wall-ms to the next scheduled event, or null
+  const beat = room.isStarted && connected > 0 ? HEARTBEAT_MS : null; // live-player heartbeat
+  if (ev === null && beat === null) return; // nothing scheduled and nobody live → idle
+  const ms = ev === null ? beat : beat === null ? ev : Math.min(ev, beat);
+  wakeTimer = setTimeout(onWake, Math.min(ms ?? MAX_TIMER_MS, MAX_TIMER_MS));
 }
 function onWake(): void {
   wakeTimer = null;
