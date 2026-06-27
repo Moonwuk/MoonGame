@@ -275,10 +275,13 @@ E_IMMOBILE, E_FLEET_BUSY, E_FORBIDDEN, E_NO_PLANET, E_UNKNOWN_UNIT, E_BAD_PAYLOA
 
 `victoryModule` слушает `time.advanced`, `planet.captured`, `fleet.destroyed`,
 `battle.resolved`, `unit.built`; пересчитывает `GameState.match.scores` и завершает
-матч событием `match.ended`. Условия: доминирование по доле планет (по умолчанию
-60%, настраивается `MatchConfig.victory.dominationPercent`), уничтожение соперников,
-лимит счёта (`scoreLimit`) и тайм-аут (`endsAt`, победитель = лучший счёт; ничья =
-`winner:null`).
+матч событием `match.ended`. Гонка триггеров (GDD §3.2): **доминирование** по доле
+**КАПЧУРНЫХ** провинций (некапчурный void в знаменатель не идёт; по умолчанию 60%,
+`MatchConfig.victory.dominationPercent`), **уничтожение** соперников (0 провинций →
+`defeated` + флот распускается), **счёт** (порог `scoreLimit`, **по умолчанию 500**
+— GDD §3.2) и **тайм-аут** (`endsAt`, **по умолчанию** кап сессии по скорости:
+×1→100 / ×2→60 / ×4→30 игровых дней; победитель = лучший счёт, ничья = `winner:null`).
+Все пороги переопределяются через `MatchConfig.victory`.
 
 **Счёт — data-driven.** `total` = территория + супер-юниты, по полям данных:
 очки узла = база за контроль (`CONTROL_BASE` = 10) + `planetType.scoreValue` +

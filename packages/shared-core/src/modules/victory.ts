@@ -1,10 +1,19 @@
 import type { MatchEndReason, MatchScore, PlayerId, UnitStack } from '../state/gameState';
 import type { GameData } from '../data/schemas';
 import type { HandlerContext, GameModule } from '../kernel/module';
+import { MS_PER_DAY } from '../util/time';
+import { isCapturable } from '../state/sectorKind';
 
 const DEFAULT_DOMINATION_PERCENT = 0.6;
 /** Score for merely controlling a node — even a planetless system is worth holding. */
 const CONTROL_BASE = 10;
+/** Solo score threshold — the genre's core win race (GDD §3.2). Config may override
+ *  it (e.g. a higher coalition threshold). */
+const DEFAULT_SCORE_LIMIT = 500;
+/** Session-length cap (game days) by speed — the time-crisis backstop that forces a
+ *  finale ranked by score (GDD §3.1/§3.2). Any other speed falls back to the ×1 cap. */
+const SESSION_MAX_DAYS: Record<number, number> = { 1: 100, 2: 60, 4: 30 };
+const DEFAULT_SESSION_DAYS = 100;
 
 function emptyScore(): MatchScore {
   return { controlledPlanets: 0, fleets: 0, units: 0, total: 0 };
@@ -149,32 +158,40 @@ function evaluateVictory(h: HandlerContext): void {
     return;
   }
 
-  const totalPlanets = Object.keys(h.state.planets).length;
+  // Domination: hold a share of the CAPTURABLE provinces. The denominator counts
+  // only ownable territory — non-capturable void/empty/debris nodes (the bulk of a
+  // post-vision-rework map) must not dilute the share, or 60% becomes unreachable.
+  const capturable = Object.values(h.state.planets).filter((p) => isCapturable(h.ctx.data, p));
   const dominationPercent = h.ctx.config?.victory?.dominationPercent ?? DEFAULT_DOMINATION_PERCENT;
-  if (totalPlanets > 0 && dominationPercent > 0) {
-    const dominator = active.find(
-      (playerId) => (scores[playerId]?.controlledPlanets ?? 0) / totalPlanets >= dominationPercent,
-    );
+  if (capturable.length > 0 && dominationPercent > 0) {
+    const dominator = active.find((playerId) => {
+      const owned = capturable.filter((p) => p.owner === playerId).length;
+      return owned / capturable.length >= dominationPercent;
+    });
     if (dominator) {
       endMatch(h, dominator, 'domination');
       return;
     }
   }
 
-  const scoreLimit = h.ctx.config?.victory?.scoreLimit;
-  if (scoreLimit !== undefined) {
-    const winner = highestScore(
-      scores,
-      active.filter((playerId) => (scores[playerId]?.total ?? 0) >= scoreLimit),
-    );
-    if (winner) {
-      endMatch(h, winner, 'score');
-      return;
-    }
+  // Score win — the genre's core race. 500 is the solo threshold (GDD §3.2); on by
+  // default so a match without explicit config still has a points victory.
+  const scoreLimit = h.ctx.config?.victory?.scoreLimit ?? DEFAULT_SCORE_LIMIT;
+  const scoreWinner = highestScore(
+    scores,
+    active.filter((playerId) => (scores[playerId]?.total ?? 0) >= scoreLimit),
+  );
+  if (scoreWinner) {
+    endMatch(h, scoreWinner, 'score');
+    return;
   }
 
-  const endsAt = h.ctx.config?.victory?.endsAt;
-  if (endsAt !== undefined && h.ctx.now >= endsAt) {
+  // Time crisis — the upper-bound backstop: a forced finale ranked by score at the
+  // session-length cap for this speed (GDD §3.1/§3.2). Config may override the cap.
+  const timeScale = h.ctx.config?.timeScale ?? 1;
+  const endsAt =
+    h.ctx.config?.victory?.endsAt ?? (SESSION_MAX_DAYS[timeScale] ?? DEFAULT_SESSION_DAYS) * MS_PER_DAY;
+  if (h.ctx.now >= endsAt) {
     endMatch(h, highestScore(scores, active), 'timeout');
   }
 }

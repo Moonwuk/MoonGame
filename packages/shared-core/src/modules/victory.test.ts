@@ -51,7 +51,9 @@ const data: GameData = parseGameData({
     },
   },
   events: {},
-  planetTypes: { terran: { scoreValue: 40 } },
+  planetTypes: { terran: { scoreValue: 40 }, capital: { scoreValue: 200 } },
+  // A non-capturable void kind — must NOT count toward the domination denominator.
+  sectorKinds: { empty: { capturable: false, buildable: false, orbit: false } },
 });
 
 function ctx(now: number, config?: MatchConfig): Context {
@@ -123,6 +125,51 @@ describe('victory module', () => {
       type: 'match.ended',
       payload: expect.objectContaining({ winner: 'p1', reason: 'domination' }),
     });
+  });
+
+  it('domination counts only CAPTURABLE provinces (void is ignored in the share)', () => {
+    const kernel = createKernel([victoryModule]);
+    const voids: Record<string, Planet> = {};
+    for (let i = 0; i < 7; i += 1) voids[`V${i}`] = planet(`V${i}`, null, { kind: 'empty' });
+    const state: GameState = {
+      ...baseState(),
+      planets: {
+        // 3 capturable provinces (p1 holds 2 → 66% ≥ 60%) among 7 void nodes: only
+        // 2/10 of ALL nodes, but 2/3 of the capturable map ⇒ domination still fires.
+        A: planet('A', 'p1'),
+        B: planet('B', 'p1'),
+        C: planet('C', 'p2'),
+        ...voids,
+      },
+    };
+
+    const r = okAdvance(kernel.advanceTo(state, ctx(HOUR)));
+
+    expect(r.state.match).toMatchObject({ status: 'ended', winner: 'p1', reason: 'domination' });
+  });
+
+  it('ends by score at the default 500 limit with no victory config', () => {
+    const kernel = createKernel([victoryModule]);
+    const state: GameState = {
+      ...baseState(),
+      planets: {
+        // p1's three capital worlds total 3×(10+200)=630 ≥ 500, yet hold only 3/8 of
+        // the capturable map (< 60%) — so the SCORE trigger, not domination, ends it.
+        A: planet('A', 'p1', { planetType: 'capital' }),
+        B: planet('B', 'p1', { planetType: 'capital' }),
+        C: planet('C', 'p1', { planetType: 'capital' }),
+        D: planet('D', 'p2'),
+        E: planet('E', 'p2'),
+        F: planet('F', null),
+        G: planet('G', null),
+        H: planet('H', null),
+      },
+    };
+
+    const r = okAdvance(kernel.advanceTo(state, ctx(HOUR))); // no victory config at all
+
+    expect(r.state.match).toMatchObject({ status: 'ended', winner: 'p1', reason: 'score' });
+    expect(r.state.match.scores.p1?.total).toBe(630);
   });
 
   it('marks empty active players defeated and ends by elimination', () => {
