@@ -2,6 +2,24 @@
 import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
 
+/**
+ * Determinism: these Math functions are "implementation-approximated" in ECMA-262
+ * (not required to be correctly-rounded), so they can differ bit-for-bit across JS
+ * engines (V8 on the server vs V8 / JSC / Hermes on the client) — which would
+ * desync the client's preview from the server authority. The core must stay in the
+ * correctly-rounded IEEE-754 subset (+ − × ÷ √ min max floor ceil + integer ops).
+ * `Math.sqrt` is intentionally NOT banned: IEEE-754 mandates √ be correctly rounded
+ * and ECMA-262 excludes it from the approximated list. See docs/architecture.md §8.
+ */
+const NON_DETERMINISTIC_MATH = [
+  'acos', 'acosh', 'asin', 'asinh', 'atan', 'atan2', 'atanh', 'cbrt', 'cos', 'cosh',
+  'exp', 'expm1', 'hypot', 'log', 'log10', 'log1p', 'log2', 'pow', 'sin', 'sinh', 'tan', 'tanh',
+].map((property) => ({
+  object: 'Math',
+  property,
+  message: `Determinism: Math.${property} is implementation-approximated (not bit-exact across JS engines). Keep the core in the correctly-rounded IEEE-754 subset (+ − × ÷ √ min max floor ceil + integer ops). See docs/architecture.md §8.`,
+}));
+
 export default tseslint.config(
   {
     // The prototype, the multiplayer test client, and the mobile (Capacitor)
@@ -43,6 +61,7 @@ export default tseslint.config(
           property: 'now',
           message: 'Determinism: pass time as a parameter (Context.now), never Date.now().',
         },
+        ...NON_DETERMINISTIC_MATH,
       ],
       'no-restricted-globals': [
         'error',
