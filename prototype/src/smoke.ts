@@ -34,12 +34,12 @@ r = order(s, buildUnit('p1', 'HOME', 'cruiser', 1), s.time);
 s = r.state;
 note(s.time, `build cruiser @HOME → ${r.error ?? 'ok'}`);
 
-// 3) send the blue fleet to take neutral FORGE
-r = order(s, moveFleet('p1', 'blue-1', 'FORGE'), s.time);
+// 3) send the blue fleet to take neutral N1
+r = order(s, moveFleet('p1', 'blue-1', 'N1'), s.time);
 s = r.state;
-note(s.time, `move blue-1 → FORGE → ${r.error ?? 'ok'}`);
+note(s.time, `move blue-1 → N1 → ${r.error ?? 'ok'}`);
 
-// 4) run the world forward; when blue-1 is idle over hostile FORGE, descend & land
+// 4) run the world forward; when blue-1 is idle over a hostile world, descend & land
 for (let t = s.time + HOUR; t <= 40 * HOUR; t += HOUR) {
   r = advance(s, t);
   s = r.state;

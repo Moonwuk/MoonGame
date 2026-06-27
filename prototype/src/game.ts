@@ -249,66 +249,25 @@ export interface MapNode {
 
 type KeyNode = Omit<MapNode, 'links'>;
 
-// Curated sectors — fixed positions / types / owners / garrisons. The rest of the
-// map is filled in around them and everything is wired up by proximity below.
+// A compact, even skirmish field: ONE home world per player at opposite ends, and
+// ten neutral worlds spread on a clean 5×2 lattice between them — every node a
+// real, capturable world (no void waypoints), so the whole map is contestable.
 const KEY: KeyNode[] = [
-  // home region (west)
-  { id: 'HOME', owner: 'p1', x: 150, y: 250, sector: 'planet', type: 'terran', buildings: [{ type: 'mine' }, { type: 'radar' }], garrison: [['marine', 3]] },
-  { id: 'ANCHOR', owner: 'p1', x: 130, y: 440, sector: 'planet', type: 'oceanic', buildings: [{ type: 'refinery' }], garrison: [['marine', 2], ['orbital_aa', 1]] },
-  { id: 'RELAY', owner: null, x: 320, y: 360, sector: 'planet', type: 'fortress_world', garrison: [['marine', 1]] },
-  { id: 'FORGE', owner: null, x: 250, y: 175, sector: 'graveyard' }, // salvage field — high score
-  // contested region (centre)
-  { id: 'NEXUS', owner: null, x: 560, y: 250, sector: 'nebula', type: 'oceanic', buildings: [{ type: 'fort' }], garrison: [['marine', 3], ['cruiser', 1]] },
-  { id: 'VEIL', owner: null, x: 470, y: 430, sector: 'dense_nebula', type: 'gas_giant', buildings: [{ type: 'refinery' }], garrison: [['marine', 2]] },
-  { id: 'HARBOR', owner: null, x: 660, y: 430, sector: 'solar_flare', type: 'relic_world', buildings: [{ type: 'barracks' }], garrison: [['marine', 2]] },
-  { id: 'DRIFT', owner: null, x: 560, y: 150, sector: 'ion_storm' }, // hazard — slow + exposed
-  // enemy region (east)
-  { id: 'OUTPOST', owner: 'p2', x: 850, y: 250, sector: 'planet', type: 'volcanic', buildings: [{ type: 'mine' }], garrison: [['marine', 3]] },
-  { id: 'BASTION', owner: 'p2', x: 930, y: 440, sector: 'nebula', type: 'barren', buildings: [{ type: 'fort' }], garrison: [['marine', 3], ['scout', 1]] },
-  { id: 'CRIMSON', owner: 'p2', x: 970, y: 260, sector: 'planet', type: 'terran', buildings: [{ type: 'fort' }, { type: 'mine' }], garrison: [['marine', 4], ['orbital_aa', 1]] },
-  { id: 'SLAG', owner: null, x: 1020, y: 390, sector: 'debris_field' }, // un-capturable corridor
+  // one home each, at opposite ends (symmetric for a fair 1v1)
+  { id: 'HOME', owner: 'p1', x: 120, y: 290, sector: 'planet', type: 'terran', buildings: [{ type: 'mine' }, { type: 'radar' }], garrison: [['marine', 3]] },
+  { id: 'CRIMSON', owner: 'p2', x: 1080, y: 290, sector: 'planet', type: 'terran', buildings: [{ type: 'mine' }, { type: 'radar' }], garrison: [['marine', 3]] },
+  // ten neutral worlds, evenly scattered across the field
+  { id: 'N1', owner: null, x: 290, y: 175, sector: 'planet', type: 'oceanic' },
+  { id: 'N2', owner: null, x: 450, y: 175, sector: 'nebula', type: 'gas_giant' },
+  { id: 'N3', owner: null, x: 600, y: 175, sector: 'graveyard', type: 'relic_world' }, // salvage prize
+  { id: 'N4', owner: null, x: 750, y: 175, sector: 'nebula', type: 'gas_giant' },
+  { id: 'N5', owner: null, x: 910, y: 175, sector: 'planet', type: 'volcanic' },
+  { id: 'N6', owner: null, x: 290, y: 405, sector: 'planet', type: 'volcanic' },
+  { id: 'N7', owner: null, x: 450, y: 405, sector: 'asteroid' },
+  { id: 'N8', owner: null, x: 600, y: 405, sector: 'planet', type: 'fortress_world' }, // central stronghold
+  { id: 'N9', owner: null, x: 750, y: 405, sector: 'asteroid' },
+  { id: 'N10', owner: null, x: 910, y: 405, sector: 'planet', type: 'oceanic' },
 ];
-
-// Fill the rest of the map with sectors on a jittered lattice. A dense Bytro-style
-// tessellation: most cells are real, capturable provinces (a mix of worlds, fields
-// and nebulae), with only the occasional void gap. Deterministic; drop GRID_STEP to
-// pack in even more provinces.
-const GRID_STEP = 88; // lattice spacing — smaller ⇒ more, smaller provinces
-const FILL_PLANET_TYPES = [
-  'terran', 'barren', 'oceanic', 'volcanic', 'gas_giant',
-  'crystalline', 'fortress_world', 'relic_world', 'irradiated', 'ringworld',
-];
-function fillSectors(): KeyNode[] {
-  const hash = (a: number, b: number): number => {
-    const v = Math.sin(a * 12.9898 + b * 78.233) * 43758.5453;
-    return v - Math.floor(v);
-  };
-  const out: KeyNode[] = [];
-  let i = 0;
-  for (let gx = 60; gx <= 1130; gx += GRID_STEP) {
-    for (let gy = 50; gy <= 520; gy += GRID_STEP) {
-      const x = gx + (hash(gx, gy) - 0.5) * GRID_STEP * 0.7;
-      const y = gy + (hash(gy, gx) - 0.5) * GRID_STEP * 0.7;
-      if (KEY.some((k) => Math.hypot(k.x - x, k.y - y) < 66)) continue;
-      const r = hash(x * 0.37, y * 0.71);
-      // Worlds (cities) stay scarce — ~15%; the bulk is asteroid fields ~38% and
-      // nebulae ~32% (lighter to render and to hold), ~15% void gaps (filtered out
-      // of MAP, so neighbours absorb the space).
-      const node: KeyNode = { id: `S${i++}`, owner: null, x, y, sector: 'empty' };
-      if (r < 0.15) {
-        node.sector = 'planet';
-        node.type = FILL_PLANET_TYPES[Math.floor(hash(y * 1.7, x * 2.3) * FILL_PLANET_TYPES.length)];
-      } else if (r < 0.53) {
-        node.sector = 'asteroid';
-      } else if (r < 0.85) {
-        node.sector = 'nebula';
-        node.type = 'barren';
-      }
-      out.push(node);
-    }
-  }
-  return out;
-}
 
 // Wire sectors up as a Relative Neighbourhood Graph: a sector links to another
 // ONLY if no third sector lies "between" them (closer to both than they are to
@@ -337,10 +296,7 @@ function withNeighborLinks(nodes: KeyNode[]): MapNode[] {
 // Bytro-style province map: only real provinces (no "empty" void waypoints), wired
 // to their neighbours by shared border (relative-neighbourhood graph). Movement is
 // province-to-adjacent; the links ARE the visible path network.
-export const MAP: MapNode[] = withNeighborLinks([
-  ...KEY,
-  ...fillSectors().filter((n) => n.sector !== 'empty'),
-]);
+export const MAP: MapNode[] = withNeighborLinks(KEY);
 
 function player(
   id: string,

@@ -1493,10 +1493,28 @@ function drawFleetRoutes() {
     const start = fleetAnchor(f);
     if (!start) continue;
     const sel = selFleet === f.id || selFleets.has(f.id);
+    const mv = f.movement;
+    const nodes = [mv.to, ...(mv.path ?? [])];
+    // If the journey ends at a POINT on the final lane (`toEdge` order), the last
+    // route point must be that point — not the destination node it would latch to.
+    const parkFrac = mv.parkT ?? mv.endT ?? 1;
     const pts = [{ x: start.x, y: start.y }];
-    for (const id of [f.movement.to, ...(f.movement.path ?? [])]) {
-      const pl = s.planets[id];
-      if (pl) pts.push(world(pl.position));
+    for (let i = 0; i < nodes.length; i++) {
+      const pl = s.planets[nodes[i]!];
+      if (!pl) continue;
+      if (i === nodes.length - 1 && parkFrac < 1) {
+        const prev = s.planets[i === 0 ? mv.from : nodes[i - 1]!]?.position;
+        if (prev) {
+          pts.push(
+            world({
+              x: prev.x + (pl.position.x - prev.x) * parkFrac,
+              y: prev.y + (pl.position.y - prev.y) * parkFrac,
+            }),
+          );
+          continue;
+        }
+      }
+      pts.push(world(pl.position));
     }
     if (pts.length < 2) continue;
     cx.save();
@@ -3752,6 +3770,6 @@ function frame(nowReal: number) {
 }
 
 note(
-  'Welcome, Commander. Secure FORGE/RELAY/ANCHOR, flank through VEIL or HARBOR, then crack CRIMSON.',
+  'Welcome, Commander. Ten free worlds lie between you and CRIMSON — seize the field, then crack the enemy capital.',
 );
 requestAnimationFrame(frame);
