@@ -91,6 +91,29 @@ describe('createMultiplayerServer', () => {
     }
   });
 
+  it('drops a connection-level message flood before parsing', async () => {
+    const server = createMultiplayerServer({ room: makeRoom() });
+    const url = await server.listen();
+    const ws = new WebSocket(`${url}?player=p1`);
+    try {
+      await once(ws, 'open');
+      let pongs = 0;
+      ws.on('message', (data) => {
+        if ((JSON.parse(data.toString()) as ServerMessage).type === 'pong') pongs += 1;
+      });
+      // Pings aren't action-rate-limited, so each one that reaches the room pongs back —
+      // a clean probe for the connection flood guard. Burst far past the per-window cap.
+      const BURST = 200;
+      for (let i = 0; i < BURST; i += 1) ws.send(JSON.stringify({ type: 'ping', clientTime: i }));
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(pongs).toBeGreaterThan(0); // the connection still works
+      expect(pongs).toBeLessThanOrEqual(100); // ≪ 200 sent ⇒ the flood was dropped, not parsed
+    } finally {
+      ws.close();
+      await server.close();
+    }
+  });
+
   it('nick-login: seats a nick and returns the SAME side on reconnect', async () => {
     const server = createMultiplayerServer({ room: makeRoom(), accountStore: new MemoryAccountStore() });
     const url = await server.listen();

@@ -570,3 +570,211 @@ describe('MatchRoom — SRV-1 (advance events on a rejected action)', () => {
     );
   });
 });
+
+// PA-4.1: the world must run 24/7 — scheduled events (arrivals/battles/captures)
+// fire even with no player connected. `msUntilNextEvent` tells a wakeup driver when
+// to call `tick`, which advances the world and broadcasts with no action. Reuses
+// `armModule`: an `arm` action schedules a `boom` 1000ms out that renames p1.
+const armAction = (id: string): Action => ({
+  id,
+  type: 'arm',
+  playerId: 'p1',
+  issuedAt: 1,
+  payload: {},
+});
+
+describe('MatchRoom — offline scheduler (tick / msUntilNextEvent)', () => {
+  function armed(start = 1000): { r: MatchRoom; set: (ms: number) => void } {
+    let real = start;
+    const r = new MatchRoom({
+      id: 'sched',
+      initialState: testState(),
+      kernel: createKernel([armModule]),
+      data: testData(),
+      now: () => real,
+    });
+    return { r, set: (ms) => (real = ms) };
+  }
+
+  it('reports no wakeup when nothing is scheduled', () => {
+    expect(armed().r.msUntilNextEvent()).toBeNull();
+  });
+
+  it('reports the ms until the soonest scheduled event', () => {
+    const { r } = armed(1000);
+    const p1 = new MemoryPeer();
+    r.addPeer('p1', p1);
+    r.submitAction('p1', armAction('arm1'), p1); // schedules boom at now(1000)+1000
+    expect(r.msUntilNextEvent()).toBe(1000); // 2000 − 1000
+  });
+
+  it('tick() fires a due event with no action, broadcasts it, then has nothing left', () => {
+    const { r, set } = armed(1000);
+    const p1 = new MemoryPeer();
+    r.addPeer('p1', p1);
+    r.submitAction('p1', armAction('arm1'), p1);
+    expect(r.state.players.p1?.name).toBe('One'); // not yet boomed
+    const mark = p1.messages.length;
+
+    // wall-clock jumps past the boom; the driver wakes the room — no action sent
+    set(2500);
+    expect(r.msUntilNextEvent()).toBe(0); // overdue
+    r.tick();
+
+    expect(r.state.players.p1?.name).toBe('BOOMED'); // fired with no action
+    const delta = p1.messages.slice(mark).find((m) => m.type === 'delta') as
+      | { events: { type: string }[] }
+      | undefined;
+    expect(delta?.events.some((e) => e.type === 'boomed')).toBe(true);
+    expect(r.msUntilNextEvent()).toBeNull(); // consumed → idle again
+  });
+
+  it('does not wake or advance while the lobby clock is frozen', () => {
+    let real = 1000;
+    const r = new MatchRoom({
+      id: 'sched-lobby',
+      initialState: testState(),
+      kernel: createKernel([armModule]),
+      data: testData(),
+      now: () => real,
+      manualStart: true,
+    });
+    const p1 = new MemoryPeer();
+    r.addPeer('p1', p1); // host, but not started → clock frozen
+    r.submitAction('p1', armAction('arm1'), p1);
+    expect(r.msUntilNextEvent()).toBeNull(); // frozen → nothing to wake for
+    real = 9000;
+    r.tick();
+    expect(r.state.players.p1?.name).toBe('One'); // tick is a no-op while frozen
+  });
+});
+
+// F-03 / F-04 (audit): the in-memory receipts map must not grow without bound, and a
+// flood of actions must be rate-limited — without breaking idempotency (a rate-limited
+// action keeps no receipt, so a genuine retry after backoff still lands).
+describe('MatchRoom — DoS bounds (receipts cap + action rate limit)', () => {
+  it('evicts the oldest receipt past the cap — a retry of an evicted action re-applies', () => {
+    const r = new MatchRoom({
+      id: 'cap',
+      initialState: testState(),
+      kernel: createKernel([renameModule]),
+      data: testData(),
+      now: () => 10,
+      maxReceipts: 2, // tiny cap to force eviction
+    });
+    const p1 = new MemoryPeer();
+    r.addPeer('p1', p1);
+
+    const a1 = r.submitAction('p1', action('a1', 'p1', 'A1'), p1);
+    r.submitAction('p1', action('a2', 'p1', 'A2'), p1);
+    r.submitAction('p1', action('a3', 'p1', 'A3'), p1); // size 3 > 2 → evicts a1
+    expect(a1.seq).toBe(1);
+
+    // a3 is still within the cap → its retry is served from the receipt (no re-apply)
+    const a3retry = r.submitAction('p1', action('a3', 'p1', 'ZZ'), p1);
+    expect(a3retry.seq).toBe(3);
+    expect(r.state.players.p1?.name).toBe('A3'); // deduped — 'ZZ' ignored
+
+    // a1's receipt was evicted → its retry is NOT deduped: it re-applies, fresh seq
+    const a1retry = r.submitAction('p1', action('a1', 'p1', 'A1again'), p1);
+    expect(a1retry.seq).toBeGreaterThan(3);
+    expect(r.state.players.p1?.name).toBe('A1again'); // re-applied
+  });
+
+  it('rate-limits a flood transiently — no receipt, so the same id lands after the window', () => {
+    let real = 1000;
+    const r = new MatchRoom({
+      id: 'rate',
+      initialState: testState(),
+      kernel: createKernel([renameModule]),
+      data: testData(),
+      now: () => real,
+      actionRateMax: 2,
+      actionRateWindowMs: 1000,
+    });
+    const p1 = new MemoryPeer();
+    r.addPeer('p1', p1);
+
+    expect(r.submitAction('p1', action('a1', 'p1', 'One'), p1).ok).toBe(true);
+    expect(r.submitAction('p1', action('a2', 'p1', 'Two'), p1).ok).toBe(true);
+
+    // 3rd within the window → rate-limited (transient rejection, world untouched)
+    const flooded = r.submitAction('p1', action('a3', 'p1', 'Three'), p1);
+    expect(flooded).toMatchObject({ ok: false, code: 'E_RATE_LIMIT' });
+    expect(p1.messages.at(-1)).toMatchObject({
+      type: 'rejection',
+      actionId: 'a3',
+      code: 'E_RATE_LIMIT',
+    });
+    expect(r.state.players.p1?.name).toBe('Two'); // a3 not applied
+
+    // no receipt was kept for a3 → after the window the SAME id is accepted
+    real += 1001;
+    const retried = r.submitAction('p1', action('a3', 'p1', 'Three'), p1);
+    expect(retried.ok).toBe(true);
+    expect(r.state.players.p1?.name).toBe('Three');
+  });
+});
+
+// Playtest fast-forward: the running clock advances timeScale× faster than wall-time,
+// so a real minute is many game-hours and fleets/builds/economy resolve on-screen.
+describe('MatchRoom — timeScale (playtest fast-forward clock)', () => {
+  it('runs the world clock timeScale× faster than wall-time after Start', () => {
+    let real = 1000;
+    const r = new MatchRoom({
+      id: 'ts',
+      initialState: testState(),
+      kernel: createKernel([renameModule]),
+      data: testData(),
+      now: () => real,
+      manualStart: true,
+      timeScale: 100,
+    });
+    const p1 = new MemoryPeer();
+    r.addPeer('p1', p1);
+    r.start('p1'); // host starts the clock at wall=1000
+    real = 1050; // 50 real-ms later → 50 × 100 = 5000 game-ms
+    r.submitAction('p1', action('a1', 'p1', 'Go'), p1);
+    expect(r.state.time).toBe(5000);
+    expect((p1.messages.at(-1) as { serverTime: number }).serverTime).toBe(5000);
+  });
+
+  it('shrinks the offline-wakeup delay by timeScale (event fires sooner in wall-time)', () => {
+    const real = 1000;
+    const r = new MatchRoom({
+      id: 'ts2',
+      initialState: testState(),
+      kernel: createKernel([armModule]),
+      data: testData(),
+      now: () => real,
+      manualStart: true,
+      timeScale: 100,
+    });
+    const p1 = new MemoryPeer();
+    r.addPeer('p1', p1);
+    r.start('p1');
+    r.submitAction('p1', { id: 'arm1', type: 'arm', playerId: 'p1', issuedAt: 1, payload: {} }, p1);
+    // boom is scheduled at game-time 1000; at ×100 that is 1000/100 = 10 wall-ms away
+    expect(r.msUntilNextEvent()).toBe(10);
+  });
+});
+
+describe('MatchRoom — backpressure (drop a peer that stops draining)', () => {
+  it('closes a peer whose outbound buffer exceeds the cap instead of sending', () => {
+    const r = room();
+    let closed: number | undefined;
+    let sent = 0;
+    const slow: RoomPeer = {
+      bufferedAmount: 2_000_000, // over the 1 MiB cap → not draining
+      send: () => {
+        sent += 1;
+      },
+      close: (code) => {
+        closed = code;
+      },
+    };
+    r.addPeer('p1', slow); // the welcome broadcast hits the backpressure guard
+    expect(closed).toBe(1013); // dropped with "try again later"
+    expect(sent).toBe(0); // nothing queued onto the stuck peer
+  });
+});

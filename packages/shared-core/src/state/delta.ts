@@ -11,6 +11,10 @@ const META_KEYS = [
   'scheduled',
   'scheduleSeq',
   'fog',
+  'heroes',
+  'tempLanes',
+  'topology',
+  'heroSeq',
 ] as const;
 
 /**

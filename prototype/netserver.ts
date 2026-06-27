@@ -47,11 +47,16 @@ const stats = {
   byType: {} as Record<string, number>,
   end: null as RoomObservation | null,
 };
+let connected = 0; // live players currently connected (drives the running-match heartbeat)
 const observe = (ev: RoomObservation): void => {
   appendFileSync(logFile, JSON.stringify({ t: Date.now(), ...ev }) + '\n');
-  if (ev.kind === 'join') stats.joins++;
-  else if (ev.kind === 'leave') stats.leaves++;
-  else if (ev.kind === 'end') stats.end = ev;
+  if (ev.kind === 'join') {
+    stats.joins++;
+    connected++;
+  } else if (ev.kind === 'leave') {
+    stats.leaves++;
+    connected = Math.max(0, connected - 1);
+  } else if (ev.kind === 'end') stats.end = ev;
   else if (ev.kind === 'action') {
     stats.actions++;
     stats.byType[ev.type] = (stats.byType[ev.type] ?? 0) + 1;
@@ -69,12 +74,21 @@ const observe = (ev: RoomObservation): void => {
       ...(ev.code ? { code: ev.code } : {}),
     });
   }
-  // Persist after anything that changes the world or the lobby (debounced below).
+  // Persist after anything that changes the world or the lobby (debounced below),
+  // and re-arm the offline wakeup: an action may schedule or consume events, and a
+  // lobby Start releases the frozen clock — both move the next-event time.
   if (ev.kind === 'action' || ev.kind === 'lobby' || ev.kind === 'end') scheduleSave();
+  // Re-arm on EVERY room event: an action may (un)schedule events, a lobby Start releases
+  // the clock, and a join/leave starts/stops the live-player heartbeat below.
+  armWakeup();
 };
 
 const host = process.env.HOST ?? '127.0.0.1';
 const port = Number(process.env.PORT ?? 8788);
+// Playtest fast-forward: wall→game clock multiplier. TIME_SCALE=100 ⇒ a real minute
+// is ~1.7 game-hours, so fleets/builds/economy resolve on-screen instead of over real
+// hours. 1 (default) = real-time. Compresses the clock itself, not just durations.
+const TIME_SCALE = Math.max(1, Number(process.env.TIME_SCALE ?? 1) || 1);
 
 // Serve the built prototype HTML at `/` so a peer just opens `http://host:port/`
 // (no file transfer; the connect overlay auto-fills the same-origin ws:// URL).
@@ -143,6 +157,7 @@ const room = new MatchRoom({
   emitStateHash: true, // attach hashState(view) so the client overlay can flag desync
   observe, // M0: log every room event to JSONL + count for the on-exit summary
   initialReceipts, // rehydrated idempotency (deduped action stays deduped after restart)
+  timeScale: TIME_SCALE, // playtest fast-forward (1 = real-time)
 });
 
 // Snapshot the world after changes, debounced so a burst of actions is one write.
@@ -173,6 +188,43 @@ async function doSave(): Promise<void> {
     process.stderr.write(`snapshot save failed: ${(e as Error)?.message ?? String(e)}\n`);
   }
   saving = false;
+}
+
+// Offline scheduler (PA-4.1): a single-process wakeup driver so the world runs
+// 24/7 even with nobody connected. The in-state schedule is mirrored as ONE
+// pending timer set to the soonest event; when it fires we `tick()` the room
+// (advance + broadcast the arrivals/battles/captures that came due) and re-arm.
+// `setTimeout` overflows past ~24.8 days, so a far-future event is capped to
+// MAX_TIMER_MS and we re-arm — a long sleep taken in hops. Note: NO downtime
+// catch-up — the room resumes its clock at the saved `state.time` (initiallyStarted),
+// so the gap while the process was down is simply skipped, not replayed. The
+// distributed/durable evolution is a job queue on Postgres (pg-boss): one shared
+// "wake match X at T" job across many server processes instead of one in-memory
+// timer per room — see docs/persistence-accounts-roadmap.md (PA-4).
+const MAX_TIMER_MS = 60 * 60_000; // 1h cap (setTimeout overflow + clock-drift safety)
+// While a STARTED match has connected players, tick at least this often even if the
+// schedule is momentarily empty — otherwise the world only advances when someone issues
+// an order (submitAction), so the published clock/economy/in-flight fleets freeze
+// on-screen between actions. newGame() starts with NO scheduled events, so without this
+// the very first thing players see after Start is a frozen "Day 1 00:00".
+const HEARTBEAT_MS = 1_000;
+let wakeTimer: ReturnType<typeof setTimeout> | null = null;
+function armWakeup(): void {
+  if (wakeTimer) {
+    clearTimeout(wakeTimer);
+    wakeTimer = null;
+  }
+  const ev = room.msUntilNextEvent(); // wall-ms to the next scheduled event, or null
+  const beat = room.isStarted && connected > 0 ? HEARTBEAT_MS : null; // live-player heartbeat
+  if (ev === null && beat === null) return; // nothing scheduled and nobody live → idle
+  const ms = ev === null ? beat : beat === null ? ev : Math.min(ev, beat);
+  wakeTimer = setTimeout(onWake, Math.min(ms ?? MAX_TIMER_MS, MAX_TIMER_MS));
+}
+function onWake(): void {
+  wakeTimer = null;
+  room.tick(); // fire whatever is now due (a no-op if a capped timer fired early)
+  scheduleSave(); // persist the advanced world
+  armWakeup(); // re-arm for the next event (or the remainder of a long sleep)
 }
 
 const server = createMultiplayerServer({ room, host, port, indexHtml, accountStore });
@@ -212,6 +264,9 @@ const lines = [
   DATABASE_URL
     ? `  store  : Postgres — durable${restored ? ' (resumed a saved match)' : ''}`
     : '  store  : in-memory — a restart loses the match (set DATABASE_URL for durability)',
+  TIME_SCALE > 1
+    ? `  time   : ×${TIME_SCALE} fast-forward (1 real min ≈ ${(TIME_SCALE / 60).toFixed(1)} game-hours) — playtest mode`
+    : '  time   : ×1 real-time (set TIME_SCALE=100 to fast-forward a playtest)',
   '',
   '  Two-person test:',
   `   • You:    open ${localHttp}/  → Connect → Azure (p1)`,
@@ -227,6 +282,10 @@ if (unreachableOnly) {
 }
 lines.push('', `  raw ws : ${wsUrl.replace('0.0.0.0', 'localhost')}?player=p1  ·  …?player=p2`, '');
 process.stdout.write(lines.join('\n'));
+
+// Start the offline heartbeat: if a restored match already has a due/pending event,
+// this arms the first wake (no burst — the clock resumes at the saved time).
+armWakeup();
 
 // On Ctrl-C: print the playtest summary (counts gathered by `observe`) and where
 // the raw JSONL landed, then close cleanly — the per-match data survives the run.
@@ -258,6 +317,10 @@ const shutdown = (): void => {
   if (saveTimer) {
     clearTimeout(saveTimer);
     saveTimer = null;
+  }
+  if (wakeTimer) {
+    clearTimeout(wakeTimer);
+    wakeTimer = null;
   }
   void (async () => {
     await doSave(); // final flush so the latest state is durable before we exit

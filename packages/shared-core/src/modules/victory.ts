@@ -71,13 +71,6 @@ function computeScores(h: HandlerContext): Record<PlayerId, MatchScore> {
   return scores;
 }
 
-/** A player is still in the running while they hold any asset — a planet, a
- *  fleet or any units. Kept independent of `total` so the score formula (where
- *  ordinary military scores nothing) can't mistake a fleet-only player for dead. */
-function hasAssets(score: MatchScore): boolean {
-  return score.controlledPlanets + score.fleets + score.units > 0;
-}
-
 function highestScore(
   scores: Record<PlayerId, MatchScore>,
   playerIds: readonly PlayerId[],
@@ -127,16 +120,24 @@ function evaluateVictory(h: HandlerContext): void {
     return;
   }
 
-  const contenders = activeBefore.filter((playerId) => {
-    const score = scores[playerId];
-    return score ? hasAssets(score) : false;
-  });
+  // A player stays in the running only while they hold at least one province.
+  // Losing every planet eliminates them — and their mobile fleets disband (a
+  // homeless armada can't keep fighting). Stricter than mere asset-holding: a
+  // fleet-only player is now dead, not a survivor.
+  const contenders = activeBefore.filter(
+    (playerId) => (scores[playerId]?.controlledPlanets ?? 0) > 0,
+  );
   if (contenders.length > 0) {
     for (const playerId of activeBefore) {
       if (!contenders.includes(playerId)) {
         const player = h.state.players[playerId];
         if (player) {
           player.status = 'defeated';
+          // Their fleets vanish with their last territory.
+          for (const fleet of Object.values(h.state.fleets)) {
+            if (fleet.owner === playerId) delete h.state.fleets[fleet.id];
+          }
+          h.emit('player.eliminated', { playerId, reason: 'no-territory' });
         }
       }
     }

@@ -1476,9 +1476,12 @@ function drawAimPreview() {
   if (!ids.length) return;
   // Prefer a node target; if none is near, aim at the closest point ON a lane —
   // the army will route to that road and park there (Bytro continuous order).
+  // The node pick radius MUST match selectAt's (24px): with the old 30px, a tap
+  // 24–30px from a junction dispatched a lane park (fleet flies to the road point)
+  // while the preview drew the path to the node — the reported mismatch.
   let target: { x: number; y: number } | null = null;
   let targetId: string | null = null;
-  let best = 30;
+  let best = 24;
   for (const n of MAP) {
     const c = world(n);
     const d = Math.hypot(aimPointer.x - c.x, aimPointer.y - c.y);
@@ -1600,6 +1603,52 @@ function clipHalfPlane(
   return out;
 }
 
+/** Sentinel edge-tag: this province edge sits on the map boundary, not a neighbour. */
+const BOUNDARY = -1;
+
+/** Like {@link clipHalfPlane}, but carries a per-edge tag so the political map can
+ *  colour each border by what lies across it. `tags[k]` is what borders the edge
+ *  `poly[k]→poly[k+1]`: a neighbour seed index (≥0) or BOUNDARY. The newly-cut edge
+ *  (along the clip line) is tagged `clipTag` (the seed we clipped against); surviving
+ *  original edges keep their tag. Lets same-owner borders draw as faint hairlines
+ *  (the empire reads as one field) and owner-vs-owner borders as a bright frontier. */
+function clipHalfPlaneTagged(
+  poly: Array<[number, number]>,
+  tags: number[],
+  a: number,
+  b: number,
+  c: number,
+  clipTag: number,
+): { poly: Array<[number, number]>; tags: number[] } {
+  const out: Array<[number, number]> = [];
+  const outT: number[] = [];
+  const n = poly.length;
+  for (let i = 0; i < n; i++) {
+    const cur = poly[i]!;
+    const nxt = poly[(i + 1) % n]!;
+    const tag = tags[i]!;
+    const dc = a * cur[0] + b * cur[1] + c;
+    const dn = a * nxt[0] + b * nxt[1] + c;
+    const cross = dc < 0 !== dn < 0;
+    if (dc <= 0) {
+      out.push(cur);
+      if (cross) {
+        const t = dc / (dc - dn);
+        out.push([cur[0] + t * (nxt[0] - cur[0]), cur[1] + t * (nxt[1] - cur[1])]);
+        outT.push(tag); // cur → intersection: surviving part of the original edge
+        outT.push(clipTag); // intersection → next: along the new clip line (this neighbour)
+      } else {
+        outT.push(tag); // wholly-inside original edge keeps its tag
+      }
+    } else if (cross) {
+      const t = dc / (dc - dn);
+      out.push([cur[0] + t * (nxt[0] - cur[0]), cur[1] + t * (nxt[1] - cur[1])]);
+      outT.push(tag); // intersection → nxt: re-entering part of the original edge
+    }
+  }
+  return { poly: out, tags: outT };
+}
+
 /** Rebuild the cached province map when the camera/ownership/viewport moves. */
 function buildStaticLayer(): void {
   // Rebuild only when the content/size changes, or when the camera has SETTLED at a
@@ -1683,9 +1732,18 @@ function buildStaticLayer(): void {
     for (let k = 1; k < poly.length; k++) g.lineTo(poly[k]![0], poly[k]![1]);
     g.closePath();
   };
+  // Pass 1 — bake every province cell (tagged power-diagram polygon) and its fill.
+  // Same owner ⇒ same colour, so a captured cluster paints as ONE political field.
+  const cells: Array<{
+    poly: Array<[number, number]>;
+    tags: number[];
+    owner: string | null;
+    idx: number;
+  }> = [];
   for (let i = 0; i < seeds.length; i++) {
     const si = seeds[i]!;
     let poly: Array<[number, number]> = clip.map((q) => [q[0], q[1]]);
+    let tags: number[] = clip.map(() => BOUNDARY);
     for (let j = 0; j < seeds.length && poly.length >= 3; j++) {
       if (i === j) continue;
       const sj = seeds[j]!;
@@ -1693,26 +1751,75 @@ function buildStaticLayer(): void {
       const a = 2 * (sj.x - si.x);
       const b = 2 * (sj.y - si.y);
       const cc = si.x * si.x + si.y * si.y - si.w - (sj.x * sj.x + sj.y * sj.y - sj.w);
-      poly = clipHalfPlane(poly, a, b, cc);
+      ({ poly, tags } = clipHalfPlaneTagged(poly, tags, a, b, cc, j));
     }
     if (poly.length < 3) continue;
+    // unified territory fill (owned a touch stronger, so it reads as held land)
     trace(poly);
-    g.fillStyle = rgba(si.owner ? ownerColor(si.owner) : COLOR.null, si.owner ? 0.36 : 0.12);
+    g.fillStyle = rgba(si.owner ? ownerColor(si.owner) : COLOR.null, si.owner ? 0.4 : 0.1);
     g.fill();
-    // faint terrain/kind accent — each province also reads as its own kind of place
-    // (its property: nebula slows fleets, gas-giant boosts output, …)
+    // faint terrain/kind accent — each province still reads as its own kind of place
+    // (nebula slows fleets, gas-giant boosts output, …)
     const accent = SECTOR_TYPES[si.kind]?.color;
     if (accent) {
       trace(poly);
       g.fillStyle = rgba(accent, 0.06);
       g.fill();
     }
-    // border — owned boundaries (front lines) brighter/thicker, neutral fainter
-    trace(poly);
-    g.strokeStyle = rgba(si.owner ? ownerColor(si.owner) : '#43626e', si.owner ? 0.85 : 0.3);
-    g.lineWidth = si.owner ? 1.6 : 1;
-    g.stroke();
+    cells.push({ poly, tags, owner: si.owner, idx: i });
   }
+
+  // Pass 2 — classify every cell edge by what's across it. Same-owner borders are
+  // thin INNER hairlines (so an empire stays one colour field with subtle province
+  // divisions); owner-vs-(other owner / neutral / void) borders are a glowing
+  // FRONTIER in the owner's colour. That contrast is the "merged territory, thinly
+  // outlined provinces" look.
+  type Seg = [number, number, number, number];
+  const ownedFront = new Map<string, Seg[]>();
+  const ownedInner = new Map<string, Seg[]>();
+  const neutralEdge: Seg[] = [];
+  const bucket = (m: Map<string, Seg[]>, key: string): Seg[] => {
+    let arr = m.get(key);
+    if (!arr) m.set(key, (arr = []));
+    return arr;
+  };
+  for (const cell of cells) {
+    const { poly, tags, owner, idx } = cell;
+    const m = poly.length;
+    for (let k = 0; k < m; k++) {
+      const t = tags[k]!;
+      const p0 = poly[k]!;
+      const p1 = poly[(k + 1) % m]!;
+      const seg: Seg = [p0[0], p0[1], p1[0], p1[1]];
+      const neigh = t >= 0 ? seeds[t]!.owner : undefined; // undefined ⇒ map boundary
+      if (t >= 0 && owner !== null && neigh === owner) {
+        if (idx < t) bucket(ownedInner, ownerColor(owner)).push(seg); // same empire, draw once
+      } else if (owner !== null) {
+        bucket(ownedFront, ownerColor(owner)).push(seg); // empire frontier (each side glows)
+      } else if (t === BOUNDARY || idx < t) {
+        neutralEdge.push(seg); // neutral province division (faint, drawn once)
+      }
+    }
+  }
+  const strokeSegs = (segs: Seg[], style: string, width: number): void => {
+    if (segs.length === 0) return;
+    g.strokeStyle = style;
+    g.lineWidth = width;
+    g.beginPath();
+    for (const sg of segs) {
+      g.moveTo(sg[0], sg[1]);
+      g.lineTo(sg[2], sg[3]);
+    }
+    g.stroke();
+  };
+  g.save();
+  g.lineJoin = 'round';
+  g.lineCap = 'round';
+  for (const [col, segs] of ownedInner) strokeSegs(segs, rgba(col, 0.18), 0.65); // inner hairlines
+  strokeSegs(neutralEdge, 'rgba(67,98,110,0.34)', 1); // neutral divisions
+  for (const [col, segs] of ownedFront) strokeSegs(segs, rgba(col, 0.14), 5.5); // frontier glow
+  for (const [col, segs] of ownedFront) strokeSegs(segs, rgba(col, 0.9), 1.6); // frontier crisp
+  g.restore();
 
   // PATH NETWORK — thin roads between adjacent provinces (the visible "пути").
   // Movement runs along these; an army marches province-to-adjacent-province and
@@ -3355,7 +3462,8 @@ function frame(nowReal: number) {
   // top bar (Iron Order-style resource readouts with +/h deltas)
   const d = floor(s.time / DAY) + 1;
   const h = floor((s.time % DAY) / HOUR);
-  const clockText = `Day ${d} · ${String(h).padStart(2, '0')}:00`;
+  const min = floor((s.time % HOUR) / 60000);
+  const clockText = `Day ${d} · ${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
   if (clockText !== lastClockText) {
     clock.textContent = clockText;
     topClock.textContent = clockText;

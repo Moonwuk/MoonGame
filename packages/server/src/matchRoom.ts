@@ -12,15 +12,22 @@ import { diffState, hashState, identifiedNodes, visibleState } from '@void/share
 import {
   parseClientMessage,
   serializeServerMessage,
+  type ClientPingPlaceMessage,
   type LobbyInfo,
+  type Ping,
   type ServerMessage,
   type ServerRejectionMessage,
 } from './protocol';
+import { InMemoryEphemeralStore, type EphemeralStore } from './ephemeral';
 
 export interface RoomPeer {
   send(data: string): void;
   close?(code?: number, reason?: string): void;
   readonly readyState?: number;
+  /** Bytes queued but not yet flushed to the socket (a `ws` getter). When this
+   *  backs up the peer isn't draining — the room drops it rather than grow memory
+   *  unbounded. Absent (e.g. an in-memory test peer) ⇒ backpressure is not enforced. */
+  readonly bufferedAmount?: number;
 }
 
 export interface MatchRoomOptions {
@@ -52,11 +59,35 @@ export interface MatchRoomOptions {
    *  the lobby waiting forever for the empty side). A slot frees the moment its
    *  peer disconnects, so reconnect-after-drop still works. Default false. */
   singlePeerPerPlayer?: boolean;
+  /** Static team assignment (playerId → teamId): same team = allies who see each
+   *  other's pings. Omit ⇒ no allies (only self sees own pings). Stopgap until a
+   *  real diplomacy relation exists (then read it instead in `areAllied`). */
+  teams?: Record<PlayerId, string>;
+  /** Ping time-to-live in ms (default 5 minutes). */
+  pingTtlMs?: number;
+  /** Where ephemeral match data (pings, …) lives. Defaults to an in-memory store;
+   *  swap a Redis-backed impl in to share it across server processes (the seam from
+   *  docs/tech-stack.md — no room-logic change). */
+  ephemeral?: EphemeralStore;
   /** Observation-only room-event stream for metrics/playtest logging (M0). */
   observe?: (event: RoomObservation) => void;
   /** Seed the idempotency receipts (e.g. rehydrated from a ReceiptStore on restart),
    *  so an action deduped before a crash stays deduped after it. */
   initialReceipts?: ActionReceipt[];
+  /** Cap on retained idempotency receipts; past it the oldest are evicted (FIFO).
+   *  Bounds memory for a long match — a retried action older than the last N is no
+   *  longer deduped (idempotency is needed for minutes, not forever). Default 10000. */
+  maxReceipts?: number;
+  /** Per-player action rate limit: at most `actionRateMax` submits per
+   *  `actionRateWindowMs`. A flood past it is rejected transiently (no receipt — a
+   *  genuine retry after backoff still lands). Defaults: 20 per 1000ms. */
+  actionRateMax?: number;
+  actionRateWindowMs?: number;
+  /** Wall-clock → game-clock multiplier for the running match clock (NOT the kernel's
+   *  duration `config.timeScale`): >1 fast-forwards the whole world for playtests, so a
+   *  real minute becomes many game-hours and fleets/builds/economy resolve on-screen.
+   *  1 = real-time. Requires a lobby gate (manualStart / waitForPlayers). */
+  timeScale?: number;
 }
 
 export interface ActionReceipt {
@@ -92,10 +123,26 @@ export interface SubmitResult {
 }
 
 const OPEN = 1;
+/** Backpressure cap: drop a peer whose unflushed outbound buffer exceeds this (it
+ *  isn't draining — a fast sender outrunning a slow receiver). Deltas are KB-sized,
+ *  so 1 MiB is hundreds of un-acked updates — a genuinely stuck client, not a blip. */
+const MAX_BUFFERED_BYTES = 1_048_576;
 
 function canSend(peer: RoomPeer): boolean {
   return peer.readyState === undefined || peer.readyState === OPEN;
 }
+
+/** Ally-ping tuning (ephemeral, server-side; never part of the deterministic core). */
+const PING_DEFAULT_TTL_MS = 5 * 60_000;
+const PING_MAX_PER_PLAYER = 8;
+const PING_RATE_WINDOW_MS = 2_000;
+const PING_RATE_MAX = 4;
+const PING_LABEL_MAX = 40;
+
+/** Idempotency-receipt + action-rate bounds (DoS / memory; audit F-03/F-04). */
+const RECEIPTS_MAX_DEFAULT = 10_000;
+const ACTION_RATE_MAX_DEFAULT = 20;
+const ACTION_RATE_WINDOW_MS_DEFAULT = 1_000;
 
 export class MatchRoom {
   readonly id: string;
@@ -126,6 +173,23 @@ export class MatchRoom {
    *  *visible* view (fog of war is server-authoritative, so every player holds a
    *  different state). A peer's `welcome` (re)sets its player's baseline. */
   private readonly lastVisible = new Map<PlayerId, GameState>();
+  private readonly teams: Record<PlayerId, string>;
+  private readonly pingTtlMs: number;
+  /** Ally pings live behind the ephemeral store (in-memory now, Redis later) — never
+   *  in GameState, so they can't trip hashState / replay / the schedule. */
+  private readonly ephemeral: EphemeralStore;
+  private pingSeq = 0;
+  /** Per-player placement timestamps, for the (local, single-process) rate limit. */
+  private readonly pingTimes = new Map<PlayerId, number[]>();
+  /** Cap on retained idempotency receipts (FIFO eviction past it — bounds memory). */
+  private readonly maxReceipts: number;
+  /** Per-player action rate limit (local, single-process; → ephemeral store at >1 proc). */
+  private readonly actionRateMax: number;
+  private readonly actionRateWindowMs: number;
+  /** Per-player submit timestamps, for the action rate limit. */
+  private readonly actionTimes = new Map<PlayerId, number[]>();
+  /** Wall→game clock multiplier (1 = real-time; >1 fast-forwards the match). */
+  private readonly timeScale: number;
 
   constructor(options: MatchRoomOptions) {
     this.id = options.id;
@@ -150,9 +214,20 @@ export class MatchRoom {
     this.emitStateHash = options.emitStateHash ?? false;
     this.singlePeerPerPlayer = options.singlePeerPerPlayer ?? false;
     this.observe = options.observe;
+    this.maxReceipts = options.maxReceipts ?? RECEIPTS_MAX_DEFAULT;
+    this.actionRateMax = options.actionRateMax ?? ACTION_RATE_MAX_DEFAULT;
+    this.actionRateWindowMs = options.actionRateWindowMs ?? ACTION_RATE_WINDOW_MS_DEFAULT;
+    this.timeScale = options.timeScale && options.timeScale > 0 ? options.timeScale : 1;
     if (options.initialReceipts) {
-      for (const r of options.initialReceipts) this.receipts.set(r.actionId, r);
+      // Rehydration must respect the cap — seed only the most recent `maxReceipts`.
+      for (const r of options.initialReceipts.slice(-this.maxReceipts)) {
+        this.receipts.set(r.actionId, r);
+      }
     }
+    this.teams = options.teams ?? {};
+    this.pingTtlMs = options.pingTtlMs ?? PING_DEFAULT_TTL_MS;
+    // Align store expiry with the room's (lobby-adjusted) clock, not raw wall time.
+    this.ephemeral = options.ephemeral ?? new InMemoryEphemeralStore(() => this.clock());
   }
 
   /** `hashState` of a per-player view, for the desync field (only when enabled). */
@@ -210,9 +285,8 @@ export class MatchRoom {
    *  manualStart) is configured, in which case it only accrues once running. */
   private clock(): number {
     if (!this.waitFor && !this.manualStart) return this.now();
-    return (
-      this.lobbyAccrued + (this.lobbyRunningSince === null ? 0 : this.now() - this.lobbyRunningSince)
-    );
+    const elapsed = this.lobbyRunningSince === null ? 0 : this.now() - this.lobbyRunningSince;
+    return this.lobbyAccrued + elapsed * this.timeScale;
   }
 
   /** Re-evaluate running/paused after a connection change: freeze or resume the
@@ -226,7 +300,7 @@ export class MatchRoom {
       return true;
     }
     if (!running && this.lobbyRunningSince !== null) {
-      this.lobbyAccrued += this.now() - this.lobbyRunningSince; // freeze
+      this.lobbyAccrued += (this.now() - this.lobbyRunningSince) * this.timeScale; // freeze
       this.lobbyRunningSince = null;
       this.observe?.({ kind: 'lobby', waiting: true });
       return true;
@@ -284,6 +358,7 @@ export class MatchRoom {
       ...this.hashField(view.base),
       ...this.lobbyField(),
     });
+    void this.sendVisiblePings(playerId, peer); // existing ally markers, on join (best-effort)
     // Tell already-present peers the wait ended (waitForPlayers) or the lobby
     // roster changed (manualStart, pre-start), so their lobby screen updates.
     if (flipped || (this.manualStart && !this.started)) this.broadcastState([]);
@@ -307,6 +382,7 @@ export class MatchRoom {
     playerPeers.delete(peer);
     if (playerPeers.size === 0) {
       this.peers.delete(playerId);
+      this.lastVisible.delete(playerId); // reclaim the per-player snapshot — no leak after a leave
       this.observe?.({ kind: 'leave', playerId });
       // Manual-start lobby: if the host leaves before starting, hand the Start
       // button to whoever's still here (insertion order) so the lobby isn't stuck.
@@ -319,7 +395,7 @@ export class MatchRoom {
     if (this.syncLobbyClock() || (this.manualStart && !this.started)) this.broadcastState([]);
   }
 
-  receive(playerId: PlayerId, peer: RoomPeer, raw: string): void {
+  async receive(playerId: PlayerId, peer: RoomPeer, raw: string): Promise<void> {
     if (raw.length > this.maxPayloadBytes) {
       this.send(peer, { type: 'error', matchId: this.id, code: 'E_PAYLOAD_TOO_LARGE' });
       return;
@@ -346,6 +422,14 @@ export class MatchRoom {
       this.start(playerId); // host-only; ignored otherwise
       return;
     }
+    if (message.type === 'ping.place') {
+      await this.handlePingPlace(playerId, peer, message);
+      return;
+    }
+    if (message.type === 'ping.clear') {
+      await this.handlePingClear(playerId, message.pingId);
+      return;
+    }
     this.submitAction(playerId, message.action, peer);
   }
 
@@ -358,6 +442,28 @@ export class MatchRoom {
       }
       return { ok: cached.ok, seq: cached.seq, events: [], code: cached.code };
     }
+
+    // Rate limit (F-03): cap submits per player per window. A flood past the cap is
+    // rejected TRANSIENTLY — no receipt is recorded, so a genuine retry after backoff
+    // still lands (idempotency must never turn a rate-limit into a permanent reject).
+    const rateNow = this.now();
+    const recent = (this.actionTimes.get(playerId) ?? []).filter(
+      (t) => rateNow - t < this.actionRateWindowMs,
+    );
+    if (recent.length >= this.actionRateMax) {
+      if (peer) {
+        this.send(peer, {
+          type: 'rejection',
+          matchId: this.id,
+          seq: this.seq,
+          actionId: action.id,
+          code: 'E_RATE_LIMIT',
+        });
+      }
+      return { ok: false, seq: this.seq, events: [], code: 'E_RATE_LIMIT' };
+    }
+    recent.push(rateNow);
+    this.actionTimes.set(playerId, recent);
 
     if (action.playerId !== playerId || !this.hasPlayer(playerId)) {
       const receipt = this.recordReceipt(action, playerId, false, 'E_FORBIDDEN');
@@ -392,6 +498,35 @@ export class MatchRoom {
     this.broadcastState(events);
     this.observeEndIfNeeded();
     return { ok: true, seq: receipt.seq, events };
+  }
+
+  /** Advance the world to the current clock and broadcast what changed — the
+   *  offline heartbeat. It fires due scheduled events (arrivals, battles,
+   *  captures) with NO player action, so the world keeps running 24/7 while
+   *  everyone is away. A wakeup driver calls this when `msUntilNextEvent` elapses.
+   *  No-op while the clock is frozen (lobby) or when nothing is due yet. */
+  tick(): void {
+    if (this.waiting) return;
+    const advanced = this.advance(this.clock());
+    if (advanced.ok && advanced.events.length > 0) {
+      this.broadcastState(advanced.events);
+      this.observeEndIfNeeded();
+    }
+  }
+
+  /** Wall-ms until the soonest scheduled event comes due — what an offline wakeup
+   *  driver sleeps for before calling `tick`. `null` when nothing is pending or
+   *  the clock is frozen (lobby): there is nothing to wake for. The world clock
+   *  advances 1:1 with wall-time, so the game-ms gap to the event IS the wall-ms
+   *  to sleep; clamped at 0 for an already-overdue event. */
+  msUntilNextEvent(): number | null {
+    if (this.waiting) return null;
+    const scheduled = this.stateValue.scheduled;
+    if (scheduled.length === 0) return null;
+    let soonest = Infinity;
+    for (const e of scheduled) if (e.at < soonest) soonest = e.at;
+    // game-ms gap → wall-ms to sleep (the clock runs `timeScale`× faster than wall-time).
+    return Math.max(0, (soonest - this.clock()) / this.timeScale);
   }
 
   /** A full per-player resync snapshot (fog applied), e.g. for a deduped retry.
@@ -437,6 +572,13 @@ export class MatchRoom {
         ? { actionId: action.id, playerId, seq: this.seq, ok }
         : { actionId: action.id, playerId, seq: this.seq, ok, code };
     this.receipts.set(action.id, receipt);
+    // Bound memory (F-04): idempotency is needed for the retry window (minutes), not
+    // forever — evict the oldest receipts past the cap (Map preserves insertion order).
+    while (this.receipts.size > this.maxReceipts) {
+      const oldest = this.receipts.keys().next().value;
+      if (oldest === undefined) break;
+      this.receipts.delete(oldest);
+    }
     this.observe?.({
       kind: 'action',
       actionId: action.id,
@@ -505,7 +647,150 @@ export class MatchRoom {
     this.send(peer, message);
   }
 
+  // --- ally pings (ephemeral, server-side; never part of the deterministic core) ---
+
+  /** Same player, or the same static team. The single swap-point for a future real
+   *  diplomacy relation (read `this.stateValue` instead of `this.teams`). */
+  private areAllied(a: PlayerId, b: PlayerId): boolean {
+    if (a === b) return true;
+    const ta = this.teams[a];
+    return ta !== undefined && ta === this.teams[b];
+  }
+
+  /** A ping is visible to its owner and the owner's allies; never to enemies. The
+   *  privacy guarantee is enforced HERE (server-side): an enemy is never sent the
+   *  ping at all, exactly like fog. Allies see it even on tiles they can't see —
+   *  that is the whole point ("look here"). */
+  private canSeePing(recipient: PlayerId, ping: Ping): boolean {
+    return this.areAllied(recipient, ping.owner);
+  }
+
+  /** Relay a ping message to every connected peer who may see that ping. */
+  private relayToViewers(ping: Ping, message: ServerMessage): void {
+    for (const [pid, peers] of this.peers) {
+      if (!this.canSeePing(pid, ping)) continue;
+      for (const peer of peers) this.send(peer, message);
+    }
+  }
+
+  private pingKey(pingId: string): string {
+    return `match:${this.id}:ping:${pingId}`;
+  }
+  private get pingPrefix(): string {
+    return `match:${this.id}:ping:`;
+  }
+
+  private async handlePingPlace(
+    playerId: PlayerId,
+    peer: RoomPeer,
+    message: ClientPingPlaceMessage,
+  ): Promise<void> {
+    if (!this.hasPlayer(playerId)) {
+      this.send(peer, { type: 'error', matchId: this.id, code: 'E_FORBIDDEN' });
+      return;
+    }
+    const now = this.clock();
+    // rate limit (local, single-process): at most PING_RATE_MAX placements per window.
+    // Moves into the ephemeral store as an atomic counter once there's >1 process.
+    const recent = (this.pingTimes.get(playerId) ?? []).filter((t) => now - t < PING_RATE_WINDOW_MS);
+    if (recent.length >= PING_RATE_MAX) {
+      this.send(peer, { type: 'error', matchId: this.id, code: 'E_PING_RATE' });
+      return;
+    }
+    const draft = message.ping;
+    if ((draft.kind === 'move' || draft.kind === 'attack') && draft.to === undefined) {
+      this.send(peer, { type: 'error', matchId: this.id, code: 'E_PING_TARGET' });
+      return;
+    }
+    if (draft.kind === 'build') {
+      const building = draft.payload?.building;
+      if (typeof building !== 'string' || !this.data.buildings[building]) {
+        this.send(peer, { type: 'error', matchId: this.id, code: 'E_PING_BUILD' });
+        return;
+      }
+    }
+    // Node anchors must reference a real planet the owner can currently identify —
+    // you can't pin a precise marker on a world you've never scouted. Point anchors
+    // ({x,y}) are always allowed; they reveal nothing hidden.
+    const seen = identifiedNodes(this.stateValue, playerId, this.data);
+    for (const anchor of [draft.target, draft.to]) {
+      if (!anchor || anchor.node === undefined) continue;
+      if (!this.stateValue.planets[anchor.node]) {
+        this.send(peer, { type: 'error', matchId: this.id, code: 'E_PING_TARGET' });
+        return;
+      }
+      if (!seen.has(anchor.node)) {
+        this.send(peer, { type: 'error', matchId: this.id, code: 'E_PING_UNSEEN' });
+        return;
+      }
+    }
+    // Evict this player's oldest pings down to the cap (never hard-block the UX).
+    const mine = (await this.ephemeral.entries<Ping>(this.pingPrefix))
+      .map((e) => e.value)
+      .filter((p) => p.owner === playerId)
+      .sort((a, b) => a.createdAt - b.createdAt);
+    while (mine.length >= PING_MAX_PER_PLAYER) {
+      const old = mine.shift()!;
+      await this.ephemeral.delete(this.pingKey(old.id));
+      this.relayToViewers(old, {
+        type: 'ping.removed',
+        matchId: this.id,
+        pingId: old.id,
+        reason: 'cleared',
+      });
+    }
+    const ping: Ping = {
+      id: `ping:${playerId}:${this.pingSeq++}`,
+      owner: playerId,
+      kind: draft.kind,
+      target: draft.target,
+      createdAt: now,
+      expiresAt: now + this.pingTtlMs,
+    };
+    if (draft.to) ping.to = draft.to;
+    if (draft.payload?.building) ping.payload = { building: draft.payload.building };
+    if (draft.label) ping.label = draft.label.slice(0, PING_LABEL_MAX);
+    await this.ephemeral.set(this.pingKey(ping.id), ping, this.pingTtlMs);
+    recent.push(now);
+    this.pingTimes.set(playerId, recent);
+    this.relayToViewers(ping, { type: 'ping.added', matchId: this.id, ping });
+  }
+
+  private async handlePingClear(playerId: PlayerId, pingId?: string): Promise<void> {
+    for (const { value: ping } of await this.ephemeral.entries<Ping>(this.pingPrefix)) {
+      if (ping.owner !== playerId) continue;
+      if (pingId !== undefined && ping.id !== pingId) continue;
+      await this.ephemeral.delete(this.pingKey(ping.id));
+      this.relayToViewers(ping, {
+        type: 'ping.removed',
+        matchId: this.id,
+        pingId: ping.id,
+        reason: 'cleared',
+      });
+    }
+  }
+
+  /** On join: send the recipient every currently-visible ping. The store drops
+   *  expired ones lazily, so there is no separate sweep; the client fades a ping on
+   *  its own `expiresAt`. */
+  private async sendVisiblePings(playerId: PlayerId, peer: RoomPeer): Promise<void> {
+    for (const { value: ping } of await this.ephemeral.entries<Ping>(this.pingPrefix)) {
+      if (this.canSeePing(playerId, ping)) {
+        this.send(peer, { type: 'ping.added', matchId: this.id, ping });
+      }
+    }
+  }
+
   private send(peer: RoomPeer, message: ServerMessage): void {
-    if (canSend(peer)) peer.send(serializeServerMessage(message));
+    if (!canSend(peer)) return;
+    // Backpressure: a peer whose buffer is backing up isn't draining — keep queuing
+    // and the server's memory grows without bound (a fast sender flooding a slow
+    // receiver). Drop it; the client auto-reconnects and gets a fresh `welcome` (a
+    // full resync), so it can't desync from the delta we skip here.
+    if (peer.bufferedAmount !== undefined && peer.bufferedAmount > MAX_BUFFERED_BYTES) {
+      peer.close?.(1013, 'backpressure');
+      return;
+    }
+    peer.send(serializeServerMessage(message));
   }
 }

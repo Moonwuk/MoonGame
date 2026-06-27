@@ -61,7 +61,12 @@ export function createMultiplayerServer(
       return;
     }
     if (indexHtml !== undefined && (path === '/' || path === '/index.html')) {
-      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      // The single-file client changes every rebuild; never let a browser serve a
+      // stale cached copy (else client fixes silently don't reach the player).
+      response.writeHead(200, {
+        'content-type': 'text/html; charset=utf-8',
+        'cache-control': 'no-store, must-revalidate',
+      });
       response.end(indexHtml);
       return;
     }
@@ -114,14 +119,30 @@ export function createMultiplayerServer(
   // lock the real player out of their own match on reconnect. A ping/pong
   // heartbeat reaps the dead socket: terminate() → 'close' → removePeer frees it.
   const alive = new WeakMap<WebSocket, boolean>();
+  // Connection-level flood guard: a coarse per-socket message cap that drops a raw
+  // flood BEFORE the (more expensive) parse — protecting CPU from a spam-clicker or a
+  // script. The fine-grained, post-parse throttle is MatchRoom's per-action rate limit;
+  // this is the cheap outer net (the connection half of audit F-03).
+  const FLOOD_WINDOW_MS = 1_000;
+  const FLOOD_MAX = 50; // a legit client sends a few msgs/s (actions + a 2s ping); 50 is slack
+  const inbound = new WeakMap<WebSocket, { n: number; since: number }>();
   wss.on('connection', (ws: WebSocket, _request: IncomingMessage, playerId: string) => {
     sockets.add(ws);
     alive.set(ws, true);
     ws.on('pong', () => alive.set(ws, true));
     room.addPeer(playerId, ws);
     ws.on('message', (data) => {
+      const now = Date.now();
+      const c = inbound.get(ws) ?? { n: 0, since: now };
+      if (now - c.since >= FLOOD_WINDOW_MS) {
+        c.n = 0;
+        c.since = now;
+      }
+      c.n += 1;
+      inbound.set(ws, c);
+      if (c.n > FLOOD_MAX) return; // drop a raw flood before the parse (cheap)
       const raw = typeof data === 'string' ? data : data.toString('utf8');
-      room.receive(playerId, ws, raw);
+      void room.receive(playerId, ws, raw); // fire-and-forget; ping handling may be async
     });
     ws.on('close', () => {
       sockets.delete(ws);

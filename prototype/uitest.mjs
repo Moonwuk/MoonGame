@@ -60,10 +60,17 @@ const getEl = (id) => {
 globalThis.document = {
   getElementById: getEl,
   querySelectorAll: () => [],
+  // The prototype bakes offscreen canvases (glow sprites, the static map layer) via
+  // document.createElement('canvas') at module load — give the stub a real element
+  // (its getContext returns the chainable ctx proxy) so the render path runs.
+  createElement: () => mkEl('canvas'),
   body: mkEl('body'),
 };
 let t = 0;
 globalThis.performance = { now: () => (t += 16) };
+// Net-mode reads localStorage for the saved server URL; stub it (no persistence).
+globalThis.localStorage = { getItem: () => null, setItem() {}, removeItem() {} };
+globalThis.location = { protocol: 'file:', host: '', hostname: '', href: 'file:///', search: '' };
 const rafCbs = [];
 globalThis.requestAnimationFrame = (cb) => {
   rafCbs.push(cb);

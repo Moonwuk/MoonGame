@@ -28,15 +28,18 @@ interface Journey {
 const EPS = 1e-4;
 
 /**
- * Lazily-built route cache. The map topology (planet positions + links) is
- * static within a match, so each (from, to) node pair is computed once with
- * Dijkstra and then served from the cache.
+ * Lazily-built route cache. The map topology (planet positions + links) is mostly
+ * static, so each (from, to) node pair is computed once with Dijkstra and served
+ * from the cache — keyed by `state.topology` so a hero temp lane (which mutates
+ * `links`) bumps the version and invalidates stale routes.
  */
 class RouteCache {
   private readonly cache = new Map<string, PlanetId[] | null>();
 
   lookup(state: GameState, from: PlanetId, to: PlanetId): PlanetId[] | null {
-    const key = `${from}\0${to}`;
+    // Key includes the topology version: a hero opening/closing a temp lane bumps it,
+    // so stale routes computed before the link change are never served.
+    const key = `${state.topology ?? 0}\0${from}\0${to}`;
     if (this.cache.has(key)) {
       const cached = this.cache.get(key)!;
       return cached ? [...cached] : null;
@@ -264,7 +267,8 @@ export const movementModule: GameModule = {
   id: 'movement',
   version: '1.1.0',
   setup(api) {
-    // Closure-scoped cache: topology is static within a kernel's lifetime.
+    // Closure-scoped cache, shared across actions; keyed by `state.topology` so a
+    // hero temp lane mutating `links` invalidates stale routes (see RouteCache).
     const routes = new RouteCache();
 
     api.onAction('fleet.move', (action, h) => {
