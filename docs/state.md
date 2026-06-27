@@ -6,7 +6,7 @@
 > `deep-technical-roadmap.md`, `multiplayer.md`, `metagame.md`, `map-roadmap.md`, корневой `CLAUDE.md` / `CONTRIBUTING.md`.
 >
 > **Ветка:** feature-ветка · **PR:** создаётся после изменений.
-> **Гейт:** `pnpm run check` (lint + typecheck + test). **Тесты: 349 зелёных** (4 skip, 43 файла).
+> **Гейт:** `pnpm run check` (lint + typecheck + test). **Тесты: 387 зелёных** (4 skip, 49 файлов).
 
 ---
 

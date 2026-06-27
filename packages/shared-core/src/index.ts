@@ -51,6 +51,7 @@ export {
   buildStateFromMap,
   validateMatchMap,
   type BuildFromMapOptions,
+  type SlotAssignment,
 } from './state/buildFromMap';
 export {
   sectorKindDef,
@@ -107,10 +108,14 @@ export type {
 export {
   MatchMapSchema,
   MapSectorSchema,
+  MapSlotSchema,
+  SpawnPolicySchema,
   parseMatchMap,
   safeParseMatchMap,
   type MatchMap,
   type MapSector,
+  type MapSlot,
+  type SpawnPolicy,
 } from './data/mapSchema';
 
 // Data-driven content
