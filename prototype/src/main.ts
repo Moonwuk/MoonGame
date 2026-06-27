@@ -214,6 +214,12 @@ let netDesync = false; // last snapshot's hash mismatched (server vs our rebuild
 let netDesyncCount = 0; // how many snapshots have mismatched this session
 // Manual-start lobby roster from the server (host + who's connected + started).
 let lobbyInfo: { host: string | null; connected: string[]; started: boolean } | null = null;
+// Auto-reconnect: on an UNEXPECTED drop (not a user action), rejoin our seat with
+// backoff — the server keeps the match running and the nick maps us back.
+let userClosed = false;
+let reconnecting = false;
+let reconnectAttempts = 0;
+let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let aimPointer: { x: number; y: number } | null = null; // last canvas pointer (for the move preview)
 let planetTab: PlanetTab = 'buildings';
 const buildQueues: Record<string, PlanetBuildQueue> = {};
@@ -2986,11 +2992,12 @@ srvInput.value =
 nickInput.value = localStorage.getItem('void.nick') ?? '';
 
 $('csolo').addEventListener('click', () => {
+  userClosed = true; // intentional leave → don't auto-reconnect
   NET = false;
   showConnect(false);
 });
 
-$('cgo').addEventListener('click', () => {
+function connect(): void {
   let raw = srvInput.value.trim();
   if (!raw) {
     statusEl.textContent = 'enter a server URL';
@@ -3051,6 +3058,9 @@ $('cgo').addEventListener('click', () => {
         if (!admitted) {
           // Server accepted us — NOW we're really in the match.
           admitted = true;
+          reconnecting = false; // a fresh welcome ends any reconnect cycle
+          reconnectAttempts = 0;
+          if (banner && banner.startsWith('⟳')) banner = null;
           NET = true;
           ME = snap.playerId ?? ME;
           clearSelection();
@@ -3110,20 +3120,62 @@ $('cgo').addEventListener('click', () => {
     }
     rttEma = null;
     if (NET) {
-      statusEl.textContent = 'disconnected';
       NET = false;
       lobbyInfo = null; // drop the lobby overlay if we were still in it
-      note('● disconnected from server');
-      showConnect(true);
+      if (userClosed) {
+        statusEl.textContent = 'disconnected';
+        note('● disconnected from server');
+        showConnect(true);
+      } else {
+        // unexpected drop → auto-rejoin our seat (the match keeps running server-side)
+        note('● connection lost — reconnecting…');
+        reconnecting = true;
+        scheduleReconnect();
+      }
+    } else if (reconnecting && !admitted) {
+      scheduleReconnect(); // a reconnect attempt failed to admit → back off and retry
     }
-    // If we were never admitted, leave the rejection message (e.g. "… already
-    // taken") in the status line instead of overwriting it with "disconnected".
+    // If we were never admitted (a normal rejected join), leave the rejection
+    // message in the status line; the overlay is already showing.
   };
   sock.onerror = () => {
     if (sock !== netSock) return; // ignore errors from a superseded socket
     statusEl.textContent = 'connection failed — is the server running / URL right?';
   };
+}
+
+// Manual Connect: start a fresh session (clear any pending auto-reconnect).
+$('cgo').addEventListener('click', () => {
+  reconnecting = false;
+  reconnectAttempts = 0;
+  userClosed = false;
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+  connect();
 });
+
+// Auto-reconnect after an unexpected drop: rejoin our seat with capped exponential
+// backoff (1,2,4,8,8,8s, then give up). Same saved server + nick → same side.
+function scheduleReconnect(): void {
+  if (reconnectTimer) return;
+  reconnectAttempts++;
+  if (reconnectAttempts > 6) {
+    reconnecting = false;
+    reconnectAttempts = 0;
+    banner = null;
+    statusEl.textContent = 'reconnect failed — tap Connect to retry';
+    showConnect(true);
+    return;
+  }
+  banner = '⟳ reconnecting…';
+  const delay = Math.min(1000 * 2 ** (reconnectAttempts - 1), 8000);
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    connect(); // reuse the saved server + nick; don't reset the attempt counter
+  }, delay);
+}
 
 // --- lobby overlay (manual-start) -------------------------------------------
 // Pre-match staging screen: shows every side with its connection status, marks the
