@@ -222,8 +222,16 @@ describe('MatchRoom — observation & state hash (M0)', () => {
 
     expect(events).toEqual([
       { kind: 'join', playerId: 'p1' },
-      { kind: 'action', playerId: 'p1', type: 'player.rename', ok: true, seq: 1 },
-      { kind: 'action', playerId: 'p1', type: 'player.rename', ok: false, seq: 2, code: 'E_BAD_PAYLOAD' },
+      { kind: 'action', actionId: 'a1', playerId: 'p1', type: 'player.rename', ok: true, seq: 1 },
+      {
+        kind: 'action',
+        actionId: 'a2',
+        playerId: 'p1',
+        type: 'player.rename',
+        ok: false,
+        seq: 2,
+        code: 'E_BAD_PAYLOAD',
+      },
       { kind: 'leave', playerId: 'p1' },
     ]);
   });
@@ -495,6 +503,33 @@ const armModule: GameModule = {
     api.onAction('reject.me', (_action, h) => h.reject('E_NOPE'));
   },
 };
+
+describe('MatchRoom — durable idempotency (initialReceipts)', () => {
+  it('a receipt seeded from a prior run dedupes a retried action (no re-apply)', () => {
+    // before the "crash": apply a1 and capture its receipt
+    const r1 = room();
+    const p1 = new MemoryPeer();
+    r1.addPeer('p1', p1);
+    const first = r1.submitAction('p1', action('a1', 'p1', 'Commander'), p1);
+    expect(first.ok).toBe(true);
+
+    // after the "restart": a fresh room seeded with that receipt. We deliberately
+    // start from the PRE-action state (name 'One') so a re-apply would be visible.
+    const r2 = new MatchRoom({
+      id: 'test-room',
+      initialState: testState(),
+      kernel: createKernel([renameModule]),
+      data: testData(),
+      now: () => 10,
+      initialReceipts: [{ actionId: 'a1', playerId: 'p1', seq: first.seq, ok: true }],
+    });
+    const p1b = new MemoryPeer();
+    r2.addPeer('p1', p1b);
+    const retry = r2.submitAction('p1', action('a1', 'p1', 'Commander'), p1b);
+    expect(retry).toMatchObject({ ok: true, seq: first.seq }); // served from the receipt
+    expect(r2.state.players.p1?.name).toBe('One'); // NOT re-applied
+  });
+});
 
 describe('MatchRoom — SRV-1 (advance events on a rejected action)', () => {
   it('broadcasts the world-advance even when the triggering action is rejected', () => {

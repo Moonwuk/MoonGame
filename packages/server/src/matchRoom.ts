@@ -54,6 +54,9 @@ export interface MatchRoomOptions {
   singlePeerPerPlayer?: boolean;
   /** Observation-only room-event stream for metrics/playtest logging (M0). */
   observe?: (event: RoomObservation) => void;
+  /** Seed the idempotency receipts (e.g. rehydrated from a ReceiptStore on restart),
+   *  so an action deduped before a crash stays deduped after it. */
+  initialReceipts?: ActionReceipt[];
 }
 
 export interface ActionReceipt {
@@ -70,7 +73,15 @@ export type RoomObservation =
   | { kind: 'join'; playerId: PlayerId }
   | { kind: 'leave'; playerId: PlayerId }
   | { kind: 'lobby'; waiting: boolean }
-  | { kind: 'action'; playerId: PlayerId; type: string; ok: boolean; seq: number; code?: string }
+  | {
+      kind: 'action';
+      actionId: string;
+      playerId: PlayerId;
+      type: string;
+      ok: boolean;
+      seq: number;
+      code?: string;
+    }
   | { kind: 'end'; winner: PlayerId | null; reason?: string };
 
 export interface SubmitResult {
@@ -139,6 +150,9 @@ export class MatchRoom {
     this.emitStateHash = options.emitStateHash ?? false;
     this.singlePeerPerPlayer = options.singlePeerPerPlayer ?? false;
     this.observe = options.observe;
+    if (options.initialReceipts) {
+      for (const r of options.initialReceipts) this.receipts.set(r.actionId, r);
+    }
   }
 
   /** `hashState` of a per-player view, for the desync field (only when enabled). */
@@ -425,6 +439,7 @@ export class MatchRoom {
     this.receipts.set(action.id, receipt);
     this.observe?.({
       kind: 'action',
+      actionId: action.id,
       playerId,
       type: action.type,
       ok,

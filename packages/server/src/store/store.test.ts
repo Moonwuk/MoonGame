@@ -1,9 +1,9 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { Pool } from 'pg';
 import { createInitialState, type GameState } from '@void/shared-core';
-import { MemoryAccountStore, MemoryMatchStore } from './memory';
-import { PostgresAccountStore, PostgresMatchStore, migrate } from './postgres';
-import type { AccountStore, MatchSnapshot, MatchStore } from './types';
+import { MemoryAccountStore, MemoryMatchStore, MemoryReceiptStore } from './memory';
+import { PostgresAccountStore, PostgresMatchStore, PostgresReceiptStore, migrate } from './postgres';
+import type { AccountStore, MatchSnapshot, MatchStore, ReceiptStore } from './types';
 
 function state(seed = 'store'): GameState {
   return createInitialState({ seed, version: { data: 't', manifest: 't' } });
@@ -69,8 +69,30 @@ function withTime(s: GameState, t: number): GameState {
   return s;
 }
 
+function receiptStoreContract(name: string, make: () => ReceiptStore): void {
+  describe(`ReceiptStore — ${name}`, () => {
+    it('saves + loads receipts; a re-save of the same action is a no-op (first wins)', async () => {
+      const store = make();
+      await store.save('m', { actionId: 'a1', playerId: 'p1', seq: 1, ok: true });
+      await store.save('m', { actionId: 'a2', playerId: 'p2', seq: 2, ok: false, code: 'E_X' });
+      await store.save('m', { actionId: 'a1', playerId: 'p1', seq: 9, ok: true }); // dup → ignored
+      const all = await store.loadAll('m');
+      expect(all).toHaveLength(2);
+      expect(all.find((r) => r.actionId === 'a1')).toMatchObject({ seq: 1, ok: true });
+      expect(all.find((r) => r.actionId === 'a2')).toMatchObject({ ok: false, code: 'E_X' });
+    });
+
+    it('scopes receipts by match', async () => {
+      const store = make();
+      await store.save('m1', { actionId: 'a', playerId: 'p1', seq: 1, ok: true });
+      expect(await store.loadAll('m2')).toHaveLength(0);
+    });
+  });
+}
+
 matchStoreContract('memory', () => new MemoryMatchStore());
 accountStoreContract('memory', () => new MemoryAccountStore());
+receiptStoreContract('memory', () => new MemoryReceiptStore());
 
 // Postgres adapters — only when a DATABASE_URL is provided (skipped in CI without a
 // DB, so the gate stays green). Verified locally against a real Postgres 16.
@@ -112,5 +134,16 @@ describe.skipIf(!DB)('Postgres adapters', () => {
     expect((await store.resolveSeat(room, 'alice', seats))).toEqual({ playerId: 'p1', isNew: false });
     expect((await store.resolveSeat(room, 'bob', seats))?.playerId).toBe('p2');
     expect(await store.resolveSeat(room, 'carol', seats)).toBeNull();
+  });
+
+  it('ReceiptStore persists + dedupes by (match, action)', async () => {
+    await migrate(pool);
+    const store = new PostgresReceiptStore(pool);
+    const m = uniq('m');
+    await store.save(m, { actionId: 'a1', playerId: 'p1', seq: 1, ok: true });
+    await store.save(m, { actionId: 'a1', playerId: 'p1', seq: 9, ok: true }); // dup → ignored
+    const all = await store.loadAll(m);
+    expect(all).toHaveLength(1);
+    expect(all[0]).toMatchObject({ actionId: 'a1', seq: 1, ok: true });
   });
 });

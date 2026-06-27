@@ -20,11 +20,14 @@ import {
   createMultiplayerServer,
   MemoryAccountStore,
   MemoryMatchStore,
+  MemoryReceiptStore,
   PostgresAccountStore,
   PostgresMatchStore,
+  PostgresReceiptStore,
   migrate,
   type AccountStore,
   type MatchStore,
+  type ReceiptStore,
   type RoomObservation,
 } from '../packages/server/src/index';
 import { newGame, kernel, data } from './src/game';
@@ -57,6 +60,14 @@ const observe = (ev: RoomObservation): void => {
       stats.rejects++;
       if (ev.code) stats.byCode[ev.code] = (stats.byCode[ev.code] ?? 0) + 1;
     }
+    // Persist the receipt so a retried action stays deduped across a restart.
+    void receiptStore.save('proto', {
+      actionId: ev.actionId,
+      playerId: ev.playerId,
+      seq: ev.seq,
+      ok: ev.ok,
+      ...(ev.code ? { code: ev.code } : {}),
+    });
   }
   // Persist after anything that changes the world or the lobby (debounced below).
   if (ev.kind === 'action' || ev.kind === 'lobby' || ev.kind === 'end') scheduleSave();
@@ -101,17 +112,22 @@ const DATABASE_URL = process.env.DATABASE_URL;
 let pool: InstanceType<typeof Pool> | null = null;
 let matchStore: MatchStore;
 let accountStore: AccountStore;
+let receiptStore: ReceiptStore;
 if (DATABASE_URL) {
   pool = new Pool({ connectionString: DATABASE_URL });
   await migrate(pool);
   matchStore = new PostgresMatchStore(pool);
   accountStore = new PostgresAccountStore(pool);
+  receiptStore = new PostgresReceiptStore(pool);
 } else {
   matchStore = new MemoryMatchStore();
   accountStore = new MemoryAccountStore();
+  receiptStore = new MemoryReceiptStore();
 }
 const restored = await matchStore.load('proto');
 const initialState = restored?.state ?? newGame();
+// Rehydrate idempotency receipts so a retried action stays deduped across a restart.
+const initialReceipts = await receiptStore.loadAll('proto');
 
 // Lobby gate: the world clock starts at 0 ("Day 1") and stays frozen until the host
 // presses Start. On restore mid-match we skip the lobby and resume the running game.
@@ -126,6 +142,7 @@ const room = new MatchRoom({
   singlePeerPerPlayer: true, // 1v1: each side is one connection — no two-people-as-Azure
   emitStateHash: true, // attach hashState(view) so the client overlay can flag desync
   observe, // M0: log every room event to JSONL + count for the on-exit summary
+  initialReceipts, // rehydrated idempotency (deduped action stays deduped after restart)
 });
 
 // Snapshot the world after changes, debounced so a burst of actions is one write.
