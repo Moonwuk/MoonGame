@@ -2926,7 +2926,13 @@ function renderPanel() {
     // Scrollable content on the left, a fixed dossier pane glued to the right edge
     // (filling the panel's empty space — see #side / .pdesc CSS). Re-rendering the
     // content rebuilds #pdesc, so force the dossier to repaint against the new DOM.
+    // Preserve the scroll offset across the rebuild — the build conveyor's countdown
+    // changes the HTML every frame, which would otherwise snap the list back to top
+    // and make the panel impossible to scroll while anything is under construction.
+    const prevScroll = (side.querySelector('.pscroll') as HTMLElement | null)?.scrollTop ?? 0;
     side.innerHTML = `<div class="pscroll">${html}</div><aside class="pdesc" id="pdesc"></aside>`;
+    const ps = side.querySelector('.pscroll') as HTMLElement | null;
+    if (ps && prevScroll > 0) ps.scrollTop = prevScroll;
     lastPanelHtml = html;
     lastObjDescHtml = '';
   }
