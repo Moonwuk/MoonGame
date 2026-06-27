@@ -17,6 +17,8 @@ export {
   type Planet,
   type PlanetSnapshot,
   type FogMemory,
+  type Hero,
+  type TempLane,
   type Fleet,
   type FleetMovement,
   type FleetEdge,
@@ -153,3 +155,4 @@ export { technologyModule } from './modules/technology';
 export { armyModule } from './modules/army';
 export { victoryModule } from './modules/victory';
 export { visibilityModule } from './modules/visibility';
+export { heroModule } from './modules/hero';

@@ -3,5 +3,6 @@
   "asteroid": { "name": "Asteroid Field", "capturable": true, "buildable": true, "orbit": false },
   "nebula": { "name": "Nebula", "capturable": true, "buildable": true, "orbit": true },
   "empty": { "name": "Empty Space", "capturable": false, "buildable": false, "orbit": false },
-  "debris_field": { "name": "Debris Field", "capturable": false, "buildable": false, "orbit": false }
+  "debris_field": { "name": "Debris Field", "capturable": false, "buildable": false, "orbit": false },
+  "dead_world": { "name": "Dead World", "capturable": false, "buildable": false, "orbit": false }
 }

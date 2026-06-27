@@ -7,6 +7,7 @@ import {
   createInitialState,
   createKernel,
   economyModule,
+  heroModule,
   movementModule,
   parseGameData,
   planetTypeModule,
@@ -18,6 +19,7 @@ import {
   type GameData,
   type GameModule,
   type GameState,
+  type Hero,
   type Planet,
   type Player,
 } from '@void/shared-core';
@@ -57,6 +59,7 @@ export const DEV_MODULES: GameModule[] = [
   planetTypeModule,
   economyModule,
   movementModule,
+  heroModule, // per-player hero: redeploy, temp public lanes, planet annihilation
   combatModule,
   captureOnArrivalModule, // walk-in capture of undefended neutral sectors (after combat)
   constructionModule,
@@ -139,6 +142,7 @@ export function createDevMatch(data: GameData, options: DevMatchOptions = {}): M
     ),
   };
   const fleets: Record<string, Fleet> = {};
+  const heroes: Record<string, Hero> = {};
   ids.forEach((id, i) => {
     // `|| 0` normalizes -0 (Math.round of a tiny negative, e.g. cos(3π/2)) → +0:
     // GameState must be JSON-stable, and JSON has no -0, so a -0 here desyncs a
@@ -156,8 +160,9 @@ export function createDevMatch(data: GameData, options: DevMatchOptions = {}): M
       ['cruiser', 2],
       ['scout_drone', 1],
     ]);
+    heroes[id] = { owner: id, location: `home_${id}`, cooldowns: {} };
   });
-  const state: GameState = { ...base, players, planets, fleets };
+  const state: GameState = { ...base, players, planets, fleets, heroes };
   return new MatchRoom({
     id: 'dev',
     initialState: state,

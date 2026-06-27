@@ -163,6 +163,13 @@ export function visibleState(state: GameState, viewerId: PlayerId, data: GameDat
     player.resources = {};
     delete player.technologies;
   }
+  // Heroes are private: a viewer sees only their own (position + cooldowns). Temp
+  // lanes stay — they are public map topology (real `links`), visible to everyone.
+  if (view.heroes) {
+    for (const pid of Object.keys(view.heroes)) {
+      if (pid !== viewerId) delete view.heroes[pid];
+    }
+  }
 
   // Planets: keep topology (id/position/links) but strip contents you can't see.
   // A world you have seen before shows its remembered snapshot (variant B);

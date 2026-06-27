@@ -262,6 +262,42 @@ export interface GameState {
    *  each seen world. Maintained by `visibilityModule`; read by `visibleState`
    *  to show greyed "last known" worlds. Internal — stripped from projections. */
   fog?: Record<PlayerId, FogMemory>;
+  /** Per-player hero entity (one per player), maintained by `heroModule`. */
+  heroes?: Record<PlayerId, Hero>;
+  /** Active temporary lanes opened by hero abilities — real graph edges for their
+   *  duration (added to `Planet.links`), with a per-owner speed bonus. */
+  tempLanes?: TempLane[];
+  /** Topology version — bumped whenever `Planet.links` change (a temp lane opens or
+   *  expires) so the movement route cache can invalidate. */
+  topology?: number;
+  /** Monotonic counter handing each temp lane its id. */
+  heroSeq?: number;
+}
+
+/** A player's hero — a per-player entity with a position on the map and ability
+ *  cooldowns. Acts from its current node (`location`); relocates with `hero.move`. */
+export interface Hero {
+  owner: PlayerId;
+  /** The node the hero currently occupies (abilities act from/around here). */
+  location: PlanetId;
+  /** Per-ability `readyAt` timestamp (ms): the ability is on cooldown while now < it. */
+  cooldowns: Record<string, number>;
+}
+
+/** A temporary lane a hero opened: a real, routable graph edge between two nodes for
+ *  a limited time, granting the owner's fleets a speed bonus along it. */
+export interface TempLane {
+  id: string;
+  owner: PlayerId;
+  from: PlanetId;
+  to: PlanetId;
+  /** Speed multiplier bonus for the owner's fleets traversing this lane (e.g. 0.5). */
+  speedBonus: number;
+  /** Simulation time (ms) the lane closes. */
+  expiresAt: number;
+  /** Whether the lane ADDED the `links` edge (vs the nodes were already linked) — so
+   *  expiry only removes a link the lane itself created. */
+  addedLink: boolean;
 }
 
 /** A player's remembered last-known state of one world (fog-of-war memory). */
