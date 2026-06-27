@@ -9,6 +9,9 @@ import type { Fleet, GameState, PlanetId, PlayerId, ScheduledEvent } from './gam
 function scheduledOwnedBy(event: ScheduledEvent, viewerId: PlayerId, state: GameState): boolean {
   const p = (event.payload ?? {}) as Record<string, unknown>;
   if (p.owner === viewerId) return true;
+  // Per-player events tagged by `playerId` (e.g. `technology.complete`) — the
+  // viewer's own research/economy timers, which they should keep in view.
+  if (p.playerId === viewerId) return true;
   if (typeof p.planetId === 'string' && state.planets[p.planetId]?.owner === viewerId) return true;
   if (typeof p.fleetId === 'string' && state.fleets[p.fleetId]?.owner === viewerId) return true;
   return false;
