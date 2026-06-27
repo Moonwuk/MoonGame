@@ -143,6 +143,11 @@ export const data: GameData = parseGameData({
     empty_space: { name: 'Open space', speedBonus: 0.15, hpBonus: 0 },
     asteroid_field: { name: 'Asteroid field', speedBonus: -0.25, hpBonus: 0.1 },
     nebula: { name: 'Nebula', speedBonus: -0.1, hpBonus: 0.05 },
+    ion_storm: { name: 'Ion Storm', speedBonus: -0.35, hpBonus: -0.15 },
+    dense_nebula: { name: 'Dense Nebula', speedBonus: -0.2, hpBonus: 0.2 },
+    solar_flare_zone: { name: 'Solar Flare Zone', speedBonus: 0.05, hpBonus: -0.25 },
+    derelict_graveyard: { name: 'Derelict Graveyard', speedBonus: -0.15, hpBonus: 0.05 },
+    deep_void: { name: 'Deep Void', speedBonus: 0.3, hpBonus: -0.1 },
   },
   // Sector kinds (capturable/buildable/orbit) — mirrors SECTOR_TYPES so the kernel's
   // capture-on-arrival treats empty void as uncapturable (matches data/sectorKinds.json).
@@ -151,6 +156,7 @@ export const data: GameData = parseGameData({
     asteroid: { name: 'Asteroid Field', capturable: true, buildable: true, orbit: false },
     nebula: { name: 'Nebula', capturable: true, buildable: true, orbit: true },
     empty: { name: 'Empty Space', capturable: false, buildable: false, orbit: false },
+    debris_field: { name: 'Debris Field', capturable: false, buildable: false, orbit: false },
   },
   planetTypes: {
     terran: { name: 'Terran', productionBonus: 0, defenseBonus: 0.1 },
@@ -158,6 +164,11 @@ export const data: GameData = parseGameData({
     oceanic: { name: 'Oceanic', productionBonus: 0.15, defenseBonus: 0.05 },
     volcanic: { name: 'Volcanic', productionBonus: 0.25, defenseBonus: -0.05 },
     gas_giant: { name: 'Gas Giant', productionBonus: 0.35, defenseBonus: -0.15 },
+    crystalline: { name: 'Crystalline', productionBonus: 0.45, defenseBonus: -0.25 },
+    fortress_world: { name: 'Fortress World', productionBonus: -0.15, defenseBonus: 0.4 },
+    relic_world: { name: 'Relic World', productionBonus: 0.05, defenseBonus: 0 },
+    irradiated: { name: 'Irradiated', productionBonus: 0.2, defenseBonus: 0.15 },
+    ringworld: { name: 'Ringworld', productionBonus: 0.3, defenseBonus: 0.1 },
   },
 });
 
@@ -186,6 +197,13 @@ export const SECTOR_TYPES: Record<string, SectorType> = {
   nebula: { name: 'Nebula', core: 'nebula', capturable: true, buildable: true, orbit: true, color: '#8f6dff' },
   asteroid: { name: 'Asteroid Field', core: 'asteroid_field', capturable: true, buildable: true, orbit: false, color: '#d6a645' },
   empty: { name: 'Empty Space', core: 'empty_space', capturable: false, buildable: false, orbit: false, color: '#46606e' },
+  // new terrains — each maps to a core `data.sectors` entry for its speed/HP bonus
+  ion_storm: { name: 'Ion Storm', core: 'ion_storm', capturable: true, buildable: true, orbit: true, color: '#6fe3ff' },
+  dense_nebula: { name: 'Dense Nebula', core: 'dense_nebula', capturable: true, buildable: true, orbit: true, color: '#a78bff' },
+  solar_flare: { name: 'Solar Flare Zone', core: 'solar_flare_zone', capturable: true, buildable: true, orbit: true, color: '#ff9f3a' },
+  graveyard: { name: 'Derelict Graveyard', core: 'derelict_graveyard', capturable: true, buildable: true, orbit: false, color: '#9fb0a8' },
+  // debris field — a fast but UN-capturable corridor (kind `debris_field` in sectorKinds)
+  debris_field: { name: 'Debris Field', core: 'deep_void', capturable: false, buildable: false, orbit: false, color: '#2f4a59' },
 };
 
 // --- the map -----------------------------------------------------------------
@@ -212,18 +230,18 @@ const KEY: KeyNode[] = [
   // home region (west)
   { id: 'HOME', owner: 'p1', x: 150, y: 250, sector: 'planet', type: 'terran', buildings: [{ type: 'mine' }, { type: 'radar' }], garrison: [['marine', 3]] },
   { id: 'ANCHOR', owner: 'p1', x: 130, y: 440, sector: 'planet', type: 'oceanic', buildings: [{ type: 'refinery' }], garrison: [['marine', 2], ['orbital_aa', 1]] },
-  { id: 'RELAY', owner: null, x: 320, y: 360, sector: 'planet', type: 'barren', garrison: [['marine', 1]] },
-  { id: 'FORGE', owner: null, x: 250, y: 175, sector: 'asteroid' },
+  { id: 'RELAY', owner: null, x: 320, y: 360, sector: 'planet', type: 'fortress_world', garrison: [['marine', 1]] },
+  { id: 'FORGE', owner: null, x: 250, y: 175, sector: 'graveyard' }, // salvage field — high score
   // contested region (centre)
   { id: 'NEXUS', owner: null, x: 560, y: 250, sector: 'nebula', type: 'oceanic', buildings: [{ type: 'fort' }], garrison: [['marine', 3], ['cruiser', 1]] },
-  { id: 'VEIL', owner: null, x: 470, y: 430, sector: 'nebula', type: 'gas_giant', buildings: [{ type: 'refinery' }], garrison: [['marine', 2]] },
-  { id: 'HARBOR', owner: null, x: 660, y: 430, sector: 'planet', type: 'oceanic', buildings: [{ type: 'barracks' }], garrison: [['marine', 2]] },
-  { id: 'DRIFT', owner: null, x: 560, y: 150, sector: 'asteroid' },
+  { id: 'VEIL', owner: null, x: 470, y: 430, sector: 'dense_nebula', type: 'gas_giant', buildings: [{ type: 'refinery' }], garrison: [['marine', 2]] },
+  { id: 'HARBOR', owner: null, x: 660, y: 430, sector: 'solar_flare', type: 'relic_world', buildings: [{ type: 'barracks' }], garrison: [['marine', 2]] },
+  { id: 'DRIFT', owner: null, x: 560, y: 150, sector: 'ion_storm' }, // hazard — slow + exposed
   // enemy region (east)
   { id: 'OUTPOST', owner: 'p2', x: 850, y: 250, sector: 'planet', type: 'volcanic', buildings: [{ type: 'mine' }], garrison: [['marine', 3]] },
   { id: 'BASTION', owner: 'p2', x: 930, y: 440, sector: 'nebula', type: 'barren', buildings: [{ type: 'fort' }], garrison: [['marine', 3], ['scout', 1]] },
   { id: 'CRIMSON', owner: 'p2', x: 970, y: 260, sector: 'planet', type: 'terran', buildings: [{ type: 'fort' }, { type: 'mine' }], garrison: [['marine', 4], ['orbital_aa', 1]] },
-  { id: 'SLAG', owner: null, x: 1020, y: 390, sector: 'asteroid' },
+  { id: 'SLAG', owner: null, x: 1020, y: 390, sector: 'debris_field' }, // un-capturable corridor
 ];
 
 // Fill the rest of the map with sectors on a jittered lattice. A dense Bytro-style
@@ -231,7 +249,10 @@ const KEY: KeyNode[] = [
 // and nebulae), with only the occasional void gap. Deterministic; drop GRID_STEP to
 // pack in even more provinces.
 const GRID_STEP = 88; // lattice spacing — smaller ⇒ more, smaller provinces
-const FILL_PLANET_TYPES = ['terran', 'barren', 'oceanic', 'volcanic', 'gas_giant'];
+const FILL_PLANET_TYPES = [
+  'terran', 'barren', 'oceanic', 'volcanic', 'gas_giant',
+  'crystalline', 'fortress_world', 'relic_world', 'irradiated', 'ringworld',
+];
 function fillSectors(): KeyNode[] {
   const hash = (a: number, b: number): number => {
     const v = Math.sin(a * 12.9898 + b * 78.233) * 43758.5453;

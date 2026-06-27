@@ -28,5 +28,35 @@
     "productionBonus": 0.35,
     "defenseBonus": -0.15,
     "scoreValue": 10
+  },
+  "crystalline": {
+    "name": "Crystalline",
+    "productionBonus": 0.45,
+    "defenseBonus": -0.25,
+    "scoreValue": 8
+  },
+  "fortress_world": {
+    "name": "Fortress World",
+    "productionBonus": -0.15,
+    "defenseBonus": 0.4,
+    "scoreValue": 30
+  },
+  "relic_world": {
+    "name": "Relic World",
+    "productionBonus": 0.05,
+    "defenseBonus": 0,
+    "scoreValue": 75
+  },
+  "irradiated": {
+    "name": "Irradiated",
+    "productionBonus": 0.2,
+    "defenseBonus": 0.15,
+    "scoreValue": 12
+  },
+  "ringworld": {
+    "name": "Ringworld",
+    "productionBonus": 0.3,
+    "defenseBonus": 0.1,
+    "scoreValue": 60
   }
 }
