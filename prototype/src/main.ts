@@ -1454,9 +1454,12 @@ function drawAimPreview() {
   if (!ids.length) return;
   // Prefer a node target; if none is near, aim at the closest point ON a lane —
   // the army will route to that road and park there (Bytro continuous order).
+  // The node pick radius MUST match selectAt's (24px): with the old 30px, a tap
+  // 24–30px from a junction dispatched a lane park (fleet flies to the road point)
+  // while the preview drew the path to the node — the reported mismatch.
   let target: { x: number; y: number } | null = null;
   let targetId: string | null = null;
-  let best = 30;
+  let best = 24;
   for (const n of MAP) {
     const c = world(n);
     const d = Math.hypot(aimPointer.x - c.x, aimPointer.y - c.y);
