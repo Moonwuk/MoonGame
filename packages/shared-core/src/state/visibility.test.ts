@@ -213,3 +213,42 @@ describe('visibleState — province kind is fog-gated (no appearance leak)', () 
     expect(view.remembered).toContain('E');
   });
 });
+
+describe('radar tracks the moving ship, not its destination', () => {
+  const at = (x: number): Partial<Planet> => ({ position: { x, y: 0 } });
+
+  it('a moving fleet projects radar from its current position', () => {
+    const base = createInitialState({ seed: 'radar-move', version: { data: '0.1.0', manifest: '1' } });
+    const state: GameState = {
+      ...base,
+      time: 100, // 10% along a 0→1000 leg ⇒ the ship is at x=100
+      players: { p1: player('p1'), p2: player('p2') },
+      planets: {
+        ST: planet('ST', 'p1', ['EN'], at(0)),
+        EN: planet('EN', null, ['ST'], at(1000)),
+        P1: planet('P1', null, [], at(300)), // 200 from the ship (x=100) — in radar (350)
+        P2: planet('P2', null, [], at(900)), // 800 from the ship — only near the DESTINATION
+      },
+      fleets: {
+        mover: {
+          id: 'mover',
+          owner: 'p1',
+          location: null,
+          movement: { from: 'ST', to: 'EN', departedAt: 0, arrivesAt: 1000 },
+          units: [{ unit: 'scout', count: 1 }], // scout: radarRange 350
+          traits: [],
+        },
+        'foe-near': fleet('foe-near', 'p2', 'P1', [['cruiser', 1]]),
+        'foe-far': fleet('foe-far', 'p2', 'P2', [['cruiser', 1]]),
+      },
+    };
+
+    const view = visibleState(state, 'p1', data);
+    // Centred on the SHIP (x=100): the enemy near the start (P1) is sensed; the one
+    // near the destination (P2) is not. The old bug anchored radar at `movement.to`
+    // and would have reversed this.
+    expect(view.signatures.some((s) => s.location === 'P1')).toBe(true);
+    expect(view.signatures.some((s) => s.location === 'P2')).toBe(false);
+    expect(view.fleets['foe-far']).toBeUndefined(); // out of the ship's radar → removed
+  });
+});

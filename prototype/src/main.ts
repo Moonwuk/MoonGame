@@ -735,7 +735,16 @@ function note(msg: string) {
 /** The map node a fleet occupies / is travelling over / is parked nearest to. */
 function fleetNode(f: Fleet): string | null {
   if (f.location) return f.location;
-  if (f.movement) return f.movement.to ?? f.movement.from ?? null;
+  if (f.movement) {
+    // The node the ship is NEAREST to right now — tracks it along the leg, not the
+    // destination (so its radar/identify anchor follows the fleet).
+    const m = f.movement;
+    const span = m.arrivesAt - m.departedAt;
+    const prog = span > 0 ? Math.min(1, Math.max(0, (s.time - m.departedAt) / span)) : 1;
+    const s0 = m.startT ?? 0;
+    const t = s0 + ((m.endT ?? 1) - s0) * prog;
+    return t <= 0.5 ? m.from : m.to;
+  }
   if (f.edge) return f.edge.t <= 0.5 ? f.edge.from : f.edge.to;
   return null;
 }
@@ -831,15 +840,17 @@ function planetRadar(p: Planet): number {
 /** Add every node within Euclidean `radius` of `start`'s position — radar is a
  *  physical signal, not jumps: a node close in space shows up even if many jumps
  *  away (or unreachable) by the lane graph. */
-function withinRadius(start: string, radius: number, out: Set<string>): void {
-  const origin = s.planets[start]?.position;
-  if (!origin) return;
+function withinRadiusAt(origin: { x: number; y: number }, radius: number, out: Set<string>): void {
   const r2 = radius * radius;
   for (const pl of Object.values(s.planets)) {
     const dx = pl.position.x - origin.x;
     const dy = pl.position.y - origin.y;
     if (dx * dx + dy * dy <= r2) out.add(pl.id);
   }
+}
+function withinRadius(start: string, radius: number, out: Set<string>): void {
+  const origin = s.planets[start]?.position;
+  if (origin) withinRadiusAt(origin, radius, out);
 }
 
 /** Flood `hops` jumps out from `start` over the lane graph into `out`. */
@@ -887,8 +898,11 @@ function computeVision(): Vision {
       floodHops(node, 0, identify); // own node only — ships are near-blind (mirrors FLEET_IDENTIFY_HOPS)
       const rr = fleetRadar(f);
       if (rr > 0) {
-        withinRadius(node, rr, radar); // signatures (outer)
-        withinRadius(node, rr * IDENTIFY_REACH_FRACTION, identify); // full reveal (inner)
+        const pos = fleetPos(f); // radar from the SHIP's position, not its destination
+        if (pos) {
+          withinRadiusAt(pos, rr, radar); // signatures (outer)
+          withinRadiusAt(pos, rr * IDENTIFY_REACH_FRACTION, identify); // full reveal (inner)
+        }
       }
     }
   for (const id of identify) radar.add(id); // identify implies radar
@@ -1431,8 +1445,9 @@ function drawRadarCoverage() {
   for (const f of Object.values(s.fleets)) {
     if (f.owner !== ME) continue;
     const r = fleetRadar(f);
-    const node = r > 0 ? fleetNode(f) : null;
-    const pos = node ? s.planets[node]?.position : null;
+    // Draw the ring at the SHIP's actual position (interpolated for a moving fleet),
+    // so the coverage tracks the fleet instead of sitting on its destination node.
+    const pos = r > 0 ? fleetPos(f) : null;
     if (pos) sources.push({ x: pos.x, y: pos.y, r, sel: selFleetSet.has(f.id) });
   }
   if (!sources.length) return;
