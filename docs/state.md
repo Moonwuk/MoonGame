@@ -283,14 +283,14 @@ E_IMMOBILE, E_FLEET_BUSY, E_FORBIDDEN, E_NO_PLANET, E_UNKNOWN_UNIT, E_BAD_PAYLOA
 ×1→100 / ×2→60 / ×4→30 игровых дней; победитель = лучший счёт, ничья = `winner:null`).
 Все пороги переопределяются через `MatchConfig.victory`.
 
-**Счёт — data-driven.** `total` = территория + супер-юниты, по полям данных:
-очки узла = база за контроль (`CONTROL_BASE` = 10) + `planetType.scoreValue` +
-`sectorType.scoreValue` + Σ `building.scoreValue × level` (вложение в апгрейды растит
-счёт, разрушение — снижает). Армия очков **не даёт**, кроме помеченных
-`UnitDef.superUnit` (тогда `scoreValue × count`, где бы юнит ни был — гарнизон/флот/
-десант). `controlledPlanets`/`fleets`/`units` остаются счётчиками; «жив ли игрок» для
-elimination считается по ним (планеты+флоты+юниты > 0), **независимо** от `total` —
-флот без территории не считается «мёртвым».
+**Счёт — data-driven, только территория** (GDD §8.1). Очки узла = база за контроль
+(`CONTROL_BASE` = 10) + `planetType.scoreValue` + `sectorType.scoreValue` + Σ
+`building.scoreValue × level` (вложение в апгрейды растит счёт, разрушение — снижает).
+**Армия очков НЕ даёт** (только headcount в `units`). Поверх базы — **хук
+`victory.score`** на провинцию (args `{planetId, owner}`): модули (тех/фракции/
+улучшения) добавляют очки данными, без контрибьютора база не меняется — это
+`computeScore = scoreValue + Σ хуков` из GDD §8.1. «Жив ли игрок» для elimination
+считается по владению провинцией (0 провинций → выбыл), **независимо** от `total`.
 
 ### hero (`hero`) — герой-сущность игрока + способности
 
@@ -359,11 +359,11 @@ Per-player **сущность** (`GameState.heroes[playerId]: {owner, location, 
 - **resources:** `credits, metal, biomass, dark_matter, artifacts, premium_shard`.
 - **units** (схема `UnitDef`): `domain('space'|'ground')`, `stats{attack, defense,
 speed, hp, range, cargoCapacity, cargoSize, aaDamage}` (+ любые доп. числа),
-  `line, traits, abilities, cost, buildTimeHours, upkeep`, `superUnit`+`scoreValue`
-  (очки даёт только супер-юнит; обычные — 0). Есть: `scout_drone,
+  `line, traits, abilities, cost, buildTimeHours, upkeep`, `signature, radarRange`
+  (армия очков не даёт — см. victory). Есть: `scout_drone,
 cruiser, siege_lance(artillery,range), dropship(cargoCapacity 12), militia,
 drop_infantry, tank(cargoSize 3), orbital_aa(aaDamage), infected_cruiser,
-reanimated_drone` (супер-юнитов пока нет — добавятся позже).
+reanimated_drone`.
 - **buildings** (`BuildingDef`): `cost, buildTimeHours, produces, hp,
 defenseBonus, upgrades[{…}], traits, scoreValue, radarRange`. Есть: `mine_t1, mine_t2,
 shipyard, biomass_pit, barracks, spaceport, radar, fort` (форт — 3 уровня: HP 35→50→65,

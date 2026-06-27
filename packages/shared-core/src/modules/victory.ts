@@ -1,5 +1,4 @@
 import type { MatchEndReason, MatchScore, PlayerId, UnitStack } from '../state/gameState';
-import type { GameData } from '../data/schemas';
 import type { HandlerContext, GameModule } from '../kernel/module';
 import { MS_PER_DAY } from '../util/time';
 import { isCapturable } from '../state/sectorKind';
@@ -19,15 +18,11 @@ function emptyScore(): MatchScore {
   return { controlledPlanets: 0, fleets: 0, units: 0, total: 0 };
 }
 
-/** Tallies a unit list: every unit raises the headcount (used for the alive
- *  check), but only super-units add to the score (ordinary military never does). */
-function tallyUnits(score: MatchScore, stacks: readonly UnitStack[], data: GameData): void {
+/** Adds a unit list to the headcount only (the alive check). Military never scores —
+ *  only territory and structures do (GDD §8.1). */
+function tallyUnits(score: MatchScore, stacks: readonly UnitStack[]): void {
   for (const stack of stacks) {
     score.units += stack.count;
-    const def = data.units[stack.unit];
-    if (def?.superUnit) {
-      score.total += def.scoreValue * stack.count;
-    }
   }
 }
 
@@ -49,22 +44,29 @@ function computeScores(h: HandlerContext): Record<PlayerId, MatchScore> {
     score.controlledPlanets += 1;
     // Territory worth: base control + planet nature + sector terrain + structures
     // (a building scales with its level, so investment — and its loss — shows).
-    score.total += CONTROL_BASE;
+    let planetScore = CONTROL_BASE;
     const planetType = planet.planetType ? data.planetTypes[planet.planetType] : undefined;
     if (planetType) {
-      score.total += planetType.scoreValue;
+      planetScore += planetType.scoreValue;
     }
     const sector = planet.terrain ? data.sectors[planet.terrain] : undefined;
     if (sector) {
-      score.total += sector.scoreValue;
+      planetScore += sector.scoreValue;
     }
     for (const building of planet.buildings) {
       const def = data.buildings[building.type];
       if (def) {
-        score.total += def.scoreValue * building.level;
+        planetScore += def.scoreValue * building.level;
       }
     }
-    tallyUnits(score, planet.garrison, data);
+    // Extension seam (GDD §8.1: computeScore = base + Σ hooks): modules add
+    // per-province score (tech / faction / improvements) on top of the data base.
+    // No contributor ⇒ base returned unchanged.
+    score.total += h.hook<number>('victory.score', planetScore, {
+      planetId: planet.id,
+      owner: planet.owner,
+    });
+    tallyUnits(score, planet.garrison);
   }
 
   for (const fleet of Object.values(h.state.fleets)) {
@@ -73,8 +75,8 @@ function computeScores(h: HandlerContext): Record<PlayerId, MatchScore> {
       continue;
     }
     score.fleets += 1;
-    tallyUnits(score, fleet.units, data);
-    tallyUnits(score, fleet.landing ?? [], data);
+    tallyUnits(score, fleet.units);
+    tallyUnits(score, fleet.landing ?? []);
   }
 
   return scores;

@@ -9,6 +9,7 @@ import {
   type Player,
 } from '../state/gameState';
 import type { AdvanceResult, Context, MatchConfig } from '../action/types';
+import type { GameModule } from '../kernel/module';
 import { victoryModule } from './victory';
 
 const HOUR = 3_600_000;
@@ -28,11 +29,9 @@ const data: GameData = parseGameData({
       stats: { attack: 2, defense: 3, speed: 1, hp: 5 },
       line: 'front',
     },
-    // A super-unit: the only kind of unit that scores (ordinary military = 0).
+    // A strong, expensive unit — but military never scores (only territory does).
     titan: {
       faction: 'x',
-      superUnit: true,
-      scoreValue: 3,
       stats: { attack: 30, defense: 30, speed: 4, hp: 200 },
       line: 'front',
     },
@@ -284,7 +283,7 @@ describe('victory module', () => {
     });
   });
 
-  it('scores territory and super-units from data, ignoring ordinary military', () => {
+  it('scores territory + structures only; military is headcount, never points', () => {
     const kernel = createKernel([victoryModule]);
     const state: GameState = {
       ...baseState(),
@@ -292,7 +291,7 @@ describe('victory module', () => {
         A: planet('A', 'p1', {
           planetType: 'terran',
           buildings: [{ type: 'fort', level: 2, hp: 50 }],
-          garrison: [{ unit: 'titan', count: 1 }],
+          garrison: [{ unit: 'titan', count: 1 }], // a strong unit — still 0 points
         }),
         B: planet('B', 'p2'),
       },
@@ -302,10 +301,38 @@ describe('victory module', () => {
 
     const r = okAdvance(kernel.advanceTo(state, ctx(HOUR)));
 
-    // 10 control + 40 terran + 20×2 fort + 3 titan = 93; the 3 cruisers add 0.
+    // 10 control + 40 terran + 20×2 fort = 90; the titan and 3 cruisers add 0.
     expect(r.state.match.status).toBe('ongoing');
-    expect(r.state.match.scores.p1?.total).toBe(93);
-    expect(r.state.match.scores.p1?.units).toBe(4); // 1 titan + 3 cruisers (headcount)
+    expect(r.state.match.scores.p1?.total).toBe(90);
+    expect(r.state.match.scores.p1?.units).toBe(4); // 1 titan + 3 cruisers (headcount only)
     expect(r.state.match.scores.p1?.fleets).toBe(1);
+  });
+
+  it('lets a module add per-province score through the victory.score hook', () => {
+    // A faction/tech-style contributor: +25 score for every province p1 holds.
+    const bonusModule: GameModule = {
+      id: 'score-bonus',
+      version: '1.0.0',
+      setup(api) {
+        api.hook<number>('victory.score', (base, args) => {
+          const { owner } = args as { owner: string };
+          return owner === 'p1' ? base + 25 : base;
+        });
+      },
+    };
+    const kernel = createKernel([victoryModule, bonusModule]);
+    const state: GameState = {
+      ...baseState(),
+      planets: {
+        A: planet('A', 'p1'), // base 10 + 25 hook = 35
+        B: planet('B', 'p1'), // base 10 + 25 hook = 35
+        C: planet('C', 'p2'), // base 10, no bonus
+      },
+    };
+
+    const r = okAdvance(kernel.advanceTo(state, ctx(HOUR, { timeScale: 1, victory: { dominationPercent: 0 } })));
+
+    expect(r.state.match.scores.p1?.total).toBe(70); // 2×(10+25)
+    expect(r.state.match.scores.p2?.total).toBe(10); // base only
   });
 });

@@ -54,11 +54,6 @@ export const UnitDefSchema = z.object({
   buildTimeHours: z.number().nonnegative().default(0),
   /** Daily upkeep paid to keep the unit (per day). */
   upkeep: ResourceBagSchema.default({}),
-  /** A unit of special significance. Only super-units contribute to the match
-   *  score (ordinary military never does); see the victory module. */
-  superUnit: z.boolean().default(false),
-  /** Victory-score worth of one such unit (only counted when `superUnit`). */
-  scoreValue: z.number().nonnegative().default(0),
   /** Radar "signature": how detectable the unit is. A fleet's signature is the
    *  sum of count × signature; radar reveals a coarse size bucket, never the
    *  exact composition (fog-of-war — `visibleState`). */
