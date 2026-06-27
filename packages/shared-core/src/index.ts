@@ -59,6 +59,7 @@ export {
   allowedBuildings,
   sectorAppearance,
 } from './state/sectorKind';
+export { factionStart, type FactionStart } from './state/factionStart';
 export {
   planRoute,
   routeDistance,
@@ -134,6 +135,9 @@ export {
   type GameData,
   type UnitDef,
   type FactionDef,
+  type FactionLoadout,
+  type FactionPassives,
+  type StartingStack,
   type BuildingDef,
   type BuildingLevel,
   type EffectRule,
@@ -163,6 +167,8 @@ export { planetTypeModule } from './modules/planetType';
 export { constructionModule } from './modules/construction';
 export { stationModule } from './modules/station';
 export { technologyModule } from './modules/technology';
+export { factionModule } from './modules/faction';
+export { reanimationModule } from './modules/reanimation';
 export { armyModule } from './modules/army';
 export { victoryModule } from './modules/victory';
 export { visibilityModule } from './modules/visibility';

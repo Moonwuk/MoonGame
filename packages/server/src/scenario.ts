@@ -7,7 +7,9 @@ import {
   createInitialState,
   createKernel,
   economyModule,
+  factionModule,
   heroModule,
+  reanimationModule,
   movementModule,
   parseGameData,
   planetTypeModule,
@@ -62,10 +64,12 @@ export const DEV_MODULES: GameModule[] = [
   movementModule,
   heroModule, // per-player hero: redeploy, temp public lanes, planet annihilation
   combatModule,
+  reanimationModule, // necromancer signature: raise the fallen on `unit.died`
   captureOnArrivalModule, // walk-in capture of undefended neutral sectors (after combat)
   constructionModule,
   stationModule, // deploy void stations on empty nodes (then build radar/fort there)
   technologyModule,
+  factionModule, // always-on faction passives (production / speed / combat) via hooks
   armyModule,
   victoryModule,
   visibilityModule, // fog-of-war memory (variant B): records last-seen worlds
