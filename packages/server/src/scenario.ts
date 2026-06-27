@@ -11,6 +11,7 @@ import {
   parseGameData,
   planetTypeModule,
   sectorModule,
+  stationModule,
   technologyModule,
   victoryModule,
   visibilityModule,
@@ -60,6 +61,7 @@ export const DEV_MODULES: GameModule[] = [
   combatModule,
   captureOnArrivalModule, // walk-in capture of undefended neutral sectors (after combat)
   constructionModule,
+  stationModule, // deploy void stations on empty nodes (then build radar/fort there)
   technologyModule,
   armyModule,
   victoryModule,

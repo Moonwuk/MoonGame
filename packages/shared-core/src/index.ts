@@ -149,6 +149,7 @@ export { captureOnArrivalModule } from './modules/captureOnArrival';
 export { sectorModule } from './modules/sector';
 export { planetTypeModule } from './modules/planetType';
 export { constructionModule } from './modules/construction';
+export { stationModule } from './modules/station';
 export { technologyModule } from './modules/technology';
 export { armyModule } from './modules/army';
 export { victoryModule } from './modules/victory';

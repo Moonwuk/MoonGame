@@ -209,6 +209,21 @@ E_NO_BUILDING, E_MAX_LEVEL, E_INSUFFICIENT, E_BOMBARDED`.
 - События: `construction.started, building.constructed/upgraded/destroyed,
 unit.built`.
 
+### station (`station`) — аванпосты в пустом космосе
+
+Контекст: корабли теперь **почти слепые** (`visibility.ts`: identify-флуд флота = 0
+прыжков, видит только свой узел; миры — 1 прыжок). Разведка — через **радар**
+(постройка `radar` или юнит с `radarRange`). Чтобы вынести радар/форт **в пустоту**,
+нужен аванпост: пустой космос нельзя ни захватить, ни застраивать (`sectorKinds.empty`).
+
+Действие **`station.deploy {planetId}`** — закрепить станцию на **пустом** узле из
+стоящего там своего флота: узел становится владеемым застраиваемым **`void_station`**
+(`sectorKinds`: capturable/buildable), оплата вперёд из казны. Дальше обычной
+`building.construct` на нём поднимается радар/форт/прочее. Станция — настоящий узел:
+оставишь без гарнизона — враг заходит (capture-on-arrival). Коды: `E_BAD_PAYLOAD,
+E_NO_PLANET, E_NOT_EMPTY, E_FORBIDDEN, E_NO_ANCHOR, E_INSUFFICIENT`. Событие
+`station.deployed`. Новый модуль + данные, ядро не тронуто.
+
 ### army (`army`) — разделение флота и наземной армии + транспорт
 
 Действия **`army.load`** / **`army.unload {fleetId, unit, count}`** — перекладка
