@@ -25,8 +25,9 @@
 Подробности — в [`docs/`](./docs): [`gdd.md`](./docs/gdd.md) (игровой дизайн),
 [`architecture.md`](./docs/architecture.md), [`modulesystem.md`](./docs/modulesystem.md),
 [`roadmap.md`](./docs/roadmap.md), [`state.md`](./docs/state.md) (снимок текущего состояния),
-[`backlog.md`](./docs/backlog.md) (кирпичики задач). Техническое исследование стека и
-по-блочные роадмапы: [`tech-research.md`](./docs/tech-research.md),
+[`backlog.md`](./docs/backlog.md) (кирпичики задач). Стек и обоснование —
+[`tech-stack.md`](./docs/tech-stack.md) (ADR: выбор + причины + триггеры). Техническое
+исследование стека и по-блочные роадмапы: [`tech-research.md`](./docs/tech-research.md),
 [`core-roadmap.md`](./docs/core-roadmap.md), [`server-roadmap.md`](./docs/server-roadmap.md),
 [`persistence-roadmap.md`](./docs/persistence-roadmap.md), [`accounts-roadmap.md`](./docs/accounts-roadmap.md),
 [`matchmaking-roadmap.md`](./docs/matchmaking-roadmap.md), [`game-integrity-roadmap.md`](./docs/game-integrity-roadmap.md),
