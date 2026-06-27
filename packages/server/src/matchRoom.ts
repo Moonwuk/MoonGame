@@ -40,6 +40,10 @@ export interface MatchRoomOptions {
    *  Snapshots carry a `lobby` roster so the client can show who's in + a Start
    *  button. Mutually exclusive with `waitForPlayers` (this takes precedence). */
   manualStart?: boolean;
+  /** Resume an already-started manual-start match (e.g. restored from a snapshot
+   *  after a restart): skip the lobby and continue the clock from `initialState.time`
+   *  instead of waiting for a fresh Start press. Ignored unless `manualStart`. */
+  initiallyStarted?: boolean;
   /** Attach `hashState(view)` to each snapshot so the client can detect desync.
    *  Opt-in (it hashes the per-player view on every broadcast). */
   emitStateHash?: boolean;
@@ -125,6 +129,13 @@ export class MatchRoom {
         ? new Set(options.waitForPlayers)
         : null;
     this.manualStart = options.manualStart ?? false;
+    if (this.manualStart && options.initiallyStarted) {
+      // Resume a started match: skip the lobby and continue the clock from the
+      // restored game time (accrued so far) starting now.
+      this.started = true;
+      this.lobbyAccrued = options.initialState.time;
+      this.lobbyRunningSince = this.now();
+    }
     this.emitStateHash = options.emitStateHash ?? false;
     this.singlePeerPerPlayer = options.singlePeerPerPlayer ?? false;
     this.observe = options.observe;
@@ -215,6 +226,11 @@ export class MatchRoom {
 
   get sequence(): number {
     return this.seq;
+  }
+
+  /** Whether a manual-start match has begun (lobby passed). */
+  get isStarted(): boolean {
+    return this.started;
   }
 
   hasPlayer(playerId: PlayerId): boolean {

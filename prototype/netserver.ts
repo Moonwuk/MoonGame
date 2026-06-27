@@ -14,8 +14,18 @@
 // loses the match) and the `?player=` handshake is unauthenticated.
 import { readFileSync, existsSync, appendFileSync, mkdirSync } from 'node:fs';
 import { networkInterfaces } from 'node:os';
-import { MatchRoom, createMultiplayerServer, type RoomObservation } from '../packages/server/src/index';
+import pgPkg from 'pg';
+import {
+  MatchRoom,
+  createMultiplayerServer,
+  MemoryMatchStore,
+  PostgresMatchStore,
+  migrate,
+  type MatchStore,
+  type RoomObservation,
+} from '../packages/server/src/index';
 import { newGame, kernel, data } from './src/game';
+const { Pool } = pgPkg;
 
 // --- M0 playtest log: append every room event (join/leave/lobby/action/end) to a
 // per-run JSONL, and keep counters for an on-exit summary. Pure observation.
@@ -45,6 +55,8 @@ const observe = (ev: RoomObservation): void => {
       if (ev.code) stats.byCode[ev.code] = (stats.byCode[ev.code] ?? 0) + 1;
     }
   }
+  // Persist after anything that changes the world or the lobby (debounced below).
+  if (ev.kind === 'action' || ev.kind === 'lobby' || ev.kind === 'end') scheduleSave();
 };
 
 const host = process.env.HOST ?? '127.0.0.1';
@@ -80,21 +92,65 @@ function ipKind(ip: string): 'vm-nat' | 'link-local' | 'cgnat' | 'lan' | 'public
   return 'public';
 }
 
-// Lobby gate: the world clock starts at 0 ("Day 1") and only accrues real time
-// while BOTH players are connected — so the match sits paused until the friend
-// joins, and re-freezes if someone drops. `now` is read raw; MatchRoom does the
-// freeze/accrue.
+// Durability: with DATABASE_URL set, the match is snapshotted to Postgres and
+// survives a restart; otherwise it's in-memory (a restart loses it, as before).
+const DATABASE_URL = process.env.DATABASE_URL;
+let pool: InstanceType<typeof Pool> | null = null;
+let matchStore: MatchStore;
+if (DATABASE_URL) {
+  pool = new Pool({ connectionString: DATABASE_URL });
+  await migrate(pool);
+  matchStore = new PostgresMatchStore(pool);
+} else {
+  matchStore = new MemoryMatchStore();
+}
+const restored = await matchStore.load('proto');
+const initialState = restored?.state ?? newGame();
+
+// Lobby gate: the world clock starts at 0 ("Day 1") and stays frozen until the host
+// presses Start. On restore mid-match we skip the lobby and resume the running game.
 const room = new MatchRoom({
   id: 'proto',
-  initialState: newGame(),
+  initialState,
   kernel,
   data,
   now: () => Date.now(),
   manualStart: true, // lobby: clock frozen until the host (first in) presses Start
+  initiallyStarted: !!restored, // restored snapshot → resume into the game, skip lobby
   singlePeerPerPlayer: true, // 1v1: each side is one connection — no two-people-as-Azure
   emitStateHash: true, // attach hashState(view) so the client overlay can flag desync
   observe, // M0: log every room event to JSONL + count for the on-exit summary
 });
+
+// Snapshot the world after changes, debounced so a burst of actions is one write.
+let saveTimer: ReturnType<typeof setTimeout> | null = null;
+let saving = false;
+function scheduleSave(): void {
+  if (saveTimer) return;
+  saveTimer = setTimeout(() => {
+    saveTimer = null;
+    void doSave();
+  }, 500);
+}
+async function doSave(): Promise<void> {
+  if (saving) {
+    scheduleSave(); // a save is in flight — coalesce into the next tick
+    return;
+  }
+  saving = true;
+  try {
+    await matchStore.save({
+      matchId: 'proto',
+      dataVersion: room.state.version?.data ?? 'proto',
+      seq: room.sequence,
+      status: room.state.match.status === 'ended' ? 'ended' : 'ongoing',
+      state: room.state,
+    });
+  } catch (e) {
+    process.stderr.write(`snapshot save failed: ${(e as Error)?.message ?? String(e)}\n`);
+  }
+  saving = false;
+}
 
 const server = createMultiplayerServer({ room, host, port, indexHtml });
 let wsUrl: string;
@@ -125,11 +181,14 @@ const localHttp = httpUrl.replace('0.0.0.0', 'localhost'); // 0.0.0.0 isn't open
 const friendUrl = onLan ? `http://${shareIp}:${port}/` : null;
 
 const lines = [
-  'Void Dominion — prototype dev server (in-memory, real core)',
+  'Void Dominion — prototype dev server (real core)',
   indexHtml
     ? `  game   : ${localHttp}/   (open in a browser → Connect)`
     : `  game   : run \`pnpm prototype\` first to serve the HTML at /`,
   `  health : ${localHttp}/health`,
+  DATABASE_URL
+    ? `  store  : Postgres — durable${restored ? ' (resumed a saved match)' : ''}`
+    : '  store  : in-memory — a restart loses the match (set DATABASE_URL for durability)',
   '',
   '  Two-person test:',
   `   • You:    open ${localHttp}/  → Connect → Azure (p1)`,
@@ -173,7 +232,16 @@ const printSummary = (): void => {
 
 const shutdown = (): void => {
   printSummary();
-  void server.close().then(() => process.exit(0));
+  if (saveTimer) {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+  }
+  void (async () => {
+    await doSave(); // final flush so the latest state is durable before we exit
+    if (pool) await pool.end();
+    await server.close();
+    process.exit(0);
+  })();
 };
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);

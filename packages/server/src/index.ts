@@ -24,3 +24,14 @@ export type {
   ServerWelcomeMessage,
 } from './protocol';
 export { parseClientMessage, serializeServerMessage } from './protocol';
+export {
+  type AccountStore,
+  type MatchSnapshot,
+  type MatchStore,
+  type SeatAssignment,
+  MemoryAccountStore,
+  MemoryMatchStore,
+  migrate,
+  PostgresAccountStore,
+  PostgresMatchStore,
+} from './store';

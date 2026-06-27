@@ -1,0 +1,43 @@
+import type { GameState, PlayerId } from '@void/shared-core';
+
+/** A durable snapshot of a match — enough to resume it byte-for-byte after a
+ *  server restart. `state` is the JSON-serializable `GameState` (the core invariant
+ *  that makes JSONB storage trivial); `seq` is the room's action counter, used for
+ *  optimistic concurrency (never overwrite a newer snapshot with an older one). */
+export interface MatchSnapshot {
+  matchId: string;
+  dataVersion: string;
+  seq: number;
+  status: 'ongoing' | 'ended';
+  state: GameState;
+}
+
+/** Persistence for match state. Adapters: in-memory (dev/test) and Postgres (prod).
+ *  All methods are async so the same interface fits a real database. */
+export interface MatchStore {
+  load(matchId: string): Promise<MatchSnapshot | null>;
+  /** Upsert the snapshot. Optimistic by `seq`: a save with an older `seq` than the
+   *  stored one is a no-op, so a late write can't clobber fresher state. */
+  save(snapshot: MatchSnapshot): Promise<void>;
+  close?(): Promise<void>;
+}
+
+export interface SeatAssignment {
+  playerId: PlayerId;
+  /** True if this nick was just assigned the seat (first join), false on return. */
+  isNew: boolean;
+}
+
+/** Identity for the lightweight nick-login: maps a (room, nick) to a fixed side, so
+ *  a returning player resumes their own seat. The full account model (email/JWT) is
+ *  in docs/persistence-accounts-roadmap.md; this is the prototype-grade first step. */
+export interface AccountStore {
+  /** Resolve a nick to a seat in a room: the SAME seat on return, a free seat from
+   *  `seats` on first join, or null when every seat is taken by another nick. */
+  resolveSeat(
+    room: string,
+    nick: string,
+    seats: readonly PlayerId[],
+  ): Promise<SeatAssignment | null>;
+  close?(): Promise<void>;
+}

@@ -451,6 +451,31 @@ describe('MatchRoom — manualStart lobby', () => {
     r.start('p2'); // the new host can now start
     expect(lobbyOf(p2.messages.at(-1))?.started).toBe(true);
   });
+
+  it('resumes an already-started match (initiallyStarted) — no fresh lobby, clock continues', () => {
+    let real = 5000;
+    const resumed: GameState = { ...testState(), time: 3000 }; // 3000ms already played
+    const r = new MatchRoom({
+      id: 'resume',
+      initialState: resumed,
+      kernel: createKernel([renameModule]),
+      data: testData(),
+      now: () => real,
+      manualStart: true,
+      initiallyStarted: true,
+    });
+    expect(r.isStarted).toBe(true);
+    const p1 = new MemoryPeer();
+    r.addPeer('p1', p1);
+    // straight into the running match: no waiting, lobby.started, clock at the saved time
+    expect((p1.messages[0] as { waiting?: boolean }).waiting).toBeUndefined();
+    expect(lobbyOf(p1.messages[0])?.started).toBe(true);
+    expect((p1.messages[0] as { serverTime: number }).serverTime).toBe(3000);
+    // the clock keeps accruing from the resume point
+    real = 5500;
+    r.submitAction('p1', action('a1', 'p1', 'Go'), p1);
+    expect(r.state.time).toBe(3500); // 3000 + (5500 − 5000)
+  });
 });
 
 // SRV-1: a rejected action must still flush the world-advance the room already

@@ -20,9 +20,9 @@ await build({
   format: 'esm',
   platform: 'node',
   target: 'node22',
-  // `ws` ships optional native bits; leave it for Node to resolve at runtime.
-  // Everything else (the @void/* TS source + the prototype game) is bundled.
-  external: ['ws'],
+  // `ws` and `pg` ship optional native bits / dynamic requires; leave them for Node
+  // to resolve at runtime. Everything else (the @void/* TS source + game) is bundled.
+  external: ['ws', 'pg'],
 });
 
 await import(pathToFileURL(outfile).href);
