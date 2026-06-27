@@ -808,8 +808,13 @@ function laneAim(
 // shared-core schema) — big hulls broadcast, recon is quiet.
 // Radar-ship classes: a fleet carrying one projects radar this far (DISTANCE, map units).
 const RADAR_SHIP: Record<string, number> = { scout: 350 };
-// Radar-array detection radius (DISTANCE, map units) by building level.
-const RADAR_LEVEL_DIST = [0, 300, 500, 700];
+// Radar-array detection radius (DISTANCE, map units) by building level. A radar
+// only yields a SIGNATURE for a node in its outer band (radar reach) that is NOT
+// already identified — so the reach must clear your own border to the NEXT ring of
+// worlds, or there is no signature band at all. On the current map a homeworld's
+// neighbours sit ~205 out (and are auto-identified, 1 hop) and the next ring ~349
+// out, so level 1 must reach past 349 to paint that ring as coarse contacts.
+const RADAR_LEVEL_DIST = [0, 400, 550, 700];
 const SENSOR_HOPS = 1; // identify (full-detail) range from an owned WORLD (jumps); fleets see their own node only
 // A radar projects two concentric ranges: signatures out to its full reach, and
 // full identification within the inner half (mirrors shared-core visibility).
