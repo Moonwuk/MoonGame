@@ -14,8 +14,15 @@ import type { Fleet, GameState, PlanetId, PlayerId } from './gameState';
  * memory of last-seen state (variant B) layers on top in a follow-up.
  */
 
-/** Identify (full-detail) range, in jumps, from any owned world or fleet. */
+/** Identify (full-detail) range, in jumps, from an owned WORLD — local awareness
+ *  around your own territory. */
 const IDENTIFY_HOPS = 1;
+
+/** Identify range from a FLEET, in jumps. Ships are near-blind on their own: they
+ *  see only the node they occupy (`0` hops). Real reconnaissance comes from RADAR —
+ *  a `radar` building/outpost, or a unit/hero carrying a radar module (`radarRange`,
+ *  resolved via `fleetRadar`). A radarless fleet is a blind kitten by design. */
+const FLEET_IDENTIFY_HOPS = 0;
 
 /** A radar projects TWO concentric ranges: it catches coarse signatures out to its
  *  full reach, and fully identifies contacts within the inner half of that reach
@@ -130,7 +137,7 @@ function coverageFor(state: GameState, viewerId: PlayerId, data: GameData): Cove
     if (fleet.owner !== viewerId) continue;
     const node = fleetNode(fleet);
     if (node === null) continue;
-    flood(state, node, IDENTIFY_HOPS, identify);
+    flood(state, node, FLEET_IDENTIFY_HOPS, identify); // own node only — ships are near-blind
     const reach = fleetRadar(fleet, data);
     if (reach > 0) {
       withinRadius(state, node, reach, radar); // signatures (outer)

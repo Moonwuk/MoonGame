@@ -233,11 +233,11 @@ let lastClockText = '';
 let lastDayTimerText = '';
 let lastLogHtml = '';
 let lastAlertText = '';
-// --- fog of war (DEV-ONLY, temporary preview of core "variant A") ------------
+// --- fog of war (renderer projection; always on) -----------------------------
 // Client-side projection just for the renderer — NOT the real security boundary
-// (that is `visibleState` in shared-core, built later). Toggle in the speed bar.
-let fogOn = true; // default on so the effect is visible
-let vision: Vision | null = null; // identify + radar sets for this frame; null = no fog
+// (that is `visibleState` in shared-core). Fog is always on: ships are near-blind,
+// sight comes from owned worlds + radar (see `computeVision`).
+let vision: Vision | null = null; // identify + radar sets for this frame
 
 // --- dom ---------------------------------------------------------------------
 
@@ -780,7 +780,7 @@ function laneAim(
 const RADAR_SHIP: Record<string, number> = { scout: 350 };
 // Radar-array detection radius (DISTANCE, map units) by building level.
 const RADAR_LEVEL_DIST = [0, 300, 500, 700];
-const SENSOR_HOPS = 1; // identify (full-detail) range from any owned node / fleet (jumps)
+const SENSOR_HOPS = 1; // identify (full-detail) range from an owned WORLD (jumps); fleets see their own node only
 // A radar projects two concentric ranges: signatures out to its full reach, and
 // full identification within the inner half (mirrors shared-core visibility).
 const IDENTIFY_REACH_FRACTION = 0.5;
@@ -863,7 +863,7 @@ function computeVision(): Vision {
     if (f.owner === ME) {
       const node = fleetNode(f);
       if (!node) continue;
-      floodHops(node, SENSOR_HOPS, identify);
+      floodHops(node, 0, identify); // own node only — ships are near-blind (mirrors FLEET_IDENTIFY_HOPS)
       const rr = fleetRadar(f);
       if (rr > 0) {
         withinRadius(node, rr, radar); // signatures (outer)
@@ -1360,7 +1360,6 @@ function drawUnionTier(
 }
 
 function drawRadarCoverage() {
-  if (!fogOn) return;
   // My radar sources (planet arrays + radar-ships), tagged so a SELECTED entity can
   // also show its own precise range on top of the merged frontier.
   type Src = { x: number; y: number; r: number; sel: boolean };
@@ -1939,11 +1938,11 @@ function render(now: number) {
       if (!p) continue;
       const c = world(n);
       if (!visible(c, 60)) continue;
-      const seen = !fogOn || known(n.id) || memory.has(n.id);
+      const seen = known(n.id) || memory.has(n.id);
       if (!seen) continue;
       const g = sweepGlow(c);
       if (g <= 0.03) continue;
-      const col = known(n.id) || !fogOn ? ownerColor(p.owner) : '#6f8a93';
+      const col = known(n.id) ? ownerColor(p.owner) : '#6f8a93';
       blitGlow(col, c.x, c.y, 24, 0.42 * g); // cached glow disc (no per-node gradient)
     }
     cx.restore();
@@ -1960,7 +1959,7 @@ function render(now: number) {
     const kn = known(n.id);
     // Variant B: fog hides capturable systems (void cells stay as pure geometry).
     // Unknown → a remembered last-known blip, or an "unexplored" marker.
-    if (fogOn && n.sector !== 'empty' && !kn) {
+    if (n.sector !== 'empty' && !kn) {
       drawFogMarker(c, n.id, memory.get(n.id));
       continue;
     }
@@ -3052,18 +3051,6 @@ for (const b of Array.from(document.querySelectorAll('[data-speed]'))) {
   });
 }
 
-// Dev-only fog-of-war toggle (temporary — removed once core visibleState lands).
-const fogBtn = Array.from(document.querySelectorAll('[data-fog]'))[0] as HTMLElement | undefined;
-if (fogBtn) {
-  fogBtn.classList.toggle('on', fogOn);
-  fogBtn.addEventListener('click', () => {
-    fogOn = !fogOn;
-    fogBtn.classList.toggle('on', fogOn);
-    lastPanelHtml = ''; // force the side panel to re-evaluate visibility
-    note(fogOn ? 'fog of war: ON (variant A — here & now)' : 'fog of war: OFF (omniscient)');
-  });
-}
-
 // Mobile: hamburger toggles the slide-in drawer (rail + log + comms); the scrim
 // behind it closes on tap. No-op on desktop, where the drawer is always shown.
 burger.addEventListener('click', () => document.body.classList.toggle('drawer-open'));
@@ -3347,7 +3334,7 @@ function frame(nowReal: number) {
     checkEnd();
   }
   resolvePendingMerges(); // complete fleet merges whose movers have arrived
-  vision = fogOn ? computeVision() : null; // dev fog projection for this frame
+  vision = computeVision(); // fog projection for this frame (always on)
   if (vision) updateMemory(vision.identify); // variant B: remember what we see
   render(nowReal);
   renderPanel();

@@ -137,4 +137,35 @@ describe('visibleState (fog of war as a security boundary)', () => {
     expect(view.planets.D?.owner).toBe('p2');
     expect(view.players.p2?.resources).toEqual({ metal: 99 });
   });
+
+  // A→Y are one jump apart and physically close (50 units). p1 owns no world here;
+  // its only sight is the lone fleet at X. A radarless ship is a blind kitten.
+  function loneFleet(units: Array<[string, number]>): GameState {
+    const base = createInitialState({ seed: 'blind', version: { data: '0.1.0', manifest: '1' } });
+    return {
+      ...base,
+      players: { p1: player('p1'), p2: player('p2') },
+      planets: {
+        X: planet('X', null, ['Y'], { position: { x: 0, y: 0 }, garrison: [{ unit: 'cruiser', count: 1 }] }),
+        Y: planet('Y', 'p2', ['X'], { position: { x: 50, y: 0 }, garrison: [{ unit: 'cruiser', count: 3 }], planetType: 'secret_world' }),
+      },
+      fleets: { lone: fleet('lone', 'p1', 'X', units) },
+    };
+  }
+
+  it('a radarless fleet sees only the node it occupies (near-blind ships)', () => {
+    const view = visibleState(loneFleet([['cruiser', 1]]), 'p1', data);
+    expect(view.planets.X?.garrison).toHaveLength(1); // own node identified
+    expect(view.planets.Y?.owner).toBeNull(); // the 1-jump neighbour is NOT revealed
+    expect(view.planets.Y?.garrison).toEqual([]);
+    expect(JSON.stringify(view)).not.toContain('secret_world'); // anti-leak
+  });
+
+  it('a radar-equipped fleet restores sight by distance (radar module)', () => {
+    // The same fleet carrying a scout (radarRange 350): Y at 50 units is well within
+    // the inner identify half (175) → fully revealed. Sight comes from the module.
+    const view = visibleState(loneFleet([['cruiser', 1], ['scout', 1]]), 'p1', data);
+    expect(view.planets.Y?.owner).toBe('p2');
+    expect(view.planets.Y?.garrison).toHaveLength(1);
+  });
 });
