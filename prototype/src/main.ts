@@ -2965,7 +2965,7 @@ scrim.addEventListener('click', () => document.body.classList.remove('drawer-ope
 // is remembered so the APK reconnects with one tap.
 const connectEl = $('connect');
 const srvInput = $('csrv') as HTMLInputElement;
-const whoInput = $('cwho') as HTMLSelectElement;
+const nickInput = $('cnick') as HTMLInputElement;
 const statusEl = $('cstatus');
 const showConnect = (show: boolean): void => {
   connectEl.style.display = show ? 'flex' : 'none';
@@ -2981,10 +2981,9 @@ srvInput.value =
       ? `ws://${location.host}`
       : `ws://${location.hostname || '127.0.0.1'}:8788`);
 // Remember the side you last commanded, so reopening the link drops you back onto
-// your own faction in one tap — a lightweight stand-in for accounts (full login /
-// durable identity is designed in docs/open-questions.md).
-const savedSide = localStorage.getItem('void.player');
-if (savedSide === 'p1' || savedSide === 'p2') whoInput.value = savedSide;
+// your own seat — the server maps nick→side, so a returning name resumes its own
+// faction (nick-login; full accounts in docs/persistence-accounts-roadmap.md).
+nickInput.value = localStorage.getItem('void.nick') ?? '';
 
 $('csolo').addEventListener('click', () => {
   NET = false;
@@ -3017,11 +3016,17 @@ $('cgo').addEventListener('click', () => {
     statusEl.textContent = 'bad server URL';
     return;
   }
-  const who = whoInput.value === 'p2' ? 'p2' : 'p1';
-  const url = `${base}/matches/proto?player=${encodeURIComponent(who)}`;
-  statusEl.textContent = `connecting → ${url}`; // show the resolved target so a bad URL is visible
+  const nick = nickInput.value.trim();
+  if (!nick) {
+    statusEl.textContent = 'enter your name';
+    return;
+  }
+  // Nick-login: the server maps this name → a fixed side and hands it back, so we
+  // learn our seat from the welcome (snap.playerId), not from a side picker.
+  const url = `${base}/matches/proto?nick=${encodeURIComponent(nick)}`;
+  statusEl.textContent = `connecting as ${nick}…`;
   localStorage.setItem('void.server', base);
-  localStorage.setItem('void.player', who); // resume this side on the next visit
+  localStorage.setItem('void.nick', nick); // resume this seat next visit
 
   // WS "open" only means the socket connected, not that the server admitted us — it
   // may still reject (slot taken / unknown player). Flip to "in the match" only on
@@ -3047,7 +3052,7 @@ $('cgo').addEventListener('click', () => {
           // Server accepted us — NOW we're really in the match.
           admitted = true;
           NET = true;
-          ME = snap.playerId ?? who;
+          ME = snap.playerId ?? ME;
           clearSelection();
           showConnect(false);
           note(`● connected as ${NAME[ME] ?? ME}`);
@@ -3083,9 +3088,9 @@ $('cgo').addEventListener('click', () => {
       onError: (code) => {
         if (sock !== netSock) return; // ignore errors from a superseded socket
         if (!admitted && code === 'E_SLOT_TAKEN') {
-          statusEl.textContent = `${NAME[who] ?? who} is already taken — pick the other side`;
+          statusEl.textContent = 'that name is already playing (another tab or device?)';
         } else if (!admitted && code === 'E_UNKNOWN_PLAYER') {
-          statusEl.textContent = 'unknown player slot';
+          statusEl.textContent = 'could not get a seat';
         } else {
           statusEl.textContent = 'error: ' + code;
         }

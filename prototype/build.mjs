@@ -353,8 +353,8 @@ const html = `<!doctype html>
     <label class="cfield">Server
       <input id="csrv" type="text" inputmode="url" autocapitalize="off" autocomplete="off" spellcheck="false" placeholder="wss://… or ws://host:8788">
     </label>
-    <label class="cfield">Command
-      <select id="cwho"><option value="p1">Azure Compact — player 1</option><option value="p2">Crimson Hegemony — player 2</option></select>
+    <label class="cfield">Your name
+      <input id="cnick" type="text" autocapitalize="off" autocomplete="off" spellcheck="false" maxlength="24" placeholder="commander name">
     </label>
     <div class="crow">
       <button id="cgo" class="cbtn">Connect</button>

@@ -10,6 +10,7 @@ import {
 } from '@void/shared-core';
 import { MatchRoom } from './matchRoom';
 import { createMultiplayerServer } from './wsServer';
+import { MemoryAccountStore } from './store';
 import type { ServerMessage } from './protocol';
 
 const markerModule: GameModule = {
@@ -86,6 +87,33 @@ describe('createMultiplayerServer', () => {
     } finally {
       p1.close();
       p2.close();
+      await server.close();
+    }
+  });
+
+  it('nick-login: seats a nick and returns the SAME side on reconnect', async () => {
+    const server = createMultiplayerServer({ room: makeRoom(), accountStore: new MemoryAccountStore() });
+    const url = await server.listen();
+    const alice = new WebSocket(`${url}?nick=alice`);
+    try {
+      const w = await nextMessage(alice);
+      expect(w).toMatchObject({ type: 'welcome' });
+      const seat = (w as { playerId: string }).playerId;
+      expect(['p1', 'p2']).toContain(seat);
+      alice.close();
+
+      // a DIFFERENT nick gets the OTHER side
+      const bob = new WebSocket(`${url}?nick=bob`);
+      const wb = await nextMessage(bob);
+      expect((wb as { playerId: string }).playerId).not.toBe(seat);
+      bob.close();
+
+      // alice returns → same side as before
+      const alice2 = new WebSocket(`${url}?nick=alice`);
+      const w2 = await nextMessage(alice2);
+      expect((w2 as { playerId: string }).playerId).toBe(seat);
+      alice2.close();
+    } finally {
       await server.close();
     }
   });

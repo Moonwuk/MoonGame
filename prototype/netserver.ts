@@ -18,9 +18,12 @@ import pgPkg from 'pg';
 import {
   MatchRoom,
   createMultiplayerServer,
+  MemoryAccountStore,
   MemoryMatchStore,
+  PostgresAccountStore,
   PostgresMatchStore,
   migrate,
+  type AccountStore,
   type MatchStore,
   type RoomObservation,
 } from '../packages/server/src/index';
@@ -97,12 +100,15 @@ function ipKind(ip: string): 'vm-nat' | 'link-local' | 'cgnat' | 'lan' | 'public
 const DATABASE_URL = process.env.DATABASE_URL;
 let pool: InstanceType<typeof Pool> | null = null;
 let matchStore: MatchStore;
+let accountStore: AccountStore;
 if (DATABASE_URL) {
   pool = new Pool({ connectionString: DATABASE_URL });
   await migrate(pool);
   matchStore = new PostgresMatchStore(pool);
+  accountStore = new PostgresAccountStore(pool);
 } else {
   matchStore = new MemoryMatchStore();
+  accountStore = new MemoryAccountStore();
 }
 const restored = await matchStore.load('proto');
 const initialState = restored?.state ?? newGame();
@@ -152,7 +158,7 @@ async function doSave(): Promise<void> {
   saving = false;
 }
 
-const server = createMultiplayerServer({ room, host, port, indexHtml });
+const server = createMultiplayerServer({ room, host, port, indexHtml, accountStore });
 let wsUrl: string;
 try {
   wsUrl = await server.listen();
