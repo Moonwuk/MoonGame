@@ -48,7 +48,7 @@ export const data: GameData = parseGameData({
       faction: 'blue',
       stats: { attack: 5, defense: 4, speed: 64, hp: 12, cargoCapacity: 1 },
       signature: 1, // quiet recon hull
-      radarRange: 350, // projects fleet radar over the net (core fog) — mirrors main.ts RADAR_SHIP.scout
+      radarRange: 350, // projects fleet radar — read by both the core fog and the prototype view
       cost: { metal: 20 },
       buildTimeHours: 1,
       upkeep: { credits: 1 },
@@ -135,10 +135,12 @@ export const data: GameData = parseGameData({
       cost: { metal: 90, credits: 40 },
       buildTimeHours: 3,
       hp: 18,
-      // Detection radius (map units) per level — drives core fog signatures over the
-      // net (`visibility.ts`). Must mirror main.ts RADAR_LEVEL_DIST[1..3] = 400/550/700
-      // so multiplayer paints the same coarse contacts single-player does; the reach
-      // must clear your own border to the next ring of worlds or there is no signature.
+      // Detection radius (map units) per level — the single source read by BOTH the
+      // core fog (`visibility.ts`, networked view) and the prototype's own vision, so
+      // they agree by construction. A radar only paints a SIGNATURE for a node in its
+      // outer band that is not already identified, so the reach must clear your own
+      // border to the next ring of worlds — on the current map neighbours sit ~205 out
+      // (auto-identified, 1 hop) and the next ring ~349, so L1 (400) reaches past 349.
       radarRange: 400,
       upgrades: [
         { cost: { metal: 180, credits: 80 }, buildTimeHours: 5, hp: 28, radarRange: 550 },

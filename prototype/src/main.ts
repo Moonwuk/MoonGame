@@ -804,17 +804,12 @@ function laneAim(
 }
 
 // --- radar / signatures ------------------------------------------------------
-// Per-unit radar "loudness" now lives in the content (`data.units[u].signature`,
-// shared-core schema) — big hulls broadcast, recon is quiet.
-// Radar-ship classes: a fleet carrying one projects radar this far (DISTANCE, map units).
-const RADAR_SHIP: Record<string, number> = { scout: 350 };
-// Radar-array detection radius (DISTANCE, map units) by building level. A radar
-// only yields a SIGNATURE for a node in its outer band (radar reach) that is NOT
-// already identified — so the reach must clear your own border to the NEXT ring of
-// worlds, or there is no signature band at all. On the current map a homeworld's
-// neighbours sit ~205 out (and are auto-identified, 1 hop) and the next ring ~349
-// out, so level 1 must reach past 349 to paint that ring as coarse contacts.
-const RADAR_LEVEL_DIST = [0, 400, 550, 700];
+// Radar reach + per-unit "loudness" are DATA, read straight from the content
+// (`data.buildings[t].radarRange`, `data.units[u].radarRange`/`signature`) — the
+// SAME source the core fog (`visibility.ts`) reads, so single-player and the
+// networked view agree by construction, with no mirrored constants to drift. The
+// reach values themselves (and why a radar must clear your border to the next ring
+// of worlds to yield any signature) are tuned in the content, next to the data.
 const SENSOR_HOPS = 1; // identify (full-detail) range from an owned WORLD (jumps); fleets see their own node only
 // A radar projects two concentric ranges: signatures out to its full reach, and
 // full identification within the inner half (mirrors shared-core visibility).
@@ -830,16 +825,21 @@ function fleetSignature(f: Fleet): number {
 function sigClass(sig: number): 'S' | 'M' | 'L' {
   return sig >= 13 ? 'L' : sig >= 5 ? 'M' : 'S';
 }
-/** Radar reach (distance) a fleet projects, from its loudest radar-ship (0 = none). */
+/** Radar reach (distance) a fleet projects, from its loudest radar-ship (0 = none).
+ *  Reads `data.units[u].radarRange` — same field the core fog uses. */
 function fleetRadar(f: Fleet): number {
   let r = 0;
-  for (const st of f.units) if (st.count > 0) r = Math.max(r, RADAR_SHIP[st.unit] ?? 0);
+  for (const st of f.units) if (st.count > 0) r = Math.max(r, data.units[st.unit]?.radarRange ?? 0);
   return r;
 }
-/** Radar reach (distance) a world projects, from its best radar array (grows with level). */
+/** Radar reach (distance) a world projects, from its best radar array (grows with
+ *  level). Reads `buildingLevel(def, level).radarRange` — same field the core fog uses. */
 function planetRadar(p: Planet): number {
   let r = 0;
-  for (const b of p.buildings) if (b.type === 'radar') r = Math.max(r, RADAR_LEVEL_DIST[b.level] ?? 0);
+  for (const b of p.buildings) {
+    const def = data.buildings[b.type];
+    if (def) r = Math.max(r, buildingLevel(def, b.level).radarRange);
+  }
   return r;
 }
 /** Add every node within Euclidean `radius` of `start`'s position — radar is a
