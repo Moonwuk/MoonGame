@@ -6,6 +6,7 @@
     "produces": { "metal": 20 },
     "hp": 15,
     "scoreValue": 8,
+    "allowedKinds": ["planet", "asteroid"],
     "traits": []
   },
   "mine_t2": {
@@ -15,6 +16,7 @@
     "produces": { "metal": 55 },
     "hp": 25,
     "scoreValue": 8,
+    "allowedKinds": ["planet", "asteroid"],
     "traits": []
   },
   "shipyard": {
@@ -24,6 +26,7 @@
     "produces": {},
     "hp": 30,
     "scoreValue": 12,
+    "allowedKinds": ["planet", "void_station"],
     "traits": []
   },
   "biomass_pit": {
@@ -33,6 +36,7 @@
     "produces": { "biomass": 30 },
     "hp": 15,
     "scoreValue": 8,
+    "allowedKinds": ["planet"],
     "traits": ["infected"]
   },
   "barracks": {
@@ -41,6 +45,7 @@
     "buildTimeHours": 8,
     "hp": 20,
     "scoreValue": 6,
+    "allowedKinds": ["planet"],
     "traits": []
   },
   "spaceport": {
@@ -49,6 +54,7 @@
     "buildTimeHours": 12,
     "hp": 25,
     "scoreValue": 6,
+    "allowedKinds": ["planet", "void_station"],
     "traits": []
   },
   "radar": {

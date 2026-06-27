@@ -200,7 +200,12 @@ E_ORBIT_CONTESTED, E_NO_TROOPS, E_OWN_PLANET, E_NO_PLANET, E_FLEET_BUSY,…`.
   `construction.complete` (`buildTimeHours`×timeScale). Одно здание каждого типа
   на планету; юниты идут в гарнизон. Коды: `E_BAD_PAYLOAD, E_NO_PLANET,
 E_FORBIDDEN, E_UNKNOWN_BUILDING/UNIT, E_ALREADY_BUILT, E_ALREADY_QUEUED,
-E_NO_BUILDING, E_MAX_LEVEL, E_INSUFFICIENT, E_BOMBARDED`.
+E_NO_BUILDING, E_MAX_LEVEL, E_INSUFFICIENT, E_BOMBARDED, E_WRONG_SECTOR`.
+- **Ростер по типу провинции:** у постройки поле `BuildingDef.allowedKinds` (виды
+  сектора, `data/sectorKinds`); пусто = где угодно. `building.construct` проверяет, что
+  `planet.kind` ∈ `allowedKinds`, иначе `E_WRONG_SECTOR` (kind не задан → пермиссивно).
+  Так у каждого типа свои постройки: **планета** — всё; **астероид** — шахты/радар/форт;
+  **туманность** — радар/форт; **`void_station`** — верфь/космопорт/радар/форт (без шахт/казарм).
 - На `construction.complete`: добавляет здание/уровень/юнитов **если ещё владеешь
   планетой** (иначе вложение сгорает); **под бомбардировкой — пауза** (re-defer).
 - Хук `combat.damage`: **бонус обороны гарнизона** = сумма `defenseBonus`

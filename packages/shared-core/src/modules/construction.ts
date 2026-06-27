@@ -171,6 +171,16 @@ export const constructionModule: GameModule = {
       if (!def) {
         return h.reject('E_UNKNOWN_BUILDING');
       }
+      // Province-type roster: a building may only be raised on its `allowedKinds`
+      // (empty = any buildable sector). An undefined sector kind degrades permissively
+      // so kind-less scenario worlds keep building exactly as before.
+      if (
+        def.allowedKinds.length > 0 &&
+        planet.kind !== undefined &&
+        !def.allowedKinds.includes(planet.kind)
+      ) {
+        return h.reject('E_WRONG_SECTOR'); // this structure does not fit this province type
+      }
       requireUnlocked(h, action.playerId, 'building', payload.building);
       if (planet.buildings.some((b) => b.type === payload.building)) {
         return h.reject('E_ALREADY_BUILT'); // one of each type; grow it with building.upgrade

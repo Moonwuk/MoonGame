@@ -109,6 +109,11 @@ export const BuildingDefSchema = z.object({
   /** Radar reach (Euclidean distance, map units) the building projects from the world it sits on
    *  (0 = none). Drives signature detection in `visibleState`. */
   radarRange: z.number().nonnegative().default(0),
+  /** Sector kinds (`data/sectorKinds`) this building may be raised on. Empty = any
+   *  buildable sector. Gives each province type its own roster — a mine needs solid
+   *  ground (planet/asteroid), a radar fits anywhere, a void station takes only
+   *  outpost structures. Enforced in the construction module (`E_WRONG_SECTOR`). */
+  allowedKinds: z.array(z.string()).default([]),
 });
 
 /**
