@@ -6,7 +6,8 @@
 > `deep-technical-roadmap.md`, `multiplayer.md`, `metagame.md`, `map-roadmap.md`, корневой `CLAUDE.md` / `CONTRIBUTING.md`.
 >
 > **Ветка:** feature-ветка · **PR:** создаётся после изменений.
-> **Гейт:** `pnpm run check` (lint + typecheck + test). **Тесты: 304 зелёных**.
+> **Гейт:** `pnpm run check` (lint + typecheck + test). **Тесты: 320** (316 проходят, 4 skip), 40 файлов.
+> Живые числа (тесты/модули) — единый источник истины здесь; сверять с гейтом, не дублировать в других доках.
 
 ---
 
@@ -72,7 +73,7 @@ packages/action-layer/src/
   data/          schemas.ts (zod-схемы + parseGameData, buildingLevel/buildingMaxLevel)
   rng/           rng.ts (sfc32)
   util/          clone.ts (deepClone/deepFreeze), treasury.ts (canAfford/payCost — shared by construction & technology)
-  modules/       economy, movement, sector, planetType, technology, combat, construction, army, victory, visibility  (+ *.test.ts)
+  modules/       economy, movement, sector, planetType, technology, combat, construction, captureOnArrival, army, victory, visibility  (11 модулей, + *.test.ts)
   examples/      skirmish.test.ts (демо-сценарий + SVG)
   index.ts       баррель (экспорт публичного API)
 data/            manifest, resources, units, buildings, factions, events, sectors, planetTypes, technologies (.json)
@@ -87,7 +88,8 @@ prototype/       src/game.ts, src/main.ts (UI), src/smoke.ts, build.mjs, uitest.
   игрока** (производство копится сюда, содержание/стоимости списываются),
   `technologies?` = сессионные исследования (`completed[]`, `active`).
 - `planets: Record<id, Planet>` — `owner|null`, `position{x,y}`, `links?`
-  (лейны графа), `sectorType?`, `resources`, **`buildings: BuildingInstance[]`**
+  (лейны графа), `terrain?` (террейн-тег → `data/sectors`) и `kind?` (вид сектора → `sectorKinds`:
+  захватываемость/застройка/орбита), `resources`, **`buildings: BuildingInstance[]`**
   (`{type, level, hp}`), `garrison: UnitStack[]` (наземная армия мира), `traits`.
 - `fleets: Record<id, Fleet>` — `owner`, `location|null`, `movement|null`,
   `units: UnitStack[]` (корабли), **`landing?: UnitStack[]`** (перевозимая
@@ -398,7 +400,7 @@ golden; модель времени `advanceTo`; экономика (казна 
 
 ```bash
 pnpm install
-pnpm run check       # lint + typecheck + test (гейт; 304 теста)
+pnpm run check       # lint + typecheck + test (гейт; 320 тестов)
 pnpm test            # vitest
 pnpm run prototype   # собрать prototype/dist/void-dominion.html
 ```

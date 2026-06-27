@@ -97,13 +97,14 @@ pnpm run format         # Prettier --write
 pnpm run audit          # pnpm audit (OWASP A03)
 pnpm run prototype      # собрать играбельный prototype/dist/void-dominion.html
 
-pnpm run check          # lint + typecheck + test (как в CI)
+pnpm run check          # lint + typecheck + test (гейт перед коммитом)
 ```
 
-CI: гейт качества (lint, typecheck, тесты, `pnpm audit`) и security-пайплайн (Semgrep,
-Bearer, Trivy, Gitleaks, SCA, SBOM) живут в [`.gitlab-ci.yml`](./.gitlab-ci.yml); на
-GitHub — только сборка APK прототипа ([`android.yml`](./.github/workflows/android.yml)).
-На сейчас **304 теста** зелёные.
+CI: GitLab-пайплайн снят при миграции на GitHub. Гейт (lint, typecheck, тесты,
+`pnpm audit`) сейчас гоняется **локально** через `pnpm run check`; на GitHub — пока
+только сборка APK прототипа ([`android.yml`](./.github/workflows/android.yml)).
+Полноценный gate-workflow на GitHub Actions — в плане (open-questions #14, трек SEC).
+На сейчас **320 тестов** (316 проходят, 4 skip) зелёные.
 
 ## Статус
 

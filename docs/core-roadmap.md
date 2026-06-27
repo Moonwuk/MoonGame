@@ -8,8 +8,8 @@
 
 ## Текущее состояние (факт)
 
-Этап 1 в основном готов: микроядро (`createKernel`/`applyAction`/`advanceTo`), 9 модулей
-(army/combat/construction/economy/movement/planetType/sector/technology/victory), seeded RNG
+Этап 1 в основном готов: микроядро (`createKernel`/`applyAction`/`advanceTo`), 11 модулей
+(army/captureOnArrival/combat/construction/economy/movement/planetType/sector/technology/victory/visibility), seeded RNG
 (+golden), модель времени, `diffState`/`applyDelta`, `visibleState` (туман как проекция). Данные
 валидируются zod (`parseGameData`). **Осталось:** фракции, дипломатия, доводка видимости, трейты,
 **версияирование сейвов и реплей** (🔴-пробел из тех-исследования).

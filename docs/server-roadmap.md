@@ -9,10 +9,13 @@
 ## Текущее состояние (факт)
 
 Есть in-memory slice: `MatchRoom` (advance → authorize → applyAction → broadcast), `wsServer`
-(`createMultiplayerServer`, `/health`, upgrade-handshake `?player=`), дельта-broadcast
-(`diffState`), идемпотентные квитанции, **запускаемый `pnpm dev:server`** + headless e2e-тест
-двух игроков. **Нет:** Fastify-скелета, интеграции `@void/action-layer`, per-player очереди,
-фильтра видимости на отправке, JWT, масштаба на >1 инстанс.
+(`createMultiplayerServer`, `/health`, upgrade-handshake `?player=`), **per-player fog-дельты**
+(`visibleState`+`diffState`) с фильтром событий, **durable+ограниченные+rate-limited квитанции**,
+**v1 офлайн-будилка** (`tick`/`msUntilNextEvent`) и Postgres-стор матча/квитанций (подключены в
+прото-хосте `netserver.ts`), **запускаемый `pnpm dev:server`** + headless e2e-тест двух игроков.
+**Нет:** Fastify-скелета, интеграции `@void/action-layer`, per-player очереди, реестра матчей
+(один room на процесс), JWT/Origin, durable-будилки (pg-boss, v2), масштаба на >1 инстанс,
+проводки персистентности в гейт-покрытый `dev:server` (сейчас она только в прото-хосте).
 
 ## Зависимости
 

@@ -17,7 +17,7 @@
 
 `[core]` `packages/shared-core/src/modules` (+ `data`) · `[act]` `action-layer` ·
 `[srv]` `server` · `[cli]` `client` · `[proto]` `prototype` · `[data]` `data/*.json` ·
-`[docs]` `docs` · `[sec]` CI/сканеры (`.gitlab-ci.yml`, `docs/security`, конфиги сканеров)
+`[docs]` `docs` · `[sec]` CI/сканеры (`.github/workflows` + `docs/security` + конфиги сканеров; GitLab-пайплайн снят при миграции на GitHub)
 
 ## Статусы
 
@@ -120,12 +120,15 @@
 ## Блок SEC · AppSec / DevSecOps `[sec]`
 
 > Трек безопасности — живёт рядом с продуктовым и раздаётся как задачи. База —
-> `.gitlab-ci.yml` + `docs/security/pipeline.md`. Один кирпич = один сканер/правило/шаг.
+> `docs/security/pipeline.md` + конфиги сканеров. Один кирпич = один сканер/правило/шаг.
 > Глубокие роадмапы (задачи/подзадачи): `secure-sdlc-roadmap.md` (как строим безопасно) и
 > `secure-environment-roadmap.md` (как безопасно эксплуатируем) — SEC/F-бирки сшиты с ними.
+> **NB:** `.gitlab-ci.yml` снят при миграции на GitHub — пайплайн ниже надо перенести в
+> GitHub Actions (open-questions #14); до этого автоматического гейта/сканеров в CI нет.
 
-- **SEC-0** ✅ Базовый GitLab-пайплайн: SAST (Semgrep) + SCA (pnpm audit + osv-scanner)
-  + секреты (Gitleaks) + Trivy fs + SBOM (Syft), ratcheting-гейт.
+- **SEC-0** ✅→🔁 Базовый пайплайн (был GitLab): SAST (Semgrep) + SCA (pnpm audit + osv-scanner)
+  + секреты (Gitleaks) + Trivy fs + SBOM (Syft), ratcheting-гейт. **Снят при миграции на GitHub —
+  требует переноса в GitHub Actions (см. NB выше).**
 - **SEC-1** ⏳ Триаж + baseline: разобрать находки, подавить ложные **с обоснованием**
   (`.semgrepignore` / `.gitleaks.toml` / `.trivyignore`), разобранные сканеры → блокирующие.
 - **SEC-2** ⏳ Кастомные Semgrep-правила под инварианты ядра: запрет `Math.random`/
