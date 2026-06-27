@@ -142,6 +142,27 @@ describe('victory module', () => {
     });
   });
 
+  it('eliminates a player who loses every province and disbands their fleets', () => {
+    const kernel = createKernel([victoryModule]);
+    const state: GameState = {
+      ...baseState(),
+      planets: { A: planet('A', 'p1') }, // p2 holds NO province…
+      fleets: { F1: fleet('F1', 'p1'), F2: fleet('F2', 'p2') }, // …but still has a fleet
+    };
+
+    const r = okAdvance(kernel.advanceTo(state, ctx(HOUR)));
+
+    // No territory ⇒ eliminated, even with a fleet; the fleet vanishes; p1 wins.
+    expect(r.state.players.p2?.status).toBe('defeated');
+    expect(r.state.fleets.F2).toBeUndefined();
+    expect(r.state.fleets.F1).toBeDefined();
+    expect(r.state.match).toMatchObject({ status: 'ended', winner: 'p1', reason: 'elimination' });
+    expect(r.events).toContainEqual({
+      type: 'player.eliminated',
+      payload: expect.objectContaining({ playerId: 'p2', reason: 'no-territory' }),
+    });
+  });
+
   it('ends by score when the score limit is reached', () => {
     const kernel = createKernel([victoryModule]);
     const state: GameState = {
