@@ -261,6 +261,11 @@ let diploOpen = false;
 let diploTab: 'diplo' | 'msgs' = 'diplo';
 let diploSort: 'name' | 'worlds' | 'stance' = 'stance';
 let diploExpanded: string | null = null; // participant row showing its action buttons
+// Roster filters (alongside sort): show only seats matching the picked stance(s) and
+// type(s). Empty set = no constraint from that category. They AND across categories,
+// OR within one. A stance filter excludes your own seat (you have no self-stance).
+const diploStanceFilter = new Set<DiplomaticStance>();
+const diploTypeFilter = new Set<'human' | 'ai'>();
 let msgTo = 'all'; // comms composer recipient (a seat id, or 'all')
 
 // --- multiplayer (net mode) --------------------------------------------------
@@ -3376,6 +3381,15 @@ function seatBadge(id: string): { icon: string; tag: string } {
   return { icon: '☻', tag: 'ИГРОК' };
 }
 
+/** Does a seat pass the active roster filters? Stance filter never matches ME (no
+ *  self-stance); an empty category imposes no constraint. */
+function diploPasses(id: string): boolean {
+  if (diploStanceFilter.size) {
+    if (id === ME || !diploStanceFilter.has(getStance(s, ME, id))) return false;
+  }
+  if (diploTypeFilter.size && !diploTypeFilter.has(isAiSeat(id) ? 'ai' : 'human')) return false;
+  return true;
+}
 function diploRowsHtml(): string {
   const others = diploSeats().filter((id) => id !== ME);
   const byName = (a: string, b: string) => (NAME[a] ?? a).localeCompare(NAME[b] ?? b);
@@ -3385,7 +3399,9 @@ function diploRowsHtml(): string {
     others.sort(
       (a, b) => STANCE_RANK[getStance(s, ME, a)] - STANCE_RANK[getStance(s, ME, b)] || byName(a, b),
     );
-  return [ME, ...others]
+  const ordered = [ME, ...others].filter(diploPasses);
+  if (!ordered.length) return `<div class="dp-empty">Под фильтр никто не подходит.</div>`;
+  return ordered
     .map((id) => {
       const bdg = seatBadge(id);
       const col = ownerColor(id);
@@ -3452,9 +3468,21 @@ function renderDiplo(): void {
     `<button class="dp-tab${diploTab === k ? ' on' : ''}" data-tab="${k}">${label}</button>`;
   const sortBtn = (k: typeof diploSort, label: string) =>
     `<button class="dp-sortb${diploSort === k ? ' on' : ''}" data-sort="${k}">${label}</button>`;
+  const stChip = (k: DiplomaticStance) =>
+    `<button class="dp-fchip${diploStanceFilter.has(k) ? ' on' : ''}" data-fstance="${k}" style="--sc:${STANCE_COLOR[k]}">${STANCE_RU[k]}</button>`;
+  const tyChip = (k: 'human' | 'ai', label: string) =>
+    `<button class="dp-fchip ty${diploTypeFilter.has(k) ? ' on' : ''}" data-ftype="${k}">${label}</button>`;
+  const anyFilter = diploStanceFilter.size || diploTypeFilter.size;
+  const filterRow =
+    `<div class="dp-filters"><span>Фильтр:</span>` +
+    STANCES.map(stChip).join('') +
+    `<span class="dp-fsep"></span>${tyChip('human', '☻ Человек')}${tyChip('ai', '⌬ ИИ')}` +
+    (anyFilter ? `<button class="dp-fclear" data-fclear="1">Сброс</button>` : '') +
+    `</div>`;
   const body =
     diploTab === 'diplo'
       ? `<div class="dp-sorts"><span>Сорт.:</span>${sortBtn('name', 'Имя')}${sortBtn('worlds', 'Провинции')}${sortBtn('stance', 'Отношение')}</div>` +
+        filterRow +
         `<div class="dp-list">${diploRowsHtml()}</div>`
       : `<div class="dp-feed" id="dp-feed">${diploFeedHtml()}</div>${diploComposeHtml()}`;
   el.innerHTML =
@@ -4644,6 +4672,10 @@ if (warPromptEl) {
 // Session menu: the rail's Diplomacy / Dispatches buttons open the roster / message log.
 document.getElementById('rail-diplo')?.addEventListener('click', () => openDiplo('diplo'));
 document.getElementById('rail-msgs')?.addEventListener('click', () => openDiplo('msgs'));
+function toggleSet<T>(set: Set<T>, v: T): void {
+  if (set.has(v)) set.delete(v);
+  else set.add(v);
+}
 function sendDiploMsg(): void {
   const input = document.getElementById('dp-text') as HTMLInputElement | null;
   const sel = document.getElementById('dp-to') as HTMLSelectElement | null;
@@ -4670,6 +4702,24 @@ if (diploEl) {
     const sort = (tg.closest('.dp-sortb') as HTMLElement | null)?.dataset.sort;
     if (sort) {
       diploSort = sort as typeof diploSort;
+      renderDiplo();
+      return;
+    }
+    const fstance = (tg.closest('.dp-fchip[data-fstance]') as HTMLElement | null)?.dataset.fstance;
+    if (fstance) {
+      toggleSet(diploStanceFilter, fstance as DiplomaticStance);
+      renderDiplo();
+      return;
+    }
+    const ftype = (tg.closest('.dp-fchip[data-ftype]') as HTMLElement | null)?.dataset.ftype;
+    if (ftype) {
+      toggleSet(diploTypeFilter, ftype as 'human' | 'ai');
+      renderDiplo();
+      return;
+    }
+    if (tg.closest('.dp-fclear')) {
+      diploStanceFilter.clear();
+      diploTypeFilter.clear();
       renderDiplo();
       return;
     }
