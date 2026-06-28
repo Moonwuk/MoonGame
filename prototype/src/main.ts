@@ -16,6 +16,7 @@ import {
   HOUR,
   DAY,
   hpOfLevel,
+  TAX_OFFICE_BONUS,
   moveFleet,
   moveFleetEdge,
   stopFleet,
@@ -24,7 +25,6 @@ import {
   bombardFleet,
   loadArmy,
   unloadArmy,
-  launchFleet,
   mergeFleet,
   splitFleet,
   engageFleet,
@@ -96,11 +96,12 @@ const LOCK = '#7df0d0'; // selection / targeting reticle accent
 const TAU = Math.PI * 2;
 const TOP = 50; // top-bar height
 const RAIL = 50; // left-rail width
-const BUILDABLE = ['mine', 'refinery', 'barracks', 'radar', 'fort'];
+const BUILDABLE = ['mine', 'refinery', 'tax_office', 'barracks', 'radar', 'fort'];
 const BUILD_UNITS = ['marine', 'orbital_aa', 'cruiser', 'scout', 'siege'];
 const BUILD_ICON: Record<string, string> = {
   mine: '⬢',
   refinery: '◇',
+  tax_office: '⛁',
   barracks: '▤',
   fort: '⬡',
   starfort: '✦',
@@ -755,6 +756,19 @@ function submitQueued(planetId: string, queued: QueuedBuild): StepOut {
   apply(out);
   return out;
 }
+// A rally fleet keeps swallowing freshly-built ships only while its world still has
+// a ship in the pipeline (one building, or one queued). The moment the queue drains,
+// the fleet is "closed" (loses its 'rally' tag) so the NEXT order opens a fresh fleet
+// — ships only pool together if you queue the next batch before the current one finishes.
+// Single-player only: in net mode the server owns the fleets and their tags.
+function closeIdleRallies(): void {
+  for (const f of Object.values(s.fleets)) {
+    if (f.owner !== ME || !f.location || f.movement || !f.traits?.includes('rally')) continue;
+    const pending =
+      !!activeConstruction(f.location, 'units') || (buildQueues[f.location]?.units.length ?? 0) > 0;
+    if (!pending) f.traits = f.traits.filter((t) => t !== 'rally');
+  }
+}
 function pumpBuildQueues(): void {
   for (const planetId of Object.keys(buildQueues)) {
     const q = buildQueues[planetId];
@@ -817,6 +831,33 @@ function selectedFleetIds(): string[] {
 }
 
 const ORBIT_R: Record<'near' | 'far', number> = { near: 30, far: 50 };
+// Past this camera zoom the orbital layer "opens up": rings widen and stationed
+// fleets start to circle their planet. Below it everything stays static (and
+// fixed-size), exactly as before — cheap at the whole-map view where it'd be invisible.
+const ORBIT_ZOOM_IN = 1.6;
+let orbitPhase = 0; // accumulated sim-time ms (frozen on pause) — drives the orbit spin
+/** Ring/animation are gated on the same close-zoom threshold. */
+function orbitsLive(): boolean {
+  return cam.scale >= ORBIT_ZOOM_IN;
+}
+/** Orbit-ring radius scale at the current zoom: compact (half-size) at the far view —
+ *  full rings read as bulky there — blooming open to ~2.4× once zoomed in close so
+ *  stationed fleets get room to circle. */
+function orbitZoom(): number {
+  if (cam.scale <= ORBIT_ZOOM_IN) return 0.5;
+  return clamp(0.5 + (cam.scale - ORBIT_ZOOM_IN) * 1.2, 0.5, 2.4);
+}
+/** Angular position (radians) of a stationed fleet's orbit slot at index `idx` of
+ *  `nPeers` sharing the ring — fanned out, and spinning when zoomed in close. */
+function orbitAngle(orbit: 'near' | 'far', idx: number, nPeers: number): number {
+  let a = -Math.PI / 2 + (idx - (nPeers - 1) / 2) * 0.55;
+  if (orbitsLive()) {
+    // inner (near) ring sweeps a touch faster than the outer (far) one
+    const speed = orbit === 'near' ? 0.00052 : 0.00034; // rad/ms
+    a += orbitPhase * speed;
+  }
+  return a;
+}
 
 /** Screen anchor (+ heading) for a fleet's chevron: the interpolated lane
  *  position while moving, or a slot on its near/far orbit ring while stationed
@@ -850,9 +891,11 @@ function fleetAnchor(f: Fleet): { x: number; y: number; ang: number } | null {
     0,
     peers.findIndex((g) => g.id === f.id),
   );
-  const a0 = -Math.PI / 2 + (idx - (peers.length - 1) / 2) * 0.55;
-  const r = ORBIT_R[orbit];
-  return { x: pc.x + Math.cos(a0) * r, y: pc.y + Math.sin(a0) * r, ang: a0 };
+  const a0 = orbitAngle(orbit, idx, peers.length);
+  const r = ORBIT_R[orbit] * orbitZoom();
+  // when circling, the chevron faces along its travel (tangent); static = radial as before
+  const ang = orbitsLive() ? a0 + Math.PI / 2 : a0;
+  return { x: pc.x + Math.cos(a0) * r, y: pc.y + Math.sin(a0) * r, ang };
 }
 function note(msg: string) {
   const d = floor(s.time / DAY) + 1;
@@ -2486,21 +2529,23 @@ function render(now: number) {
     if (!SECTOR_TYPES[SECTOR_OF[pid]]?.orbit && !fortified) continue;
     const pc = world(pl.position);
     if (!visible(pc, 80)) continue;
+    const oz = orbitZoom(); // rings widen as you zoom in (1 at the far view)
     for (const orb of ['far', 'near'] as const) {
       const warm = orb === 'near'; // near = hot zone (bombard / AA reaches), far = safe
+      const rr = ORBIT_R[orb] * oz;
       cx.save();
       cx.setLineDash(warm ? [2, 5] : [7, 6]);
       cx.lineDashOffset = warm ? now / 200 : -now / 280;
       cx.strokeStyle = rgba(ORBIT_COLOR[orb], warm ? 0.42 : 0.22);
       cx.lineWidth = warm ? 1.3 : 1;
       cx.beginPath();
-      cx.arc(pc.x, pc.y, ORBIT_R[orb], 0, TAU);
+      cx.arc(pc.x, pc.y, rr, 0, TAU);
       cx.stroke();
       cx.setLineDash([]);
       cx.fillStyle = rgba(ORBIT_COLOR[orb], 0.7);
       cx.font = '700 7px ui-monospace,Menlo,monospace';
       cx.textAlign = 'center';
-      cx.fillText(warm ? 'NEAR' : 'FAR', pc.x, pc.y + ORBIT_R[orb] + 8);
+      cx.fillText(warm ? 'NEAR' : 'FAR', pc.x, pc.y + rr + 8);
       cx.restore();
     }
   }
@@ -2672,9 +2717,13 @@ function conveyorHtml(planetId: string, lane: BuildLane): string {
   const queued = queueOf(planetId)[lane];
   let html = `<div class="conveyor">`;
   if (active) {
-    const pct = progressPct(active);
-    html += `<div class="current"><span>NOW</span><b>${constructionLabel(active.payload)}</b><em>${timeLeft(active.at)}</em></div>`;
-    html += `<div class="bar"><i style="width:${pct.toFixed(0)}%"></i></div>`;
+    // The live % / remaining-time are patched in each frame by updateConveyors() and
+    // deliberately kept OUT of the panel's HTML signature — otherwise the panel (and its
+    // build buttons) would be rebuilt 60×/s, and a click whose down/up straddle a rebuild
+    // is dropped (the bug where rapid build orders only queued one ship in real time).
+    const dur = buildDurationHours(active.payload) * HOUR;
+    html += `<div class="current"><span>NOW</span><b>${constructionLabel(active.payload)}</b><em class="conv-time" data-at="${active.at}">—</em></div>`;
+    html += `<div class="bar"><i class="conv-fill" data-at="${active.at}" data-dur="${dur}" style="width:0%"></i></div>`;
   } else {
     html += `<div class="current idle"><span>IDLE</span><b>ready for next order</b><em>—</em></div>`;
     html += `<div class="bar"><i style="width:0%"></i></div>`;
@@ -2916,11 +2965,11 @@ function panelHtml(): string {
       `<div class="hint">Ground units defend planets and can be loaded onto fleets from the fleet panel.</div>`,
     );
   } else if (planetTab === 'ships') {
-    let garr = `<div class="sec">Spacecraft in garrison</div>` + unitRows(ships);
-    if (mine && ships.length) {
-      garr += `<div class="row">${btn('launch', p.id, '🚀 Launch fleet from garrison', true)}</div>`;
+    // Built ships now auto-rally to orbit (see fleetLaunchModule), so the garrison
+    // normally holds no spacecraft — only surface the section if some linger.
+    if (ships.length) {
+      cols.push(`<div class="sec">Spacecraft in garrison</div>` + unitRows(ships));
     }
-    cols.push(garr);
     if (here.length) {
       let orbit = `<div class="sec">Fleets in orbit</div>`;
       for (const f of here) {
@@ -3028,6 +3077,11 @@ function buildingDossier(id: string, level: number): Dossier | null {
       return {
         name: def.name,
         body: `Добывающая платформа, вгрызающаяся в спёкшуюся кору мёртвого мира. Там, где аннигиляция выжгла всё живое, обнажилась чистая металлическая руда — станция качает ${hl(metal)} металла в час, и каждый новый ярус наращивает поток. Единственная причина держать выжженное пепелище под флагом.`,
+      };
+    case 'tax_office':
+      return {
+        name: def.name,
+        body: `Налоговая управа имперского образца: сама ничего не добывает, но ставит на учёт население мира и поднимает его кредитный сбор на ${hl(pct(TAX_OFFICE_BONUS))}. Возводится один раз — бюрократию не масштабируют, её терпят.`,
       };
     default:
       return { name: def.name, body: 'Планетарное сооружение.' };
@@ -3336,6 +3390,23 @@ function renderPanel() {
     lastObjDescHtml = '';
   }
   renderObjDesc();
+  updateConveyors(); // patch live build progress without rebuilding the panel
+}
+
+/** Patch the build conveyor's progress bar + remaining time in place each frame, so
+ *  the panel's HTML (and its buttons) can stay put between structural changes. */
+function updateConveyors(): void {
+  const root = side.querySelector('.pscroll');
+  if (!root) return;
+  for (const el of Array.from(root.querySelectorAll('.conv-fill')) as HTMLElement[]) {
+    const at = Number(el.dataset.at);
+    const dur = Number(el.dataset.dur);
+    const pct = dur > 0 ? Math.max(0, Math.min(100, 100 - ((at - s.time) / dur) * 100)) : 100;
+    el.style.width = `${pct.toFixed(0)}%`;
+  }
+  for (const el of Array.from(root.querySelectorAll('.conv-time')) as HTMLElement[]) {
+    el.textContent = timeLeft(Number(el.dataset.at));
+  }
 }
 
 function cmdBtn(cmd: string, icon: string, label: string, cls: string, disabled: boolean): string {
@@ -3515,8 +3586,6 @@ side.addEventListener('click', (ev) => {
     enqueueBuild(selPlanet!, { kind: 'upgrade', id: arg, count: 1 });
   } else if (act === 'unit') {
     enqueueBuild(selPlanet!, { kind: 'unit', id: arg, count: 1 });
-  } else if (act === 'launch') {
-    playerOrder(launchFleet(ME, arg));
   } else if (act === 'orbit') {
     playerOrder(orbitFleet(ME, selFleet!, arg as 'near' | 'far'));
   } else if (act === 'bombard') {
@@ -4211,7 +4280,11 @@ function frame(nowReal: number) {
     checkFleetClashes();
     runAI();
     pumpBuildQueues();
+    closeIdleRallies(); // drop the 'rally' tag once a world's build pipeline empties
   }
+  // The orbit spin only advances while the world is actually running (sim ticking, or a
+  // live net match), so pausing freezes the ships on their rings instead of drifting on.
+  if (dt > 0 && dt < 1000 && (NET || (speed > 0 && !banner))) orbitPhase += dt;
   resolvePendingMerges(); // complete fleet merges whose movers have arrived
   checkEnd(); // terminal banner from `match` — runs in BOTH modes (net snapshots carry it)
   vision = computeVision(); // fog projection for this frame (always on)

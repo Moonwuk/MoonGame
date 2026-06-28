@@ -10,6 +10,8 @@ import {
   createInitialState,
   parseGameData,
   buildingLevel,
+  hasOrbit,
+  allowedBuildings,
   isBombarded,
   economyModule,
   movementModule,
@@ -28,6 +30,7 @@ import {
   type GameData,
   type GameModule,
   type GameState,
+  type ResourceBag,
   type Hero,
   type Planet,
   type Fleet,
@@ -134,6 +137,15 @@ export const data: GameData = parseGameData({
       buildTimeHours: 4,
       produces: { credits: 8 },
       hp: 20,
+      scoreValue: 3,
+    },
+    // tax office — a one-time civic upgrade (no levels): lifts the whole credit take
+    // of the inhabited world it sits on by +25% (taxModule). Cannot stack.
+    tax_office: {
+      name: 'Tax Office',
+      cost: { metal: 120, credits: 60 },
+      buildTimeHours: 4,
+      hp: 16,
       scoreValue: 3,
     },
     // salvage metal rig — the ONLY thing raisable on a dead world (sectorKinds roster);
@@ -431,6 +443,42 @@ function mergeStacks(base: UnitStack[], add: UnitStack[]): UnitStack[] {
   return out;
 }
 
+// --- taxes: inhabited worlds collect credits --------------------------------
+// Armies cost credits in upkeep, but nothing minted them at scale — so a growing
+// fleet starved the economy. Now every inhabited world of yours levies a flat
+// civic tax; a Tax Office (one-time, no levels) boosts that world's whole credit
+// take. Hooks `economy.production`, so the core economy stays generic.
+export const TAX_PER_HOUR = 100; // base credits/h from each inhabited owned world (tune later)
+export const TAX_OFFICE_BONUS = 0.25; // Tax Office: +25% to that world's credit income
+
+/** An inhabited world — a normal colonisable planet/cloud with an orbital layer
+ *  and the general build roster. Asteroid junctions (no orbit), dead worlds
+ *  (salvage-only roster) and empty space are NOT inhabited and pay no tax. */
+export function isInhabited(planet: Planet): boolean {
+  return hasOrbit(data, planet) && allowedBuildings(data, planet) === undefined;
+}
+
+export const taxModule: GameModule = {
+  id: 'tax',
+  version: '0.1.0',
+  setup(api) {
+    // Runs in the `economy.production` pipeline AFTER planetType (see MODULES order),
+    // so the flat tax is exactly TAX_PER_HOUR (not scaled by world richness), while the
+    // Tax Office multiplies the world's whole credit take (refinery output + the tax).
+    api.hook<ResourceBag>('economy.production', (bag, args, h) => {
+      const planetId = (args as { planetId?: string }).planetId;
+      const planet = planetId ? h.state.planets[planetId] : undefined;
+      if (!planet || !isInhabited(planet)) return bag;
+      const out: Record<string, number> = { ...bag };
+      out.credits = (out.credits ?? 0) + TAX_PER_HOUR;
+      if (planet.buildings.some((b) => b.type === 'tax_office')) {
+        out.credits *= 1 + TAX_OFFICE_BONUS;
+      }
+      return out;
+    });
+  },
+};
+
 // --- fleet.launch / fleet.merge: form and consolidate mobile fleets ----------
 // The core builds units into a planet's garrison; this small module lets a
 // player scramble those into a new fleet (ships → units, ground troops →
@@ -488,6 +536,56 @@ export const fleetLaunchModule: GameModule = {
         h.ctx.data.units[s.unit]?.traits.includes('immobile'),
       );
       h.emit('fleet.launched', { fleetId: id, planetId: planet.id, owner: action.playerId });
+    });
+
+    // Auto-rally: a freshly-built SHIP doesn't sit in the garrison waiting to be
+    // launched — it flies straight to orbit and joins the world's RALLY fleet (the
+    // construction output). Ships ordered in one queue thus pool into a single fleet.
+    // The rally fleet is tagged 'rally'; pre-existing fleets the player already had on
+    // orbit lack the tag, so a new build never silently merges into them. Ground units
+    // (and immobile emplacements) stay in the garrison as before.
+    api.on('unit.built', (event, h) => {
+      const p = event.payload as { planetId?: string; unit?: string; count?: number; owner?: string };
+      if (typeof p?.planetId !== 'string' || typeof p?.unit !== 'string' || typeof p?.owner !== 'string') {
+        return;
+      }
+      const def = h.ctx.data.units[p.unit];
+      if (!def || def.traits.includes('ground')) return; // ground army stays planetside
+      const planet = h.state.planets[p.planetId];
+      if (!planet || planet.owner !== p.owner) return;
+      const want = p.count ?? 0;
+      const gi = planet.garrison.findIndex((st) => st.unit === p.unit);
+      if (want <= 0 || gi < 0) return;
+      const take = Math.min(want, planet.garrison[gi].count);
+      if (take <= 0) return;
+      // pull the just-built ships out of the garrison the core added them to
+      planet.garrison[gi].count -= take;
+      if (planet.garrison[gi].count <= 0) planet.garrison.splice(gi, 1);
+      let rally = Object.values(h.state.fleets).find(
+        (f) =>
+          f.owner === p.owner &&
+          f.location === planet.id &&
+          !f.movement &&
+          !f.battleId &&
+          f.traits.includes('rally'),
+      );
+      if (!rally) {
+        const seq = Object.keys(h.state.fleets).length;
+        rally = {
+          id: `fleet:${p.owner}:${h.ctx.now}:${seq}`,
+          owner: p.owner,
+          location: planet.id,
+          movement: null,
+          units: [],
+          landing: [],
+          traits: ['rally'],
+          battleId: null,
+        };
+        h.state.fleets[rally.id] = rally;
+      }
+      const si = rally.units.findIndex((st) => st.unit === p.unit);
+      if (si >= 0) rally.units[si].count += take;
+      else rally.units.push({ unit: p.unit, count: take });
     });
 
     // Fuse `from` into `into` when both are docked, idle and in the same sector.
@@ -730,13 +828,24 @@ export function netIncome(state: GameState, playerId: string): Record<string, nu
   for (const p of Object.values(state.planets)) {
     if (p.owner !== playerId || isBombarded(state, p.id)) continue;
     const mult = 1 + (p.planetType ? (data.planetTypes[p.planetType]?.productionBonus ?? 0) : 0);
+    // Credits are settled per-planet so the civic tax + Tax Office boost mirror the
+    // core's economy.production pipeline (taxModule); metal accrues straight to `out`.
+    let credits = 0;
     for (const b of p.buildings) {
       const def = data.buildings[b.type];
       if (!def) continue;
       const produces = buildingLevel(def, b.level).produces;
-      for (const res of Object.keys(produces))
-        out[res] = (out[res] ?? 0) + (produces[res] ?? 0) * mult;
+      for (const res of Object.keys(produces)) {
+        const v = (produces[res] ?? 0) * mult;
+        if (res === 'credits') credits += v;
+        else out[res] = (out[res] ?? 0) + v;
+      }
     }
+    if (isInhabited(p)) {
+      credits += TAX_PER_HOUR;
+      if (p.buildings.some((b) => b.type === 'tax_office')) credits *= 1 + TAX_OFFICE_BONUS;
+    }
+    if (credits !== 0) out.credits = (out.credits ?? 0) + credits;
   }
   const addUpkeep = (stacks: Array<{ unit: string; count: number }>) => {
     for (const st of stacks) {
@@ -787,6 +896,7 @@ export const diplomacyModule: GameModule = {
 export const MODULES: GameModule[] = [
   sectorModule,
   planetTypeModule,
+  taxModule, // civic tax on inhabited worlds (hooks economy.production, after planetType)
   economyModule,
   movementModule,
   heroModule, // projection hero: fleet combat aura (+5%) + death/respawn
