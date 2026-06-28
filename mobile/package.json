@@ -8,13 +8,16 @@
     "www": "node sync-www.mjs",
     "android:add": "cap add android",
     "sync": "cap sync android",
-    "apk": "npm run www && npm run sync && cd android && ./gradlew assembleDebug --no-daemon"
+    "assets": "capacitor-assets generate --android",
+    "brand": "npm run assets && node patch-android.mjs",
+    "apk": "npm run www && npm run sync && npm run brand && cd android && ./gradlew assembleDebug --no-daemon"
   },
   "dependencies": {
     "@capacitor/android": "^6.0.0",
     "@capacitor/core": "^6.0.0"
   },
   "devDependencies": {
+    "@capacitor/assets": "^3.0.5",
     "@capacitor/cli": "^6.0.0"
   },
   "comments": {

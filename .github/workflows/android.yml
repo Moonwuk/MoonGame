@@ -1,8 +1,10 @@
 name: Android APK (prototype)
 
 # Builds an installable debug APK of the prototype by wrapping the self-contained
-# prototype HTML in a Capacitor WebView. Runs on GitHub's ubuntu runner, which has
-# the Android SDK preinstalled. Download the APK from the run's artifacts.
+# prototype HTML in a Capacitor WebView (branded icon/splash, locked to landscape).
+# Runs on GitHub's ubuntu runner, which has the Android SDK preinstalled. On main it
+# also publishes the APK to a rolling "alpha" prerelease for a stable download link;
+# every run still uploads the APK as a build artifact too.
 # NOTE: action versions are tag-pinned for now — SHA-pin with SD-6.1 (see
 # secure-sdlc-roadmap.md) alongside the other workflows.
 
@@ -15,8 +17,9 @@ on:
       - 'mobile/**'
       - '.github/workflows/android.yml'
 
+# contents: write lets the build publish the APK to the rolling "alpha" release.
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build-apk:
@@ -55,6 +58,12 @@ jobs:
           npx cap add android
           npx cap sync android
 
+      - name: Brand the app (icon + splash) and lock to landscape
+        working-directory: mobile
+        run: |
+          npx capacitor-assets generate --android
+          node patch-android.mjs
+
       - name: Assemble debug APK
         working-directory: mobile/android
         run: ./gradlew assembleDebug --no-daemon --stacktrace
@@ -65,3 +74,30 @@ jobs:
           name: void-dominion-debug-apk
           path: mobile/android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+
+      # A stable, shareable download link for the alpha: keep one rolling prerelease
+      # tagged "alpha" whose asset URL never changes, refreshed on every main build.
+      # Only from main — branch builds still produce the artifact above, just no release.
+      - name: Publish to the rolling "alpha" release
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp mobile/android/app/build/outputs/apk/debug/app-debug.apk void-dominion-alpha.apk
+          {
+            echo "Rolling alpha — the latest debug APK built from main (${GITHUB_SHA:0:7})."
+            echo
+            echo "Install on Android:"
+            echo "1. Download void-dominion-alpha.apk below."
+            echo "2. Open it; allow \"install from unknown sources\" if prompted."
+            echo "3. Launch — single-player works fully offline. The app runs in landscape."
+            echo
+            echo "Debug-signed (testing only, not Play-Store ready). For multiplayer, point the"
+            echo "connect screen at a host running pnpm dev:proto-server (see docs/multiplayer.md)."
+          } > release-notes.md
+          gh release delete alpha --cleanup-tag --yes 2>/dev/null || true
+          gh release create alpha void-dominion-alpha.apk \
+            --target "$GITHUB_SHA" \
+            --prerelease \
+            --title "Void Dominion — Alpha (rolling)" \
+            --notes-file release-notes.md
