@@ -253,6 +253,20 @@ body.sheet-open #cmdbar{bottom:calc(34vh + 12px);}
   padding:1px 4px;margin-left:5px;white-space:nowrap;}
 .dp-ping{flex:0 0 auto;width:40px;border-radius:6px;border:1px solid var(--amber);
   background:rgba(255,180,58,.12);color:var(--amber);font-size:15px;cursor:pointer;font-variant-emoji:text;}
+/* ally ping marker popup (tap a pin on the map) */
+#pingpop{position:fixed;z-index:45;display:none;transform:translate(-50%,calc(-100% - 14px));
+  width:172px;background:var(--glass);border:1px solid var(--amber);border-radius:8px;padding:8px 10px;
+  box-shadow:0 0 22px rgba(0,0,0,.6);-webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px);}
+#pingpop.show{display:block;}
+.pp-top{display:flex;justify-content:space-between;align-items:baseline;gap:6px;margin-bottom:5px;}
+.pp-top b{font-size:11px;letter-spacing:.5px;font-variant-emoji:text;}
+.pp-top span{font-size:9px;color:var(--cyan-dim);font-variant-numeric:tabular-nums;}
+.pp-desc{font-size:11px;line-height:1.4;color:#e7d6b8;margin-bottom:7px;word-break:break-word;}
+.pp-desc i{color:var(--dim);}
+.pp-act{display:flex;gap:5px;}
+.pp-act button{flex:1;padding:5px 6px;border-radius:5px;border:1px solid var(--cyan-dim);
+  background:rgba(53,214,230,.1);color:var(--cyan);font:700 10px ui-monospace,monospace;cursor:pointer;}
+.pp-act .pp-del{border-color:#7a221c;background:rgba(255,90,77,.12);color:var(--red);}
 
 /* status strip below the top bar: day/time + victory progress */
 #devline{position:fixed;top:46px;left:0;right:0;height:20px;z-index:24;display:flex;align-items:center;gap:14px;
@@ -568,6 +582,7 @@ const html = `<!doctype html>
 <div id="playercard"></div>
 <div id="warprompt"></div>
 <div id="diplo"></div>
+<div id="pingpop"></div>
 <div id="splitdlg"></div>
 <div id="fps"></div>
 <div id="banner"></div>

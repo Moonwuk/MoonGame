@@ -270,6 +270,8 @@ let diploExpanded: string | null = null; // participant row showing its action b
 const diploStanceFilter = new Set<DiplomaticStance>();
 const diploTypeFilter = new Set<'human' | 'ai'>();
 let convoOpen = COALITION; // the open conversation in the messages tab (seat id or COALITION)
+// Screen hit-boxes for the on-map ping markers, rebuilt every frame by drawPings().
+let pingHits: Array<{ loc: string; x: number; y: number }> = [];
 
 // --- multiplayer (net mode) --------------------------------------------------
 // When connected, the server is authoritative: snapshots replace `s`, orders are
@@ -2715,6 +2717,7 @@ function render(now: number) {
     cx.strokeRect(x, y, w, h);
     cx.restore();
   }
+  drawPings(now); // ally ping markers (coalition), with screen hit-boxes for taps
   drawAimPreview();
 }
 
@@ -3470,7 +3473,7 @@ function convoLineHtml(m: SessionMsg): string {
   if (m.ping) {
     return (
       `<div class="dp-line ping" data-ping="${esc(m.ping)}"><span class="dp-when">${t}</span>` +
-      `📍 <b>${esc(fromName(m.from))}</b> отметил <b>${esc(m.ping)}</b><span class="dp-jump">↪ камера</span></div>`
+      `📍 <b>${esc(fromName(m.from))}</b> ${esc(m.ping)}: ${esc(m.text)}<span class="dp-jump">↪ камера</span></div>`
     );
   }
   if (m.sys) return `<div class="dp-line sys"><span class="dp-when">${t}</span>${esc(m.text)}</div>`;
@@ -3999,6 +4002,7 @@ cmdbar.addEventListener('click', (ev) => {
 
 // Tap/click selection at a screen point (drag-aware — see the pointer handlers).
 function selectAt(mx: number, my: number) {
+  closePingPop(); // any map tap dismisses an open ping popup (a marker tap reopens below)
   // Merge armed: the next tap on a friendly fleet (not itself in the selection) is
   // the anchor — the selected fleet(s) fly to it and fuse. Any other tap cancels.
   if (merging) {
@@ -4019,6 +4023,16 @@ function selectAt(mx: number, my: number) {
   }
   // Plain tap = selection. Movement happens only when "Move" is armed (aiming), so a
   // fleet selection never blocks picking a planet (and vice versa).
+  // A tap on an ally ping marker opens its description popup (takes priority over
+  // selection, since markers float above the node they mark).
+  if (!aiming) {
+    for (const h of pingHits) {
+      if (Math.hypot(mx - h.x, my - h.y) < 12) {
+        openPingPop(h.loc);
+        return;
+      }
+    }
+  }
   if (!aiming) {
     for (const f of Object.values(s.fleets)) {
       if (f.owner !== ME) continue;
@@ -4735,6 +4749,22 @@ if (warPromptEl) {
   });
 }
 
+// Ping marker popup: jump the camera to the marker, or (your own) remove it.
+const pingPopEl = document.getElementById('pingpop');
+if (pingPopEl) {
+  pingPopEl.addEventListener('click', (e) => {
+    const tg = e.target as HTMLElement;
+    const jump = (tg.closest('.pp-jump') as HTMLElement | null)?.dataset.loc;
+    if (jump) {
+      closePingPop();
+      jumpToPing(jump);
+      return;
+    }
+    const del = (tg.closest('.pp-del') as HTMLElement | null)?.dataset.loc;
+    if (del) removePing(del);
+  });
+}
+
 // Session menu: the rail's Diplomacy / Dispatches buttons open the roster / message log.
 document.getElementById('rail-diplo')?.addEventListener('click', () => openDiplo('diplo'));
 document.getElementById('rail-msgs')?.addEventListener('click', () => openDiplo('msgs'));
@@ -4752,13 +4782,91 @@ function sendDiploMsg(): void {
     input.focus();
   }
 }
-/** Ping the selected province into the coalition channel — a clickable map marker. */
+/** Ping the selected province into the coalition channel — also a clickable map
+ *  marker. The composer text becomes the marker's short description. */
 function pingSelected(): void {
   if (!selPlanet || !s.planets[selPlanet]) {
     note('Сначала выберите провинцию на карте');
     return;
   }
-  pushMsg(COALITION, `отметил ${selPlanet}`, false, ME, selPlanet);
+  const input = document.getElementById('dp-text') as HTMLInputElement | null;
+  const desc = (input?.value.trim() ?? '').slice(0, 80);
+  pushMsg(COALITION, desc || `метка ${selPlanet}`, false, ME, selPlanet);
+  if (input) {
+    input.value = '';
+    input.focus();
+  }
+}
+/** Active coalition pings, one marker per province (the latest ping there wins). The
+ *  coalition chat log and the map markers share this single source. */
+function activePings(): SessionMsg[] {
+  const byLoc = new Map<string, SessionMsg>();
+  for (const m of sessionMessages) if (m.to === COALITION && m.ping) byLoc.set(m.ping, m);
+  return [...byLoc.values()];
+}
+/** Drop the marker (and its chat lines) for one of YOUR pings. */
+function removePing(loc: string): void {
+  sessionMessages = sessionMessages.filter((m) => !(m.to === COALITION && m.ping === loc && m.from === ME));
+  closePingPop();
+  if (diploOpen && diploTab === 'msgs') renderDiploFeed();
+}
+/** A tapped map marker → a small popup with who pinged it and their description. */
+function openPingPop(loc: string): void {
+  const m = activePings().find((p) => p.ping === loc);
+  const pl = s.planets[loc];
+  const el = document.getElementById('pingpop');
+  if (!m || !pl || !el) return;
+  const c = world(pl.position);
+  const r = canvas.getBoundingClientRect();
+  const who = m.from === ME ? 'Вы' : NAME[m.from] ?? m.from;
+  const mine = m.from === ME;
+  el.innerHTML =
+    `<div class="pp-top"><b style="color:${ownerColor(m.from)}">📍 ${esc(who)}</b><span>${esc(loc)}</span></div>` +
+    `<div class="pp-desc">${m.text ? esc(m.text) : '<i>без описания</i>'}</div>` +
+    `<div class="pp-act"><button class="pp-jump" data-loc="${esc(loc)}">↪ камера</button>` +
+    (mine ? `<button class="pp-del" data-loc="${esc(loc)}">убрать</button>` : '') +
+    `</div>`;
+  el.style.left = `${Math.round(r.left + (c.x / VW) * r.width)}px`;
+  el.style.top = `${Math.round(r.top + (c.y / VH) * r.height)}px`;
+  el.classList.add('show');
+}
+function closePingPop(): void {
+  document.getElementById('pingpop')?.classList.remove('show');
+}
+/** Draw a pin per active coalition ping (owner-coloured), recording screen hit-boxes
+ *  for tap detection. Pins float just above the node, tip pointing at it. */
+function drawPings(now: number): void {
+  pingHits = [];
+  for (const m of activePings()) {
+    const pl = s.planets[m.ping!];
+    if (!pl) continue;
+    const c = world(pl.position);
+    if (!visible(c, 40)) continue;
+    const x = c.x;
+    const y = c.y - 18; // pin head floats above the node
+    const col = ownerColor(m.from);
+    const pulse = 0.7 + 0.3 * Math.sin(now / 360 + x * 0.05);
+    cx.save();
+    cx.shadowColor = 'rgba(0,0,0,.7)';
+    cx.shadowBlur = 4;
+    cx.fillStyle = rgba(col, pulse);
+    cx.strokeStyle = 'rgba(4,10,12,.85)';
+    cx.lineWidth = 1.4;
+    cx.beginPath(); // teardrop pin: head + tip toward the node
+    cx.moveTo(x, y + 11);
+    cx.lineTo(x - 5, y);
+    cx.arc(x, y - 1, 5.5, Math.PI, 0);
+    cx.lineTo(x, y + 11);
+    cx.fill();
+    cx.stroke();
+    cx.shadowBlur = 0;
+    cx.fillStyle = 'rgba(6,18,22,.95)';
+    cx.beginPath();
+    cx.arc(x, y - 1, 2.1, 0, TAU);
+    cx.fill();
+    cx.restore();
+    pingHits.push({ loc: m.ping!, x, y: y - 1 });
+  }
 }
 /** Tap a ping → fly the camera to that province (and select it); close the menu. */
 function jumpToPing(id: string): void {
