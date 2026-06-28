@@ -2,8 +2,9 @@ name: Play in browser (GitHub Pages)
 
 # Builds the self-contained prototype HTML and publishes it to GitHub Pages, so the
 # game can be tried in a browser with no install at https://moonwuk.github.io/Nygame/.
-# Pages self-enables on the first run (configure-pages `enablement: true`). Actions are
-# SHA-pinned (SD-6.1 / F-16); the trailing `# vN` comments track versions.
+# ONE-TIME SETUP: enable Pages in repo Settings → Pages → "Build and deployment" →
+# Source: "GitHub Actions" (the workflow token can't enable it for you). After that
+# this workflow deploys on every push to main. Actions are SHA-pinned (SD-6.1 / F-16).
 
 on:
   workflow_dispatch:
@@ -55,9 +56,7 @@ jobs:
           mkdir -p _site
           cp prototype/dist/void-dominion.html _site/index.html
 
-      - uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5 (enablement:true self-enables Pages)
-        with:
-          enablement: true
+      - uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
 
       - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
         with:
