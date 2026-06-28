@@ -66,7 +66,8 @@ body::before{content:"";position:fixed;inset:0;z-index:1;pointer-events:none;mix
   border-left:1px solid var(--line);border-right:1px solid var(--line);scrollbar-width:none;}
 #purse::-webkit-scrollbar{display:none;}
 .res{display:flex;align-items:center;gap:5px;padding:0 9px;height:100%;flex:0 0 auto;}
-.res i{font-style:normal;font-size:14px;line-height:1;}
+.res i{font-style:normal;font-size:14px;line-height:1;color:var(--cyan);font-variant-emoji:text;
+  text-shadow:0 0 6px rgba(53,214,230,.4);}
 .res b{color:#eafffb;font-weight:700;font-size:13px;font-variant-numeric:tabular-nums;}
 /* donate/premium currency (Суверены): pinned to the far-right corner, gold accent */
 .res.donate{margin-left:auto;border-left:1px solid var(--line);}

@@ -4070,15 +4070,17 @@ function frame(nowReal: number) {
   // Top bar = the six currencies (icon + amount). Five are session resources; the
   // donate currency (Суверены ◆) is a meta-layer balance pinned to the far-right corner.
   const r = s.players[ME]?.resources ?? {};
-  const chip = (icon: string, val: string, donate = false) =>
-    `<span class="res${donate ? ' donate' : ''}"><i>${icon}</i><b>${val}</b></span>`;
+  // Monochrome line glyphs from the console's own icon family (no emoji variants, so
+  // they render as text, not colour emoji). Name in `title` for hover/long-press.
+  const chip = (icon: string, val: string, name: string, donate = false) =>
+    `<span class="res${donate ? ' donate' : ''}" title="${name}"><i>${icon}</i><b>${val}</b></span>`;
   const hudHtml =
-    chip('💰', kfmt(r.credits ?? 0)) +
-    chip('🌾', kfmt(r.food ?? 0)) +
-    chip('⚙', kfmt(r.metal ?? 0)) +
-    chip('⚡', kfmt(r.energy ?? 0)) +
-    chip('🔌', kfmt(r.microelectronics ?? 0)) +
-    chip('◆', kfmt(SOVEREIGNS), true);
+    chip('¤', kfmt(r.credits ?? 0), 'Credits') +
+    chip('❖', kfmt(r.food ?? 0), 'Food') +
+    chip('⬢', kfmt(r.metal ?? 0), 'Metal') +
+    chip('↯', kfmt(r.energy ?? 0), 'Energy') +
+    chip('▦', kfmt(r.microelectronics ?? 0), 'Microelectronics') +
+    chip('◆', kfmt(SOVEREIGNS), 'Суверены — donate currency', true);
   if (hudHtml !== lastHudHtml) {
     purse.innerHTML = hudHtml;
     lastHudHtml = hudHtml;
