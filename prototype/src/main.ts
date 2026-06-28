@@ -477,6 +477,25 @@ function zoomAt(fx: number, fy: number, factor: number) {
   cam.scale = clamp(cam.scale * factor, 0.6, 5);
   cam.x = fx - bx * cam.scale;
   cam.y = fy - by * cam.scale;
+  clampCam();
+}
+
+/** Keep the camera on the map: a map that fits the screen can't be flung off (only nudged
+ *  within a small overscroll margin); a zoomed-in map pans across its own content without
+ *  exposing empty space past its edges. Stops the "map flies away on a fast swipe" glitch. */
+function clampCam(): void {
+  const M = 120; // gentle overscroll breathing room beyond the content edges
+  const tl = projBase({ x: MINX, y: MINY });
+  const br = projBase({ x: MAXX, y: MAXY });
+  const pL = tl.x * cam.scale;
+  const pR = br.x * cam.scale;
+  const pT = tl.y * cam.scale;
+  const pB = br.y * cam.scale;
+  // Two bounds per axis: map's left edge at screen 0 (cam = -pL) and right edge at screen
+  // VW (cam = VW - pR). Whichever is smaller is the low clamp. Works for a map wider OR
+  // narrower than the viewport; ±M lets you overscroll a touch without losing the map.
+  cam.x = clamp(cam.x, Math.min(-pL, VW - pR) - M, Math.max(-pL, VW - pR) + M);
+  cam.y = clamp(cam.y, Math.min(-pT, VH - pB) - M, Math.max(-pT, VH - pB) + M);
 }
 
 // --- helpers -----------------------------------------------------------------
@@ -1644,8 +1663,6 @@ const bg = document.createElement('canvas');
 const bgx = bg.getContext('2d') as CanvasRenderingContext2D;
 let bgContent = ''; // viewport + ownership signature (camera-independent)
 let bgCam = { x: 0, y: 0, scale: 1 }; // camera the static layer was last baked at
-const lastCam = { x: NaN, y: NaN, scale: NaN };
-let camSettled = false; // true when the camera didn't move since last frame
 
 function ownersSig(): string {
   let out = '';
@@ -1730,7 +1747,11 @@ function buildStaticLayer(): void {
   const content = `${VW}x${VH}:${DPR.toFixed(2)}|${ownersSig()}`;
   const sizeOk = bg.width === Math.round(VW * DPR);
   const camSame = cam.x === bgCam.x && cam.y === bgCam.y && cam.scale === bgCam.scale;
-  if (sizeOk && content === bgContent && (camSame || !camSettled)) return;
+  // Re-bake whenever the camera moved. The bake is viewport-sized, so following a pan
+  // with a transformed STALE bake left the newly-revealed area uncovered — a smear / a
+  // map squeezed into a corner on the wide map. A 52-seed power diagram is cheap enough
+  // to re-tile per moved frame; idle frames (camera at rest) still cost one cached blit.
+  if (sizeOk && content === bgContent && camSame) return;
   bgContent = content;
   bgCam = { x: cam.x, y: cam.y, scale: cam.scale };
   bg.width = Math.round(VW * DPR);
@@ -1922,20 +1943,10 @@ function buildStaticLayer(): void {
 
 /** Blit the cached static layer (device-pixel 1:1) beneath the live dynamic art. */
 function blitStaticLayer(): void {
-  buildStaticLayer();
+  buildStaticLayer(); // re-bakes at the live camera whenever it moved (else returns the cache)
   cx.save();
-  cx.setTransform(1, 0, 0, 1, 0, 0); // backing pixels
-  if (cam.x === bgCam.x && cam.y === bgCam.y && cam.scale === bgCam.scale) {
-    cx.drawImage(bg, 0, 0); // baked at the current camera → 1:1
-  } else {
-    // active pan/zoom: follow the camera with the last (stale) bake, transformed —
-    // cheap drawImage instead of a full re-tessellation; a crisp rebuild lands on settle.
-    // Integer-align the offset so a pure pan (k=1) blits without subpixel resampling.
-    const k = cam.scale / bgCam.scale;
-    const tx = Math.round((cam.x - bgCam.x * k) * DPR);
-    const ty = Math.round((cam.y - bgCam.y * k) * DPR);
-    cx.drawImage(bg, tx, ty, Math.round(bg.width * k), Math.round(bg.height * k));
-  }
+  cx.setTransform(1, 0, 0, 1, 0, 0); // backing pixels — the bake is always at the live camera, 1:1
+  cx.drawImage(bg, 0, 0);
   cx.restore();
 }
 
@@ -1995,14 +2006,8 @@ function drawRadarRange(now: number): void {
 }
 
 function render(now: number) {
-  // Did the camera move since last frame? The static layer only re-tessellates once
-  // the camera comes to rest (see buildStaticLayer), so an active drag stays smooth.
-  camSettled = cam.x === lastCam.x && cam.y === lastCam.y && cam.scale === lastCam.scale;
-  lastCam.x = cam.x;
-  lastCam.y = cam.y;
-  lastCam.scale = cam.scale;
   cx.setTransform(DPR, 0, 0, DPR, 0, 0); // draw in CSS pixels, crisp on hi-DPI
-  blitStaticLayer(); // cached backdrop + province political map
+  blitStaticLayer(); // backdrop + province political map (re-baked on camera move, else cached)
   drawScanSweep(now); // slow radar sweep — pure console chrome
   updateRadarContacts(now); // the arm paints enemy signatures as it crosses them
   drawRadarCoverage(); // my sensor reach (radar arrays + ships)
@@ -3327,6 +3332,7 @@ canvas.addEventListener('pointermove', (ev) => {
   } else {
     cam.x += p.x - prev.x;
     cam.y += p.y - prev.y;
+    clampCam(); // keep the map from being dragged entirely off-screen
     if (dragStart && Math.hypot(p.x - dragStart.x, p.y - dragStart.y) > 6) dragged = true;
   }
 });
