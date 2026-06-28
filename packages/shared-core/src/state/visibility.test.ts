@@ -123,6 +123,17 @@ describe('visibleState (fog of war as a security boundary)', () => {
     expect(visibleState(state, 'p1', data).scheduled.map((e) => e.id)).toEqual(['own']);
   });
 
+  it('keeps the viewer own playerId-tagged timers (e.g. research), drops the foe’s', () => {
+    const state = scenario();
+    // `technology.complete` is tagged by playerId, not owner/planetId/fleetId — the
+    // viewer must still see their OWN research ETA, and never the enemy's.
+    state.scheduled = [
+      { id: 'my-research', at: 30, type: 'technology.complete', payload: { playerId: 'p1', technology: 't' }, seq: 0 },
+      { id: 'foe-research', at: 40, type: 'technology.complete', payload: { playerId: 'p2', technology: 't' }, seq: 1 },
+    ];
+    expect(visibleState(state, 'p1', data).scheduled.map((e) => e.id)).toEqual(['my-research']);
+  });
+
   it('serialized view never contains hidden data (the real anti-leak test)', () => {
     const json = JSON.stringify(visibleState(scenario(), 'p1', data));
     expect(json).not.toContain('enemy-hidden'); // unseen fleet id
