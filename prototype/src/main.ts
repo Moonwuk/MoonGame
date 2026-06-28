@@ -286,6 +286,9 @@ let pingHits: Array<{ loc: string; x: number; y: number }> = [];
 // When connected, the server is authoritative: snapshots replace `s`, orders are
 // sent (not applied locally), and the local sim/AI is suspended (see frame()).
 let NET = false;
+/** The match this client is in / will (re)connect to. Set when joining from the menu;
+ *  `connect()` (and auto-reconnect) dial `/matches/<currentMatchId>`. */
+let currentMatchId = 'proto';
 let netClient: MultiplayerClient | null = null;
 let netSock: WebSocket | null = null;
 // M0 net telemetry (dev overlay): smoothed round-trip ms, and a desync check that
@@ -4394,39 +4397,12 @@ $('setupcancel').addEventListener('click', () => {
 });
 
 function connect(): void {
-  let raw = srvInput.value.trim();
-  if (!raw) {
-    statusEl.textContent = 'enter a server URL';
-    return;
-  }
-  // Accept whatever the user pasted — http(s)://, ws(s)://, or a bare host:port —
-  // and normalize to a ws(s):// ORIGIN. This kills three silent failure modes:
-  //  • an https page opening ws:// is blocked as mixed content → force wss://;
-  //  • a pasted full URL with a /matches/… path would double the path → 404;
-  //  • a bare host with no scheme can't open at all.
-  raw = raw.replace(/^http(s?):\/\//i, 'ws$1://'); // http→ws, https→wss
-  if (!/^wss?:\/\//i.test(raw)) {
-    raw = (location.protocol === 'https:' ? 'wss://' : 'ws://') + raw;
-  }
-  if (location.protocol === 'https:' && raw.startsWith('ws://')) {
-    raw = 'wss://' + raw.slice('ws://'.length);
-  }
-  let base: string;
-  try {
-    const u = new URL(raw);
-    base = `${u.protocol}//${u.host}`; // drop any path/query the user pasted
-  } catch {
-    statusEl.textContent = 'bad server URL';
-    return;
-  }
-  const nick = nickInput.value.trim();
-  if (!nick) {
-    statusEl.textContent = 'enter your name';
-    return;
-  }
+  const srv = resolveServer();
+  if (!srv) return;
+  const { base, nick } = srv;
   // Nick-login: the server maps this name → a fixed side and hands it back, so we
   // learn our seat from the welcome (snap.playerId), not from a side picker.
-  const url = `${base}/matches/proto?nick=${encodeURIComponent(nick)}`;
+  const url = `${base}/matches/${encodeURIComponent(currentMatchId)}?nick=${encodeURIComponent(nick)}`;
   statusEl.textContent = `connecting as ${nick}…`;
   localStorage.setItem('void.server', base);
   localStorage.setItem('void.nick', nick); // resume this seat next visit
@@ -4562,8 +4538,68 @@ function connect(): void {
   };
 }
 
-// Manual Connect: start a fresh session (clear any pending auto-reconnect).
-$('cgo').addEventListener('click', () => {
+// --- match browser (the meta-shell "Play" tab) -------------------------------
+// Reads the server's read-model (`GET /matches?nick=`) into three tabs and joins /
+// archives a chosen match. Meta lives on the server (no menu state in GameState).
+
+/** Normalize the pasted server box to a ws(s):// ORIGIN + read the nick. Returns
+ *  null (and sets the status line) when either is missing/invalid. Shared by the
+ *  match browser and `connect()`. */
+function resolveServer(): { base: string; nick: string } | null {
+  let raw = srvInput.value.trim();
+  if (!raw) {
+    statusEl.textContent = 'enter a server URL';
+    return null;
+  }
+  // Accept http(s)://, ws(s)://, or a bare host:port and normalize. Kills three
+  // silent failures: https page + ws:// (mixed content) → wss://; a pasted /matches
+  // path → 404; a bare host with no scheme can't open.
+  raw = raw.replace(/^http(s?):\/\//i, 'ws$1://');
+  if (!/^wss?:\/\//i.test(raw)) {
+    raw = (location.protocol === 'https:' ? 'wss://' : 'ws://') + raw;
+  }
+  if (location.protocol === 'https:' && raw.startsWith('ws://')) {
+    raw = 'wss://' + raw.slice('ws://'.length);
+  }
+  let base: string;
+  try {
+    base = `${new URL(raw).protocol}//${new URL(raw).host}`; // drop any path/query
+  } catch {
+    statusEl.textContent = 'bad server URL';
+    return null;
+  }
+  const nick = nickInput.value.trim();
+  if (!nick) {
+    statusEl.textContent = 'enter your name';
+    return null;
+  }
+  return { base, nick };
+}
+
+const httpBase = (wsBase: string): string => wsBase.replace(/^ws/, 'http');
+
+interface MatchRow {
+  matchId: string;
+  mapId: string;
+  rules: { timeScale?: number; victory?: { dominationPercent?: number; scoreLimit?: number } };
+  days: number;
+  players: { seated: number; capacity: number };
+  status: string;
+}
+type MatchTab = 'available' | 'active' | 'archived';
+let matchLists: Record<MatchTab, MatchRow[]> | null = null;
+let activeTab: MatchTab = 'available';
+
+function ruleSummary(r: MatchRow['rules']): string {
+  const parts = [`×${r.timeScale ?? 1}`];
+  if (r.victory?.scoreLimit) parts.push(`до ${r.victory.scoreLimit} очк.`);
+  if (r.victory?.dominationPercent) parts.push(`${Math.round(r.victory.dominationPercent * 100)}% карты`);
+  return parts.join(' · ');
+}
+
+/** Join a chosen match: set it as the (re)connect target, then dial via `connect()`. */
+function connectToMatch(id: string): void {
+  currentMatchId = id;
   reconnecting = false;
   reconnectAttempts = 0;
   userClosed = false;
@@ -4572,7 +4608,104 @@ $('cgo').addEventListener('click', () => {
     reconnectTimer = null;
   }
   connect();
-});
+}
+
+async function refreshMatches(): Promise<void> {
+  const srv = resolveServer();
+  if (!srv) return;
+  statusEl.textContent = 'загрузка матчей…';
+  try {
+    const res = await fetch(`${httpBase(srv.base)}/matches?nick=${encodeURIComponent(srv.nick)}`);
+    if (!res.ok) throw new Error('http ' + res.status);
+    matchLists = (await res.json()) as Record<MatchTab, MatchRow[]>;
+    localStorage.setItem('void.server', srv.base);
+    localStorage.setItem('void.nick', srv.nick);
+    statusEl.textContent = '';
+  } catch {
+    matchLists = null;
+    statusEl.textContent = 'сервер недоступен';
+  }
+  renderMatches();
+}
+
+async function toggleArchive(id: string, restore: boolean): Promise<void> {
+  const srv = resolveServer();
+  if (!srv) return;
+  const op = restore ? 'unarchive' : 'archive';
+  try {
+    const res = await fetch(
+      `${httpBase(srv.base)}/matches/${encodeURIComponent(id)}/${op}?nick=${encodeURIComponent(srv.nick)}`,
+      { method: 'POST' },
+    );
+    if (!res.ok) {
+      statusEl.textContent = restore ? 'не удалось восстановить' : 'не удалось в архив';
+      return;
+    }
+    await refreshMatches();
+  } catch {
+    statusEl.textContent = 'ошибка архива';
+  }
+}
+
+function renderMatches(): void {
+  const el = $('mlist');
+  if (!matchLists) {
+    el.innerHTML = '<div class="mempty">нажмите «Обновить список»</div>';
+    return;
+  }
+  const rows = matchLists[activeTab] ?? [];
+  if (rows.length === 0) {
+    el.innerHTML = '<div class="mempty">пусто</div>';
+    return;
+  }
+  el.textContent = '';
+  for (const m of rows) {
+    const row = document.createElement('div');
+    row.className = 'mrow';
+    const info = document.createElement('div');
+    info.className = 'minfo';
+    info.innerHTML =
+      `<div class="mname">${esc(m.mapId)} <span class="mid">${esc(m.matchId)}</span></div>` +
+      `<div class="mmeta">День ${m.days} · ${m.players.seated}/${m.players.capacity} игроков · ` +
+      `${esc(ruleSummary(m.rules))} · ${m.status === 'ended' ? 'завершён' : 'идёт'}</div>`;
+    row.appendChild(info);
+    const btns = document.createElement('div');
+    btns.className = 'mbtns';
+    const join = document.createElement('button');
+    join.className = 'mbtn';
+    join.textContent = 'Войти';
+    join.addEventListener('click', () => connectToMatch(m.matchId));
+    btns.appendChild(join);
+    if (activeTab !== 'available') {
+      const restore = activeTab === 'archived';
+      const arch = document.createElement('button');
+      arch.className = 'mbtn ghost';
+      arch.textContent = restore ? 'Восстановить' : 'В архив';
+      arch.addEventListener('click', () => void toggleArchive(m.matchId, restore));
+      btns.appendChild(arch);
+    }
+    row.appendChild(btns);
+    el.appendChild(row);
+  }
+}
+
+for (const btn of Array.from(document.querySelectorAll('.mtab'))) {
+  btn.addEventListener('click', () => {
+    activeTab = ((btn as HTMLElement).dataset.tab as MatchTab) ?? 'available';
+    for (const b of Array.from(document.querySelectorAll('.mtab'))) {
+      b.classList.toggle('active', b === btn);
+    }
+    renderMatches();
+  });
+}
+
+// "Обновить список" reloads the read-model; per-row "Войти"/"В архив" act on a match.
+$('cgo').addEventListener('click', () => void refreshMatches());
+
+// Open the menu populated when a server is reachable (the page is usually served BY
+// the dev server, so the same-origin default just works); otherwise it shows a prompt
+// and Single-player still works.
+void refreshMatches();
 
 // Auto-reconnect after an unexpected drop: rejoin our seat with capped exponential
 // backoff (1,2,4,8,8,8s, then give up). Same saved server + nick → same side.
