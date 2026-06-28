@@ -30,7 +30,7 @@ import {
   type ReceiptStore,
   type RoomObservation,
 } from '../packages/server/src/index';
-import { newGame, kernel, data } from './src/game';
+import { newGame, kernel, data, aiOrders, HOUR } from './src/game';
 const { Pool } = pgPkg;
 
 // --- M0 playtest log: append every room event (join/leave/lobby/action/end) to a
@@ -48,14 +48,19 @@ const stats = {
   end: null as RoomObservation | null,
 };
 let connected = 0; // live players currently connected (drives the running-match heartbeat)
+// Seats with a live human peer. Any seat in the match NOT in here is "empty" and is
+// driven by the server-side AI (mirrors single-player: empty slots are taken by the AI).
+const humans = new Set<string>();
 const observe = (ev: RoomObservation): void => {
   appendFileSync(logFile, JSON.stringify({ t: Date.now(), ...ev }) + '\n');
   if (ev.kind === 'join') {
     stats.joins++;
     connected++;
+    humans.add(ev.playerId);
   } else if (ev.kind === 'leave') {
     stats.leaves++;
     connected = Math.max(0, connected - 1);
+    humans.delete(ev.playerId);
   } else if (ev.kind === 'end') stats.end = ev;
   else if (ev.kind === 'action') {
     stats.actions++;
@@ -220,9 +225,27 @@ function armWakeup(): void {
   const ms = ev === null ? beat : beat === null ? ev : Math.min(ev, beat);
   wakeTimer = setTimeout(onWake, Math.min(ms ?? MAX_TIMER_MS, MAX_TIMER_MS));
 }
+// Server-side AI for empty seats: every ~2 game-hours, any match seat with no live
+// human peer issues the same orders the single-player AI would (shared `aiOrders`),
+// submitted through the authoritative room. Runs only while the match is started and
+// someone is connected — otherwise the board just idles on its schedule. This is what
+// makes "empty multiplayer slots are taken by the AI" true: an unjoined seat plays.
+let aiLastAt = 0; // game-time of the last AI decision tick
+function runServerAI(): void {
+  if (!room.isStarted || connected === 0) return;
+  const now = room.state.time;
+  if (now - aiLastAt < 2 * HOUR) return;
+  aiLastAt = now;
+  for (const seat of Object.keys(room.state.players)) {
+    if (humans.has(seat)) continue; // a human commands this seat
+    for (const action of aiOrders(room.state, seat)) room.submitAction(seat, action);
+  }
+}
+
 function onWake(): void {
   wakeTimer = null;
   room.tick(); // fire whatever is now due (a no-op if a capped timer fired early)
+  runServerAI(); // drive any empty seat once the clock has moved
   scheduleSave(); // persist the advanced world
   armWakeup(); // re-arm for the next event (or the remainder of a long sleep)
 }

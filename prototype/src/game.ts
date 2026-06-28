@@ -841,3 +841,51 @@ export const buildUnit = (playerId: string, planetId: string, unit: string, coun
   act(playerId, 'unit.build', { planetId, unit, count });
 export const engageFleet = (playerId: string, fleetId: string, targetId: string) =>
   act(playerId, 'fleet.engage', { fleetId, targetId });
+
+// --- AI ----------------------------------------------------------------------
+
+/** One decision tick's orders for an AI-driven seat, evaluated against `state`.
+ *  Read-only: it builds and returns the actions; the caller applies them — the
+ *  client to its local sim, the server through the authoritative room. Drives
+ *  empty seats the same way in solo and multiplayer (a seat with no human). */
+export function aiOrders(state: GameState, ai: string): Action[] {
+  const out: Action[] = [];
+  if (!state.players[ai]) return out; // seat not in play / eliminated
+  const isShipUnit = (u: string): boolean => !data.units[u]?.traits.includes('ground');
+  const capturable = (p: Planet): boolean => SECTOR_TYPES[p.kind ?? '']?.capturable ?? false;
+  const d = (a: { x: number; y: number }, b: { x: number; y: number }): number =>
+    Math.hypot(a.x - b.x, a.y - b.y);
+  // Send each idle AI fleet toward the nearest capturable world it doesn't own.
+  for (const f of Object.values(state.fleets)) {
+    if (f.owner !== ai || f.location == null || f.movement || f.battleId) continue;
+    const here = state.planets[f.location];
+    if (!here) continue;
+    let best: Planet | null = null;
+    let bestD = Infinity;
+    for (const p of Object.values(state.planets)) {
+      if (p.owner === ai || !capturable(p)) continue;
+      const dd = d(here.position, p.position);
+      if (dd < bestD) {
+        bestD = dd;
+        best = p;
+      }
+    }
+    if (best) out.push(moveFleet(ai, f.id, best.id));
+  }
+  // Build + launch from this AI's home base (its first developed owned world).
+  const base =
+    Object.values(state.planets).find((p) => p.owner === ai && p.buildings.length > 0) ??
+    Object.values(state.planets).find((p) => p.owner === ai);
+  const pl = state.players[ai];
+  if (base && pl) {
+    if ((pl.resources.metal ?? 0) > 220 && (pl.resources.credits ?? 0) > 120) {
+      out.push(buildUnit(ai, base.id, 'cruiser', 1));
+    } else if ((pl.resources.metal ?? 0) > 70) {
+      out.push(buildUnit(ai, base.id, 'marine', 1));
+    }
+    const aiFleets = Object.values(state.fleets).filter((f) => f.owner === ai).length;
+    const baseHasShip = base.garrison.some((st) => isShipUnit(st.unit));
+    if (aiFleets < 2 && baseHasShip) out.push(launchFleet(ai, base.id));
+  }
+  return out;
+}

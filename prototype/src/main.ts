@@ -32,6 +32,7 @@ import {
   buildBuilding,
   upgradeBuilding,
   buildUnit,
+  aiOrders,
   START_CANDIDATES,
   type SetupConfig,
   type SeatConfig,
@@ -1237,40 +1238,10 @@ function handleEvents(events: DomainEvent[]) {
 function runAI() {
   if (s.time - lastAiAt < 2 * HOUR) return;
   lastAiAt = s.time;
+  // Each empty seat's orders come from the shared `aiOrders` (same logic the net
+  // server uses to drive unfilled multiplayer seats). Apply them in sequence.
   for (const ai of AI_PLAYERS) {
-    if (!s.players[ai]) continue; // seat not in play / eliminated
-    // Send each idle AI fleet toward the nearest capturable world it doesn't own.
-    for (const f of Object.values(s.fleets)) {
-      if (f.owner !== ai || f.location == null || f.movement || f.battleId) continue;
-      const here = s.planets[f.location];
-      if (!here) continue;
-      let best: Planet | null = null;
-      let bestD = Infinity;
-      for (const p of Object.values(s.planets)) {
-        if (p.owner === ai || !(SECTOR_TYPES[SECTOR_OF[p.id]]?.capturable ?? false)) continue;
-        const d = dist(here.position, p.position);
-        if (d < bestD) {
-          bestD = d;
-          best = p;
-        }
-      }
-      if (best) apply(order(s, moveFleet(ai, f.id, best.id), s.time));
-    }
-    // Build + launch from this AI's home base (its first developed owned world).
-    const base =
-      Object.values(s.planets).find((p) => p.owner === ai && p.buildings.length > 0) ??
-      Object.values(s.planets).find((p) => p.owner === ai);
-    const pl = s.players[ai];
-    if (base && pl) {
-      if ((pl.resources.metal ?? 0) > 220 && (pl.resources.credits ?? 0) > 120) {
-        apply(order(s, buildUnit(ai, base.id, 'cruiser', 1), s.time));
-      } else if ((pl.resources.metal ?? 0) > 70) {
-        apply(order(s, buildUnit(ai, base.id, 'marine', 1), s.time));
-      }
-      const aiFleets = Object.values(s.fleets).filter((f) => f.owner === ai).length;
-      const baseHasShip = base.garrison.some((st) => isShip(st.unit));
-      if (aiFleets < 2 && baseHasShip) apply(order(s, launchFleet(ai, base.id), s.time));
-    }
+    for (const a of aiOrders(s, ai)) apply(order(s, a, s.time));
   }
 }
 
@@ -3990,8 +3961,9 @@ function frame(nowReal: number) {
   // smooth FPS; ignore absurd gaps (tab backgrounded) so the readout stays sane
   if (dt > 0 && dt < 1000) fpsEma = fpsEma * 0.9 + (1000 / dt) * 0.1;
   if (!NET && speed > 0 && !banner) {
-    // Local single-player sim. In net mode the server owns the clock, combat, the
-    // enemy (a human, not the AI) and construction — we only render its snapshots.
+    // Local single-player sim. In net mode the server owns the clock, combat,
+    // construction and every rival — a connected human, or the server-side AI for
+    // an empty seat — so we only render its snapshots (no local AI runs here).
     const target = s.time + (dt / 1000) * speed * HOUR;
     apply(advance(s, target));
     autoEngage();
