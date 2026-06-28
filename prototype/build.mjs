@@ -638,7 +638,8 @@ const html = `<!doctype html>
   <div class="sbox">
     <div class="stitle"><span class="dia"></span><b>SKIRMISH SETUP</b></div>
     <p class="ssub">Pick your homeworld on the map, choose how many rivals join, then launch. Empty
-      slots are taken by the AI — switch a slot OFF to command a smaller sector.</p>
+      slots are taken by the AI — switch a slot OFF to command a smaller sector, or switch
+      them all OFF for a peaceful solo sandbox to explore the interface.</p>
     <svg id="setupmap" class="smap" preserveAspectRatio="xMidYMid meet"></svg>
     <p class="smaphint" id="setuphint">Tap a glowing world to choose your start</p>
     <div id="setupslots" class="sslots"></div>

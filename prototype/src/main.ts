@@ -4262,8 +4262,9 @@ $('csolo').addEventListener('click', () => {
 
 // --- single-player setup overlay --------------------------------------------
 // Pick your homeworld on a mini-map and choose how many AI rivals join, then
-// launch a fresh local match. Seat 1 is always you; seats 2-4 toggle AI/off,
-// with at least one rival (two seats) required to start.
+// launch a fresh local match. Seat 1 is always you; seats 2-4 toggle AI/off.
+// Switch every rival OFF for a solo sandbox — the core never ends a one-player
+// match, so it's a peaceful space to read descriptions and learn the interface.
 const setupEl = $('setup');
 const setupMapEl = $('setupmap');
 const setupSlotsEl = $('setupslots');
@@ -4326,9 +4327,16 @@ function renderSetupSlots(): void {
 function renderSetup(): void {
   renderSetupMap();
   renderSetupSlots();
-  const active = setupSlots.filter((r) => r !== 'off').length;
-  setupGoEl.disabled = active < 2;
-  setupHintEl.textContent = `Home: ${setupStart} — tap another glowing world to change`;
+  // Seat 1 (you) is always in, so the match can always launch — including with ZERO
+  // rivals: a calm solo sandbox to read descriptions, learn the UI and test in peace
+  // (the core never ends a one-player match — victory needs ≥2 active sides).
+  const rivals = setupSlots.slice(1).filter((r) => r === 'ai').length;
+  setupGoEl.disabled = false;
+  setupGoEl.textContent = rivals === 0 ? 'LAUNCH SOLO' : 'LAUNCH';
+  setupHintEl.textContent =
+    rivals === 0
+      ? `Home: ${setupStart} — solo sandbox, no rivals · tap a glowing world to change`
+      : `Home: ${setupStart} — tap another glowing world to change`;
 }
 
 function openSetup(): void {
@@ -4372,6 +4380,7 @@ function startMatch(setup: SetupConfig): void {
   splitState = null;
   killStats = { destroyed: 0, lost: 0 };
   myBattleLocs.clear();
+  logLines.length = 0; // fresh log — drop notes from the menu-background match
   for (const k of Object.keys(buildQueues)) delete buildQueues[k];
   defaultView(); // phone: zoom onto home; desktop: whole-map fit
   setupEl.style.display = 'none';
