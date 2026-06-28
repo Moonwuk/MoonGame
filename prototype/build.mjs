@@ -65,9 +65,11 @@ body::before{content:"";position:fixed;inset:0;z-index:1;pointer-events:none;mix
 #purse{display:flex;align-items:center;flex:1 1 auto;min-width:0;overflow-x:auto;height:100%;margin:0 4px;
   border-left:1px solid var(--line);border-right:1px solid var(--line);scrollbar-width:none;}
 #purse::-webkit-scrollbar{display:none;}
-.res{display:flex;align-items:center;gap:5px;padding:0 9px;height:100%;flex:0 0 auto;}
-.res i{font-style:normal;font-size:14px;line-height:1;color:var(--cyan);font-variant-emoji:text;
-  text-shadow:0 0 6px rgba(53,214,230,.4);}
+/* uniform chips so the currencies line up evenly: fixed-width centred icon box +
+   tabular value, equal min-width per chip */
+.res{display:flex;align-items:center;gap:6px;padding:0 10px;height:100%;flex:0 0 auto;min-width:58px;}
+.res i{display:inline-block;width:16px;text-align:center;font-style:normal;font-size:14px;line-height:1;
+  color:var(--cyan);font-variant-emoji:text;text-shadow:0 0 6px rgba(53,214,230,.4);}
 .res b{color:#eafffb;font-weight:700;font-size:13px;font-variant-numeric:tabular-nums;}
 /* donate/premium currency (Суверены): pinned to the far-right corner, gold accent */
 .res.donate{margin-left:auto;border-left:1px solid var(--line);}
@@ -291,7 +293,7 @@ body.sheet-open #log{display:none;}
     border:1px solid var(--line-hi);border-radius:4px;background:var(--glass);z-index:36;
     box-shadow:0 0 16px rgba(0,0,0,.5);}
   body.sheet-open #burger{display:none;}
-  .res{padding:0 7px;gap:4px;}
+  .res{padding:0 6px;gap:4px;min-width:52px;}
   #devline{top:44px;}
 
   /* left rail + event log + comms collapse into a slide-in drawer */
