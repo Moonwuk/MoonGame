@@ -64,6 +64,15 @@ jobs:
           npx capacitor-assets generate --android
           node patch-android.mjs
 
+      # Sign with a COMMITTED debug keystore (standard android/android credentials —
+      # not a secret) so every build has the SAME signature. Without this, the Gradle
+      # debug keystore is regenerated per run, so installing an update over a previously
+      # sideloaded build fails with "conflicts with another package" (signature mismatch).
+      - name: Pin the debug signing key (stable signature across builds)
+        run: |
+          mkdir -p ~/.android
+          cp mobile/debug.keystore ~/.android/debug.keystore
+
       - name: Assemble debug APK
         working-directory: mobile/android
         run: ./gradlew assembleDebug --no-daemon --stacktrace

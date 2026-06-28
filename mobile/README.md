@@ -24,8 +24,20 @@ with the latest build, at a stable link:
 On the phone: open the direct link → download → open the APK → allow "install from
 unknown sources" if prompted → launch. **Single-player runs fully offline** (portrait).
 
-It is a **debug** APK (signed with Android's debug key) — fine for testing, not for
-the Play Store. A release/AAB needs a signing keystore (a later step).
+It is a **debug** APK, signed with a **committed debug keystore** (`mobile/debug.keystore`,
+standard `android`/`android` credentials — not a secret) so every build shares one
+signature and updates install over the previous build. A Play-Store release/AAB still
+needs a real (secret) keystore — a later step.
+
+### If the install fails
+
+- **"App not installed — it conflicts with another package"** — you have an older build
+  installed that was signed with a *different* key (older builds regenerated the debug
+  key each time). **Uninstall Void Dominion once**, then install this build; from now on
+  the signature is stable, so future updates install straight over the top.
+- **Google Play Protect "blocked for your protection"** — expected for a sideloaded
+  debug APK from an unverified developer. Tap **Подробнее → Установить всё равно**
+  (More details → Install anyway). It's the same code you build here.
 
 ## Get the APK as a CI artifact (any branch build)
 
