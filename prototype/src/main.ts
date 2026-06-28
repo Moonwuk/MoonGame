@@ -436,14 +436,23 @@ for (const n of MAP) {
   MINY = Math.min(MINY, n.y);
   MAXY = Math.max(MAXY, n.y);
 }
-// Base fit: map-space → screen, fitting the cluster inside the HUD insets.
+// The play area: the screen rectangle the map lives in, inside the HUD insets. Mobile
+// no longer reserves the left rail (it folds into the drawer) → the map claims that
+// space; desktop keeps the rail + label gutter and the right panel column.
+function insets(): { left: number; right: number; top: number; bottom: number } {
+  return {
+    left: MOBILE ? 14 : RAIL + 80,
+    right: VW - (MOBILE ? 24 : 372),
+    top: TOP + (MOBILE ? 54 : 80),
+    bottom: VH - (MOBILE ? 96 : 150),
+  };
+}
+// Leave a little breathing room around the whole-map (scale-1) view so it reads as a
+// framed board, not edge-to-edge. This is the floor of the zoom range (MIN_SCALE = 1).
+const FIT_MARGIN = 0.94;
+// Base fit: map-space → screen, fitting the whole map inside the play area at scale 1.
 function projBase(p: { x: number; y: number }): { x: number; y: number } {
-  // Mobile no longer reserves the left rail (it folds into the drawer) → the map
-  // claims that space; desktop keeps the rail + label gutter.
-  const left = MOBILE ? 14 : RAIL + 80;
-  const right = VW - (MOBILE ? 24 : 372);
-  const top = TOP + (MOBILE ? 54 : 80);
-  const bottom = VH - (MOBILE ? 96 : 150);
+  const { left, right, top, bottom } = insets();
   const aw = Math.max(60, right - left);
   const ah = Math.max(60, bottom - top);
   const mapW = MAXX - MINX || 1;
@@ -452,7 +461,7 @@ function projBase(p: { x: number; y: number }): { x: number; y: number } {
   // space stays a circle on screen — distances aren't stretched, and the radar
   // ring reads as a true circle. Fit the whole map inside the play area and centre
   // it (the spare axis gets symmetric margins / letterbox).
-  const scale = Math.min(aw / mapW, ah / mapH);
+  const scale = Math.min(aw / mapW, ah / mapH) * FIT_MARGIN;
   const offX = left + (aw - mapW * scale) / 2;
   const offY = top + (ah - mapH * scale) / 2;
   return { x: offX + (p.x - MINX) * scale, y: offY + (p.y - MINY) * scale };
@@ -461,6 +470,11 @@ function projBase(p: { x: number; y: number }): { x: number; y: number } {
 // Camera: pan offset + zoom over the base fit. Node/label sizes stay constant
 // in screen pixels; only positions transform (a node-graph style zoom).
 const cam = { scale: 1, x: 0, y: 0 };
+// Zoom range tied to content: 1 = the whole-map fit (you can't zoom out past it into
+// empty void); 4 = close enough to inspect one province + its neighbours. The default
+// (and double-tap reset) is the whole-map view.
+const MIN_SCALE = 1;
+const MAX_SCALE = 4;
 const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
 // node sector type by id — drives asteroid-junction rendering + capture-by-arrival
 const SECTOR_OF: Record<string, string> = Object.fromEntries(MAP.map((n) => [n.id, n.sector]));
@@ -472,30 +486,38 @@ function visible(c: { x: number; y: number }, pad = 80): boolean {
   return c.x >= -pad && c.x <= VW + pad && c.y >= -pad && c.y <= VH + pad;
 }
 function zoomAt(fx: number, fy: number, factor: number) {
+  // Anchor the zoom on the focal point (cursor / pinch centre): the map-space point under
+  // it stays put, so zoom grows toward where you're looking instead of drifting.
   const bx = (fx - cam.x) / cam.scale;
   const by = (fy - cam.y) / cam.scale;
-  cam.scale = clamp(cam.scale * factor, 0.6, 5);
+  cam.scale = clamp(cam.scale * factor, MIN_SCALE, MAX_SCALE);
   cam.x = fx - bx * cam.scale;
   cam.y = fy - by * cam.scale;
   clampCam();
 }
 
-/** Keep the camera on the map: a map that fits the screen can't be flung off (only nudged
- *  within a small overscroll margin); a zoomed-in map pans across its own content without
- *  exposing empty space past its edges. Stops the "map flies away on a fast swipe" glitch. */
+/** Keep the map filling the play area: it can never be panned/zoomed to expose empty
+ *  space past its own edges, and at the whole-map (min-zoom) floor it sits centred and
+ *  still. A zoomed-in map pans freely across its content. Because the clamp hugs the
+ *  content exactly (no slack margin), it doesn't fight the zoom anchor. */
 function clampCam(): void {
-  const M = 120; // gentle overscroll breathing room beyond the content edges
+  const { left, right, top, bottom } = insets();
   const tl = projBase({ x: MINX, y: MINY });
   const br = projBase({ x: MAXX, y: MAXY });
   const pL = tl.x * cam.scale;
   const pR = br.x * cam.scale;
   const pT = tl.y * cam.scale;
   const pB = br.y * cam.scale;
-  // Two bounds per axis: map's left edge at screen 0 (cam = -pL) and right edge at screen
-  // VW (cam = VW - pR). Whichever is smaller is the low clamp. Works for a map wider OR
-  // narrower than the viewport; ±M lets you overscroll a touch without losing the map.
-  cam.x = clamp(cam.x, Math.min(-pL, VW - pR) - M, Math.max(-pL, VW - pR) + M);
-  cam.y = clamp(cam.y, Math.min(-pT, VH - pB) - M, Math.max(-pT, VH - pB) + M);
+  // Per axis: if the map is at least as big as the play area, pan within it so neither
+  // edge comes inside (no void); otherwise it fits, so park it centred in the play area.
+  cam.x =
+    pR - pL >= right - left
+      ? clamp(cam.x, right - pR, left - pL)
+      : (left + right - pL - pR) / 2;
+  cam.y =
+    pB - pT >= bottom - top
+      ? clamp(cam.y, bottom - pB, top - pT)
+      : (top + bottom - pT - pB) / 2;
 }
 
 // --- helpers -----------------------------------------------------------------
