@@ -72,4 +72,20 @@ export default tseslint.config(
       ],
     },
   },
+  {
+    // CI / repo-automation scripts run on Node — give them the Node globals they use
+    // (the determinism rules above never apply here; this is build glue, not the core).
+    files: ['.github/**/*.{mjs,js}'],
+    languageOptions: {
+      globals: {
+        process: 'readonly',
+        console: 'readonly',
+        Buffer: 'readonly',
+        URL: 'readonly',
+        fetch: 'readonly',
+        setTimeout: 'readonly',
+        clearTimeout: 'readonly',
+      },
+    },
+  },
 );
