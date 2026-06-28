@@ -1,0 +1,67 @@
+import { describe, it, expect } from 'vitest';
+import {
+  damageBuckets,
+  groundTick,
+  resolveGround,
+  makeSide,
+  GROUND_ROSTER,
+  type GroundRoster,
+} from './groundcombat';
+
+// Minimal rosters that inject the exact damage numbers from the design examples.
+const empty = { infantry: { hp: 24, atk: {}, def: {} }, tank: { hp: 46, atk: {}, def: {} } };
+
+describe('ground combat — matrix damage weighted by target composition', () => {
+  it('routes a unit’s atk(inf 1, tank 2) into a 2-inf+2-tank target (50/50)', () => {
+    // The exact "0.25 to each infantry, 0.5 to each tank" example.
+    const roster: GroundRoster = { ...empty, tank: { hp: 46, atk: { infantry: 1, tank: 2 }, def: {} } };
+    const attacker = makeSide(roster, { tank: 1 });
+    const defender = makeSide(roster, { infantry: 2, tank: 2 });
+    const b = damageBuckets(roster, attacker, defender, 'atk');
+    expect(b.infantry).toBeCloseTo(0.5); // 1 × 0.5 share
+    expect(b.tank).toBeCloseTo(1.0); // 2 × 0.5 share
+    expect(b.infantry! / 2).toBeCloseTo(0.25); // per infantry unit
+    expect(b.tank! / 2).toBeCloseTo(0.5); // per tank unit
+  });
+
+  it('weights anti-inf 10 / anti-armour 6 by a 3-inf+3-tank target → 5 + 3 = 8 total', () => {
+    const roster: GroundRoster = { ...empty, tank: { hp: 46, atk: { infantry: 10, tank: 6 }, def: {} } };
+    const attacker = makeSide(roster, { tank: 1 }); // one striker carrying the army-total numbers
+    const defender = makeSide(roster, { infantry: 3, tank: 3 });
+    const b = damageBuckets(roster, attacker, defender, 'atk');
+    expect(b.infantry).toBeCloseTo(5); // 10 × 0.5
+    expect(b.tank).toBeCloseTo(3); // 6 × 0.5
+    expect((b.infantry ?? 0) + (b.tank ?? 0)).toBeCloseTo(8);
+  });
+
+  it('a pure-infantry target takes ALL the anti-infantry damage, none routed to armour', () => {
+    const attacker = makeSide(GROUND_ROSTER, { tank: 6 }); // 6 tanks
+    const defender = makeSide(GROUND_ROSTER, { infantry: 6 }); // 100% infantry
+    const b = damageBuckets(GROUND_ROSTER, attacker, defender, 'atk');
+    expect(b.infantry).toBeCloseTo(6 * GROUND_ROSTER.tank!.atk.infantry!); // 6 × 14 × 1.0
+    expect(b.tank).toBeUndefined(); // no tanks in the target → no anti-armour bucket
+  });
+
+  it('both sides trade each tick — the defender returns its def damage', () => {
+    const attacker = makeSide(GROUND_ROSTER, { tank: 2 });
+    const defender = makeSide(GROUND_ROSTER, { tank: 2 });
+    const t = groundTick(GROUND_ROSTER, attacker, defender);
+    expect(t.toDefender.tank).toBeCloseTo(2 * GROUND_ROSTER.tank!.atk.tank!); // attacker atk
+    expect(t.toAttacker.tank).toBeCloseTo(2 * GROUND_ROSTER.tank!.def.tank!); // defender def (return fire)
+  });
+
+  it('resolves the rock-paper-scissors triangle: tank > infantry > bomber > tank', () => {
+    const six = (u: 'infantry' | 'tank' | 'bomber') => makeSide(GROUND_ROSTER, { [u]: 6 });
+    expect(resolveGround(GROUND_ROSTER, six('tank'), six('infantry')).winner).toBe('attacker'); // tanks beat infantry
+    expect(resolveGround(GROUND_ROSTER, six('bomber'), six('tank')).winner).toBe('attacker'); // bombers beat tanks
+    expect(resolveGround(GROUND_ROSTER, six('infantry'), six('bomber')).winner).toBe('attacker'); // infantry beat bombers
+  });
+
+  it('kills whole units as the HP pool drops, and ends with a winner', () => {
+    const out = resolveGround(GROUND_ROSTER, makeSide(GROUND_ROSTER, { tank: 6 }), makeSide(GROUND_ROSTER, { infantry: 6 }));
+    expect(out.winner).toBe('attacker');
+    expect(out.defender).toHaveLength(0); // infantry wiped
+    expect(out.attacker[0]!.count).toBeGreaterThan(0); // some tanks survive
+    expect(out.rounds).toBeGreaterThan(0);
+  });
+});
