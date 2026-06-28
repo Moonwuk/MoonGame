@@ -277,9 +277,10 @@ body.sheet-open #cmdbar{bottom:calc(34vh + 12px);}
 #devline .dstat{flex:0 0 auto;}
 #devline .dstat.win{color:var(--up);font-weight:700;}
 
-/* slim icon rail, always on the left edge (just the wired tools); each icon opens a
-   window. Short — wraps its icons, so the map below it stays tappable. */
-#rail{position:fixed;left:8px;top:70px;width:42px;z-index:25;display:flex;flex-direction:column;gap:4px;
+/* slim icon rail in the bottom-left corner (just the wired tools); each icon opens a
+   window. column-reverse + bottom anchor → it grows UPWARD as more tools get wired,
+   with the primary icon nearest the thumb. Short, so the map around it stays tappable. */
+#rail{position:fixed;left:8px;bottom:14px;top:auto;width:42px;z-index:26;display:flex;flex-direction:column-reverse;gap:4px;
   padding:4px;background:rgba(3,12,16,.72);border:1px solid var(--line-hi);border-radius:9px;
   box-shadow:0 0 16px rgba(0,0,0,.45);-webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px);}
 #rail button{position:relative;width:34px;height:34px;background:transparent;border:0;cursor:pointer;
@@ -424,6 +425,8 @@ button.b:disabled{opacity:.32;cursor:not-allowed;color:var(--dim);border-color:v
 
   #side{right:0;left:0;bottom:0;top:auto;width:auto;max-height:50vh;z-index:28;clip-path:none;
     border-left:0;border-right:0;border-top:1px solid var(--cyan);}
+  /* the bottom-sheet covers the full width — lift the corner rail above it so it stays reachable */
+  body.sheet-open #rail{bottom:calc(50vh + 10px);}
   /* phones have no hover and no room — drop the dossier pane, content fills width */
   .pdesc{display:none;}
   .pscroll{padding:13px 14px;}
