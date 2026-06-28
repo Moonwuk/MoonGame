@@ -44,6 +44,7 @@ import {
   buildingMaxLevel,
   estimateTravelHours,
   fleetBaseSpeed,
+  getStance,
   hashState,
   planRoute,
 } from '../../packages/shared-core/src/index';
@@ -54,6 +55,7 @@ import type {
   Battle,
   Planet,
   Action,
+  DiplomaticStance,
   DomainEvent,
 } from '../../packages/shared-core/src/index';
 
@@ -248,6 +250,18 @@ let pendingMerges: Array<{ mover: string; into: string }> = [];
 let additive = false; // Ctrl/⌘ held on the current tap → add to the fleet selection
 // Split-fleet dialog: which fleet, and how many of each ship type peel off.
 let splitState: { fleetId: string; take: Record<string, number> } | null = null;
+
+// --- session diplomacy & comms menu state ------------------------------------
+// Messages are a prototype-local session log — they don't touch the deterministic
+// core (they don't affect the sim, so they stay out of GameState). Stances DO live
+// in the core (state.diplomacy); the menu drives them through diplomacy.declare.
+type SessionMsg = { at: number; from: string; to: string; text: string; sys: boolean };
+let sessionMessages: SessionMsg[] = [];
+let diploOpen = false;
+let diploTab: 'diplo' | 'msgs' = 'diplo';
+let diploSort: 'name' | 'worlds' | 'stance' = 'stance';
+let diploExpanded: string | null = null; // participant row showing its action buttons
+let msgTo = 'all'; // comms composer recipient (a seat id, or 'all')
 
 // --- multiplayer (net mode) --------------------------------------------------
 // When connected, the server is authoritative: snapshots replace `s`, orders are
@@ -1395,7 +1409,24 @@ function handleEvents(events: DomainEvent[]) {
         break;
       case 'planet.captured':
         note(`🚩 ${NAME[p.owner as string]} captured ${p.planetId}`);
+        if (diploOpen && diploTab === 'diplo') renderDiplo(); // province counts shifted
         break;
+      case 'diplomacy.changed': {
+        const a = p.a as string;
+        const b = p.b as string;
+        const st = p.stance as DiplomaticStance;
+        const na = NAME[a] ?? a;
+        const nb = NAME[b] ?? b;
+        pushMsg(
+          b,
+          st === 'war' ? `${na} объявил войну ${nb}` : `${na} и ${nb}: ${STANCE_RU[st].toLowerCase()}`,
+          true,
+          a,
+        );
+        if (a === ME || b === ME) note(`${na} → ${nb}: ${STANCE_RU[st]}`);
+        if (diploOpen && diploTab === 'diplo') renderDiplo();
+        break;
+      }
       case 'building.constructed':
         note(`🏗️ ${p.building} built at ${p.planetId}`);
         if (p.building === 'starfort') installFortressAA(p.planetId as string);
@@ -3235,6 +3266,216 @@ function openPlayerCard(): void {
   el.classList.add('show');
 }
 
+// --- session diplomacy & comms menu ------------------------------------------
+// Opened from the left rail (Diplomacy / Dispatches). Two tabs: the participant
+// roster (icon = human vs AI, sortable by name / provinces / stance, with stance
+// actions) and the session message log. Stances run through the core's
+// `diplomacy.declare`; messages are a client-side session log (SessionMsg).
+const STANCE_RU: Record<DiplomaticStance, string> = {
+  war: 'Война',
+  peace: 'Мир',
+  pact: 'Пакт',
+  alliance: 'Союз',
+};
+const STANCE_COLOR: Record<DiplomaticStance, string> = {
+  war: '#ff5a4d',
+  peace: '#9fb8c0',
+  pact: '#35d6e6',
+  alliance: '#5ff0a8',
+};
+// Friendliness rank: war (hostile) < peace < pact < alliance (closest). Warming the
+// relation up a rank needs the other side's consent; cooling it down is unilateral.
+const STANCE_RANK: Record<DiplomaticStance, number> = { war: 0, peace: 1, pact: 2, alliance: 3 };
+const STANCES: DiplomaticStance[] = ['war', 'peace', 'pact', 'alliance'];
+
+function worldsOf(id: string): number {
+  let n = 0;
+  for (const p of Object.values(s.planets)) if (p.owner === id) n++;
+  return n;
+}
+/** A seat the AI drives. Everyone else (ME, or another human in net play) is human —
+ *  this drives the roster's human/AI icon and whether a proposal is auto-decided. */
+function isAiSeat(id: string): boolean {
+  return AI_PLAYERS.has(id);
+}
+/** Seats taking part in the match, in the fixed seat order. */
+function diploSeats(): string[] {
+  return SEAT_META.map((m) => m.id).filter((id) => !!s.players[id]);
+}
+/** `Day N · HH:MM` stamp for a sim time (mirrors the status strip). */
+function fmtStamp(at: number): string {
+  const d = floor(at / DAY) + 1;
+  const h = floor((at % DAY) / HOUR);
+  const m = floor((at % HOUR) / 60000);
+  return `D${d} ${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
+/** Deterministic AI verdict on a proposal to warm relations, by relative strength
+ *  (provinces). A side that's winning won't de-escalate; a weaker/even one takes it. */
+function aiAcceptsStance(target: string, to: DiplomaticStance): boolean {
+  const mine = worldsOf(ME);
+  const theirs = worldsOf(target);
+  switch (to) {
+    case 'war':
+      return true; // war never needs consent
+    case 'peace':
+      return mine >= theirs; // sue for peace works unless they're ahead
+    case 'pact':
+      return mine * 4 >= theirs * 3; // mine ≥ 0.75× theirs — a respectable partner
+    case 'alliance':
+      return mine >= theirs; // ally only an equal-or-stronger power
+  }
+}
+
+/** Append a line to the session log (bounded). Patches the feed if it's on screen. */
+function pushMsg(to: string, text: string, sys: boolean, from = ME): void {
+  sessionMessages.push({ at: s.time, from, to, text, sys });
+  if (sessionMessages.length > 200) sessionMessages.shift();
+  if (diploOpen && diploTab === 'msgs') renderDiploFeed();
+}
+
+/** Player-driven stance change toward `target`. War (and any cooling-off) is
+ *  unilateral; warming the relation up a rank asks the target — an AI decides by
+ *  strength, a (net) human can't negotiate here yet. */
+function proposeStance(target: string, to: DiplomaticStance): void {
+  if (target === ME || !s.players[target]) return;
+  const from = getStance(s, ME, target);
+  if (from === to) return;
+  if (STANCE_RANK[to] > STANCE_RANK[from]) {
+    if (!isAiSeat(target)) {
+      note('переговоры с другими игроками — позже (нужен сервер)');
+      return;
+    }
+    if (!aiAcceptsStance(target, to)) {
+      pushMsg(target, `${NAME[target] ?? target} отклонил предложение: ${STANCE_RU[to]}`, true, target);
+      note(`✖ ${NAME[target] ?? target} отклонил: ${STANCE_RU[to]}`);
+      return;
+    }
+  }
+  // diplomacy.declare sets the stance and emits diplomacy.changed → the log line + note
+  // are appended uniformly in handleEvents (the same path the AI's declarations take).
+  playerOrder(declareWar(ME, target, to));
+}
+
+function openDiplo(tab: 'diplo' | 'msgs'): void {
+  diploOpen = true;
+  diploTab = tab;
+  renderDiplo();
+  document.getElementById('diplo')?.classList.add('show');
+  document.body.classList.remove('drawer-open'); // tuck the rail drawer away behind it
+}
+function closeDiplo(): void {
+  diploOpen = false;
+  document.getElementById('diplo')?.classList.remove('show');
+}
+
+/** Roster icon + tag for a seat: a human commander vs a synthetic (AI) one. */
+function seatBadge(id: string): { icon: string; tag: string } {
+  if (id === ME) return { icon: '☻', tag: 'ВЫ' };
+  if (isAiSeat(id)) return { icon: '⌬', tag: 'ИИ' };
+  return { icon: '☻', tag: 'ИГРОК' };
+}
+
+function diploRowsHtml(): string {
+  const others = diploSeats().filter((id) => id !== ME);
+  const byName = (a: string, b: string) => (NAME[a] ?? a).localeCompare(NAME[b] ?? b);
+  if (diploSort === 'name') others.sort(byName);
+  else if (diploSort === 'worlds') others.sort((a, b) => worldsOf(b) - worldsOf(a) || byName(a, b));
+  else
+    others.sort(
+      (a, b) => STANCE_RANK[getStance(s, ME, a)] - STANCE_RANK[getStance(s, ME, b)] || byName(a, b),
+    );
+  return [ME, ...others]
+    .map((id) => {
+      const bdg = seatBadge(id);
+      const col = ownerColor(id);
+      const w = worldsOf(id);
+      const isMe = id === ME;
+      const st = isMe ? null : getStance(s, ME, id);
+      const stanceTag = isMe
+        ? `<span class="dp-tag">ВЫ</span>`
+        : `<span class="dp-stance" style="color:${STANCE_COLOR[st!]};border-color:${STANCE_COLOR[st!]}">${STANCE_RU[st!]}</span>`;
+      const expanded = diploExpanded === id && !isMe;
+      const actions = expanded
+        ? `<div class="dp-actions">` +
+          STANCES.map(
+            (t) =>
+              `<button class="dp-act${t === st ? ' on' : ''}" data-stance="${t}" data-seat="${id}" style="--sc:${STANCE_COLOR[t]}">${STANCE_RU[t]}</button>`,
+          ).join('') +
+          `<button class="dp-msg" data-msgseat="${id}">✉</button></div>`
+        : '';
+      return (
+        `<div class="dp-row${expanded ? ' open' : ''}${isMe ? ' me' : ''}"${isMe ? '' : ` data-seat="${id}"`}>` +
+        `<span class="dp-ic" style="color:${col}">${bdg.icon}</span>` +
+        `<span class="dp-name">${esc(NAME[id] ?? id)} <em>${bdg.tag}</em></span>` +
+        `<span class="dp-w" title="провинций">⬣ ${w}</span>` +
+        stanceTag +
+        `</div>` +
+        actions
+      );
+    })
+    .join('');
+}
+
+function diploFeedHtml(): string {
+  if (!sessionMessages.length)
+    return `<div class="dp-empty">Сообщений пока нет.<br>Объявите войну, предложите мир — или напишите.</div>`;
+  return sessionMessages
+    .map((m) => {
+      const t = fmtStamp(m.at);
+      if (m.sys) return `<div class="dp-line sys"><span class="dp-when">${t}</span>${esc(m.text)}</div>`;
+      const who = m.from === ME ? 'Вы' : NAME[m.from] ?? m.from;
+      const to = m.to === 'all' ? 'всем' : NAME[m.to] ?? m.to;
+      return `<div class="dp-line"><span class="dp-when">${t}</span><b>${esc(who)} → ${esc(to)}:</b> ${esc(m.text)}</div>`;
+    })
+    .join('');
+}
+
+function diploComposeHtml(): string {
+  const opts = ['all', ...diploSeats().filter((id) => id !== ME)]
+    .map(
+      (id) =>
+        `<option value="${id}"${id === msgTo ? ' selected' : ''}>${id === 'all' ? 'Всем' : esc(NAME[id] ?? id)}</option>`,
+    )
+    .join('');
+  return (
+    `<div class="dp-compose"><select id="dp-to">${opts}</select>` +
+    `<input id="dp-text" maxlength="160" placeholder="Сообщение…" autocomplete="off">` +
+    `<button class="dp-send">▶</button></div>`
+  );
+}
+
+function renderDiplo(): void {
+  const el = document.getElementById('diplo');
+  if (!el) return;
+  const tabBtn = (k: 'diplo' | 'msgs', label: string) =>
+    `<button class="dp-tab${diploTab === k ? ' on' : ''}" data-tab="${k}">${label}</button>`;
+  const sortBtn = (k: typeof diploSort, label: string) =>
+    `<button class="dp-sortb${diploSort === k ? ' on' : ''}" data-sort="${k}">${label}</button>`;
+  const body =
+    diploTab === 'diplo'
+      ? `<div class="dp-sorts"><span>Сорт.:</span>${sortBtn('name', 'Имя')}${sortBtn('worlds', 'Провинции')}${sortBtn('stance', 'Отношение')}</div>` +
+        `<div class="dp-list">${diploRowsHtml()}</div>`
+      : `<div class="dp-feed" id="dp-feed">${diploFeedHtml()}</div>${diploComposeHtml()}`;
+  el.innerHTML =
+    `<div class="dpbox">` +
+    `<div class="dp-head"><b>СЕССИЯ</b>${tabBtn('diplo', 'Дипломатия')}${tabBtn('msgs', 'Сообщения')}<button class="dp-close">✕</button></div>` +
+    body +
+    `</div>`;
+  if (diploTab === 'msgs') scrollFeedToEnd();
+}
+/** Patch just the message feed (so a new line doesn't wipe a half-typed reply). */
+function renderDiploFeed(): void {
+  const feed = document.getElementById('dp-feed');
+  if (!feed) return;
+  feed.innerHTML = diploFeedHtml();
+  feed.scrollTop = feed.scrollHeight;
+}
+function scrollFeedToEnd(): void {
+  const feed = document.getElementById('dp-feed');
+  if (feed) feed.scrollTop = feed.scrollHeight;
+}
+
 /** A compact codex tile (icon + a one-line label) that opens the full info panel on
  *  tap. `label` is the build cost for buildables, or ×count for a fleet's ships. The
  *  tiles live in context — building tiles in the build menu, ship tiles in the fleet
@@ -4397,6 +4638,69 @@ if (warPromptEl) {
     const tg = e.target as HTMLElement;
     if (tg.classList.contains('wp-yes')) confirmWarPrompt();
     else if (tg.id === 'warprompt' || tg.classList.contains('wp-no')) cancelWarPrompt();
+  });
+}
+
+// Session menu: the rail's Diplomacy / Dispatches buttons open the roster / message log.
+document.getElementById('rail-diplo')?.addEventListener('click', () => openDiplo('diplo'));
+document.getElementById('rail-msgs')?.addEventListener('click', () => openDiplo('msgs'));
+function sendDiploMsg(): void {
+  const input = document.getElementById('dp-text') as HTMLInputElement | null;
+  const sel = document.getElementById('dp-to') as HTMLSelectElement | null;
+  const text = input?.value.trim();
+  if (!text) return;
+  msgTo = sel?.value ?? 'all';
+  pushMsg(msgTo, text, false); // append + patch the feed (in net play this would also broadcast)
+  if (input) {
+    input.value = '';
+    input.focus();
+  }
+}
+const diploEl = document.getElementById('diplo');
+if (diploEl) {
+  diploEl.addEventListener('click', (e) => {
+    const tg = e.target as HTMLElement;
+    if (tg.id === 'diplo' || tg.closest('.dp-close')) return closeDiplo();
+    const tab = (tg.closest('.dp-tab') as HTMLElement | null)?.dataset.tab;
+    if (tab) {
+      diploTab = tab as 'diplo' | 'msgs';
+      renderDiplo();
+      return;
+    }
+    const sort = (tg.closest('.dp-sortb') as HTMLElement | null)?.dataset.sort;
+    if (sort) {
+      diploSort = sort as typeof diploSort;
+      renderDiplo();
+      return;
+    }
+    const actBtn = tg.closest('.dp-act') as HTMLElement | null;
+    if (actBtn) {
+      proposeStance(actBtn.dataset.seat!, actBtn.dataset.stance as DiplomaticStance);
+      renderDiplo();
+      return;
+    }
+    const msgseat = (tg.closest('.dp-msg') as HTMLElement | null)?.dataset.msgseat;
+    if (msgseat) {
+      msgTo = msgseat;
+      diploTab = 'msgs';
+      renderDiplo();
+      document.getElementById('dp-text')?.focus();
+      return;
+    }
+    if (tg.closest('.dp-send')) return sendDiploMsg();
+    const row = tg.closest('.dp-row') as HTMLElement | null;
+    if (row?.dataset.seat) {
+      diploExpanded = diploExpanded === row.dataset.seat ? null : row.dataset.seat;
+      renderDiplo();
+    }
+  });
+  // Enter sends the composed message.
+  diploEl.addEventListener('keydown', (e) => {
+    const ke = e as KeyboardEvent;
+    if (ke.key === 'Enter' && (ke.target as HTMLElement).id === 'dp-text') {
+      e.preventDefault();
+      sendDiploMsg();
+    }
   });
 }
 

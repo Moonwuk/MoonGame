@@ -170,6 +170,59 @@ body.sheet-open #cmdbar{bottom:calc(34vh + 12px);}
 .wp-yes{border:1px solid #7a221c;background:rgba(255,90,77,.16);color:var(--red);}
 .wp-yes:active{background:rgba(255,90,77,.3);}
 
+/* session menu — diplomacy roster + message log (rail: Diplomacy / Dispatches) */
+#diplo{position:fixed;inset:0;z-index:49;display:none;align-items:center;justify-content:center;padding:16px;
+  background:rgba(1,5,9,.62);-webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px);}
+#diplo.show{display:flex;}
+#diplo .dpbox{display:flex;flex-direction:column;width:min(460px,96vw);max-height:88vh;background:var(--glass);
+  border:1px solid var(--cyan);border-radius:10px;overflow:hidden;
+  box-shadow:0 0 44px rgba(0,0,0,.6),inset 0 0 0 1px rgba(53,214,230,.06);}
+.dp-head{display:flex;align-items:center;gap:6px;padding:10px 12px;border-bottom:1px solid var(--line-hi);}
+.dp-head b{font-size:11px;letter-spacing:2px;color:var(--cyan-dim);margin-right:2px;}
+.dp-tab{padding:6px 11px;border-radius:6px;border:1px solid var(--line);background:transparent;color:var(--dim);
+  font:700 11px ui-monospace,monospace;letter-spacing:.5px;cursor:pointer;}
+.dp-tab.on{color:var(--cyan);border-color:var(--cyan-dim);background:rgba(53,214,230,.1);}
+.dp-close{margin-left:auto;width:28px;height:28px;border-radius:6px;border:1px solid var(--line);
+  background:transparent;color:var(--dim);cursor:pointer;font-size:12px;}
+.dp-sorts{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:9px 12px;border-bottom:1px solid var(--line);
+  font-size:10px;color:var(--cyan-dim);letter-spacing:.5px;}
+.dp-sortb{padding:4px 8px;border-radius:5px;border:1px solid var(--line);background:transparent;color:var(--dim);
+  font:600 10px ui-monospace,monospace;cursor:pointer;}
+.dp-sortb.on{color:var(--cyan);border-color:var(--cyan-dim);background:rgba(53,214,230,.1);}
+.dp-list{overflow:auto;padding:6px;display:flex;flex-direction:column;gap:4px;}
+.dp-row{display:flex;align-items:center;gap:9px;padding:9px 10px;border-radius:7px;border:1px solid var(--line);
+  background:rgba(8,28,32,.5);cursor:pointer;}
+.dp-row.me{cursor:default;border-color:var(--cyan-dim);background:rgba(53,214,230,.07);}
+.dp-row.open{border-color:var(--cyan-dim);}
+.dp-ic{font-size:18px;width:20px;text-align:center;font-variant-emoji:text;flex:0 0 auto;}
+.dp-name{flex:1;font-size:13px;color:#eafffb;font-weight:700;display:flex;align-items:baseline;gap:6px;min-width:0;}
+.dp-name em{font-style:normal;font-size:8px;letter-spacing:1.2px;color:var(--cyan-dim);
+  border:1px solid var(--line);border-radius:3px;padding:1px 4px;flex:0 0 auto;}
+.dp-w{font-size:11px;color:var(--dim);font-variant-numeric:tabular-nums;flex:0 0 auto;}
+.dp-stance{font-size:9px;letter-spacing:1px;border:1px solid;border-radius:3px;padding:2px 6px;flex:0 0 auto;font-weight:700;}
+.dp-tag{font-size:9px;letter-spacing:1px;color:var(--cyan-dim);flex:0 0 auto;}
+.dp-actions{display:flex;flex-wrap:wrap;align-items:center;gap:5px;padding:0 10px 9px 39px;}
+.dp-act{padding:6px 10px;border-radius:6px;border:1px solid var(--line);background:transparent;color:var(--dim);
+  font:700 11px ui-monospace,monospace;cursor:pointer;}
+.dp-act.on{color:var(--sc);border-color:var(--sc);background:rgba(53,214,230,.08);}
+.dp-msg{margin-left:auto;padding:6px 11px;border-radius:6px;border:1px solid var(--cyan-dim);
+  background:rgba(53,214,230,.1);color:var(--cyan);font-size:13px;cursor:pointer;}
+.dp-feed{overflow:auto;padding:10px 12px;display:flex;flex-direction:column;gap:7px;min-height:170px;}
+.dp-empty{margin:auto;text-align:center;color:var(--dim);font-size:12px;line-height:1.8;}
+.dp-line{font-size:12px;line-height:1.5;color:#cfe7e3;}
+.dp-line b{color:#eafffb;}
+.dp-line.sys{color:var(--amber);font-size:11px;}
+.dp-when{display:inline-block;min-width:60px;color:var(--cyan-dim);font-size:9px;
+  font-variant-numeric:tabular-nums;margin-right:6px;}
+.dp-compose{display:flex;gap:6px;padding:9px 10px;border-top:1px solid var(--line-hi);}
+.dp-compose select{max-width:118px;background:#06181c;color:var(--ink);border:1px solid var(--line);
+  border-radius:6px;padding:0 6px;font:600 11px ui-monospace,monospace;}
+.dp-compose input{flex:1;min-width:0;background:#06181c;color:var(--ink);border:1px solid var(--line);
+  border-radius:6px;padding:9px 10px;font:400 13px ui-monospace,monospace;}
+.dp-compose input:focus{outline:none;border-color:var(--cyan-dim);}
+.dp-send{width:42px;border-radius:6px;border:1px solid var(--cyan-dim);
+  background:rgba(53,214,230,.14);color:var(--cyan);font-size:14px;cursor:pointer;}
+
 /* status strip below the top bar: day/time + victory progress */
 #devline{position:fixed;top:46px;left:0;right:0;height:20px;z-index:24;display:flex;align-items:center;gap:14px;
   padding:0 14px;background:rgba(2,8,11,.55);color:var(--cyan-dim);font-size:11px;letter-spacing:.6px;
@@ -461,8 +514,8 @@ const html = `<!doctype html>
 <div id="scrim"></div>
 <div id="drawer">
   <nav id="rail">
-    <button title="Dispatches">≡<span class="rlabel">Dispatches</span></button>
-    <button title="Diplomacy (soon)">⬡<span class="rlabel">Diplomacy</span></button>
+    <button id="rail-msgs" title="Dispatches">≡<span class="rlabel">Dispatches</span></button>
+    <button id="rail-diplo" title="Diplomacy">⬡<span class="rlabel">Diplomacy</span></button>
     <button title="Economy">¤<span class="rlabel">Economy</span></button>
     <button title="Military">△<span class="rlabel">Military</span></button>
     <button title="Army">▤<span class="rlabel">Army</span></button>
@@ -483,6 +536,7 @@ const html = `<!doctype html>
 <div id="codex"></div>
 <div id="playercard"></div>
 <div id="warprompt"></div>
+<div id="diplo"></div>
 <div id="splitdlg"></div>
 <div id="fps"></div>
 <div id="banner"></div>
