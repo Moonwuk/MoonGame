@@ -48,7 +48,7 @@ import {
   hashState,
   planRoute,
 } from '../../packages/shared-core/src/index';
-import { MultiplayerClient } from '../../packages/client/src/index';
+import { MultiplayerClient, type MultiplayerPing } from '../../packages/client/src/index';
 import type {
   GameState,
   Fleet,
@@ -257,7 +257,16 @@ let splitState: { fleetId: string; take: Record<string, number> } | null = null;
 // in the core (state.diplomacy); the menu drives them through diplomacy.declare.
 // `to` is a conversation key: a seat id (a 1:1 DM) or COALITION (the allies' group
 // chat). `ping` (coalition only) carries a province id → a clickable map marker.
-type SessionMsg = { at: number; from: string; to: string; text: string; sys: boolean; ping?: string };
+// `pingId` (net only) is the server-assigned id, so a `ping.removed` can find its line.
+type SessionMsg = {
+  at: number;
+  from: string;
+  to: string;
+  text: string;
+  sys: boolean;
+  ping?: string;
+  pingId?: string;
+};
 const COALITION = 'coalition';
 let sessionMessages: SessionMsg[] = [];
 let diploOpen = false;
@@ -4482,6 +4491,28 @@ function connect(): void {
       },
       onRejection: (_id, code) =>
         note('✖ ' + code.replace(/^E_/, '').toLowerCase().replace(/_/g, ' ')),
+      // Server-relayed ally pings (own + allies, hidden from enemies): merge them into
+      // the coalition channel so they render as map markers + chat lines, same as solo.
+      onPingAdded: (ping: MultiplayerPing) => {
+        const node = ping.target.node;
+        if (!node) return; // prototype markers are province-anchored
+        if (sessionMessages.some((m) => m.pingId === ping.id)) return; // dedup the echo
+        sessionMessages.push({
+          at: ping.createdAt,
+          from: ping.owner,
+          to: COALITION,
+          text: ping.label ?? `метка ${node}`,
+          sys: false,
+          ping: node,
+          pingId: ping.id,
+        });
+        if (diploOpen && diploTab === 'msgs') renderDiploFeed();
+      },
+      onPingRemoved: (pingId: string) => {
+        sessionMessages = sessionMessages.filter((m) => m.pingId !== pingId);
+        closePingPop();
+        if (diploOpen && diploTab === 'msgs') renderDiploFeed();
+      },
       onError: (code) => {
         if (sock !== netSock) return; // ignore errors from a superseded socket
         if (!admitted && code === 'E_SLOT_TAKEN') {
@@ -4791,7 +4822,13 @@ function pingSelected(): void {
   }
   const input = document.getElementById('dp-text') as HTMLInputElement | null;
   const desc = (input?.value.trim() ?? '').slice(0, 80);
-  pushMsg(COALITION, desc || `метка ${selPlanet}`, false, ME, selPlanet);
+  if (NET && netClient) {
+    // The server is authoritative for pings: it stamps the marker and relays a
+    // `ping.added` back to us + allies — that echo is what adds it (see onPingAdded).
+    netClient.placePing({ kind: 'mark', target: { node: selPlanet }, label: desc });
+  } else {
+    pushMsg(COALITION, desc || `метка ${selPlanet}`, false, ME, selPlanet);
+  }
   if (input) {
     input.value = '';
     input.focus();
@@ -4806,6 +4843,12 @@ function activePings(): SessionMsg[] {
 }
 /** Drop the marker (and its chat lines) for one of YOUR pings. */
 function removePing(loc: string): void {
+  const mine = activePings().find((p) => p.ping === loc && p.from === ME);
+  if (NET && netClient && mine?.pingId) {
+    netClient.clearPing(mine.pingId); // server echoes ping.removed → drops it for everyone
+    closePingPop();
+    return;
+  }
   sessionMessages = sessionMessages.filter((m) => !(m.to === COALITION && m.ping === loc && m.from === ME));
   closePingPop();
   if (diploOpen && diploTab === 'msgs') renderDiploFeed();
