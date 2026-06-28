@@ -123,7 +123,8 @@ if (thFile) {
     }
     if (o.DetectorName === undefined && o.SourceMetadata === undefined) continue;
     const isV = o.Verified === true;
-    isV ? verified++ : unverified++;
+    if (isV) verified++;
+    else unverified++;
     const level = isV ? 'error' : 'note';
     toolOf('TruffleHog')[level]++;
     totals[level]++;
@@ -244,7 +245,7 @@ if (findings.length) {
   for (const f of findings.slice(0, CAP)) {
     const where = f.path ? `\`${f.path}${f.line ? ':' + f.line : ''}\`` : '—';
     L.push(
-      `| ${ICON[f.level]} | ${f.tool} | \`${f.rule}\` | ${where} | ${f.msg.replace(/\|/g, '\\|')} |`,
+      `| ${ICON[f.level]} | ${f.tool} | \`${f.rule}\` | ${where} | ${f.msg.replace(/\\/g, '\\\\').replace(/\|/g, '\\|')} |`,
     );
   }
   if (findings.length > CAP)
