@@ -976,6 +976,9 @@ export const bombardFleet = (playerId: string, fleetId: string, on: boolean) =>
  *  clear (targetId null) to auto-target the nearest hostile in range. */
 export const barrageFleet = (playerId: string, fleetId: string, targetId: string | null) =>
   act(playerId, 'fleet.barrage', { fleetId, targetId });
+/** Set an artillery fleet's rules of engagement (passive/return/standard/aggressive). */
+export const barrageModeFleet = (playerId: string, fleetId: string, mode: string) =>
+  act(playerId, 'fleet.barrageMode', { fleetId, mode });
 export const loadArmy = (playerId: string, fleetId: string, unit: string, count = 1) =>
   act(playerId, 'army.load', { fleetId, unit, count });
 export const unloadArmy = (playerId: string, fleetId: string, unit: string, count = 1) =>

@@ -24,6 +24,7 @@ import {
   assaultFleet,
   bombardFleet,
   barrageFleet,
+  barrageModeFleet,
   loadArmy,
   unloadArmy,
   mergeFleet,
@@ -2915,6 +2916,17 @@ function panelHtml(): string {
       h += nShips ? `<div class="sec">Ships — tap for specs</div>` + unitTilesHtml(f.units) : '';
       if (nTr > 0) h += `<div class="sec">Carrying troops</div>` + unitTilesHtml(f.landing ?? []);
 
+      // Artillery rules of engagement — passive / return / standard / aggressive.
+      if (f.owner === ME && fleetHasArtillery(f)) {
+        const mode = f.barrageMode ?? 'standard';
+        const mbtn = (m: string, lbl: string) =>
+          btn('barragemode', m, (mode === m ? '● ' : '') + lbl, mode !== m);
+        h += `<div class="sec">Артиллерия — режим огня</div><div class="row">`;
+        h += mbtn('passive', 'Пассив') + mbtn('return', 'Ответ') + mbtn('standard', 'Станд') + mbtn('aggressive', 'Агрес');
+        h += `</div>`;
+        h += `<div class="hint">Пассив — не стреляет. Ответ — только после урона по флоту. Станд — по тем, с кем война. Агрес — по любому, кроме пакта/союза.</div>`;
+      }
+
       // The player's projection hero rides here → name it and flag its fleet aura.
       if (f.units.some((u) => u.count > 0 && data.units[u.unit]?.traits.includes('hero'))) {
         const heroName = s.heroes?.[f.owner]?.name ?? s.players[f.owner]?.name ?? f.owner;
@@ -3986,6 +3998,8 @@ side.addEventListener('click', (ev) => {
     playerOrder(orbitFleet(ME, selFleet!, arg as 'near' | 'far'));
   } else if (act === 'bombard') {
     playerOrder(bombardFleet(ME, selFleet!, arg === 'on'));
+  } else if (act === 'barragemode') {
+    playerOrder(barrageModeFleet(ME, selFleet!, arg));
   } else if (act === 'assault') {
     playerOrder(assaultFleet(ME, selFleet!));
   } else if (act === 'load') {

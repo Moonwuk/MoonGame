@@ -1,5 +1,13 @@
 import type { GameModule, HandlerContext } from '../kernel/module';
-import type { Battle, CombatantRef, Fleet, GameState, PlanetId, UnitStack } from '../state/gameState';
+import type {
+  BarrageMode,
+  Battle,
+  CombatantRef,
+  Fleet,
+  GameState,
+  PlanetId,
+  UnitStack,
+} from '../state/gameState';
 import type { GameData, UnitDef } from '../data/schemas';
 import { timeScaleOf, type Context } from '../action/types';
 import { MS_PER_HOUR } from '../util/time';
@@ -166,6 +174,11 @@ function applyDamageToSide(
       : h.state.fleets[ref.fleetId]?.owner;
   if (owner != null) {
     source.owner = owner;
+  }
+  // Taking damage provokes a fleet's `return` ("ответный") artillery fire mode.
+  if (ref.kind === 'fleet' && dmg > 0) {
+    const f = h.state.fleets[ref.fleetId];
+    if (f) f.barrageProvoked = true;
   }
   setSideUnits(h.state, ref, applyDamage(h, units, dmg, data, source));
 }
@@ -735,18 +748,32 @@ function artilleryRange(fleet: Fleet, data: GameData): number {
   return r;
 }
 
+/** Whether a `mode` artillery shooter owned by `owner` may fire on `target`:
+ *  - `standard` / `return`: only an enemy at WAR (the base hostility rule).
+ *  - `aggressive`: any other-owner fleet that is NOT a pact/alliance partner
+ *    (war OR peace) — it opens fire on un-allied neighbours. */
+function targetableBy(h: HandlerContext, owner: string, target: Fleet, mode: BarrageMode): boolean {
+  if (owner === target.owner) return false;
+  if (mode === 'aggressive') {
+    const stance = getStance(h.state, owner, target.owner);
+    return stance !== 'pact' && stance !== 'alliance';
+  }
+  return isHostile(h, owner, target.owner); // war only
+}
+
 /** The fleet an artillery shooter fires on this span: its player-chosen
- *  `barrageTarget` if still hostile, alive and in range, else the NEAREST such
- *  hostile fleet (ties broken by lowest id). null = nothing in range. A
+ *  `barrageTarget` if still targetable (per `mode`), alive and in range, else the
+ *  NEAREST such fleet (ties broken by lowest id). null = nothing in range. A
  *  now-invalid chosen target is cleared as a side effect (falls back to auto). */
 function pickBarrageTarget(
   h: HandlerContext,
   shooter: Fleet,
   from: { x: number; y: number },
   range: number,
+  mode: BarrageMode,
 ): Fleet | null {
   const inRange = (f: Fleet): boolean => {
-    if (f.id === shooter.id || !isHostile(h, shooter.owner, f.owner)) return false;
+    if (f.id === shooter.id || !targetableBy(h, shooter.owner, f, mode)) return false;
     if (!Array.isArray(f.units) || !f.units.some((s) => s.count > 0)) return false;
     // A fleet already pinned in a melee battle is not a standoff target: shelling
     // (and deleting) a combatant from outside the fight would let a third party
@@ -788,7 +815,9 @@ function pickBarrageTarget(
  * STATIONARY fleet carrying artillery shells ONE hostile stationary fleet within
  * its firing radius. A pure standoff — no return fire and no battle is entered;
  * the only counter is to close the distance and engage it in melee. Auto-targets
- * the nearest hostile, or the player's `fleet.barrage` focus target.
+ * the nearest target, or the player's `fleet.barrage` focus target, subject to
+ * the fleet's rules of engagement (`barrageMode`: passive / return / standard /
+ * aggressive — see `BarrageMode`).
  *
  * Two invariants drive the design:
  *  - Only stationary shooters AND targets fire/are-hit (no `movement`): their
@@ -807,12 +836,16 @@ function runArtillery(h: HandlerContext, hours: number): void {
   for (const id of Object.keys(h.state.fleets).sort()) {
     const shooter = h.state.fleets[id];
     if (!shooter || shooter.battleId || shooter.movement) continue; // pinned in melee / maneuvering
+    // Rules of engagement: hold fire when passive, or when `return` and not yet hit.
+    const mode: BarrageMode = shooter.barrageMode ?? 'standard';
+    if (mode === 'passive') continue;
+    if (mode === 'return' && !shooter.barrageProvoked) continue;
     const range = artilleryRange(shooter, data);
     const power = artilleryPower(shooter, data);
     if (range <= 0 || power <= 0) continue;
     const from = fleetPosition(h.state, shooter, h.ctx.now);
     if (!from) continue;
-    const target = pickBarrageTarget(h, shooter, from, range);
+    const target = pickBarrageTarget(h, shooter, from, range, mode);
     if (!target) continue;
     shots.push({
       shooterId: id,
@@ -1030,6 +1063,30 @@ export const combatModule: GameModule = {
       }
       fleet.barrageTarget = targetId;
       h.emit('fleet.barrage', { fleetId, target: targetId, owner: action.playerId });
+    });
+
+    // Set a fleet's artillery rules of engagement (passive / return / standard /
+    // aggressive). Records intent only; `runArtillery` reads it each span.
+    api.onAction('fleet.barrageMode', (action, h) => {
+      const { fleetId, mode } = action.payload as { fleetId?: string; mode?: string };
+      if (typeof fleetId !== 'string') {
+        return h.reject('E_BAD_PAYLOAD');
+      }
+      if (mode !== 'passive' && mode !== 'return' && mode !== 'standard' && mode !== 'aggressive') {
+        return h.reject('E_BAD_PAYLOAD');
+      }
+      const fleet = ownFleet(h.state, fleetId);
+      if (!fleet) {
+        return h.reject('E_NO_FLEET');
+      }
+      if (fleet.owner !== action.playerId) {
+        return h.reject('E_FORBIDDEN');
+      }
+      if (artilleryRange(fleet, h.ctx.data) <= 0) {
+        return h.reject('E_NO_ARTILLERY');
+      }
+      fleet.barrageMode = mode;
+      h.emit('fleet.barrageMode', { fleetId, mode, owner: action.playerId });
     });
 
     api.on('combat.tick', (event, h) => {

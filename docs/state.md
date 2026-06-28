@@ -267,7 +267,14 @@ E_ORBIT_CONTESTED, E_NO_TROOPS, E_OWN_PLANET, E_NO_PLANET, E_FLEET_BUSY,…`.
   артиллерию на конкретный враждебный флот (`barrageTarget` на флоте) или сбросить
   (`null` → авто-ближайший). Устаревшая цель (погибла / вышла из радиуса) сбрасывается
   сама. Коды: `E_NO_FLEET, E_FORBIDDEN, E_NO_ARTILLERY, E_NO_TARGET, E_NOT_HOSTILE,
-E_BAD_PAYLOAD`.
+E_BAD_PAYLOAD`. Поиск флота по цели — **own-key** (`__proto__`/`constructor` не
+  проходят, защита от отравления `barrageTarget` → тихий DoS отрезка).
+- **Режимы огня артиллерии** (`barrageMode` на флоте, лестница агрессии; действие
+  **`fleet.barrageMode {fleetId, mode}`**): **`passive`** — не стреляет; **`return`**
+  — только после того, как флот получил урон (флаг `barrageProvoked`, ставится в
+  `applyDamageToSide`); **`standard`** (дефолт) — по тем, с кем **война**;
+  **`aggressive`** — по любому флоту, кроме **пакта/союза** (т.е. война ИЛИ мир —
+  открывает огонь по несоюзным соседям). Стойка читается из `state.diplomacy`.
 
 ### construction (`construction`) — здания + наземная стройка
 

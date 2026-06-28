@@ -185,7 +185,24 @@ export interface Fleet {
    *  (`fleet.barrage`). Absent/null = auto-target the nearest hostile in range.
    *  Cleared automatically once the target dies or drifts out of range. */
   barrageTarget?: FleetId | null;
+  /** Rules of engagement for this fleet's artillery standoff fire. Absent = the
+   *  `standard` default. See `BarrageMode`. */
+  barrageMode?: BarrageMode;
+  /** Set true once this fleet has taken combat damage — the trigger for the
+   *  `return` ("ответный") fire mode, which holds fire until first hit. */
+  barrageProvoked?: boolean;
 }
+
+/**
+ * Rules of engagement for a fleet's artillery standoff fire (an aggression
+ * ladder):
+ *  - `passive`    — never auto-fire (hold fire).
+ *  - `return`     — fire only after the fleet has taken damage (`barrageProvoked`).
+ *  - `standard`   — fire at the nearest enemy at WAR (the default).
+ *  - `aggressive` — fire at the nearest fleet that is NOT a pact/alliance partner
+ *                   (i.e. `war` OR `peace`), opening fire on non-allied neighbours.
+ */
+export type BarrageMode = 'passive' | 'return' | 'standard' | 'aggressive';
 
 /**
  * A combatant in a battle — the ship units of a fleet (orbital), the landing

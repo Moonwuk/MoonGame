@@ -151,6 +151,15 @@ function barrage(fleetId: string, targetId: string | null, playerId = 'p1'): Act
     issuedAt: 0,
   };
 }
+function barrageMode(fleetId: string, mode: string, playerId = 'p1'): Action {
+  return {
+    id: `s:${playerId}:5`,
+    type: 'fleet.barrageMode',
+    playerId,
+    payload: { fleetId, mode },
+    issuedAt: 0,
+  };
+}
 
 function okApply(r: ApplyResult) {
   if (!r.ok) throw new Error(`apply failed: ${r.code}`);
@@ -885,5 +894,72 @@ describe('combat — artillery standoff fire (GDD §7.2)', () => {
     expect(r.state.fleets.A2).toBeUndefined();
     expect(r.state.fleets.B2).toBeUndefined();
     expect(types(r.events).filter((t) => t === 'fleet.destroyed')).toHaveLength(2);
+  });
+});
+
+describe('combat — artillery fire modes (rules of engagement)', () => {
+  type Mode = 'passive' | 'return' | 'standard' | 'aggressive';
+  type Stance = 'war' | 'peace' | 'pact' | 'alliance';
+  function pair(mode?: Mode, stance?: Stance): GameState {
+    const st = baseState(
+      [fleet('ART', 'p1', 'PA', [['siege', 1]]), fleet('E', 'p2', 'PB', [['fighter', 2]])],
+      [planet('PA', null, 0, 0), planet('PB', null, 100, 0)],
+    );
+    if (mode) st.fleets.ART!.barrageMode = mode;
+    if (stance) setStance(st, 'p1', 'p2', stance);
+    return st;
+  }
+  const fired = (st: GameState, hours = 1): boolean => {
+    const r = okAdvance(createKernel([combatModule]).advanceTo(st, ctx(hours * HOUR)));
+    return types(r.events).includes('artillery.fired');
+  };
+
+  it('passive holds fire even with a hostile in range', () => {
+    expect(fired(pair('passive'))).toBe(false);
+  });
+
+  it('standard (default) fires at a WAR target but not a PEACE one', () => {
+    expect(fired(pair(undefined))).toBe(true); // war is the default stance
+    expect(fired(pair('standard', 'peace'))).toBe(false);
+  });
+
+  it('aggressive fires on a PEACE neighbour, but spares pact / alliance', () => {
+    expect(fired(pair('aggressive', 'peace'))).toBe(true);
+    expect(fired(pair('aggressive', 'pact'))).toBe(false);
+    expect(fired(pair('aggressive', 'alliance'))).toBe(false);
+  });
+
+  it('return holds fire until the fleet has been provoked by damage', () => {
+    expect(fired(pair('return'))).toBe(false); // not yet hit → silent
+    const provoked = pair('return');
+    provoked.fleets.ART!.barrageProvoked = true;
+    expect(fired(provoked)).toBe(true);
+  });
+
+  it('taking damage sets barrageProvoked (the return trigger)', () => {
+    // B (standard) shells A (return → holds fire this span). A is hit ⇒ provoked.
+    const st = baseState(
+      [fleet('A', 'p1', 'PA', [['siege', 1]]), fleet('B', 'p2', 'PB', [['siege', 1]])],
+      [planet('PA', null, 0, 0), planet('PB', null, 100, 0)],
+    );
+    st.fleets.A!.barrageMode = 'return';
+    const r = okAdvance(createKernel([combatModule]).advanceTo(st, ctx(HOUR)));
+    expect(r.state.fleets.A?.barrageProvoked).toBe(true); // B's shot provoked A
+    expect(r.state.fleets.B?.barrageProvoked).toBeFalsy(); // A held fire → B unhit
+  });
+
+  it('fleet.barrageMode sets the mode and rejects bad input', () => {
+    const kernel = createKernel([combatModule]);
+    const base = (): GameState =>
+      baseState(
+        [fleet('ART', 'p1', 'PA', [['siege', 1]]), fleet('PLAIN', 'p1', 'PA', [['fighter', 1]])],
+        [planet('PA', null, 0, 0)],
+      );
+    const set = okApply(kernel.applyAction(base(), barrageMode('ART', 'aggressive'), ctx(0)));
+    expect(set.state.fleets.ART?.barrageMode).toBe('aggressive');
+    expect(rej(kernel.applyAction(base(), barrageMode('ART', 'berserk'), ctx(0)))).toBe('E_BAD_PAYLOAD');
+    expect(rej(kernel.applyAction(base(), barrageMode('ZZ', 'passive'), ctx(0)))).toBe('E_NO_FLEET');
+    expect(rej(kernel.applyAction(base(), barrageMode('ART', 'passive', 'p2'), ctx(0)))).toBe('E_FORBIDDEN');
+    expect(rej(kernel.applyAction(base(), barrageMode('PLAIN', 'passive'), ctx(0)))).toBe('E_NO_ARTILLERY');
   });
 });
