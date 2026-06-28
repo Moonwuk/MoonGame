@@ -65,3 +65,39 @@ describe('ground combat — matrix damage weighted by target composition', () =>
     expect(out.rounds).toBeGreaterThan(0);
   });
 });
+
+describe('ground combat — officer bonuses (flexible, tunable)', () => {
+  const a = () => makeSide(GROUND_ROSTER, { tank: 2 });
+  const d = () => makeSide(GROUND_ROSTER, { tank: 2 });
+
+  it('an attack officer scales the division’s outgoing attack', () => {
+    const base = groundTick(GROUND_ROSTER, a(), d()).toDefender.tank!;
+    const buffed = groundTick(GROUND_ROSTER, a(), d(), { name: 'o', atk: 0.5 }).toDefender.tank!;
+    expect(buffed).toBeCloseTo(base * 1.5);
+  });
+
+  it('a defence officer scales the defender’s return fire', () => {
+    const base = groundTick(GROUND_ROSTER, a(), d()).toAttacker.tank!;
+    const buffed = groundTick(GROUND_ROSTER, a(), d(), undefined, { name: 'o', def: 0.5 }).toAttacker.tank!;
+    expect(buffed).toBeCloseTo(base * 1.5);
+  });
+
+  it('an HP officer makes the division tougher (bakes into hpEach)', () => {
+    const side = makeSide(GROUND_ROSTER, { infantry: 2 }, { name: 'q', hp: 0.5 });
+    expect(side[0]!.hpEach).toBeCloseTo(GROUND_ROSTER.infantry!.hp * 1.5);
+    expect(side[0]!.hp).toBeCloseTo(2 * GROUND_ROSTER.infantry!.hp * 1.5);
+  });
+
+  it('an atkVs officer adds a flat per-type attack bonus', () => {
+    const base = groundTick(GROUND_ROSTER, makeSide(GROUND_ROSTER, { infantry: 1 }), makeSide(GROUND_ROSTER, { tank: 1 })).toDefender.tank!;
+    const buffed = groundTick(GROUND_ROSTER, makeSide(GROUND_ROSTER, { infantry: 1 }), makeSide(GROUND_ROSTER, { tank: 1 }), { name: 'at', atkVs: { tank: 100 } }).toDefender.tank!;
+    expect(buffed).toBeCloseTo(base + 100); // target is 100% tank → full flat bonus lands
+  });
+
+  it('a strong attack officer flips an otherwise-losing mirror match', () => {
+    // tank.def(8) > tank.atk(7), so the defender wins a bare mirror...
+    expect(resolveGround(GROUND_ROSTER, a(), d()).winner).toBe('defender');
+    // ...but a +50% attack officer tips it to the attacker.
+    expect(resolveGround(GROUND_ROSTER, a(), d(), { attackerOfficer: { name: 'x', atk: 0.5 } }).winner).toBe('attacker');
+  });
+});

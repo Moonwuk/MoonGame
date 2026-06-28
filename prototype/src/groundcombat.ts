@@ -31,21 +31,50 @@ export const GROUND_ROSTER: GroundRoster = {
   bomber: { hp: 18, atk: { infantry: 6, tank: 16, bomber: 5 }, def: { infantry: 5, tank: 12, bomber: 4 } },
 };
 
-/** A live stack on one side: a unit type, its count, and its remaining HP pool
- *  (≤ count × profile.hp). One stack per type. */
+/** An officer attached to a division — a hero-like leader granting flexible, TUNABLE
+ *  bonuses ("то и то может давать"): any combination of these, set per officer. */
+export interface Officer {
+  name: string;
+  /** +fraction to the division's outgoing ATTACK damage (0.1 = +10%). */
+  atk?: number;
+  /** +fraction to the division's outgoing DEFENCE (return fire). */
+  def?: number;
+  /** +fraction to the division's unit HP (toughness / survivability). */
+  hp?: number;
+  /** Optional flat per-target-type ATTACK bonus (e.g. an anti-tank specialist). */
+  atkVs?: DamageTable;
+}
+
+/** Placeholder officer archetypes — values are stand-ins to be tuned later. */
+export const OFFICERS: Record<string, Officer> = {
+  assault: { name: 'Штурмовик', atk: 0.15 },
+  defender: { name: 'Командир обороны', def: 0.15, hp: 0.1 },
+  quartermaster: { name: 'Снабженец', hp: 0.2 },
+};
+
+/** A live stack on one side: a unit type, its count, the remaining HP pool, and the
+ *  per-unit max HP (`hpEach`, with any officer toughness baked in). One stack per type. */
 export interface GroundStack {
   type: FormationUnit;
   count: number;
   hp: number;
+  hpEach: number;
 }
 
-/** Build a full-health side from a type→count map (e.g. a mobilised template). */
-export function makeSide(roster: GroundRoster, counts: Partial<Record<FormationUnit, number>>): GroundStack[] {
+/** Build a full-health side from a type→count map (e.g. a mobilised template). An
+ *  attached `officer` bakes its HP bonus into each unit's `hpEach`. */
+export function makeSide(
+  roster: GroundRoster,
+  counts: Partial<Record<FormationUnit, number>>,
+  officer?: Officer,
+): GroundStack[] {
+  const hpMul = 1 + (officer?.hp ?? 0);
   const side: GroundStack[] = [];
   for (const [type, count] of Object.entries(counts)) {
     const prof = roster[type];
     if (!prof || !count || count <= 0) continue;
-    side.push({ type: type as FormationUnit, count, hp: count * prof.hp });
+    const hpEach = prof.hp * hpMul;
+    side.push({ type: type as FormationUnit, count, hp: count * hpEach, hpEach });
   }
   return side;
 }
@@ -63,10 +92,14 @@ export function damageBuckets(
   source: GroundStack[],
   target: GroundStack[],
   which: 'atk' | 'def',
+  officer?: Officer,
 ): DamageTable {
   const total = liveCount(target);
   const out: DamageTable = {};
   if (total <= 0) return out;
+  // The source's officer scales its outgoing damage (atk when attacking, def on
+  // return fire) and may add a flat per-type attack bonus.
+  const mul = 1 + (which === 'atk' ? (officer?.atk ?? 0) : (officer?.def ?? 0));
   const targetCount: DamageTable = {};
   for (const s of target) if (s.count > 0) targetCount[s.type] = (targetCount[s.type] ?? 0) + s.count;
   for (const t of Object.keys(targetCount) as FormationUnit[]) {
@@ -75,22 +108,22 @@ export function damageBuckets(
       if (s.count <= 0) continue;
       armyDmg += s.count * (roster[s.type]?.[which][t] ?? 0);
     }
-    out[t] = armyDmg * (targetCount[t]! / total);
+    if (which === 'atk') armyDmg += officer?.atkVs?.[t] ?? 0;
+    out[t] = armyDmg * mul * (targetCount[t]! / total);
   }
   return out;
 }
 
 /** Apply per-type damage buckets to a side: each type's bucket hits that type's stack,
  *  killing whole units as its HP pool drops. Returns the survivors. */
-function applyBuckets(roster: GroundRoster, side: GroundStack[], buckets: DamageTable): GroundStack[] {
+function applyBuckets(side: GroundStack[], buckets: DamageTable): GroundStack[] {
   return side
     .map((s) => {
       const dmg = buckets[s.type] ?? 0;
       if (dmg <= 0 || s.count <= 0) return s;
-      const per = roster[s.type]?.hp ?? 1;
       const hp = Math.max(0, s.hp - dmg);
-      const count = hp <= 0 ? 0 : Math.ceil(hp / per);
-      return { type: s.type, count, hp: count > 0 ? hp : 0 };
+      const count = hp <= 0 ? 0 : Math.ceil(hp / s.hpEach);
+      return { type: s.type, count, hp: count > 0 ? hp : 0, hpEach: s.hpEach };
     })
     .filter((s) => s.count > 0);
 }
@@ -103,14 +136,20 @@ export interface GroundTick {
   attacker: GroundStack[];
   defender: GroundStack[];
 }
-export function groundTick(roster: GroundRoster, attacker: GroundStack[], defender: GroundStack[]): GroundTick {
-  const toDefender = damageBuckets(roster, attacker, defender, 'atk');
-  const toAttacker = damageBuckets(roster, defender, attacker, 'def');
+export function groundTick(
+  roster: GroundRoster,
+  attacker: GroundStack[],
+  defender: GroundStack[],
+  attackerOfficer?: Officer,
+  defenderOfficer?: Officer,
+): GroundTick {
+  const toDefender = damageBuckets(roster, attacker, defender, 'atk', attackerOfficer);
+  const toAttacker = damageBuckets(roster, defender, attacker, 'def', defenderOfficer);
   return {
     toDefender,
     toAttacker,
-    attacker: applyBuckets(roster, attacker, toAttacker),
-    defender: applyBuckets(roster, defender, toDefender),
+    attacker: applyBuckets(attacker, toAttacker),
+    defender: applyBuckets(defender, toDefender),
   };
 }
 
@@ -121,18 +160,20 @@ export interface GroundOutcome {
   defender: GroundStack[];
 }
 
-/** Resolve a ground battle to conclusion (one side wiped), or null at the round cap. */
+/** Resolve a ground battle to conclusion (one side wiped), or null at the round cap.
+ *  Each side may have an attached officer (its bonuses apply every tick). */
 export function resolveGround(
   roster: GroundRoster,
   attacker: GroundStack[],
   defender: GroundStack[],
-  maxRounds = 100,
+  opts: { attackerOfficer?: Officer; defenderOfficer?: Officer; maxRounds?: number } = {},
 ): GroundOutcome {
+  const maxRounds = opts.maxRounds ?? 100;
   let a = attacker;
   let d = defender;
   let rounds = 0;
   while (liveCount(a) > 0 && liveCount(d) > 0 && rounds < maxRounds) {
-    const t = groundTick(roster, a, d);
+    const t = groundTick(roster, a, d, opts.attackerOfficer, opts.defenderOfficer);
     a = t.attacker;
     d = t.defender;
     rounds += 1;
