@@ -6,7 +6,7 @@
 > `deep-technical-roadmap.md`, `multiplayer.md`, `metagame.md`, `map-roadmap.md`, корневой `CLAUDE.md` / `CONTRIBUTING.md`.
 >
 > **Ветка:** feature-ветка · **PR:** создаётся после изменений.
-> **Гейт:** `pnpm run check` (lint + typecheck + test). **Тесты: 417 зелёных** (4 skip, 51 файл).
+> **Гейт:** `pnpm run check` (lint + typecheck + test). **Тесты: 422 зелёных** (4 skip, 51 файл).
 
 ---
 
@@ -439,11 +439,20 @@ drop_infantry, tank(cargoSize 3), orbital_aa(aaDamage), infected_cruiser,
 reanimated_drone`.
 - **buildings** (`BuildingDef`): `cost, buildTimeHours, produces, hp,
 defenseBonus, upgrades[{…}], traits, scoreValue, radarRange`. Есть: `mine_t1, mine_t2,
-shipyard, biomass_pit, barracks, spaceport, radar, fort` (форт — 3 уровня: HP 35→50→65,
-  defenseBonus 0.35→0.50→0.65; **радар — 3 уровня**: `radarRange` 300→500→700 (расстояние),
-  HP 18→26→34). `radarRange` теперь **уровневый** (`BuildingLevelSchema`), `visibleState`
-  читает его через `buildingLevel(def, level)`. `scoreValue`: fort 20·уровень, shipyard 12,
-  mine/biomass 8, barracks/spaceport/radar 6.
+shipyard, biomass_pit, barracks, spaceport, radar, fort, metal_station, power_plant, fabricator`
+  (форт — 3 уровня: HP 35→50→65, defenseBonus 0.35→0.50→0.65; **радар — 3 уровня**: `radarRange`
+  300→500→700 (расстояние), HP 18→26→34). `radarRange` теперь **уровневый** (`BuildingLevelSchema`),
+  `visibleState` читает его через `buildingLevel(def, level)`. `scoreValue`: fort 20·уровень,
+  shipyard 12, fabricator 14, mine/biomass/power_plant 8, barracks/spaceport/radar 6.
+  **ECON-3 — производители недостающих ресурсов:** `power_plant` (Fusion Reactor, 3 уровня:
+  `energy` 25→60→110) и `fabricator` (Microelectronics Fab, 3 уровня: `microelectronics`
+  8→18→32; стоит metal+credits+`energy` — премиум-ресурс «варится» из энергии, гейтится
+  технологией `microelectronics_fabrication`). Так у каждого экономического ресурса
+  (кроме `credits` — валюта/сток) есть хотя бы одно здание-производитель; экономика
+  начисляет любой `produces`-ресурс агностично (движок не трогался). Ростеры
+  `sectorKinds`: реактор — планета/астероид/туманность/`void_station`, фабрикатор —
+  планета/`void_station`. Referential-integrity тест следит, что любой `produces`/`cost`/
+  `upkeep`-ресурс контента есть в `resources`.
 - **sectors:** `empty_space(+скорость), asteroid_field(−скорость/+живучесть/score 5),
 nebula(score 3)`. **planetTypes** дают `scoreValue` (terran 40, oceanic 35,
 volcanic 20, gas_giant 10, barren 5).
@@ -451,7 +460,8 @@ volcanic 20, gas_giant 10, barren 5).
 - **events:** `reanimate_on_kill, infect_planet, void_anomaly` (правила
   trigger→effect; движок трейтов пока не построен).
 - **technologies:** сессионное дерево (`industrial_automation`,
-  `orbital_logistics`, `siege_doctrine`, `fortified_infrastructure`): стоимость,
+  `orbital_logistics`, `siege_doctrine`, `fortified_infrastructure`,
+  `microelectronics_fabrication`): стоимость,
   длительность, prerequisite-цепочки, unlocks юнитов/зданий и бонусы к
   production/speed/damage.
 
