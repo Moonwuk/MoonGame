@@ -58,7 +58,7 @@ jobs:
           npx cap add android
           npx cap sync android
 
-      - name: Brand the app (icon + splash) and lock to landscape
+      - name: Brand the app (icon + splash) and lock to portrait
         working-directory: mobile
         run: |
           npx capacitor-assets generate --android
