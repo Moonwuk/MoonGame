@@ -256,6 +256,12 @@ const logLines: string[] = [];
 let lastAiAt = 0;
 // Player ids the local sim drives as AI (empty seats become AI). Default solo = p2.
 let AI_PLAYERS = new Set<string>(['p2']);
+// Session war record (from `unit.died` events): enemy units you destroyed vs your own
+// units lost. Cumulative since the match started; reset on a new match. Only battles
+// YOU take part in are counted (tracked by location via battle.started/resolved), so
+// the AI's fights elsewhere don't inflate your tally.
+let killStats = { destroyed: 0, lost: 0 };
+const myBattleLocs = new Set<string>();
 // Single-player setup screen state: per-seat role (seat 0 is always you) + your
 // chosen homeworld. Seats 2-4 toggle 'ai'/'off'; an 'ai' seat spawns a rival.
 let setupSlots: Array<'human' | 'ai' | 'off'> = ['human', 'ai', 'off', 'off'];
@@ -1223,11 +1229,13 @@ function handleEvents(events: DomainEvent[]) {
     switch (e.type) {
       case 'battle.started':
         note(`⚔️ battle at ${p.location} (${p.phase})`);
+        if (p.attacker === ME || p.defender === ME) myBattleLocs.add(p.location as string);
         break;
       case 'battle.resolved':
         note(
           `battle at ${p.location} ended — ${p.winner ? NAME[p.winner as string] + ' won' : 'stalemate'}`,
         );
+        myBattleLocs.delete(p.location as string);
         break;
       case 'planet.captured':
         note(`🚩 ${NAME[p.owner as string]} captured ${p.planetId}`);
@@ -1257,6 +1265,16 @@ function handleEvents(events: DomainEvent[]) {
       case 'fleet.destroyed':
         note(`☠️ a ${NAME[p.owner as string]} fleet was destroyed`);
         break;
+      case 'unit.died': {
+        // War record — only count casualties in battles you're part of, so the AI's
+        // fights elsewhere don't pad your numbers. Your dead = lost; the rest = destroyed.
+        if (myBattleLocs.has(p.at as string)) {
+          const n = (p.count as number) ?? 0;
+          if (p.owner === ME) killStats.lost += n;
+          else killStats.destroyed += n;
+        }
+        break;
+      }
     }
   }
 }
@@ -3008,7 +3026,6 @@ function playerCardHtml(): string {
   const fleets = Object.values(s.fleets).filter((f) => f.owner === ME).length;
   const score = Math.round(s.match?.scores?.[ME]?.total ?? 0);
   const need = Math.max(0, SCORE_LIMIT - score);
-  const r = pl?.resources ?? {};
   const col = ownerColor(ME);
   const row = (k: string, v: string) => `<div class="pc-row"><span class="pc-k">${k}</span><span class="pc-v">${v}</span></div>`;
   return (
@@ -3019,13 +3036,9 @@ function playerCardHtml(): string {
     row('Worlds held', String(worlds)) +
     row('Fleets', String(fleets)) +
     row('Score', `${score} / ${SCORE_LIMIT}${need === 0 ? ' · ★ WIN' : ' · ' + need + ' to win'}`) +
-    `</div><div class="pc-sec">Treasury</div><div class="pc-stats">` +
-    row('¤ Credits', kfmt(r.credits ?? 0)) +
-    row('❖ Food', kfmt(r.food ?? 0)) +
-    row('⬢ Metal', kfmt(r.metal ?? 0)) +
-    row('↯ Energy', kfmt(r.energy ?? 0)) +
-    row('▦ Microelectronics', kfmt(r.microelectronics ?? 0)) +
-    row('◆ Суверены', kfmt(SOVEREIGNS)) +
+    `</div><div class="pc-sec">War record</div><div class="pc-stats">` +
+    row('⚔ Enemy units destroyed', kfmt(killStats.destroyed)) +
+    row('☠ Own units lost', kfmt(killStats.lost)) +
     `</div><button class="pc-close">CLOSE</button>`
   );
 }
@@ -3799,6 +3812,8 @@ function startMatch(setup: SetupConfig): void {
   merging = false;
   additive = false;
   splitState = null;
+  killStats = { destroyed: 0, lost: 0 };
+  myBattleLocs.clear();
   for (const k of Object.keys(buildQueues)) delete buildQueues[k];
   defaultView(); // phone: zoom onto home; desktop: whole-map fit
   setupEl.style.display = 'none';
