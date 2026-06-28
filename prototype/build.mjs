@@ -647,6 +647,24 @@ button.b:disabled{opacity:.32;cursor:not-allowed;color:var(--dim);border-color:v
 #testmode .tm-fight:disabled{opacity:.4;cursor:not-allowed;border-color:var(--line);color:var(--dim);background:transparent;}
 @media (max-width:520px){#testmode .tm-sides{grid-template-columns:1fr;}}
 /* === /DEV TEST MODE === */
+/* --- short viewports (landscape phones, split-screen): overlays scroll instead of
+   clipping off-screen; the welcome card compacts and stacks its chip/footer in-flow --- */
+@media (max-height:680px){
+  #connect,#setup,#codex,#playercard,#warprompt,#diplo,#splitdlg{
+    align-items:flex-start;overflow-y:auto;-webkit-overflow-scrolling:touch;}
+  #connect{padding:14px 18px;}
+  #connect .cwrap{display:flex;flex-direction:column;margin:auto;}
+  #connect .clang{position:static;align-self:flex-end;margin:0 0 10px;top:auto;right:auto;}
+  #connect .cfoot{position:static;bottom:auto;margin-top:14px;}
+  #connect .ccrest{margin:2px 0 14px;gap:6px;}
+  #connect .ccrest .ring{width:48px;height:48px;}
+  #connect .ccrest .ring .dia{width:25px;height:25px;}
+  #connect .ccrest .wtag{display:none;}
+  #connect .cnew{padding:13px;min-height:46px;}
+  #connect .cdiv{margin:13px 0 11px;}
+  #connect .csoc{width:46px;height:46px;}
+  #connect .cstack{margin-top:14px;}
+}
 `;
 
 const html = `<!doctype html>
