@@ -255,7 +255,10 @@ let splitState: { fleetId: string; take: Record<string, number> } | null = null;
 // Messages are a prototype-local session log — they don't touch the deterministic
 // core (they don't affect the sim, so they stay out of GameState). Stances DO live
 // in the core (state.diplomacy); the menu drives them through diplomacy.declare.
-type SessionMsg = { at: number; from: string; to: string; text: string; sys: boolean };
+// `to` is a conversation key: a seat id (a 1:1 DM) or COALITION (the allies' group
+// chat). `ping` (coalition only) carries a province id → a clickable map marker.
+type SessionMsg = { at: number; from: string; to: string; text: string; sys: boolean; ping?: string };
+const COALITION = 'coalition';
 let sessionMessages: SessionMsg[] = [];
 let diploOpen = false;
 let diploTab: 'diplo' | 'msgs' = 'diplo';
@@ -266,7 +269,7 @@ let diploExpanded: string | null = null; // participant row showing its action b
 // OR within one. A stance filter excludes your own seat (you have no self-stance).
 const diploStanceFilter = new Set<DiplomaticStance>();
 const diploTypeFilter = new Set<'human' | 'ai'>();
-let msgTo = 'all'; // comms composer recipient (a seat id, or 'all')
+let convoOpen = COALITION; // the open conversation in the messages tab (seat id or COALITION)
 
 // --- multiplayer (net mode) --------------------------------------------------
 // When connected, the server is authoritative: snapshots replace `s`, orders are
@@ -1422,13 +1425,17 @@ function handleEvents(events: DomainEvent[]) {
         const st = p.stance as DiplomaticStance;
         const na = NAME[a] ?? a;
         const nb = NAME[b] ?? b;
-        pushMsg(
-          b,
-          st === 'war' ? `${na} объявил войну ${nb}` : `${na} и ${nb}: ${STANCE_RU[st].toLowerCase()}`,
-          true,
-          a,
-        );
-        if (a === ME || b === ME) note(`${na} → ${nb}: ${STANCE_RU[st]}`);
+        // Only events that involve YOU land in a conversation (your DM with the other
+        // party); two AIs re-stancing each other isn't part of any of your chats.
+        if (a === ME || b === ME) {
+          pushMsg(
+            b,
+            st === 'war' ? `${na} объявил войну ${nb}` : `${na} и ${nb}: ${STANCE_RU[st].toLowerCase()}`,
+            true,
+            a,
+          );
+          note(`${na} → ${nb}: ${STANCE_RU[st]}`);
+        }
         if (diploOpen && diploTab === 'diplo') renderDiplo();
         break;
       }
@@ -3333,9 +3340,9 @@ function aiAcceptsStance(target: string, to: DiplomaticStance): boolean {
 }
 
 /** Append a line to the session log (bounded). Patches the feed if it's on screen. */
-function pushMsg(to: string, text: string, sys: boolean, from = ME): void {
-  sessionMessages.push({ at: s.time, from, to, text, sys });
-  if (sessionMessages.length > 200) sessionMessages.shift();
+function pushMsg(to: string, text: string, sys: boolean, from = ME, ping?: string): void {
+  sessionMessages.push({ at: s.time, from, to, text, sys, ping });
+  if (sessionMessages.length > 300) sessionMessages.shift();
   if (diploOpen && diploTab === 'msgs') renderDiploFeed();
 }
 
@@ -3437,31 +3444,86 @@ function diploRowsHtml(): string {
     .join('');
 }
 
-function diploFeedHtml(): string {
-  if (!sessionMessages.length)
-    return `<div class="dp-empty">Сообщений пока нет.<br>Объявите войну, предложите мир — или напишите.</div>`;
-  return sessionMessages
-    .map((m) => {
-      const t = fmtStamp(m.at);
-      if (m.sys) return `<div class="dp-line sys"><span class="dp-when">${t}</span>${esc(m.text)}</div>`;
-      const who = m.from === ME ? 'Вы' : NAME[m.from] ?? m.from;
-      const to = m.to === 'all' ? 'всем' : NAME[m.to] ?? m.to;
-      return `<div class="dp-line"><span class="dp-when">${t}</span><b>${esc(who)} → ${esc(to)}:</b> ${esc(m.text)}</div>`;
+// --- conversations (messages tab: list of chats + the open thread) -----------
+/** Your coalition: you + everyone you're at `alliance` with. */
+function coalitionMembers(): string[] {
+  return [ME, ...diploSeats().filter((id) => id !== ME && getStance(s, ME, id) === 'alliance')];
+}
+/** Messages in a conversation: COALITION = the group channel; a seat id = the 1:1
+ *  DM between you and them (either direction). */
+function convoMessages(key: string): SessionMsg[] {
+  if (key === COALITION) return sessionMessages.filter((m) => m.to === COALITION);
+  return sessionMessages.filter(
+    (m) => m.to !== COALITION && ((m.from === ME && m.to === key) || (m.from === key && m.to === ME)),
+  );
+}
+function convoLast(key: string): SessionMsg | undefined {
+  const ms = convoMessages(key);
+  return ms[ms.length - 1];
+}
+function fromName(id: string): string {
+  return id === ME ? 'Вы' : NAME[id] ?? id;
+}
+/** One message line. A ping renders as a clickable marker that flies the camera. */
+function convoLineHtml(m: SessionMsg): string {
+  const t = fmtStamp(m.at);
+  if (m.ping) {
+    return (
+      `<div class="dp-line ping" data-ping="${esc(m.ping)}"><span class="dp-when">${t}</span>` +
+      `📍 <b>${esc(fromName(m.from))}</b> отметил <b>${esc(m.ping)}</b><span class="dp-jump">↪ камера</span></div>`
+    );
+  }
+  if (m.sys) return `<div class="dp-line sys"><span class="dp-when">${t}</span>${esc(m.text)}</div>`;
+  return `<div class="dp-line${m.from === ME ? ' me' : ''}"><span class="dp-when">${t}</span><b>${esc(fromName(m.from))}:</b> ${esc(m.text)}</div>`;
+}
+function convoFeedInnerHtml(key: string): string {
+  const msgs = convoMessages(key);
+  if (msgs.length) return msgs.map(convoLineHtml).join('');
+  return `<div class="dp-empty">${key === COALITION ? 'Чат коалиции пуст.<br>Отметьте провинцию пингом 📍 или напишите.' : 'Сообщений пока нет.'}</div>`;
+}
+/** Left column: the coalition channel pinned on top, then a DM per participant
+ *  (most-recently-active first). Selecting one opens its thread on the right. */
+function convoListHtml(): string {
+  const dms = diploSeats()
+    .filter((id) => id !== ME)
+    .sort(
+      (a, b) =>
+        (convoLast(b)?.at ?? -1) - (convoLast(a)?.at ?? -1) ||
+        (NAME[a] ?? a).localeCompare(NAME[b] ?? b),
+    );
+  const coal =
+    `<button class="dp-cv coal${convoOpen === COALITION ? ' on' : ''}" data-convo="${COALITION}">` +
+    `<span class="dp-cv-ic" style="color:var(--amber)">⚡</span>` +
+    `<span class="dp-cv-nm">Коалиция<em>${coalitionMembers().length} уч.</em></span></button>`;
+  const items = dms
+    .map((id) => {
+      const last = convoLast(id);
+      const prev = last ? esc((last.from === ME ? 'Вы: ' : '') + (last.ping ? '📍 ' + last.ping : last.text)) : '—';
+      return (
+        `<button class="dp-cv${convoOpen === id ? ' on' : ''}" data-convo="${id}">` +
+        `<span class="dp-cv-ic" style="color:${ownerColor(id)}">${seatBadge(id).icon}</span>` +
+        `<span class="dp-cv-nm">${esc(NAME[id] ?? id)}<em>${prev}</em></span></button>`
+      );
     })
     .join('');
+  return `<div class="dp-cvlist">${coal}${items}</div>`;
 }
-
-function diploComposeHtml(): string {
-  const opts = ['all', ...diploSeats().filter((id) => id !== ME)]
-    .map(
-      (id) =>
-        `<option value="${id}"${id === msgTo ? ' selected' : ''}>${id === 'all' ? 'Всем' : esc(NAME[id] ?? id)}</option>`,
-    )
-    .join('');
+/** Right column: header, the open conversation's messages, and the composer (with a
+ *  ping button in the coalition channel). */
+function convoThreadHtml(): string {
+  const isCoal = convoOpen === COALITION;
+  const title = isCoal
+    ? `⚡ Коалиция · ${coalitionMembers().length} уч.`
+    : `${seatBadge(convoOpen).icon} ${esc(NAME[convoOpen] ?? convoOpen)}`;
+  const pingBtn = isCoal
+    ? `<button class="dp-ping" title="Отметить выбранную провинцию пингом">📍</button>`
+    : '';
   return (
-    `<div class="dp-compose"><select id="dp-to">${opts}</select>` +
-    `<input id="dp-text" maxlength="160" placeholder="Сообщение…" autocomplete="off">` +
-    `<button class="dp-send">▶</button></div>`
+    `<div class="dp-thread">` +
+    `<div class="dp-thhead">${title}</div>` +
+    `<div class="dp-feed" id="dp-feed">${convoFeedInnerHtml(convoOpen)}</div>` +
+    `<div class="dp-compose">${pingBtn}<input id="dp-text" maxlength="160" placeholder="Сообщение…" autocomplete="off"><button class="dp-send">▶</button></div>` +
+    `</div>`
   );
 }
 
@@ -3488,7 +3550,7 @@ function renderDiplo(): void {
       ? `<div class="dp-sorts"><span>Сорт.:</span>${sortBtn('name', 'Имя')}${sortBtn('worlds', 'Провинции')}${sortBtn('stance', 'Отношение')}</div>` +
         filterRow +
         `<div class="dp-list">${diploRowsHtml()}</div>`
-      : `<div class="dp-feed" id="dp-feed">${diploFeedHtml()}</div>${diploComposeHtml()}`;
+      : `<div class="dp-convo">${convoListHtml()}${convoThreadHtml()}</div>`;
   el.innerHTML =
     `<div class="dpbox">` +
     `<div class="dp-head"><b>СЕССИЯ</b>${tabBtn('diplo', 'Дипломатия')}${tabBtn('msgs', 'Сообщения')}<button class="dp-close">✕</button></div>` +
@@ -3496,11 +3558,11 @@ function renderDiplo(): void {
     `</div>`;
   if (diploTab === 'msgs') scrollFeedToEnd();
 }
-/** Patch just the message feed (so a new line doesn't wipe a half-typed reply). */
+/** Patch just the open thread's feed (so a new line doesn't wipe a half-typed reply). */
 function renderDiploFeed(): void {
   const feed = document.getElementById('dp-feed');
   if (!feed) return;
-  feed.innerHTML = diploFeedHtml();
+  feed.innerHTML = convoFeedInnerHtml(convoOpen);
   feed.scrollTop = feed.scrollHeight;
 }
 function scrollFeedToEnd(): void {
@@ -4682,15 +4744,32 @@ function toggleSet<T>(set: Set<T>, v: T): void {
 }
 function sendDiploMsg(): void {
   const input = document.getElementById('dp-text') as HTMLInputElement | null;
-  const sel = document.getElementById('dp-to') as HTMLSelectElement | null;
   const text = input?.value.trim();
   if (!text) return;
-  msgTo = sel?.value ?? 'all';
-  pushMsg(msgTo, text, false); // append + patch the feed (in net play this would also broadcast)
+  pushMsg(convoOpen, text, false); // to the open conversation (in net play this would broadcast)
   if (input) {
     input.value = '';
     input.focus();
   }
+}
+/** Ping the selected province into the coalition channel — a clickable map marker. */
+function pingSelected(): void {
+  if (!selPlanet || !s.planets[selPlanet]) {
+    note('Сначала выберите провинцию на карте');
+    return;
+  }
+  pushMsg(COALITION, `отметил ${selPlanet}`, false, ME, selPlanet);
+}
+/** Tap a ping → fly the camera to that province (and select it); close the menu. */
+function jumpToPing(id: string): void {
+  const pl = s.planets[id];
+  if (!pl) return;
+  centerOn(pl.position, 3);
+  selPlanet = id;
+  selFleet = null;
+  selFleets = new Set();
+  lastPanelHtml = '';
+  closeDiplo();
 }
 const diploEl = document.getElementById('diplo');
 if (diploEl) {
@@ -4735,12 +4814,22 @@ if (diploEl) {
     }
     const msgseat = (tg.closest('.dp-msg') as HTMLElement | null)?.dataset.msgseat;
     if (msgseat) {
-      msgTo = msgseat;
+      convoOpen = msgseat;
       diploTab = 'msgs';
       renderDiplo();
       document.getElementById('dp-text')?.focus();
       return;
     }
+    const convo = (tg.closest('.dp-cv') as HTMLElement | null)?.dataset.convo;
+    if (convo) {
+      convoOpen = convo;
+      renderDiplo();
+      document.getElementById('dp-text')?.focus();
+      return;
+    }
+    if (tg.closest('.dp-ping')) return pingSelected();
+    const ping = (tg.closest('.dp-line.ping') as HTMLElement | null)?.dataset.ping;
+    if (ping) return jumpToPing(ping);
     if (tg.closest('.dp-send')) return sendDiploMsg();
     const row = tg.closest('.dp-row') as HTMLElement | null;
     if (row?.dataset.seat) {
