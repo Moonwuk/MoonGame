@@ -1,28 +1,28 @@
 name: Security scan
 
-# Informational, NON-BLOCKING security pipeline.
-# Runs all scanners on EVERY push (any branch), aggregates results into ONE Markdown
-# report, and posts it back as a sticky PR comment (if the commit has an open PR) or a
-# commit comment otherwise. It never fails the build and is NOT a required status check —
-# findings are for visibility, not gating (by request).
+# Informational, NON-BLOCKING security pipeline. Runs a DIVERSE set of scanners on
+# EVERY push (any branch) — different methods / data sources / surfaces, not clones —
+# aggregates everything into ONE report, and posts it back (sticky PR comment, or a
+# commit comment otherwise) + job summary + artifact. Never fails the build; NOT a
+# required check.
 #
-# TODO (SD-6.1 / audit F-16): pin actions and scanner images by full SHA / image digest.
-# For now first-party actions use major tags and scanner images reuse the versions the
-# prior GitLab pipeline pinned (trivy 0.58.2, osv v1.9.1, syft v1.20.0, gitleaks v8.18.4);
-# semgrep uses :latest pending a pin. Dependabot (github-actions) is the intended way to
-# then pin + maintain these.
+# Each scan job writes a `status-<key>.json` sentinel AFTER the scan with the real
+# exit code / outcome. The summarizer LEADS with a scan-confirmation table built from
+# those sentinels, so a silently-failed scanner is flagged "⚠️ NOT confirmed" instead
+# of a misleading quiet "0 findings" (anti fail-open — audit F-08).
+#
+# TODO (SD-6.1 / F-16): SHA/digest-pin actions and images. Pinned scanner images reuse
+# the prior GitLab pin set; semgrep/trufflehog/zizmor use :latest pending a pin.
 
 on:
   push:
     branches: ['**']
   workflow_dispatch:
 
-# One run per ref; a newer commit cancels the older in-flight run (saves CI minutes).
 concurrency:
   group: security-${{ github.ref }}
   cancel-in-progress: true
 
-# Least privilege: nothing by default; each job grants only what it needs.
 permissions: {}
 
 jobs:
@@ -46,19 +46,22 @@ jobs:
       - name: pnpm audit
         continue-on-error: true
         run: pnpm audit --json > pnpm-audit.json || true
-      - name: record check status
+      - name: sentinels
         run: |
-          echo '{"check":"${{ steps.check.outcome }}"}' > check-status.json
+          echo "{\"check\":\"${{ steps.check.outcome }}\"}" > check-status.json
+          ok=true; [ -s pnpm-audit.json ] || ok=false
+          echo "{\"key\":\"audit\",\"ok\":$ok}" > status-audit.json
       - uses: actions/upload-artifact@v4
         with:
           name: report-check
           path: |
             pnpm-audit.json
             check-status.json
+            status-audit.json
           if-no-files-found: warn
 
   semgrep:
-    name: SAST (Semgrep)
+    name: SAST patterns (Semgrep)
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -68,13 +71,21 @@ jobs:
       - name: semgrep
         continue-on-error: true
         run: |
+          set +e
           docker run --rm -v "$PWD:/src" -w /src semgrep/semgrep:latest \
             semgrep scan --config=p/typescript --config=p/javascript --config=p/security-audit \
-            --sarif --output=semgrep.sarif --metrics=off || true
+            --sarif --output=semgrep.sarif --metrics=off
+          rc=$?
+          set -e
+          ok=true; case $rc in 125 | 126 | 127) ok=false ;; esac
+          [ -s semgrep.sarif ] || ok=false
+          echo "{\"key\":\"semgrep\",\"ok\":$ok,\"exit\":$rc}" > status-semgrep.json
       - uses: actions/upload-artifact@v4
         with:
           name: report-semgrep
-          path: semgrep.sarif
+          path: |
+            semgrep.sarif
+            status-semgrep.json
           if-no-files-found: warn
       - name: upload to code scanning
         continue-on-error: true
@@ -83,8 +94,39 @@ jobs:
           sarif_file: semgrep.sarif
           category: semgrep
 
+  codeql:
+    name: SAST dataflow (CodeQL)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: javascript-typescript
+      - id: cqa
+        continue-on-error: true
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: codeql
+          output: codeql-out
+          upload: always
+      - name: sentinel
+        if: always()
+        run: echo "{\"key\":\"codeql\",\"ok\":${{ steps.cqa.outcome == 'success' }}}" > status-codeql.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: report-codeql
+          path: |
+            codeql-out/**/*.sarif
+            status-codeql.json
+          if-no-files-found: warn
+
   gitleaks:
-    name: Secrets (Gitleaks)
+    name: Secrets — tree (Gitleaks)
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -94,13 +136,21 @@ jobs:
       - name: gitleaks
         continue-on-error: true
         run: |
+          set +e
           docker run --rm -v "$PWD:/src" -w /src zricethezav/gitleaks:v8.18.4 \
             detect --source=/src --no-git --redact \
-            --report-format sarif --report-path gitleaks.sarif || true
+            --report-format sarif --report-path gitleaks.sarif
+          rc=$?
+          set -e
+          ok=true; case $rc in 125 | 126 | 127) ok=false ;; esac
+          [ -s gitleaks.sarif ] || ok=false
+          echo "{\"key\":\"gitleaks\",\"ok\":$ok,\"exit\":$rc}" > status-gitleaks.json
       - uses: actions/upload-artifact@v4
         with:
           name: report-gitleaks
-          path: gitleaks.sarif
+          path: |
+            gitleaks.sarif
+            status-gitleaks.json
           if-no-files-found: warn
       - name: upload to code scanning
         continue-on-error: true
@@ -109,8 +159,35 @@ jobs:
           sarif_file: gitleaks.sarif
           category: gitleaks
 
+  trufflehog:
+    name: Secrets — history + verify (TruffleHog)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history — the differentiator vs Gitleaks (--no-git)
+      - name: trufflehog
+        continue-on-error: true
+        run: |
+          set +e
+          docker run --rm -v "$PWD:/src" -w /src trufflesecurity/trufflehog:latest \
+            git file:///src --json --no-update > trufflehog.json 2>/dev/null
+          rc=$?
+          set -e
+          ok=true; case $rc in 125 | 126 | 127) ok=false ;; esac
+          echo "{\"key\":\"trufflehog\",\"ok\":$ok,\"exit\":$rc}" > status-trufflehog.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: report-trufflehog
+          path: |
+            trufflehog.json
+            status-trufflehog.json
+          if-no-files-found: warn
+
   osv:
-    name: SCA (OSV-Scanner)
+    name: SCA — osv.dev (OSV-Scanner)
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -120,12 +197,20 @@ jobs:
       - name: osv-scanner
         continue-on-error: true
         run: |
+          set +e
           docker run --rm -v "$PWD:/src" -w /src ghcr.io/google/osv-scanner:v1.9.1 \
-            --lockfile=pnpm-lock.yaml --format=sarif --output=osv.sarif || true
+            --lockfile=pnpm-lock.yaml --format=sarif --output=osv.sarif
+          rc=$?
+          set -e
+          ok=true; case $rc in 125 | 126 | 127) ok=false ;; esac
+          [ -s osv.sarif ] || ok=false
+          echo "{\"key\":\"osv\",\"ok\":$ok,\"exit\":$rc}" > status-osv.json
       - uses: actions/upload-artifact@v4
         with:
           name: report-osv
-          path: osv.sarif
+          path: |
+            osv.sarif
+            status-osv.json
           if-no-files-found: warn
       - name: upload to code scanning
         continue-on-error: true
@@ -134,8 +219,8 @@ jobs:
           sarif_file: osv.sarif
           category: osv-scanner
 
-  trivy:
-    name: Vuln + IaC (Trivy fs)
+  trivy-fs:
+    name: Vuln + IaC — files (Trivy fs)
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -145,22 +230,69 @@ jobs:
       - name: trivy fs
         continue-on-error: true
         run: |
+          set +e
           docker run --rm -v "$PWD:/src" -w /src aquasec/trivy:0.58.2 \
-            fs --scanners vuln,secret,misconfig --format sarif --output trivy.sarif . || true
+            fs --scanners vuln,secret,misconfig --format sarif --output trivy.sarif .
+          rc=$?
+          set -e
+          ok=true; case $rc in 125 | 126 | 127) ok=false ;; esac
+          [ -s trivy.sarif ] || ok=false
+          echo "{\"key\":\"trivy-fs\",\"ok\":$ok,\"exit\":$rc}" > status-trivy-fs.json
       - uses: actions/upload-artifact@v4
         with:
-          name: report-trivy
-          path: trivy.sarif
+          name: report-trivy-fs
+          path: |
+            trivy.sarif
+            status-trivy-fs.json
           if-no-files-found: warn
       - name: upload to code scanning
         continue-on-error: true
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: trivy.sarif
-          category: trivy
+          category: trivy-fs
+
+  trivy-image:
+    name: Vuln — built image base OS (Trivy image)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: build image
+        continue-on-error: true
+        run: docker build -t void-dominion:scan .
+      - name: trivy image + image SBOM
+        continue-on-error: true
+        run: |
+          set +e
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD:/out" -w /out \
+            aquasec/trivy:0.58.2 image --format sarif --output trivy-image.sarif void-dominion:scan
+          rc=$?
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD:/out" -w /out \
+            anchore/syft:v1.20.0 scan void-dominion:scan -o cyclonedx-json=sbom-image.cdx.json
+          set -e
+          ok=true; case $rc in 125 | 126 | 127) ok=false ;; esac
+          [ -s trivy-image.sarif ] || ok=false
+          echo "{\"key\":\"trivy-image\",\"ok\":$ok,\"exit\":$rc}" > status-trivy-image.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: report-trivy-image
+          path: |
+            trivy-image.sarif
+            sbom-image.cdx.json
+            status-trivy-image.json
+          if-no-files-found: warn
+      - name: upload to code scanning
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-image.sarif
+          category: trivy-image
 
   sbom:
-    name: SBOM (Syft / CycloneDX)
+    name: SBOM — files (Syft / CycloneDX)
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -169,17 +301,111 @@ jobs:
       - name: syft sbom
         continue-on-error: true
         run: |
+          set +e
           docker run --rm -v "$PWD:/src" -w /src anchore/syft:v1.20.0 \
-            scan dir:/src -o cyclonedx-json=sbom.cdx.json || true
+            scan dir:/src -o cyclonedx-json=sbom.cdx.json
+          rc=$?
+          set -e
+          ok=true; case $rc in 125 | 126 | 127) ok=false ;; esac
+          [ -s sbom.cdx.json ] || ok=false
+          echo "{\"key\":\"sbom\",\"ok\":$ok,\"exit\":$rc}" > status-sbom.json
       - uses: actions/upload-artifact@v4
         with:
           name: report-sbom
-          path: sbom.cdx.json
+          path: |
+            sbom.cdx.json
+            status-sbom.json
+          if-no-files-found: warn
+
+  zizmor:
+    name: Workflow security (zizmor)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: zizmor
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          docker run --rm -e GH_TOKEN -v "$PWD:/src" -w /src ghcr.io/zizmorcore/zizmor:latest \
+            --format sarif . > zizmor.sarif
+          rc=$?
+          set -e
+          ok=true; case $rc in 125 | 126 | 127) ok=false ;; esac
+          [ -s zizmor.sarif ] || ok=false
+          echo "{\"key\":\"zizmor\",\"ok\":$ok,\"exit\":$rc}" > status-zizmor.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: report-zizmor
+          path: |
+            zizmor.sarif
+            status-zizmor.json
+          if-no-files-found: warn
+      - name: upload to code scanning
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: zizmor.sarif
+          category: zizmor
+
+  scorecard:
+    name: Repo posture (OpenSSF Scorecard)
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' # posture checks are meaningful on the default branch
+    permissions:
+      contents: read
+      security-events: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - id: sc
+        continue-on-error: true
+        uses: ossf/scorecard-action@v2
+        with:
+          results_file: scorecard.sarif
+          results_format: sarif
+          publish_results: false
+      - name: sentinel
+        if: always()
+        run: echo "{\"key\":\"scorecard\",\"ok\":${{ steps.sc.outcome == 'success' }}}" > status-scorecard.json
+      - name: upload to code scanning
+        if: always()
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: scorecard.sarif
+          category: scorecard
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: report-scorecard
+          path: |
+            scorecard.sarif
+            status-scorecard.json
           if-no-files-found: warn
 
   report:
     name: summarize + report
-    needs: [check, semgrep, gitleaks, osv, trivy, sbom]
+    needs:
+      [
+        check,
+        semgrep,
+        codeql,
+        gitleaks,
+        trufflehog,
+        osv,
+        trivy-fs,
+        trivy-image,
+        sbom,
+        zizmor,
+        scorecard,
+      ]
     if: always()
     runs-on: ubuntu-latest
     permissions:
