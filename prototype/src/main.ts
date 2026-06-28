@@ -59,18 +59,24 @@ import type {
 // Cyan stays the console-chrome accent (grid, borders, targeting reticle).
 const COLOR: Record<string, string> = {
   p1: '#3ad17a', // you — green
-  p2: '#ff5a4d', // enemy — red
+  p2: '#ff5a4d', // rivals — red / amber / violet (by stable order, see RIVAL_COLORS)
+  p3: '#ffb43a',
+  p4: '#b07cff',
   ally: '#4a8cff', // ally — blue (latent: no allied player in the skirmish yet)
   null: '#6f8a93', // neutral — gray
 };
+// Distinct hues for the OTHER commanders (you are always green), assigned in a stable
+// order so each rival keeps its colour across the match (up to 3 rivals on a 4-seat map).
+const RIVAL_COLORS = ['#ff5a4d', '#ffb43a', '#b07cff']; // red, amber, violet
 const VOID_COLOR = '#46606e'; // empty-space provinces — uncapturable void
-// Political colour is relative to the local commander: YOU are always green,
-// neutral gray, everyone else (the enemy) red. In single-player you are p1; in
-// net mode you may be p1 or p2 — this keeps "your" colour green either way.
+// Political colour is relative to the local commander: YOU are always green, neutral gray,
+// each rival its own hue. Works for solo (you = p1) and net (you may be any seat).
 function ownerColor(owner: string | null | undefined): string {
   if (!owner) return COLOR.null;
   if (owner === ME) return COLOR.p1;
-  return COLOR.p2;
+  const rivals = ['p1', 'p2', 'p3', 'p4'].filter((id) => id !== ME);
+  const i = rivals.indexOf(owner);
+  return i >= 0 ? RIVAL_COLORS[i % RIVAL_COLORS.length]! : RIVAL_COLORS[0]!;
 }
 const GRID = 'rgba(46,150,160,0.07)';
 const LOCK = '#7df0d0'; // selection / targeting reticle accent
@@ -233,6 +239,8 @@ let planetTab: PlanetTab = 'buildings';
 const buildQueues: Record<string, PlanetBuildQueue> = {};
 const logLines: string[] = [];
 let lastAiAt = 0;
+// Player ids the local sim drives as AI (empty seats become AI). Default solo = p2.
+let AI_PLAYERS = new Set<string>(['p2']);
 let lastPanelHtml = '';
 let lastCmdHtml = '';
 let lastSplitHtml = '';
@@ -1214,33 +1222,40 @@ function handleEvents(events: DomainEvent[]) {
 function runAI() {
   if (s.time - lastAiAt < 2 * HOUR) return;
   lastAiAt = s.time;
-  for (const f of Object.values(s.fleets)) {
-    if (f.owner !== 'p2' || f.location == null || f.movement || f.battleId) continue;
-    const here = s.planets[f.location];
-    if (!here) continue;
-    let best: Planet | null = null;
-    let bestD = Infinity;
-    for (const p of Object.values(s.planets)) {
-      if (p.owner === 'p2') continue;
-      const d = dist(here.position, p.position);
-      if (d < bestD) {
-        bestD = d;
-        best = p;
+  for (const ai of AI_PLAYERS) {
+    if (!s.players[ai]) continue; // seat not in play / eliminated
+    // Send each idle AI fleet toward the nearest capturable world it doesn't own.
+    for (const f of Object.values(s.fleets)) {
+      if (f.owner !== ai || f.location == null || f.movement || f.battleId) continue;
+      const here = s.planets[f.location];
+      if (!here) continue;
+      let best: Planet | null = null;
+      let bestD = Infinity;
+      for (const p of Object.values(s.planets)) {
+        if (p.owner === ai || !(SECTOR_TYPES[SECTOR_OF[p.id]]?.capturable ?? false)) continue;
+        const d = dist(here.position, p.position);
+        if (d < bestD) {
+          bestD = d;
+          best = p;
+        }
       }
+      if (best) apply(order(s, moveFleet(ai, f.id, best.id), s.time));
     }
-    if (best) apply(order(s, moveFleet('p2', f.id, best.id), s.time));
-  }
-  const cap = s.planets.CRIMSON;
-  const red = s.players.p2;
-  if (cap && cap.owner === 'p2' && red) {
-    if ((red.resources.metal ?? 0) > 220 && (red.resources.credits ?? 0) > 120) {
-      apply(order(s, buildUnit('p2', 'CRIMSON', 'cruiser', 1), s.time));
-    } else if ((red.resources.metal ?? 0) > 70) {
-      apply(order(s, buildUnit('p2', 'CRIMSON', 'marine', 1), s.time));
+    // Build + launch from this AI's home base (its first developed owned world).
+    const base =
+      Object.values(s.planets).find((p) => p.owner === ai && p.buildings.length > 0) ??
+      Object.values(s.planets).find((p) => p.owner === ai);
+    const pl = s.players[ai];
+    if (base && pl) {
+      if ((pl.resources.metal ?? 0) > 220 && (pl.resources.credits ?? 0) > 120) {
+        apply(order(s, buildUnit(ai, base.id, 'cruiser', 1), s.time));
+      } else if ((pl.resources.metal ?? 0) > 70) {
+        apply(order(s, buildUnit(ai, base.id, 'marine', 1), s.time));
+      }
+      const aiFleets = Object.values(s.fleets).filter((f) => f.owner === ai).length;
+      const baseHasShip = base.garrison.some((st) => isShip(st.unit));
+      if (aiFleets < 2 && baseHasShip) apply(order(s, launchFleet(ai, base.id), s.time));
     }
-    const redFleets = Object.values(s.fleets).filter((f) => f.owner === 'p2').length;
-    const capHasShip = cap.garrison.some((st) => isShip(st.unit));
-    if (redFleets < 2 && capHasShip) apply(order(s, launchFleet('p2', 'CRIMSON'), s.time));
   }
 }
 

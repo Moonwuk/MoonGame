@@ -288,41 +288,50 @@ export interface MapNode {
 
 type KeyNode = Omit<MapNode, 'links'>;
 
-// A LARGE contested field for the 1v1: two home planets at the far left/right ends, a
-// staggered lattice of provinces filling the space between. EXACTLY 12 provinces are
-// 'planet' kind — the prize, 50 pts each = 600 — and the other 40 are non-planet
-// provinces worth the flat 10, so the board totals ~1000 base points (12×50 + 40×10).
-// A solo win needs 600 (ctx config / core DEFAULT_SCORE_LIMIT). The whole map — lattice
-// positions, RNG links and the auto-fitted canvas bounds — derives from the constants
-// below; reshape it by editing the cell lists. The planet cells are point-symmetric
-// (each (c,r) paired with (cols-1-c, rows-1-r)) for a fair duel.
-const FIELD = { cols: 13, rows: 4, x0: 140, dx: 128, y0: 210, dy: 175, stagger: 64 };
+// A LARGE, ORGANIC contested field: a jittered lattice (no rigid grid look) of provinces
+// wired to neighbours by a relative-neighbourhood graph. EXACTLY 12 are 'planet' kind —
+// 4 of them START candidates (one per corner region, where players & AI spawn) + 8 neutral
+// worlds — and the other 40 are non-planet provinces, so the board totals ~1000 base points
+// (12×50 + 40×10); a solo win needs 600. All planets start NEUTRAL; newGame() seeds owners +
+// homes at the chosen starts. The jitter is deterministic (seeded sine hash) → reproducible.
+const FIELD = { cols: 13, rows: 4, x0: 152, dx: 124, y0: 206, dy: 166, jitter: 0.42 };
 const NON_PLANET_KINDS = ['asteroid', 'nebula', 'graveyard', 'ion_storm', 'dense_nebula', 'solar_flare'];
-const NEUTRAL_PLANET_TYPES = ['oceanic', 'volcanic', 'fortress_world', 'relic_world', 'gas_giant', 'irradiated', 'ringworld', 'crystalline', 'barren', 'terran'];
-const HOME_CELL = '0,1';
-const CRIMSON_CELL = '12,2';
-// ten neutral 'planet' provinces (5 point-symmetric pairs), evenly spread, 3 per row
-const NEUTRAL_PLANET_CELLS = ['2,0', '10,3', '4,1', '8,2', '3,3', '9,0', '6,0', '6,3', '5,2', '7,1'];
+const NEUTRAL_PLANET_TYPES = ['oceanic', 'volcanic', 'fortress_world', 'relic_world', 'gas_giant', 'irradiated', 'ringworld', 'crystalline'];
+// 4 start candidates — one per corner region, spread wide so multi-player starts don't crowd.
+const START_CELLS = ['1,0', '11,0', '1,3', '11,3'];
+// 8 neutral 'planet' worlds, spread through the middle.
+const NEUTRAL_PLANET_CELLS = ['6,0', '6,3', '4,1', '8,2', '3,2', '9,1', '6,1', '6,2'];
+
+const cellId = (cell: string): string => {
+  const [c, r] = cell.split(',');
+  return `C${c}R${r}`;
+};
+/** Deterministic 0..1 hash for the organic jitter (no Math.random → reproducible map). */
+function jhash(n: number): number {
+  const x = Math.sin(n * 127.1 + 311.7) * 43758.5453;
+  return x - Math.floor(x);
+}
 
 function buildField(): KeyNode[] {
-  const planetCells = new Set([HOME_CELL, CRIMSON_CELL, ...NEUTRAL_PLANET_CELLS]);
+  const starts = new Set(START_CELLS);
+  const neutralP = new Set(NEUTRAL_PLANET_CELLS);
   const nodes: KeyNode[] = [];
   let ptIdx = 0; // cycles neutral planet types
   let npIdx = 0; // cycles non-planet terrains
+  let i = 0; // jitter index
   for (let row = 0; row < FIELD.rows; row += 1) {
     for (let col = 0; col < FIELD.cols; col += 1) {
       const cell = `${col},${row}`;
-      const x = FIELD.x0 + col * FIELD.dx + (row % 2 ? FIELD.stagger : 0);
-      const y = FIELD.y0 + row * FIELD.dy;
-      const homeBits = { buildings: [{ type: 'mine' }, { type: 'radar' }], garrison: [['marine', 3]] as Array<[string, number]> };
-      if (cell === HOME_CELL) {
-        nodes.push({ id: 'HOME', owner: 'p1', x, y, sector: 'planet', type: 'terran', ...homeBits });
-      } else if (cell === CRIMSON_CELL) {
-        nodes.push({ id: 'CRIMSON', owner: 'p2', x, y, sector: 'planet', type: 'terran', ...homeBits });
-      } else if (planetCells.has(cell)) {
-        nodes.push({ id: `C${col}R${row}`, owner: null, x, y, sector: 'planet', type: NEUTRAL_PLANET_TYPES[ptIdx++ % NEUTRAL_PLANET_TYPES.length] });
+      const x = Math.round(FIELD.x0 + col * FIELD.dx + (jhash(i * 2) - 0.5) * 2 * FIELD.jitter * FIELD.dx);
+      const y = Math.round(FIELD.y0 + row * FIELD.dy + (jhash(i * 2 + 1) - 0.5) * 2 * FIELD.jitter * FIELD.dy);
+      i += 1;
+      const id = cellId(cell);
+      if (starts.has(cell)) {
+        nodes.push({ id, owner: null, x, y, sector: 'planet', type: 'terran' });
+      } else if (neutralP.has(cell)) {
+        nodes.push({ id, owner: null, x, y, sector: 'planet', type: NEUTRAL_PLANET_TYPES[ptIdx++ % NEUTRAL_PLANET_TYPES.length] });
       } else {
-        nodes.push({ id: `C${col}R${row}`, owner: null, x, y, sector: NON_PLANET_KINDS[npIdx++ % NON_PLANET_KINDS.length]! });
+        nodes.push({ id, owner: null, x, y, sector: NON_PLANET_KINDS[npIdx++ % NON_PLANET_KINDS.length]! });
       }
     }
   }
@@ -330,6 +339,8 @@ function buildField(): KeyNode[] {
 }
 
 const KEY: KeyNode[] = buildField();
+/** The 4 worlds players spawn on — the start picker offers these. */
+export const START_CANDIDATES: string[] = START_CELLS.map(cellId);
 
 // Wire sectors up as a Relative Neighbourhood Graph: a sector links to another
 // ONLY if no third sector lies "between" them (closer to both than they are to
@@ -622,59 +633,76 @@ export const fleetLaunchModule: GameModule = {
 
 // --- assembling the match ----------------------------------------------------
 
-export function newGame(): GameState {
+/** A seat in a match: who spawns where, and whether the AI drives it. Up to 4. */
+export interface SeatConfig {
+  id: string;
+  name: string;
+  faction: string;
+  start: string; // a START_CANDIDATES world id
+  ai: boolean;
+}
+export interface SetupConfig {
+  seats: SeatConfig[];
+}
+/** Default solo skirmish: you (p1) vs one AI (p2), at two of the start candidates. */
+export const DEFAULT_SETUP: SetupConfig = {
+  seats: [
+    { id: 'p1', name: 'Azure Compact', faction: 'blue', start: START_CANDIDATES[0]!, ai: false },
+    { id: 'p2', name: 'Crimson Hegemony', faction: 'red', start: START_CANDIDATES[1]!, ai: true },
+  ],
+};
+
+export function newGame(setup: SetupConfig = DEFAULT_SETUP): GameState {
   const base = createInitialState({
     seed: 'prototype-1',
     version: { data: '0.1.0', manifest: '1' },
   });
+  // Every province starts NEUTRAL; the chosen seats below claim + fortify their homeworld.
   const planets: Record<string, Planet> = {};
   for (const n of MAP) {
     planets[n.id] = {
       id: n.id,
-      owner: n.owner,
+      owner: null,
       position: { x: n.x, y: n.y },
       links: n.links,
       terrain: SECTOR_TYPES[n.sector]?.core ?? 'empty_space',
-      kind: n.sector, // planet / asteroid / nebula / empty — drives capturable (sectorKinds)
+      kind: n.sector, // planet / asteroid / nebula / … — drives capturable (sectorKinds)
       // relative territory weight — planets are the small sectors, fields/clouds bigger
       size: n.sector === 'nebula' ? 1.5 : n.sector === 'asteroid' ? 1.3 : 1,
       planetType: n.type,
       resources: {},
-      buildings: (n.buildings ?? []).map((b) => {
-        const def = data.buildings[b.type];
-        const level = b.level ?? 1;
-        const hp = def ? hpOfLevel(b.type, level) : 0;
-        return { type: b.type, level, hp };
-      }),
-      garrison: (n.garrison ?? []).map(([unit, count]) => ({ unit, count })),
+      buildings: [],
+      garrison: [],
       traits: [],
     };
   }
-  const players: Record<string, Player> = {
-    p1: player('p1', 'Azure Compact', 'blue', { credits: 260, metal: 320 }),
-    p2: player('p2', 'Crimson Hegemony', 'red', { credits: 240, metal: 300 }),
-  };
-  const fleets: Record<string, Fleet> = {
-    'blue-1': fleet(
-      'blue-1',
-      'p1',
-      'HOME',
+  const players: Record<string, Player> = {};
+  const fleets: Record<string, Fleet> = {};
+  const heroes: Record<string, Hero> = {};
+  for (const seat of setup.seats) {
+    const home = planets[seat.start];
+    if (!home) continue;
+    home.owner = seat.id;
+    home.buildings = [
+      { type: 'mine', level: 1, hp: hpOfLevel('mine', 1) },
+      { type: 'radar', level: 1, hp: hpOfLevel('radar', 1) },
+    ];
+    home.garrison = [{ unit: 'marine', count: 3 }];
+    players[seat.id] = player(seat.id, seat.name, seat.faction, { credits: 260, metal: 320 });
+    fleets[`${seat.id}-1`] = fleet(
+      `${seat.id}-1`,
+      seat.id,
+      seat.start,
       [
-        ['hero', 1], // the player's projection — flagship of the home fleet
+        ['hero', 1], // the commander's projection — flagship of the home fleet
         ['cruiser', 2],
         ['scout', 1],
       ],
       [['marine', 3]],
-    ),
-    'red-1': fleet('red-1', 'p2', 'CRIMSON', [['hero', 1], ['cruiser', 2]], [['marine', 3]]),
-  };
-  // Each player's first hero is a projection of themselves, named by their nick
-  // (a sensible default here; the net server overrides with the login nick). It
-  // rides in the home fleet and respawns at the home world.
-  const heroes: Record<string, Hero> = {
-    p1: { owner: 'p1', name: players.p1!.name, location: 'HOME', cooldowns: {}, alive: true },
-    p2: { owner: 'p2', name: players.p2!.name, location: 'CRIMSON', cooldowns: {}, alive: true },
-  };
+    );
+    // The first hero is a projection of the commander, named by their nick.
+    heroes[seat.id] = { owner: seat.id, name: seat.name, location: seat.start, cooldowns: {}, alive: true };
+  }
   return { ...base, players, planets, fleets, heroes };
 }
 
