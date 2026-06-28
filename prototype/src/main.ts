@@ -32,6 +32,9 @@ import {
   buildBuilding,
   upgradeBuilding,
   buildUnit,
+  START_CANDIDATES,
+  type SetupConfig,
+  type SeatConfig,
   type StepOut,
 } from './game';
 import {
@@ -78,6 +81,14 @@ function ownerColor(owner: string | null | undefined): string {
   const i = rivals.indexOf(owner);
   return i >= 0 ? RIVAL_COLORS[i % RIVAL_COLORS.length]! : RIVAL_COLORS[0]!;
 }
+// The four possible commanders, in stable seat order. Seat 1 is always you (human);
+// seats 2-4 are AI or off in the setup screen. Mirrors DEFAULT_SETUP in game.ts.
+const SEAT_META: ReadonlyArray<{ id: string; name: string; faction: string; color: string }> = [
+  { id: 'p1', name: 'Azure Compact', faction: 'blue', color: COLOR.p1! },
+  { id: 'p2', name: 'Crimson Hegemony', faction: 'red', color: COLOR.p2! },
+  { id: 'p3', name: 'Amber Concord', faction: 'amber', color: COLOR.p3! },
+  { id: 'p4', name: 'Violet Ascendancy', faction: 'violet', color: COLOR.p4! },
+];
 const GRID = 'rgba(46,150,160,0.07)';
 const LOCK = '#7df0d0'; // selection / targeting reticle accent
 const TAU = Math.PI * 2;
@@ -241,6 +252,10 @@ const logLines: string[] = [];
 let lastAiAt = 0;
 // Player ids the local sim drives as AI (empty seats become AI). Default solo = p2.
 let AI_PLAYERS = new Set<string>(['p2']);
+// Single-player setup screen state: per-seat role (seat 0 is always you) + your
+// chosen homeworld. Seats 2-4 toggle 'ai'/'off'; an 'ai' seat spawns a rival.
+let setupSlots: Array<'human' | 'ai' | 'off'> = ['human', 'ai', 'off', 'off'];
+let setupStart: string = START_CANDIDATES[0] ?? MAP[0]!.id;
 let lastPanelHtml = '';
 let lastCmdHtml = '';
 let lastSplitHtml = '';
@@ -1088,7 +1103,7 @@ function playerOrder(action: Action) {
   if (out.error) note('✖ ' + out.error.replace(/^E_/, '').toLowerCase().replace(/_/g, ' '));
 }
 
-const NAME: Record<string, string> = { p1: 'Azure', p2: 'Crimson' };
+const NAME: Record<string, string> = { p1: 'Azure', p2: 'Crimson', p3: 'Amber', p4: 'Violet' };
 function setFleetSelection(ids: string[]) {
   const picked = ids.filter((id) => s.fleets[id]?.owner === ME);
   selFleets = new Set(picked);
@@ -3600,7 +3615,143 @@ nickInput.value = localStorage.getItem('void.nick') ?? '';
 $('csolo').addEventListener('click', () => {
   userClosed = true; // intentional leave → don't auto-reconnect
   NET = false;
+  openSetup(); // pick start + rivals before the skirmish begins
+});
+
+// --- single-player setup overlay --------------------------------------------
+// Pick your homeworld on a mini-map and choose how many AI rivals join, then
+// launch a fresh local match. Seat 1 is always you; seats 2-4 toggle AI/off,
+// with at least one rival (two seats) required to start.
+const setupEl = $('setup');
+const setupMapEl = $('setupmap');
+const setupSlotsEl = $('setupslots');
+const setupHintEl = $('setuphint');
+const setupGoEl = $('setupgo') as HTMLButtonElement;
+
+function renderSetupMap(): void {
+  const pad = 60;
+  setupMapEl.setAttribute(
+    'viewBox',
+    `${MINX - pad} ${MINY - pad} ${MAXX - MINX + pad * 2} ${MAXY - MINY + pad * 2}`,
+  );
+  const cand = new Set(START_CANDIDATES);
+  const byId = new Map(MAP.map((n) => [n.id, n]));
+  let svg = '';
+  for (const n of MAP) {
+    for (const l of n.links) {
+      const m = byId.get(l);
+      if (!m || m.id < n.id) continue; // draw each undirected edge once
+      svg += `<line x1="${n.x}" y1="${n.y}" x2="${m.x}" y2="${m.y}" stroke="#1d3640" stroke-width="3"/>`;
+    }
+  }
+  for (const n of MAP) {
+    if (cand.has(n.id)) continue; // candidates drawn last, on top
+    const planet = n.sector === 'planet';
+    svg += `<circle cx="${n.x}" cy="${n.y}" r="${planet ? 16 : 11}" fill="${planet ? '#2c5460' : '#1b2d34'}" stroke="#33555f" stroke-width="2"/>`;
+  }
+  for (const id of START_CANDIDATES) {
+    const n = byId.get(id);
+    if (!n) continue;
+    const picked = id === setupStart;
+    svg +=
+      `<circle class="cand" data-cand="${id}" cx="${n.x}" cy="${n.y}" r="${picked ? 30 : 22}" ` +
+      `fill="${picked ? 'rgba(58,209,122,.35)' : 'rgba(53,214,230,.16)'}" ` +
+      `stroke="${picked ? '#3ad17a' : '#35d6e6'}" stroke-width="${picked ? 6 : 4}"/>`;
+  }
+  setupMapEl.innerHTML = svg;
+}
+
+function renderSetupSlots(): void {
+  let h = '';
+  for (let i = 0; i < SEAT_META.length; i++) {
+    const m = SEAT_META[i]!;
+    const role = setupSlots[i]!;
+    if (i === 0) {
+      h +=
+        `<div class="srow"><span class="dot" style="background:${m.color};color:${m.color}"></span>` +
+        `<span class="nm">${esc(m.name)}</span><span class="you">YOU</span></div>`;
+    } else {
+      const aiOn = role === 'ai';
+      h +=
+        `<div class="srow ${aiOn ? '' : 'off'}"><span class="dot" style="background:${m.color};color:${m.color}"></span>` +
+        `<span class="nm">${esc(m.name)}</span>` +
+        `<button class="stog ${aiOn ? 'ai' : ''}" data-slot="${i}">${aiOn ? 'AI' : 'OFF'}</button></div>`;
+    }
+  }
+  setupSlotsEl.innerHTML = h;
+}
+
+function renderSetup(): void {
+  renderSetupMap();
+  renderSetupSlots();
+  const active = setupSlots.filter((r) => r !== 'off').length;
+  setupGoEl.disabled = active < 2;
+  setupHintEl.textContent = `Home: ${setupStart} — tap another glowing world to change`;
+}
+
+function openSetup(): void {
+  setupSlots = ['human', 'ai', 'off', 'off'];
+  setupStart = START_CANDIDATES[0] ?? MAP[0]!.id;
   showConnect(false);
+  setupEl.style.display = 'flex';
+  renderSetup();
+}
+
+function buildSetupConfig(): SetupConfig {
+  const seats: SeatConfig[] = [
+    { id: SEAT_META[0]!.id, name: SEAT_META[0]!.name, faction: SEAT_META[0]!.faction, start: setupStart, ai: false },
+  ];
+  // Hand each active AI seat one of the remaining candidate worlds, in order.
+  const free = START_CANDIDATES.filter((c) => c !== setupStart);
+  let fi = 0;
+  for (let i = 1; i < SEAT_META.length; i++) {
+    if (setupSlots[i] !== 'ai') continue;
+    const start = free[fi++];
+    if (!start) break; // ran out of candidate worlds
+    const m = SEAT_META[i]!;
+    seats.push({ id: m.id, name: m.name, faction: m.faction, start, ai: true });
+  }
+  return { seats };
+}
+
+function startMatch(setup: SetupConfig): void {
+  s = newGame(setup);
+  ME = 'p1';
+  AI_PLAYERS = new Set(setup.seats.filter((x) => x.ai).map((x) => x.id));
+  lastAiAt = s.time;
+  // Reset interaction + queues + camera to the framed whole-map view.
+  selFleet = null;
+  selPlanet = null;
+  selFleets = new Set();
+  pendingMerges = [];
+  aiming = false;
+  merging = false;
+  additive = false;
+  splitState = null;
+  for (const k of Object.keys(buildQueues)) delete buildQueues[k];
+  cam.scale = 1;
+  cam.x = 0;
+  cam.y = 0;
+  setupEl.style.display = 'none';
+}
+
+setupMapEl.addEventListener('click', (ev) => {
+  const t = (ev.target as Element).closest('[data-cand]');
+  if (!t) return;
+  setupStart = t.getAttribute('data-cand')!;
+  renderSetup();
+});
+setupSlotsEl.addEventListener('click', (ev) => {
+  const t = (ev.target as Element).closest('[data-slot]');
+  if (!t) return;
+  const i = Number(t.getAttribute('data-slot'));
+  setupSlots[i] = setupSlots[i] === 'ai' ? 'off' : 'ai';
+  renderSetup();
+});
+setupGoEl.addEventListener('click', () => startMatch(buildSetupConfig()));
+$('setupcancel').addEventListener('click', () => {
+  setupEl.style.display = 'none';
+  showConnect(true);
 });
 
 function connect(): void {

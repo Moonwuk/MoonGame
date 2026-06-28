@@ -380,6 +380,32 @@ body.sheet-open #log{display:none;}
   background:rgba(53,214,230,.14);color:var(--cyan);font:13px ui-monospace,monospace;letter-spacing:1px;cursor:pointer;}
 #lobby .lbtn:disabled{opacity:.4;cursor:not-allowed;}
 #lobby .lwait{text-align:center;color:var(--dim);font-size:12px;}
+#setup{position:fixed;inset:0;z-index:58;display:none;align-items:center;justify-content:center;
+  background:rgba(2,8,11,.72);}
+#setup .sbox{width:min(560px,95vw);max-height:92vh;overflow:auto;background:var(--glass);
+  border:1px solid var(--line-hi);border-radius:14px;padding:22px;box-shadow:0 0 40px rgba(0,0,0,.6);}
+#setup .stitle{display:flex;align-items:center;gap:10px;font-size:18px;letter-spacing:3px;color:var(--cyan);}
+#setup .stitle .dia{width:12px;height:12px;transform:rotate(45deg);background:var(--cyan);box-shadow:0 0 10px var(--cyan);border:none;}
+#setup .ssub{margin:8px 0 14px;color:var(--dim);font-size:12px;line-height:1.5;}
+#setup .smap{width:100%;height:200px;display:block;border:1px solid var(--line-hi);border-radius:10px;
+  background:radial-gradient(circle at 50% 40%,rgba(53,214,230,.06),transparent 70%),#06141a;margin-bottom:6px;}
+#setup .smap .cand{cursor:pointer;}
+#setup .smaphint{text-align:center;color:var(--dim);font-size:11px;margin:0 0 14px;}
+#setup .sslots{display:flex;flex-direction:column;gap:8px;margin-bottom:16px;}
+#setup .srow{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--line-hi);
+  border-radius:8px;font:13px ui-monospace,monospace;color:var(--ink);}
+#setup .srow .dot{width:10px;height:10px;border-radius:50%;flex:none;box-shadow:0 0 8px currentColor;}
+#setup .srow .nm{flex:1;}
+#setup .srow .you{font-size:10px;color:var(--cyan);letter-spacing:1px;}
+#setup .srow.off{opacity:.45;}
+#setup .srow .stog{font:11px ui-monospace,monospace;letter-spacing:1px;border:1px solid var(--line-hi);
+  border-radius:6px;padding:6px 12px;min-width:64px;cursor:pointer;background:transparent;color:var(--dim);}
+#setup .srow .stog.ai{border-color:var(--cyan);color:var(--cyan);background:rgba(53,214,230,.12);}
+#setup .sgo{width:100%;padding:13px 10px;border-radius:8px;border:1px solid var(--cyan);
+  background:rgba(53,214,230,.16);color:var(--cyan);font:600 13px ui-monospace,monospace;letter-spacing:1px;cursor:pointer;min-height:46px;}
+#setup .sgo:disabled{opacity:.4;cursor:not-allowed;}
+#setup .scancel{width:100%;margin-top:8px;padding:10px;border-radius:8px;border:1px solid var(--line-hi);
+  background:transparent;color:var(--dim);font:12px ui-monospace,monospace;letter-spacing:1px;cursor:pointer;}
 `;
 
 const html = `<!doctype html>
@@ -447,6 +473,18 @@ const html = `<!doctype html>
     <p class="lsub">Waiting in the staging sector. The host starts the match when ready.</p>
     <div id="lroster" class="lroster"></div>
     <div id="lactions"></div>
+  </div>
+</div>
+<div id="setup">
+  <div class="sbox">
+    <div class="stitle"><span class="dia"></span><b>SKIRMISH SETUP</b></div>
+    <p class="ssub">Pick your homeworld on the map, choose how many rivals join, then launch. Empty
+      slots are taken by the AI — switch a slot OFF to command a smaller sector.</p>
+    <svg id="setupmap" class="smap" preserveAspectRatio="xMidYMid meet"></svg>
+    <p class="smaphint" id="setuphint">Tap a glowing world to choose your start</p>
+    <div id="setupslots" class="sslots"></div>
+    <button id="setupgo" class="sgo" disabled>LAUNCH</button>
+    <button id="setupcancel" class="scancel">Back</button>
   </div>
 </div>
 <script>${js}</script>
