@@ -62,6 +62,7 @@
   "dead_world": {
     "name": "Dead World",
     "productionBonus": 0,
+    "productionByResource": { "metal": 0.3 },
     "defenseBonus": 0,
     "scoreValue": 0
   }

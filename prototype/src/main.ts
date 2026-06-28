@@ -3775,6 +3775,6 @@ function frame(nowReal: number) {
 }
 
 note(
-  'Welcome, Commander. Ten free worlds lie between you and CRIMSON — seize the field, then crack the enemy capital.',
+  'Welcome, Commander. A wide frontier of provinces separates you from CRIMSON — the worlds among them score 50, every other sector 10. Reach 600 points or take the enemy capital.',
 );
 requestAnimationFrame(frame);

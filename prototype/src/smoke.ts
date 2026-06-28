@@ -34,10 +34,10 @@ r = order(s, buildUnit('p1', 'HOME', 'cruiser', 1), s.time);
 s = r.state;
 note(s.time, `build cruiser @HOME → ${r.error ?? 'ok'}`);
 
-// 3) send the blue fleet to take neutral N1
-r = order(s, moveFleet('p1', 'blue-1', 'N1'), s.time);
+// 3) send the blue fleet to take a nearby neutral world
+r = order(s, moveFleet('p1', 'blue-1', 'C2R0'), s.time);
 s = r.state;
-note(s.time, `move blue-1 → N1 → ${r.error ?? 'ok'}`);
+note(s.time, `move blue-1 → C2R0 → ${r.error ?? 'ok'}`);
 
 // 4) run the world forward; when blue-1 is idle over a hostile world, descend & land
 for (let t = s.time + HOUR; t <= 40 * HOUR; t += HOUR) {
@@ -66,7 +66,7 @@ for (let t = s.time + HOUR; t <= 40 * HOUR; t += HOUR) {
   }
 }
 
-note(s.time, `FORGE owner = ${s.planets.FORGE?.owner}`);
+note(s.time, `C2R0 owner = ${s.planets.C2R0?.owner}`);
 note(s.time, `HOME garrison = ${JSON.stringify(s.planets.HOME?.garrison)}`);
 
 // 5) launch a fresh fleet from HOME's garrison

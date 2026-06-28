@@ -157,7 +157,11 @@ export const heroModule: GameModule = {
       if (!hero) return h.reject('E_NO_HERO');
       const planet = h.state.planets[planetId];
       if (!planet) return h.reject('E_NO_PLANET');
-      if (!isCapturable(h.ctx.data, planet)) return h.reject('E_NOT_DESTRUCTIBLE'); // empty space / already dead
+      // Destructible = a real, ownable world that isn't already a dead world. Empty
+      // space (uncapturable) and a previously-annihilated dead world are both rejected.
+      if (!isCapturable(h.ctx.data, planet) || planet.kind === DEAD_KIND) {
+        return h.reject('E_NOT_DESTRUCTIBLE');
+      }
       const origin = h.state.planets[hero.location];
       if (!origin) return h.reject('E_NO_PLANET');
       if (distance(origin.position, planet.position) > ANNIHILATE_RANGE) {
@@ -166,11 +170,11 @@ export const heroModule: GameModule = {
       if (onCooldown(hero, 'annihilate', h.ctx.now)) return h.reject('E_COOLDOWN');
 
       const previousOwner = planet.owner;
-      planet.owner = null;
+      planet.owner = null; // neutral again — a depleted world anyone can re-claim
       planet.buildings = [];
       planet.garrison = [];
-      planet.kind = DEAD_KIND; // uncapturable / unbuildable
-      planet.planetType = DEAD_PLANET_TYPE; // no production / defense / score
+      planet.kind = DEAD_KIND; // capturable + buildable, but worth only the flat 10
+      planet.planetType = DEAD_PLANET_TYPE; // no defense edge, but rich in metal (+30%)
       hero.cooldowns = hero.cooldowns ?? {};
       hero.cooldowns.annihilate = after(h, ANNIHILATE_COOLDOWN_HOURS);
       h.emit('planet.destroyed', { planetId, by: action.playerId, from: previousOwner });

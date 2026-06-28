@@ -107,6 +107,9 @@ export const data: GameData = parseGameData({
   },
   factions: {},
   buildings: {
+    // Every building is worth victory points by TIER — the score module multiplies
+    // `scoreValue` by the instance's level, so investing in upgrades (and losing them)
+    // moves the scoreboard. Modest next to a planet's 50 base; tune in this data.
     // metal mine — the economy's backbone; each level digs into denser ore and
     // lifts output by +50% (12 → 18 → 27 metal/h), at a steeper cost in kind.
     mine: {
@@ -115,6 +118,7 @@ export const data: GameData = parseGameData({
       buildTimeHours: 3,
       produces: { metal: 12 },
       hp: 20,
+      scoreValue: 4,
       upgrades: [
         { cost: { metal: 140 }, buildTimeHours: 4, produces: { metal: 18 }, hp: 26 },
         { cost: { metal: 230, credits: 50 }, buildTimeHours: 5, produces: { metal: 27 }, hp: 32 },
@@ -126,8 +130,23 @@ export const data: GameData = parseGameData({
       buildTimeHours: 4,
       produces: { credits: 8 },
       hp: 20,
+      scoreValue: 3,
     },
-    barracks: { name: 'Barracks', cost: { metal: 70 }, buildTimeHours: 3, hp: 25 },
+    // salvage metal rig — the ONLY thing raisable on a dead world (sectorKinds roster);
+    // mines the corpse for metal, boosted +30% by the dead world's metal bonus.
+    metal_station: {
+      name: 'Salvage Metal Rig',
+      cost: { metal: 80, credits: 30 },
+      buildTimeHours: 4,
+      produces: { metal: 30 },
+      hp: 20,
+      scoreValue: 5,
+      upgrades: [
+        { cost: { metal: 220, credits: 90 }, buildTimeHours: 6, produces: { metal: 60 }, hp: 30 },
+        { cost: { metal: 380, credits: 170 }, buildTimeHours: 8, produces: { metal: 100 }, hp: 40 },
+      ],
+    },
+    barracks: { name: 'Barracks', cost: { metal: 70 }, buildTimeHours: 3, hp: 25, scoreValue: 2 },
     // radar array — projects a detection radius (in jumps) that grows with its
     // level; enemy fleets inside it show up as coarse signatures (not identified).
     radar: {
@@ -142,6 +161,7 @@ export const data: GameData = parseGameData({
       // border to the next ring of worlds — on the current map neighbours sit ~205 out
       // (auto-identified, 1 hop) and the next ring ~349, so L1 (400) reaches past 349.
       radarRange: 400,
+      scoreValue: 2,
       upgrades: [
         { cost: { metal: 180, credits: 80 }, buildTimeHours: 5, hp: 28, radarRange: 550 },
         { cost: { metal: 300, credits: 140 }, buildTimeHours: 7, hp: 38, radarRange: 700 },
@@ -155,6 +175,7 @@ export const data: GameData = parseGameData({
       buildTimeHours: 6,
       hp: 70,
       defenseBonus: 0.4,
+      scoreValue: 6,
     },
     fort: {
       name: 'Fort',
@@ -162,6 +183,7 @@ export const data: GameData = parseGameData({
       buildTimeHours: 4,
       hp: 40,
       defenseBonus: 0.3,
+      scoreValue: 5,
       upgrades: [
         { cost: { metal: 200, credits: 80 }, buildTimeHours: 6, hp: 60, defenseBonus: 0.45 },
         { cost: { metal: 340, credits: 160 }, buildTimeHours: 8, hp: 85, defenseBonus: 0.6 },
@@ -182,11 +204,17 @@ export const data: GameData = parseGameData({
   // Sector kinds (capturable/buildable/orbit) — mirrors SECTOR_TYPES so the kernel's
   // capture-on-arrival treats empty void as uncapturable (matches data/sectorKinds.json).
   sectorKinds: {
-    planet: { name: 'Planet', capturable: true, buildable: true, orbit: true },
+    // The province KIND carries the territory score: a `planet` is the prize (50), every
+    // other capturable kind the flat 10 (the schema default — so asteroid/nebula/… and the
+    // KEY's terrain kinds all score 10 without listing it here).
+    planet: { name: 'Planet', scoreValue: 50, capturable: true, buildable: true, orbit: true },
     asteroid: { name: 'Asteroid Field', capturable: true, buildable: true, orbit: false },
     nebula: { name: 'Nebula', capturable: true, buildable: true, orbit: true },
     empty: { name: 'Empty Space', capturable: false, buildable: false, orbit: false },
     debris_field: { name: 'Debris Field', capturable: false, buildable: false, orbit: false },
+    // a destroyed planet — re-claimable + metal-rich, but worth only the flat 10; the
+    // salvage rig is the one thing buildable there. (Annihilation = a future hero.)
+    dead_world: { name: 'Dead World', scoreValue: 10, capturable: true, buildable: true, orbit: true, allowedBuildings: ['metal_station'] },
   },
   planetTypes: {
     terran: { name: 'Terran', productionBonus: 0, defenseBonus: 0.1 },
@@ -199,6 +227,7 @@ export const data: GameData = parseGameData({
     relic_world: { name: 'Relic World', productionBonus: 0.05, defenseBonus: 0 },
     irradiated: { name: 'Irradiated', productionBonus: 0.2, defenseBonus: 0.15 },
     ringworld: { name: 'Ringworld', productionBonus: 0.3, defenseBonus: 0.1 },
+    dead_world: { name: 'Dead World', productionBonus: 0, productionByResource: { metal: 0.3 }, defenseBonus: 0 },
   },
 });
 
@@ -237,6 +266,8 @@ export const SECTOR_TYPES: Record<string, SectorType> = {
   graveyard: { name: 'Derelict Graveyard', core: 'derelict_graveyard', capturable: true, buildable: true, orbit: false, color: '#9fb0a8' },
   // debris field — a fast but UN-capturable corridor (kind `debris_field` in sectorKinds)
   debris_field: { name: 'Debris Field', core: 'deep_void', capturable: false, buildable: false, orbit: false, color: '#2f4a59' },
+  // dead world — a destroyed planet (future hero ability); re-claimable, only the salvage rig builds here
+  dead_world: { name: 'Dead World', core: 'deep_void', capturable: true, buildable: true, orbit: true, color: '#5a4a4a', allowedBuildings: ['metal_station'] },
 };
 
 // --- the map -----------------------------------------------------------------
@@ -257,25 +288,48 @@ export interface MapNode {
 
 type KeyNode = Omit<MapNode, 'links'>;
 
-// A compact, even skirmish field: ONE home world per player at opposite ends, and
-// ten neutral worlds spread on a clean 5×2 lattice between them — every node a
-// real, capturable world (no void waypoints), so the whole map is contestable.
-const KEY: KeyNode[] = [
-  // one home each, at opposite ends (symmetric for a fair 1v1)
-  { id: 'HOME', owner: 'p1', x: 120, y: 290, sector: 'planet', type: 'terran', buildings: [{ type: 'mine' }, { type: 'radar' }], garrison: [['marine', 3]] },
-  { id: 'CRIMSON', owner: 'p2', x: 1080, y: 290, sector: 'planet', type: 'terran', buildings: [{ type: 'mine' }, { type: 'radar' }], garrison: [['marine', 3]] },
-  // ten neutral worlds, evenly scattered across the field
-  { id: 'N1', owner: null, x: 290, y: 175, sector: 'planet', type: 'oceanic' },
-  { id: 'N2', owner: null, x: 450, y: 175, sector: 'nebula', type: 'gas_giant' },
-  { id: 'N3', owner: null, x: 600, y: 175, sector: 'graveyard', type: 'relic_world' }, // salvage prize
-  { id: 'N4', owner: null, x: 750, y: 175, sector: 'nebula', type: 'gas_giant' },
-  { id: 'N5', owner: null, x: 910, y: 175, sector: 'planet', type: 'volcanic' },
-  { id: 'N6', owner: null, x: 290, y: 405, sector: 'planet', type: 'volcanic' },
-  { id: 'N7', owner: null, x: 450, y: 405, sector: 'asteroid' },
-  { id: 'N8', owner: null, x: 600, y: 405, sector: 'planet', type: 'fortress_world' }, // central stronghold
-  { id: 'N9', owner: null, x: 750, y: 405, sector: 'asteroid' },
-  { id: 'N10', owner: null, x: 910, y: 405, sector: 'planet', type: 'oceanic' },
-];
+// A LARGE contested field for the 1v1: two home planets at the far left/right ends, a
+// staggered lattice of provinces filling the space between. EXACTLY 12 provinces are
+// 'planet' kind — the prize, 50 pts each = 600 — and the other 40 are non-planet
+// provinces worth the flat 10, so the board totals ~1000 base points (12×50 + 40×10).
+// A solo win needs 600 (ctx config / core DEFAULT_SCORE_LIMIT). The whole map — lattice
+// positions, RNG links and the auto-fitted canvas bounds — derives from the constants
+// below; reshape it by editing the cell lists. The planet cells are point-symmetric
+// (each (c,r) paired with (cols-1-c, rows-1-r)) for a fair duel.
+const FIELD = { cols: 13, rows: 4, x0: 140, dx: 128, y0: 210, dy: 175, stagger: 64 };
+const NON_PLANET_KINDS = ['asteroid', 'nebula', 'graveyard', 'ion_storm', 'dense_nebula', 'solar_flare'];
+const NEUTRAL_PLANET_TYPES = ['oceanic', 'volcanic', 'fortress_world', 'relic_world', 'gas_giant', 'irradiated', 'ringworld', 'crystalline', 'barren', 'terran'];
+const HOME_CELL = '0,1';
+const CRIMSON_CELL = '12,2';
+// ten neutral 'planet' provinces (5 point-symmetric pairs), evenly spread, 3 per row
+const NEUTRAL_PLANET_CELLS = ['2,0', '10,3', '4,1', '8,2', '3,3', '9,0', '6,0', '6,3', '5,2', '7,1'];
+
+function buildField(): KeyNode[] {
+  const planetCells = new Set([HOME_CELL, CRIMSON_CELL, ...NEUTRAL_PLANET_CELLS]);
+  const nodes: KeyNode[] = [];
+  let ptIdx = 0; // cycles neutral planet types
+  let npIdx = 0; // cycles non-planet terrains
+  for (let row = 0; row < FIELD.rows; row += 1) {
+    for (let col = 0; col < FIELD.cols; col += 1) {
+      const cell = `${col},${row}`;
+      const x = FIELD.x0 + col * FIELD.dx + (row % 2 ? FIELD.stagger : 0);
+      const y = FIELD.y0 + row * FIELD.dy;
+      const homeBits = { buildings: [{ type: 'mine' }, { type: 'radar' }], garrison: [['marine', 3]] as Array<[string, number]> };
+      if (cell === HOME_CELL) {
+        nodes.push({ id: 'HOME', owner: 'p1', x, y, sector: 'planet', type: 'terran', ...homeBits });
+      } else if (cell === CRIMSON_CELL) {
+        nodes.push({ id: 'CRIMSON', owner: 'p2', x, y, sector: 'planet', type: 'terran', ...homeBits });
+      } else if (planetCells.has(cell)) {
+        nodes.push({ id: `C${col}R${row}`, owner: null, x, y, sector: 'planet', type: NEUTRAL_PLANET_TYPES[ptIdx++ % NEUTRAL_PLANET_TYPES.length] });
+      } else {
+        nodes.push({ id: `C${col}R${row}`, owner: null, x, y, sector: NON_PLANET_KINDS[npIdx++ % NON_PLANET_KINDS.length]! });
+      }
+    }
+  }
+  return nodes;
+}
+
+const KEY: KeyNode[] = buildField();
 
 // Wire sectors up as a Relative Neighbourhood Graph: a sector links to another
 // ONLY if no third sector lies "between" them (closer to both than they are to
@@ -672,7 +726,9 @@ export const MODULES: GameModule[] = [
 export const kernel = createKernel(MODULES);
 
 export function ctx(now: number): Context {
-  return { now, data, config: { timeScale: 1 } };
+  // Solo win at 600 of the board's ~1000 base points (also the core default now; set
+  // explicitly so the prototype's win condition is self-documenting and tunable here).
+  return { now, data, config: { timeScale: 1, victory: { scoreLimit: 600 } } };
 }
 
 export interface StepOut {

@@ -189,6 +189,10 @@ export const PlanetTypeDefSchema = z.object({
   name: z.string().optional(),
   /** Multiplier on the world's production, e.g. 0.25 = +25% (rich), −0.25 = poor. */
   productionBonus: z.number().default(0),
+  /** Per-resource production multipliers layered ON TOP of `productionBonus`, e.g.
+   *  `{ metal: 0.3 }` = +30% metal only (a depleted dead world is metal-rich). Lets a
+   *  type favour one resource without touching the others; applied by `planetTypeModule`. */
+  productionByResource: z.record(z.string(), z.number()).default({}),
   /** Ground-defense edge for the owner's garrison: incoming assault damage is
    *  divided by (1 + this). Positive = defensible world, negative = exposed.
    *  Stacks with building defense. */
@@ -247,6 +251,11 @@ export const SectorKindAppearanceSchema = z.object({
  *  Absent / unknown kind degrades to the permissive defaults below. */
 export const SectorKindDefSchema = z.object({
   name: z.string().optional(),
+  /** Victory-score base for controlling a province of this kind (GDD §8.1). A
+   *  habitable `planet` is the prize (50); every other province type — asteroid,
+   *  nebula, a depleted dead world — is worth a flat 10. Data-driven so the whole
+   *  scoring economy is balanced in content, not code. */
+  scoreValue: z.number().nonnegative().default(10),
   /** Can this province be owned (captured)? Empty space cannot. */
   capturable: z.boolean().default(true),
   /** Can structures be raised here? */

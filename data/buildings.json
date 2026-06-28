@@ -97,5 +97,28 @@
       }
     ],
     "traits": []
+  },
+  "metal_station": {
+    "name": "Salvage Metal Rig I",
+    "cost": { "metal": 80, "credits": 30 },
+    "buildTimeHours": 8,
+    "produces": { "metal": 30 },
+    "hp": 20,
+    "scoreValue": 6,
+    "upgrades": [
+      {
+        "cost": { "metal": 220, "credits": 90 },
+        "buildTimeHours": 14,
+        "produces": { "metal": 60 },
+        "hp": 30
+      },
+      {
+        "cost": { "metal": 380, "credits": 170 },
+        "buildTimeHours": 20,
+        "produces": { "metal": 100 },
+        "hp": 40
+      }
+    ],
+    "traits": []
   }
 }

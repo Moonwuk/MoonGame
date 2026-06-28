@@ -50,9 +50,18 @@ const data: GameData = parseGameData({
     },
   },
   events: {},
-  planetTypes: { terran: { scoreValue: 40 }, capital: { scoreValue: 200 } },
-  // A non-capturable void kind — must NOT count toward the domination denominator.
-  sectorKinds: { empty: { capturable: false, buildable: false, orbit: false } },
+  // planetType drives economy/defense; it no longer feeds the victory score.
+  planetTypes: { terran: { productionBonus: 0 }, capital: { productionBonus: 0 } },
+  // Province KIND now carries the territory score base: a `planet` is the prize (50),
+  // a rare `capital` worth more (200), a depleted `dead_world` the flat 10, and every
+  // other/absent kind the flat default (10). `empty` is a non-capturable void — it must
+  // NOT count toward the domination denominator.
+  sectorKinds: {
+    empty: { capturable: false, buildable: false, orbit: false },
+    planet: { scoreValue: 50 },
+    capital: { scoreValue: 200 },
+    dead_world: { scoreValue: 10 },
+  },
 });
 
 function ctx(now: number, config?: MatchConfig): Context {
@@ -147,16 +156,16 @@ describe('victory module', () => {
     expect(r.state.match).toMatchObject({ status: 'ended', winner: 'p1', reason: 'domination' });
   });
 
-  it('ends by score at the default 500 limit with no victory config', () => {
+  it('ends by score at the default 600 limit with no victory config', () => {
     const kernel = createKernel([victoryModule]);
     const state: GameState = {
       ...baseState(),
       planets: {
-        // p1's three capital worlds total 3×(10+200)=630 ≥ 500, yet hold only 3/8 of
-        // the capturable map (< 60%) — so the SCORE trigger, not domination, ends it.
-        A: planet('A', 'p1', { planetType: 'capital' }),
-        B: planet('B', 'p1', { planetType: 'capital' }),
-        C: planet('C', 'p1', { planetType: 'capital' }),
+        // p1's three capital worlds total 3×200=600 ≥ 600, yet hold only 3/8 of the
+        // capturable map (< 60%) — so the SCORE trigger, not domination, ends it.
+        A: planet('A', 'p1', { kind: 'capital' }),
+        B: planet('B', 'p1', { kind: 'capital' }),
+        C: planet('C', 'p1', { kind: 'capital' }),
         D: planet('D', 'p2'),
         E: planet('E', 'p2'),
         F: planet('F', null),
@@ -168,7 +177,7 @@ describe('victory module', () => {
     const r = okAdvance(kernel.advanceTo(state, ctx(HOUR))); // no victory config at all
 
     expect(r.state.match).toMatchObject({ status: 'ended', winner: 'p1', reason: 'score' });
-    expect(r.state.match.scores.p1?.total).toBe(630);
+    expect(r.state.match.scores.p1?.total).toBe(600);
   });
 
   it('marks empty active players defeated and ends by elimination', () => {
@@ -214,9 +223,9 @@ describe('victory module', () => {
     const state: GameState = {
       ...baseState(),
       planets: {
-        // p1 holds a developed terran world (10 control + 40 terran = 50),
-        // p2 a bare world (10). Third planet neutral keeps p1 below domination.
-        A: planet('A', 'p1', { planetType: 'terran' }),
+        // p1 holds one full planet (50 base), p2 a bare world (the flat 10). A third
+        // neutral province keeps p1 below the domination share.
+        A: planet('A', 'p1', { kind: 'planet' }),
         B: planet('B', 'p2'),
         C: planet('C', null),
       },
@@ -289,7 +298,7 @@ describe('victory module', () => {
       ...baseState(),
       planets: {
         A: planet('A', 'p1', {
-          planetType: 'terran',
+          kind: 'planet',
           buildings: [{ type: 'fort', level: 2, hp: 50 }],
           garrison: [{ unit: 'titan', count: 1 }], // a strong unit — still 0 points
         }),
@@ -301,7 +310,7 @@ describe('victory module', () => {
 
     const r = okAdvance(kernel.advanceTo(state, ctx(HOUR)));
 
-    // 10 control + 40 terran + 20×2 fort = 90; the titan and 3 cruisers add 0.
+    // 50 planet + 20×2 fort = 90; the titan and 3 cruisers add 0.
     expect(r.state.match.status).toBe('ongoing');
     expect(r.state.match.scores.p1?.total).toBe(90);
     expect(r.state.match.scores.p1?.units).toBe(4); // 1 titan + 3 cruisers (headcount only)
@@ -334,5 +343,26 @@ describe('victory module', () => {
 
     expect(r.state.match.scores.p1?.total).toBe(70); // 2×(10+25)
     expect(r.state.match.scores.p2?.total).toBe(10); // base only
+  });
+
+  it('scores a province by its KIND: planet 50, dead world and other kinds the flat 10', () => {
+    const kernel = createKernel([victoryModule]);
+    const state: GameState = {
+      ...baseState(),
+      planets: {
+        A: planet('A', 'p1', { kind: 'planet' }), // 50 — the prize
+        B: planet('B', 'p1', { kind: 'dead_world' }), // 10 — a depleted planet is worth far less
+        C: planet('C', 'p1'), // kind-less ⇒ the flat default 10
+        D: planet('D', 'p2'),
+      },
+    };
+
+    // dominationPercent 0 disables the share win so we can read the raw scoreboard.
+    const r = okAdvance(
+      kernel.advanceTo(state, ctx(HOUR, { timeScale: 1, victory: { dominationPercent: 0 } })),
+    );
+
+    expect(r.state.match.scores.p1?.total).toBe(70); // 50 + 10 + 10
+    expect(r.state.match.scores.p2?.total).toBe(10);
   });
 });

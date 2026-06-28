@@ -33,12 +33,13 @@ const data: GameData = parseGameData({
   buildings: { mine: { name: 'Mine', produces: { metal: 10 } } },
   events: {},
   sectorKinds: {
-    planet: { capturable: true, buildable: true, orbit: true },
-    dead_world: { capturable: false, buildable: false, orbit: false },
+    planet: { scoreValue: 50, capturable: true, buildable: true, orbit: true },
+    // A depleted planet is re-claimable and metal-rich, but worth only the flat 10.
+    dead_world: { scoreValue: 10, capturable: true, buildable: true, orbit: true },
   },
   planetTypes: {
-    terran: { productionBonus: 0, defenseBonus: 0.1, scoreValue: 40 },
-    dead_world: { productionBonus: 0, defenseBonus: 0, scoreValue: 0 },
+    terran: { productionBonus: 0, defenseBonus: 0.1 },
+    dead_world: { productionBonus: 0, productionByResource: { metal: 0.3 }, defenseBonus: 0 },
   },
 });
 const HOUR = 3_600_000;
@@ -224,7 +225,7 @@ describe('hero — temp lane speed bonus (fleet.speed hook)', () => {
 describe('hero — planet annihilation', () => {
   const kernel = createKernel([heroModule]);
 
-  it('turns a world into an uncapturable dead_world, cleared and ownerless', () => {
+  it('turns a world into a re-claimable, metal-rich dead world, cleared and ownerless', () => {
     const st = world();
     st.planets.C!.buildings = [{ type: 'mine', level: 1, hp: 0 }];
     st.planets.C!.garrison = [{ unit: 'scout', count: 3 }];
@@ -253,7 +254,8 @@ describe('hero — planet annihilation', () => {
     expect(
       errCode(kernel.applyAction(st, act('planet.annihilate', 'p1', { planetId: 'F' }), ctx(0))),
     ).toBe('E_OUT_OF_RANGE');
-    // A dead world can't be destroyed again (uncapturable).
+    // A dead world can't be destroyed again — the kind guard rejects it even though
+    // a dead world is now re-capturable (you can re-claim and mine it, not re-kill it).
     const dead = okApply(kernel.applyAction(st, act('planet.annihilate', 'p1', { planetId: 'C' }), ctx(0)));
     expect(
       errCode(

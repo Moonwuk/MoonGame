@@ -30,6 +30,8 @@ const data: GameData = parseGameData({
   planetTypes: {
     volcanic: { productionBonus: 0.25, defenseBonus: -0.05 },
     terran: { productionBonus: 0, defenseBonus: 0.1 },
+    // A depleted world: no flat bonus, but metal-rich (+30% metal only).
+    dead_world: { productionBonus: 0, productionByResource: { metal: 0.3 } },
   },
 });
 const HOUR = 3_600_000;
@@ -69,6 +71,12 @@ describe('planet-type module — production', () => {
     const kernel = createKernel([economyModule, planetTypeModule]);
     const r = okAdvance(kernel.advanceTo(minedWorld(), ctx(HOUR)));
     expect(r.state.players.p1?.resources.metal).toBeCloseTo(10);
+  });
+
+  it('applies a per-resource bonus on top of the flat one (dead world: +30% metal)', () => {
+    const kernel = createKernel([economyModule, planetTypeModule]);
+    const r = okAdvance(kernel.advanceTo(minedWorld('dead_world'), ctx(HOUR)));
+    expect(r.state.players.p1?.resources.metal).toBeCloseTo(13); // 10/h × (1+0) × (1+0.3) × 1h
   });
 
   it('without the module the type has no effect (graceful degradation)', () => {
