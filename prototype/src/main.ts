@@ -112,6 +112,18 @@ const UNIT_ICON: Record<string, string> = {
   siege: '✦',
   hero: '♔', // the player's projection — a crowned flagship
 };
+// A small glyph per province KIND, drawn above each province so its type reads at a
+// glance (planet / asteroid / nebula / wreck-field / storm / …). Text glyphs only.
+const KIND_ICON: Record<string, string> = {
+  planet: '◉',
+  dead_world: '⊗',
+  asteroid: '⬡',
+  nebula: '≋',
+  dense_nebula: '❋',
+  graveyard: '⊘',
+  ion_storm: '⌁',
+  solar_flare: '✸',
+};
 let ME = 'p1';
 // Суверены — the donate/premium currency (docs/economy-roadmap.md). It's a meta-layer
 // account balance, NOT match state, so the prototype shows a placeholder here; the real
@@ -530,10 +542,10 @@ function zoomAt(fx: number, fy: number, factor: number) {
   clampCam();
 }
 
-/** Keep the map filling the play area: it can never be panned/zoomed to expose empty
- *  space past its own edges, and at the whole-map (min-zoom) floor it sits centred and
- *  still. A zoomed-in map pans freely across its content. Because the clamp hugs the
- *  content exactly (no slack margin), it doesn't fight the zoom anchor. */
+/** Keep the map filling the play area, but with SLACK at the edges so the outermost
+ *  provinces don't jam against the screen border — you can pan a comfortable margin
+ *  past the content edge, which makes edge navigation easy. At the whole-map (min-zoom)
+ *  floor the map sits centred and still; a zoomed-in map pans freely across its content. */
 function clampCam(): void {
   const { left, right, top, bottom } = insets();
   const tl = projBase({ x: MINX, y: MINY });
@@ -542,15 +554,18 @@ function clampCam(): void {
   const pR = br.x * cam.scale;
   const pT = tl.y * cam.scale;
   const pB = br.y * cam.scale;
-  // Per axis: if the map is at least as big as the play area, pan within it so neither
-  // edge comes inside (no void); otherwise it fits, so park it centred in the play area.
+  // Breathing room: allow panning ~16% of the play area past each edge.
+  const mx = (right - left) * 0.16;
+  const my = (bottom - top) * 0.16;
+  // Per axis: if the map is at least as big as the play area, pan within it (+ slack) so
+  // an edge can sit a margin inside; otherwise it fits, so park it centred in the play area.
   cam.x =
     pR - pL >= right - left
-      ? clamp(cam.x, right - pR, left - pL)
+      ? clamp(cam.x, right - pR - mx, left - pL + mx)
       : (left + right - pL - pR) / 2;
   cam.y =
     pB - pT >= bottom - top
-      ? clamp(cam.y, bottom - pB, top - pT)
+      ? clamp(cam.y, bottom - pB - my, top - pT + my)
       : (top + bottom - pT - pB) / 2;
 }
 
@@ -2179,6 +2194,20 @@ function render(now: number) {
       continue;
     }
 
+    // province-type badge: a small kind glyph above the node so the type reads at a
+    // glance, regardless of the bespoke art below it (planet / asteroid / nebula / …).
+    if (KIND_ICON[n.sector]) {
+      cx.save();
+      cx.font = '13px ui-monospace,Menlo,monospace';
+      cx.textAlign = 'center';
+      cx.textBaseline = 'middle';
+      cx.shadowColor = 'rgba(0,0,0,0.85)';
+      cx.shadowBlur = 3;
+      cx.fillStyle = rgba(SECTOR_TYPES[SECTOR_OF[n.id]]?.color ?? '#9fb6bd', 1);
+      cx.fillText(KIND_ICON[n.sector]!, c.x, c.y - 18);
+      cx.restore();
+    }
+
     // asteroid-field sector: a lane junction, not a city — scattered rocks + a
     // fat hub where the lanes meet, no orbits. Captured by simply arriving — unless
     // a space fortress is raised here, which fortifies it (orbit + AA, must storm).
@@ -3023,7 +3052,12 @@ function playerCardHtml(): string {
   const name = pl?.name ?? NAME[ME] ?? ME;
   const faction = SEAT_META.find((m) => m.id === ME)?.faction ?? pl?.faction ?? '—';
   const worlds = Object.values(s.planets).filter((p) => p.owner === ME).length;
-  const fleets = Object.values(s.fleets).filter((f) => f.owner === ME).length;
+  // Total units you command: ships + carried troops across your fleets, plus every
+  // garrison on your worlds.
+  let units = 0;
+  for (const f of Object.values(s.fleets))
+    if (f.owner === ME) units += sumUnits(f.units) + sumUnits(f.landing ?? []);
+  for (const pp of Object.values(s.planets)) if (pp.owner === ME) units += sumUnits(pp.garrison);
   const score = Math.round(s.match?.scores?.[ME]?.total ?? 0);
   const need = Math.max(0, SCORE_LIMIT - score);
   const col = ownerColor(ME);
@@ -3034,7 +3068,7 @@ function playerCardHtml(): string {
     `<div class="pc-stats">` +
     row('Faction', esc(faction)) +
     row('Worlds held', String(worlds)) +
-    row('Fleets', String(fleets)) +
+    row('Units', String(units)) +
     row('Score', `${score} / ${SCORE_LIMIT}${need === 0 ? ' · ★ WIN' : ' · ' + need + ' to win'}`) +
     `</div><div class="pc-sec">War record</div><div class="pc-stats">` +
     row('⚔ Enemy units destroyed', kfmt(killStats.destroyed)) +

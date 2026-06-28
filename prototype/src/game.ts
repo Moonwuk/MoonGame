@@ -288,19 +288,20 @@ export interface MapNode {
 
 type KeyNode = Omit<MapNode, 'links'>;
 
-// A LARGE, ORGANIC contested field: a jittered lattice (no rigid grid look) of provinces
-// wired to neighbours by a relative-neighbourhood graph. EXACTLY 12 are 'planet' kind —
-// 4 of them START candidates (one per corner region, where players & AI spawn) + 8 neutral
-// worlds — and the other 40 are non-planet provinces, so the board totals ~1000 base points
-// (12×50 + 40×10); a solo win needs 600. All planets start NEUTRAL; newGame() seeds owners +
-// homes at the chosen starts. The jitter is deterministic (seeded sine hash) → reproducible.
-const FIELD = { cols: 13, rows: 4, x0: 152, dx: 124, y0: 206, dy: 166, jitter: 0.42 };
+// A SQUARE, ORGANIC contested field: a jittered 7×7 lattice (equal cell spacing, no rigid
+// grid look) wired to neighbours by a relative-neighbourhood graph. EXACTLY 12 are 'planet'
+// kind — 4 of them START candidates (one per corner region, where players & AI spawn) + 8
+// neutral worlds — and the other 37 are non-planet provinces, so the board totals ~970 base
+// points (12×50 + 37×10); a solo win needs 600. All planets start NEUTRAL; newGame() seeds
+// owners + homes at the chosen starts. The jitter is deterministic (seeded sine hash) →
+// reproducible. Square aspect so it reads well in portrait (fills width, pans vertically).
+const FIELD = { cols: 7, rows: 7, x0: 150, dx: 145, y0: 150, dy: 145, jitter: 0.4 };
 const NON_PLANET_KINDS = ['asteroid', 'nebula', 'graveyard', 'ion_storm', 'dense_nebula', 'solar_flare'];
 const NEUTRAL_PLANET_TYPES = ['oceanic', 'volcanic', 'fortress_world', 'relic_world', 'gas_giant', 'irradiated', 'ringworld', 'crystalline'];
-// 4 start candidates — one per corner region, spread wide so multi-player starts don't crowd.
-const START_CELLS = ['1,0', '11,0', '1,3', '11,3'];
+// 4 start candidates — one per corner region (inset), spread wide so starts don't crowd.
+const START_CELLS = ['1,1', '5,1', '1,5', '5,5'];
 // 8 neutral 'planet' worlds, spread through the middle.
-const NEUTRAL_PLANET_CELLS = ['6,0', '6,3', '4,1', '8,2', '3,2', '9,1', '6,1', '6,2'];
+const NEUTRAL_PLANET_CELLS = ['3,3', '1,3', '5,3', '3,1', '3,5', '2,2', '4,4', '2,4'];
 
 const cellId = (cell: string): string => {
   const [c, r] = cell.split(',');
