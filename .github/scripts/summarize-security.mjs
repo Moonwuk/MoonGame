@@ -31,7 +31,7 @@ const EXPECTED = [
   { key: 'trivy-fs', name: 'Trivy fs — vuln/secret/IaC' },
   { key: 'trivy-image', name: 'Trivy image — базовая ОС образа' },
   { key: 'zizmor', name: 'zizmor — безопасность workflow' },
-  { key: 'scorecard', name: 'OpenSSF Scorecard — постура (main)' },
+  { key: 'scorecard', name: 'OpenSSF Scorecard — постура', mainOnly: true },
   { key: 'sbom', name: 'Syft — SBOM (CycloneDX)' },
 ];
 
@@ -166,6 +166,7 @@ if (checkFile) {
 const sboms = files.filter((f) => /\.cdx\.json$/i.test(f)).map((f) => basename(f));
 
 // --- scan-confirmation (fail-open detector) ---
+const isMain = ref === 'main';
 const confirm = EXPECTED.map((t) => {
   const s = sentinels.get(t.key);
   // Confirmed if the job wrote a sentinel with ok=true. Defensive fallback: a tool
@@ -174,10 +175,17 @@ const confirm = EXPECTED.map((t) => {
     (s && s.ok === true) ||
     (!s && t.key === 'sbom' && sboms.length > 0) ||
     (!s && t.key === 'audit' && auditFile != null);
-  return { ...t, ok: Boolean(ok), missing: !s };
+  // A main-only job (Scorecard) that's absent off `main` was SKIPPED by design —
+  // not a fail-open, so it must not raise the "NOT confirmed" alarm.
+  let state;
+  if (ok) state = 'ok';
+  else if (t.mainOnly && !isMain && !s) state = 'skipped';
+  else state = 'bad';
+  return { ...t, state };
 });
-const confirmedCount = confirm.filter((c) => c.ok).length;
-const notConfirmed = confirm.filter((c) => !c.ok);
+const okCount = confirm.filter((c) => c.state === 'ok').length;
+const skipped = confirm.filter((c) => c.state === 'skipped');
+const bad = confirm.filter((c) => c.state === 'bad');
 
 findings.sort((a, b) => RANK[b.level] - RANK[a.level] || a.tool.localeCompare(b.tool));
 const CAP = 30;
@@ -191,19 +199,24 @@ L.push(
 L.push('');
 
 // TRUST FIRST: did every scanner actually run?
-L.push(`### 🔎 Подтверждение сканов — ${confirmedCount}/${EXPECTED.length}`);
-if (notConfirmed.length) {
+L.push(
+  `### 🔎 Подтверждение сканов — ${okCount}/${EXPECTED.length}${skipped.length ? ` (+${skipped.length} пропущено)` : ''}`,
+);
+if (bad.length) {
   L.push('');
   L.push(
-    `> **⚠️ ВНИМАНИЕ: ${notConfirmed.length} скан(ов) НЕ подтверждены** — отчёт по ним нельзя считать «чисто». Не доверяй «0 находок» от них. См. лог прогона.`,
+    `> **⚠️ ВНИМАНИЕ: ${bad.length} скан(ов) НЕ подтверждены** — отчёт по ним нельзя считать «чисто». Не доверяй «0 находок» от них. См. лог прогона.`,
   );
 }
 L.push('');
 L.push('| Сканер | Подтверждён |');
 L.push('| --- | --- |');
-for (const c of confirm) {
-  L.push(`| ${c.name} | ${c.ok ? '✅ просканировано' : '⚠️ **НЕ подтверждён**'} |`);
-}
+const CELL = {
+  ok: '✅ просканировано',
+  skipped: '⏭ пропущено (только на main)',
+  bad: '⚠️ **НЕ подтверждён**',
+};
+for (const c of confirm) L.push(`| ${c.name} | ${CELL[c.state]} |`);
 L.push('');
 
 L.push('| Серьёзность | Σ |');
