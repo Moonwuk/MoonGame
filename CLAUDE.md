@@ -17,7 +17,7 @@ Monorepo (pnpm workspaces):
 - `packages/shared-core` — the deterministic, data-driven simulation. Built first,
   in isolation (no server, no DB, no network). This is where the work currently is.
 - `packages/server` — authoritative server (Stage 3). Placeholder.
-- `packages/client` — React Native client (Stage 4). Placeholder.
+- `packages/client` — client (Stage 4, placeholder). Direction is a **PWA-first web client** (TWA Android + Capacitor iOS), not React Native — see `docs/cross-platform-roadmap.md` (decision record).
 - `data/` — game content as JSON. `docs/` — design docs.
 
 ## Commands

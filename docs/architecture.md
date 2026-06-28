@@ -110,7 +110,7 @@ trait: "reanimate_on_kill"
 
 | Слой                | Технология                       | Почему                                                        |
 | ------------------- | -------------------------------- | ------------------------------------------------------------- |
-| Клиент              | React Native + react-native-skia | Один код на iOS+Android; Skia для звёздной карты с зумом      |
+| Клиент              | PWA-first веб (TWA + Capacitor)   | Один TS/web-артефакт на все платформы; карта Canvas2D→WebGL→WebGPU — см. `cross-platform-roadmap.md` |
 | Ядро                | TypeScript-пакет `shared-core`   | Симуляция, общая для клиента и сервера                        |
 | Сервер              | Node.js + TypeScript (Fastify)   | Быстрая разработка, тот же язык, хороший WebSocket            |
 | Реалтайм            | WebSocket (ws)                   | Сервер пушит только diff — что изменилось                     |
@@ -125,8 +125,8 @@ trait: "reanimate_on_kill"
 
 ```
 ┌──────────────────────────────────┐
-│   React Native (iOS + Android)   │
-│   + react-native-skia (карта)    │
+│   PWA-клиент (браузер + сторы)   │
+│   TWA Android + Capacitor iOS    │
 └───────────────┬──────────────────┘
                 │ WebSocket (diff, только видимое)
 ┌───────────────▼──────────────────┐
