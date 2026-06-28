@@ -14,21 +14,28 @@ import type { FormationUnit } from './game';
 export type DamageTable = Partial<Record<FormationUnit, number>>;
 
 /** A ground unit's combat profile: its own HP plus attack/defence damage by target
- *  type. `atk` is used when its army attacks; `def` is its return fire when attacked. */
+ *  type, and a `strength` scalar that ranks it for the combat-width cap. `atk` is used
+ *  when its army attacks; `def` is its return fire when attacked. */
 export interface GroundProfile {
   hp: number;
   atk: DamageTable;
   def: DamageTable;
+  /** Ranking weight for the "12 strongest fight" rule (higher = picked first). */
+  strength?: number;
 }
 export type GroundRoster = Record<string, GroundProfile>;
+
+/** Combat width (Iron Order): only the N strongest units of a side DEAL damage each
+ *  tick; the rest are reserve — they add HP and absorb hits, but don't fire. */
+export const COMBAT_WIDTH = 12;
 
 /** The default roster — a rock-paper-scissors triangle: tanks crush infantry, bombers
  *  crush tanks, infantry counter bombers. Defence ≥ attack (a defender's edge). Pure
  *  content — tune freely; the resolver reads these, the menu its summed preview. */
 export const GROUND_ROSTER: GroundRoster = {
-  infantry: { hp: 24, atk: { infantry: 6, tank: 3, bomber: 10 }, def: { infantry: 8, tank: 4, bomber: 12 } },
-  tank: { hp: 46, atk: { infantry: 14, tank: 7, bomber: 3 }, def: { infantry: 16, tank: 8, bomber: 4 } },
-  bomber: { hp: 18, atk: { infantry: 6, tank: 16, bomber: 5 }, def: { infantry: 5, tank: 12, bomber: 4 } },
+  infantry: { hp: 24, strength: 1, atk: { infantry: 6, tank: 3, bomber: 10 }, def: { infantry: 8, tank: 4, bomber: 12 } },
+  tank: { hp: 46, strength: 3, atk: { infantry: 14, tank: 7, bomber: 3 }, def: { infantry: 16, tank: 8, bomber: 4 } },
+  bomber: { hp: 18, strength: 2, atk: { infantry: 6, tank: 16, bomber: 5 }, def: { infantry: 5, tank: 12, bomber: 4 } },
 };
 
 /** An officer attached to a division — a hero-like leader granting flexible, TUNABLE
@@ -82,6 +89,29 @@ export function makeSide(
 const liveCount = (side: GroundStack[]): number =>
   side.reduce((n, s) => n + (s.count > 0 ? s.count : 0), 0);
 
+/** The units that actually FIRE this tick: the `width` strongest of a side (by each
+ *  type's `strength`, ties by type id for determinism). Returns active count per type;
+ *  the rest of the army is reserve (HP/absorption only). */
+function activeUnits(roster: GroundRoster, side: GroundStack[], width: number): DamageTable {
+  const ranked = side
+    .filter((s) => s.count > 0)
+    .slice()
+    .sort(
+      (x, y) =>
+        (roster[y.type]?.strength ?? 0) - (roster[x.type]?.strength ?? 0) ||
+        (x.type < y.type ? -1 : x.type > y.type ? 1 : 0),
+    );
+  const out: DamageTable = {};
+  let remaining = width;
+  for (const s of ranked) {
+    if (remaining <= 0) break;
+    const take = Math.min(s.count, remaining);
+    if (take > 0) out[s.type] = (out[s.type] ?? 0) + take;
+    remaining -= take;
+  }
+  return out;
+}
+
 /**
  * Damage `source` deals to `target` this tick, as a per target-type bucket:
  *   bucket[t] = ( Σ over source: count × source[which][t] ) × ( target's count-share of t )
@@ -93,10 +123,13 @@ export function damageBuckets(
   target: GroundStack[],
   which: 'atk' | 'def',
   officer?: Officer,
+  width = COMBAT_WIDTH,
 ): DamageTable {
   const total = liveCount(target);
   const out: DamageTable = {};
   if (total <= 0) return out;
+  // Only the source's `width` strongest units fire (combat width); the rest are reserve.
+  const firing = activeUnits(roster, source, width);
   // The source's officer scales its outgoing damage (atk when attacking, def on
   // return fire) and may add a flat per-type attack bonus.
   const mul = 1 + (which === 'atk' ? (officer?.atk ?? 0) : (officer?.def ?? 0));
@@ -104,9 +137,8 @@ export function damageBuckets(
   for (const s of target) if (s.count > 0) targetCount[s.type] = (targetCount[s.type] ?? 0) + s.count;
   for (const t of Object.keys(targetCount) as FormationUnit[]) {
     let armyDmg = 0;
-    for (const s of source) {
-      if (s.count <= 0) continue;
-      armyDmg += s.count * (roster[s.type]?.[which][t] ?? 0);
+    for (const [type, cnt] of Object.entries(firing)) {
+      armyDmg += cnt! * (roster[type]?.[which][t] ?? 0);
     }
     if (which === 'atk') armyDmg += officer?.atkVs?.[t] ?? 0;
     out[t] = armyDmg * mul * (targetCount[t]! / total);

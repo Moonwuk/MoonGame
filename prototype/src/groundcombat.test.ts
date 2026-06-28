@@ -50,6 +50,20 @@ describe('ground combat — matrix damage weighted by target composition', () =>
     expect(t.toAttacker.tank).toBeCloseTo(2 * GROUND_ROSTER.tank!.def.tank!); // defender def (return fire)
   });
 
+  it('caps firepower at the 12 strongest units — the rest are reserve HP', () => {
+    const target = makeSide(GROUND_ROSTER, { tank: 1 });
+    const out12 = damageBuckets(GROUND_ROSTER, makeSide(GROUND_ROSTER, { infantry: 12 }), target, 'atk');
+    const out13 = damageBuckets(GROUND_ROSTER, makeSide(GROUND_ROSTER, { infantry: 13 }), target, 'atk');
+    expect(out13.tank).toBeCloseTo(out12.tank!); // the 13th infantry adds no firepower
+  });
+
+  it('fills the 12 firing slots with the STRONGEST units first', () => {
+    // 10 infantry + 5 tanks = 15 units; the top 12 = 5 tanks + 7 infantry (tank stronger).
+    const out = damageBuckets(GROUND_ROSTER, makeSide(GROUND_ROSTER, { infantry: 10, tank: 5 }), makeSide(GROUND_ROSTER, { infantry: 1 }), 'atk');
+    const exp = 5 * GROUND_ROSTER.tank!.atk.infantry! + 7 * GROUND_ROSTER.infantry!.atk.infantry!;
+    expect(out.infantry).toBeCloseTo(exp); // not all 10 infantry fire — 3 are bumped to reserve
+  });
+
   it('resolves the rock-paper-scissors triangle: tank > infantry > bomber > tank', () => {
     const six = (u: 'infantry' | 'tank' | 'bomber') => makeSide(GROUND_ROSTER, { [u]: 6 });
     expect(resolveGround(GROUND_ROSTER, six('tank'), six('infantry')).winner).toBe('attacker'); // tanks beat infantry
