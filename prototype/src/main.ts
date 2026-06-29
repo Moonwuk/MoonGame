@@ -1008,6 +1008,29 @@ function orbitZoom(): number {
   if (cam.scale <= ORBIT_ZOOM_IN) return 0.5;
   return clamp(0.5 + (cam.scale - ORBIT_ZOOM_IN) * 1.2, 0.5, 2.4);
 }
+/** Orbit-ring radius for a planet at the current zoom, in screen px. The base radius
+ *  blooms with zoom (orbitZoom), but is capped to a fraction of the on-screen gap to the
+ *  nearest LINKED neighbour so a ring never spills onto the adjacent sectors — zoomed in
+ *  tight on a phone the un-capped rings reached their neighbours and looked messy. Both
+ *  rings scale by the one factor so the near/far proportion holds; fleets sit on this same
+ *  radius (so a chevron never floats off its ring). */
+function orbitRingRadius(
+  pl: { position: { x: number; y: number }; links?: string[] },
+  orb: 'near' | 'far',
+): number {
+  const pc = world(pl.position);
+  let nearest = Infinity;
+  for (const nb of pl.links ?? []) {
+    const np = s.planets[nb];
+    if (!np) continue;
+    const npc = world(np.position);
+    nearest = Math.min(nearest, Math.hypot(npc.x - pc.x, npc.y - pc.y));
+  }
+  // cap the OUTER (far) ring at ~40% of the gap to the nearest neighbour, then scale both
+  // rings by that one factor (so two adjacent rings keep a gap and never cover a node).
+  const scale = nearest === Infinity ? orbitZoom() : Math.min(orbitZoom(), (nearest * 0.4) / ORBIT_R.far);
+  return ORBIT_R[orb] * scale;
+}
 /** Angular position (radians) of a stationed fleet's orbit slot at index `idx` of
  *  `nPeers` sharing the ring — fanned out, and spinning when zoomed in close. */
 function orbitAngle(orbit: 'near' | 'far', idx: number, nPeers: number): number {
@@ -1053,7 +1076,7 @@ function fleetAnchor(f: Fleet): { x: number; y: number; ang: number } | null {
     peers.findIndex((g) => g.id === f.id),
   );
   const a0 = orbitAngle(orbit, idx, peers.length);
-  const r = ORBIT_R[orbit] * orbitZoom();
+  const r = orbitRingRadius(pl, orbit);
   // when circling, the chevron faces along its travel (tangent); static = radial as before
   const ang = orbitsLive() ? a0 + Math.PI / 2 : a0;
   return { x: pc.x + Math.cos(a0) * r, y: pc.y + Math.sin(a0) * r, ang };
@@ -2711,10 +2734,9 @@ function render(now: number) {
     if (!SECTOR_TYPES[SECTOR_OF[pid]]?.orbit && !fortified) continue;
     const pc = world(pl.position);
     if (!visible(pc, 80)) continue;
-    const oz = orbitZoom(); // rings widen as you zoom in (1 at the far view)
     for (const orb of ['far', 'near'] as const) {
       const warm = orb === 'near'; // near = hot zone (bombard / AA reaches), far = safe
-      const rr = ORBIT_R[orb] * oz;
+      const rr = orbitRingRadius(pl, orb);
       cx.save();
       cx.setLineDash(warm ? [2, 5] : [7, 6]);
       cx.lineDashOffset = warm ? now / 200 : -now / 280;
