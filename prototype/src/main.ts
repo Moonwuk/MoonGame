@@ -23,6 +23,8 @@ import {
   orbitFleet,
   assaultFleet,
   bombardFleet,
+  barrageFleet,
+  barrageModeFleet,
   loadArmy,
   unloadArmy,
   mergeFleet,
@@ -35,6 +37,12 @@ import {
   declareWar,
   canTraverse,
   START_CANDIDATES,
+  DEFAULT_TEMPLATES,
+  FORMATION_UNITS,
+  FORMATION_SLOTS,
+  formationStats,
+  type FormationTemplate,
+  type FormationUnit,
   type SetupConfig,
   type SeatConfig,
   type StepOut,
@@ -235,6 +243,7 @@ let selFleet: string | null = null;
 let selPlanet: string | null = null;
 let selFleets = new Set<string>();
 let aiming = false; // "Move" command armed → next world tap orders the move
+let barrageAim = false; // "Обстрел" armed → next tap picks the artillery's focus target
 // A staged move that would cross territory of a player you're at PEACE with: held
 // until you confirm in the war-prompt (declaring war opens the route) or cancel.
 let warPrompt: {
@@ -354,8 +363,6 @@ const hovercard = $('hovercard');
 const alertBadge = $('alertbadge');
 const cmdbar = $('cmdbar');
 const splitdlg = $('splitdlg');
-const burger = $('burger');
-const scrim = $('scrim');
 
 // --- viewport, galaxy backdrop & map projection ------------------------------
 
@@ -864,6 +871,25 @@ function battleAnchor(b: Battle): { x: number; y: number } | null {
 function selectedFleetIds(): string[] {
   if (selFleets.size) return [...selFleets].filter((id) => s.fleets[id]?.owner === ME);
   return selFleet && s.fleets[selFleet]?.owner === ME ? [selFleet] : [];
+}
+
+/** Does this fleet carry artillery (units that fire at range — the `fleet.barrage`
+ *  / standoff-fire mechanic applies)? */
+function fleetHasArtillery(f: Fleet | undefined): boolean {
+  return !!f && f.units.some((u) => u.count > 0 && (data.units[u.unit]?.traits.includes('artillery') ?? false));
+}
+
+/** A fleet's standoff firing radius (map units) — the longest gun among its live
+ *  artillery units sets the reach (mirrors combat.ts artilleryRange). 0 = none. */
+function artilleryRangeOf(f: Fleet | undefined): number {
+  if (!f) return 0;
+  let r = 0;
+  for (const u of f.units) {
+    if (u.count > 0 && data.units[u.unit]?.traits.includes('artillery')) {
+      r = Math.max(r, data.units[u.unit]?.stats.range ?? 0);
+    }
+  }
+  return r;
 }
 
 const ORBIT_R: Record<'near' | 'far', number> = { near: 30, far: 50 };
@@ -2699,7 +2725,32 @@ function render(now: number) {
     cx.fill();
     cx.restore();
 
-    if (selFleet === f.id || selFleets.has(f.id)) targetBrackets(A.x, A.y, 12, now);
+    if (selFleet === f.id || selFleets.has(f.id)) {
+      targetBrackets(A.x, A.y, 12, now);
+      // Artillery: show the standoff firing radius (and a focus line to a chosen
+      // target) so the player can read the reach — "радиус не очень большой".
+      const aRange = artilleryRangeOf(f);
+      if (aRange > 0) {
+        cx.save();
+        cx.strokeStyle = rgba('#ff7a3a', barrageAim ? 0.7 : 0.42);
+        cx.lineWidth = 1;
+        cx.setLineDash([5, 5]);
+        cx.beginPath();
+        cx.arc(A.x, A.y, aRange * cam.scale, 0, TAU);
+        cx.stroke();
+        cx.setLineDash([]);
+        const tf = f.barrageTarget ? s.fleets[f.barrageTarget] : undefined;
+        const ta = tf ? fleetAnchor(tf) : null;
+        if (ta) {
+          cx.strokeStyle = rgba('#ff7a3a', 0.8);
+          cx.beginPath();
+          cx.moveTo(A.x, A.y);
+          cx.lineTo(ta.x, ta.y);
+          cx.stroke();
+        }
+        cx.restore();
+      }
+    }
 
     cx.fillStyle = rgba(col, 0.95);
     cx.font = '700 10px ui-monospace,Menlo,monospace';
@@ -2870,6 +2921,17 @@ function panelHtml(): string {
       h += `<div class="pstats"><span>⚔ ATK ${atk}</span><span>🛡 DEF ${def}</span><span>❤ HP ${hpTot}</span><span>⚡ SPD ${spdTxt}</span></div>`;
       h += nShips ? `<div class="sec">Ships — tap for specs</div>` + unitTilesHtml(f.units) : '';
       if (nTr > 0) h += `<div class="sec">Carrying troops</div>` + unitTilesHtml(f.landing ?? []);
+
+      // Artillery rules of engagement — passive / return / standard / aggressive.
+      if (f.owner === ME && fleetHasArtillery(f)) {
+        const mode = f.barrageMode ?? 'standard';
+        const mbtn = (m: string, lbl: string) =>
+          btn('barragemode', m, (mode === m ? '● ' : '') + lbl, mode !== m);
+        h += `<div class="sec">Артиллерия — режим огня</div><div class="row">`;
+        h += mbtn('passive', 'Пассив') + mbtn('return', 'Ответ') + mbtn('standard', 'Станд') + mbtn('aggressive', 'Агрес');
+        h += `</div>`;
+        h += `<div class="hint">Пассив — не стреляет. Ответ — только после урона по флоту. Станд — по тем, с кем война. Агрес — по любому, кроме пакта/союза.</div>`;
+      }
 
       // The player's projection hero rides here → name it and flag its fleet aura.
       if (f.units.some((u) => u.count > 0 && data.units[u.unit]?.traits.includes('hero'))) {
@@ -3389,7 +3451,6 @@ function openDiplo(tab: 'diplo' | 'msgs'): void {
   diploTab = tab;
   renderDiplo();
   document.getElementById('diplo')?.classList.add('show');
-  document.body.classList.remove('drawer-open'); // tuck the rail drawer away behind it
 }
 function closeDiplo(): void {
   diploOpen = false;
@@ -3793,12 +3854,15 @@ function renderCmdBar() {
   // Split: only a single docked fleet with ≥2 ships can shed some into a new fleet.
   const lone = ids.length === 1 && fleets[0] ? fleets[0] : null;
   const canSplit = !!lone && !!lone.location && !lone.movement && !lone.battleId && sumUnits(lone.units) >= 2;
+  // Artillery in the selection → offer the standoff-fire focus order.
+  const anyArtillery = fleets.some(fleetHasArtillery);
   const html =
     `<span class="cmdlabel">${ids.length > 1 ? ids.length + ' FLEETS' : 'FLEET'}</span>` +
     cmdBtn('move', '⤳', 'Move', aiming ? 'on' : '', false) +
     cmdBtn('stop', '■', 'Stop', 'danger', !anyMoving) +
     cmdBtn('attack', '⚔', 'Attack', '', !canAssault) +
     cmdBtn(descend ? 'near' : 'far', descend ? '▼' : '▲', descend ? 'Near' : 'Far', '', !anyDocked) +
+    (anyArtillery ? cmdBtn('barrage', '🎯', 'Обстрел', barrageAim ? 'on' : '', false) : '') +
     cmdBtn('merge', '⛬', ids.length > 1 ? 'Merge' : 'Merge…', merging ? 'on' : '', !canMerge) +
     cmdBtn('split', '⊟', 'Split', splitState ? 'on' : '', !canSplit);
   if (html !== lastCmdHtml) {
@@ -3940,6 +4004,8 @@ side.addEventListener('click', (ev) => {
     playerOrder(orbitFleet(ME, selFleet!, arg as 'near' | 'far'));
   } else if (act === 'bombard') {
     playerOrder(bombardFleet(ME, selFleet!, arg === 'on'));
+  } else if (act === 'barragemode') {
+    playerOrder(barrageModeFleet(ME, selFleet!, arg));
   } else if (act === 'assault') {
     playerOrder(assaultFleet(ME, selFleet!));
   } else if (act === 'load') {
@@ -3976,6 +4042,7 @@ cmdbar.addEventListener('click', (ev) => {
   const cmd = t.dataset.cmd;
   const ids = selectedFleetIds();
   if (cmd !== 'merge') merging = false; // any other command disarms merge-targeting
+  if (cmd !== 'barrage') barrageAim = false; // any other command disarms barrage-targeting
   if (cmd === 'move') {
     aiming = !aiming; // arm / disarm the move order
   } else if (cmd === 'merge') {
@@ -4003,6 +4070,12 @@ cmdbar.addEventListener('click', (ev) => {
       aiming = false;
       renderSplitDialog();
     }
+  } else if (cmd === 'barrage') {
+    // Arm focus-fire: the next tap on an enemy fleet aims the selected artillery
+    // at it; a tap on empty space clears back to auto-targeting the nearest.
+    barrageAim = !barrageAim;
+    aiming = false;
+    if (barrageAim) note('🎯 tap an enemy fleet to focus fire · empty space = auto');
   }
   lastCmdHtml = '';
   lastPanelHtml = '';
@@ -4030,6 +4103,29 @@ function selectAt(mx: number, my: number) {
       }
     }
     merging = false;
+    lastPanelHtml = '';
+    return;
+  }
+  // Barrage armed: the next tap on an enemy fleet focuses the selected artillery's
+  // standoff fire on it; a tap on empty space (no enemy fleet) clears back to
+  // auto-targeting the nearest hostile in range. A mis-aimed/peace target is
+  // rejected server-side (surfaced as a log note).
+  if (barrageAim) {
+    let targetId: string | null = null;
+    for (const f of Object.values(s.fleets)) {
+      if (f.owner === ME) continue;
+      const a = fleetAnchor(f);
+      if (a && Math.hypot(mx - a.x, my - a.y) < 16) {
+        targetId = f.id;
+        break;
+      }
+    }
+    for (const id of selectedFleetIds()) {
+      if (fleetHasArtillery(s.fleets[id])) playerOrder(barrageFleet(ME, id, targetId));
+    }
+    if (targetId) note('🎯 focus fire set');
+    else note('🎯 auto-target');
+    barrageAim = false;
     lastPanelHtml = '';
     return;
   }
@@ -4223,10 +4319,14 @@ for (const b of Array.from(document.querySelectorAll('[data-speed]'))) {
   });
 }
 
-// Mobile: hamburger toggles the slide-in drawer (rail + log + comms); the scrim
-// behind it closes on tap. No-op on desktop, where the drawer is always shown.
-burger.addEventListener('click', () => document.body.classList.toggle('drawer-open'));
-scrim.addEventListener('click', () => document.body.classList.remove('drawer-open'));
+// Event-log window: the rail's ≡ opens it; ✕ or the backdrop closes it. The feed
+// (#log) updates in place each frame whether the window is open or not.
+const logWin = document.getElementById('logwin');
+document.getElementById('rail-log')?.addEventListener('click', () => logWin?.classList.add('show'));
+logWin?.addEventListener('click', (e) => {
+  const tg = e.target as HTMLElement;
+  if (tg.id === 'logwin' || tg.classList.contains('lw-close')) logWin.classList.remove('show');
+});
 
 // --- connect overlay (single-player vs join a live session) ------------------
 // Entry screen: pick a faction, then run a local skirmish or connect to a server
@@ -4270,6 +4370,78 @@ const setupMapEl = $('setupmap');
 const setupSlotsEl = $('setupslots');
 const setupHintEl = $('setuphint');
 const setupGoEl = $('setupgo') as HTMLButtonElement;
+const setupDivEl = $('setup-div');
+
+// --- division designer (main-menu "Дивизии" tab) ----------------------------
+// The player's 3 templates, composed before the match and LOCKED once it starts.
+// Persisted across openSetup() so a design survives going Back; deep-cloned from the
+// defaults so editing never mutates them.
+const setupTemplates: FormationTemplate[] = DEFAULT_TEMPLATES.map((t) => ({
+  name: t.name,
+  slots: [...t.slots],
+}));
+let setupTplIdx = 0; // which of the 3 templates is open in the designer
+const FORM_ICON: Record<string, string> = { infantry: '🪖', tank: '🛡', bomber: '✈' };
+const FORM_RU: Record<string, string> = { infantry: 'Пехота', tank: 'Танк', bomber: 'Бомбер' };
+
+function renderTemplates(): void {
+  const tabs = setupTemplates
+    .map((t, i) => `<button data-tpl="${i}" class="${i === setupTplIdx ? 'on' : ''}">${esc(t.name)}</button>`)
+    .join('');
+  const tpl = setupTemplates[setupTplIdx]!;
+  const slots = tpl.slots
+    .map((u, i) => {
+      const cls = u ? '' : 'empty';
+      const ic = u ? FORM_ICON[u] : '＋';
+      const nm = u ? FORM_RU[u] : 'пусто';
+      return `<div class="tslot ${cls}" data-slot="${i}"><span class="ic">${ic}</span><span class="nm">${esc(nm)}</span></div>`;
+    })
+    .join('');
+  const f = formationStats(tpl);
+  const syn = f.synergies.length
+    ? f.synergies.map((x) => `<span class="syn">◈ ${esc(x.name)} — ${esc(x.desc)}</span>`).join('')
+    : `<span class="syn none">◇ Нет бонусов состава — смешай рода войск.</span>`;
+  const cost = Object.entries(f.cost)
+    .map(([r, a]) => `${a} ${r}`)
+    .join(' · ');
+  setupDivEl.innerHTML =
+    `<p class="ssub">Собери 3 шаблона дивизий из 6 слотов. Состав даёт суммарные статы и бонусы; во время боя шаблоны не меняются. Тапни слот, чтобы сменить юнит.</p>` +
+    `<div class="tpl-tabs">${tabs}</div>` +
+    `<div class="tpl-slots">${slots}</div>` +
+    `<div class="tpl-stats"><div class="row"><span>⚔ Атака ${f.attack}</span><span>🛡 Оборона ${f.defense}</span><span>❤ HP ${f.hp}</span><span>№ ${f.count}/${FORMATION_SLOTS}</span></div>${syn}<div class="tpl-cost">Стоимость мобилизации: ${cost || '—'}</div></div>`;
+}
+
+/** Cycle a slot through: пусто → пехота → танк → бомбер → пусто. */
+function cycleSlot(i: number): void {
+  const tpl = setupTemplates[setupTplIdx];
+  if (!tpl) return;
+  const cur = tpl.slots[i] ?? null;
+  const order: (FormationUnit | null)[] = [null, ...FORMATION_UNITS];
+  const next = order[(order.indexOf(cur) + 1) % order.length] ?? null;
+  tpl.slots[i] = next;
+  renderTemplates();
+}
+
+setupDivEl.addEventListener('click', (ev) => {
+  const t = (ev.target as Element).closest('[data-slot],[data-tpl]') as HTMLElement | null;
+  if (!t) return;
+  if (t.dataset.tpl !== undefined) {
+    setupTplIdx = Number(t.dataset.tpl);
+    renderTemplates();
+  } else if (t.dataset.slot !== undefined) {
+    cycleSlot(Number(t.dataset.slot));
+  }
+});
+// Setup tab switch (Старт ↔ Дивизии).
+document.querySelector('#setup .stabs')?.addEventListener('click', (ev) => {
+  const t = (ev.target as Element).closest('[data-stab]') as HTMLElement | null;
+  if (!t) return;
+  const tab = t.dataset.stab;
+  document.querySelectorAll('#setup .stabs button').forEach((b) => b.classList.toggle('on', (b as HTMLElement).dataset.stab === tab));
+  $('setup-start').style.display = tab === 'start' ? '' : 'none';
+  setupDivEl.style.display = tab === 'div' ? '' : 'none';
+  if (tab === 'div') renderTemplates();
+});
 
 function renderSetupMap(): void {
   const pad = 60;
@@ -4344,6 +4516,10 @@ function openSetup(): void {
   setupStart = START_CANDIDATES[0] ?? MAP[0]!.id;
   showConnect(false);
   setupEl.style.display = 'flex';
+  // Always open on the Старт tab (the division designer keeps its own state).
+  document.querySelectorAll('#setup .stabs button').forEach((b) => b.classList.toggle('on', (b as HTMLElement).dataset.stab === 'start'));
+  $('setup-start').style.display = '';
+  setupDivEl.style.display = 'none';
   renderSetup();
 }
 
@@ -4361,7 +4537,8 @@ function buildSetupConfig(): SetupConfig {
     const m = SEAT_META[i]!;
     seats.push({ id: m.id, name: m.name, faction: m.faction, start, ai: true });
   }
-  return { seats };
+  // Carry the player's locked division templates into the match (deep-cloned).
+  return { seats, templates: setupTemplates.map((t) => ({ name: t.name, slots: [...t.slots] })) };
 }
 
 function startMatch(setup: SetupConfig): void {

@@ -70,8 +70,11 @@ export const data: GameData = parseGameData({
       upkeep: { credits: 4 },
     },
     siege: {
+      // Artillery: a backline platform that fires from range at one target —
+      // a pure standoff (no return fire) within `range` map units (combat
+      // runArtillery). Reaches ~one neighbouring world (~205 apart), no further.
       faction: 'blue',
-      stats: { attack: 30, defense: 6, speed: 30, hp: 40, range: 3 },
+      stats: { attack: 30, defense: 6, speed: 30, hp: 40, range: 240 },
       traits: ['artillery'],
       signature: 5, // huge siege platform — loudest
       cost: { metal: 90, credits: 40 },
@@ -98,6 +101,42 @@ export const data: GameData = parseGameData({
       cost: { metal: 110, credits: 30 },
       buildTimeHours: 4,
       upkeep: { credits: 3 },
+    },
+    // --- formation roster: the ground units that fill a division template's 6 slots
+    // (formation.ts). Each has a distinct role; the template's SUM + composition
+    // synergies (combined-arms / entrenched / armour / air) set the division's stats.
+    // Пехота — cheap, defensive front line; the backbone that holds ground.
+    infantry: {
+      faction: 'blue',
+      stats: { attack: 8, defense: 16, speed: 48, hp: 24, cargoSize: 1 },
+      domain: 'ground',
+      traits: ['ground'],
+      signature: 1,
+      cost: { metal: 35 },
+      buildTimeHours: 2,
+      upkeep: { credits: 2 },
+    },
+    // Танк — heavy front line: high attack and hull, but pricey and bulky to lift.
+    tank: {
+      faction: 'blue',
+      stats: { attack: 22, defense: 14, speed: 40, hp: 46, cargoSize: 3 },
+      domain: 'ground',
+      traits: ['ground'],
+      signature: 2,
+      cost: { metal: 120, credits: 30 },
+      buildTimeHours: 4,
+      upkeep: { credits: 4 },
+    },
+    // Бомбардировщик — rear-line striker: big attack, paper armour; hits structures.
+    bomber: {
+      faction: 'blue',
+      stats: { attack: 26, defense: 4, speed: 60, hp: 18, cargoSize: 2 },
+      domain: 'ground',
+      traits: ['ground'],
+      signature: 3,
+      cost: { metal: 90, credits: 50 },
+      buildTimeHours: 3,
+      upkeep: { credits: 5 },
     },
     // The player's projection hero — cruiser-tier guns but TRIPLE the hull, and the
     // +5% attack/defense aura it grants its fleet (heroModule). Seeded, not built.
@@ -746,7 +785,115 @@ export interface SeatConfig {
 }
 export interface SetupConfig {
   seats: SeatConfig[];
+  /** The player's 3 division templates, designed in the main menu and LOCKED for the
+   *  session (mobilised in-match via `formation.mobilize`). Absent → DEFAULT_TEMPLATES. */
+  templates?: FormationTemplate[];
 }
+
+// --- ground formations (HOI4-style division templates) -----------------------
+// A "воинское объединение" is a TEMPLATE of 6 slots, each holding one formation unit
+// (or empty). Mobilising it builds those units as a ground army; the division's stats
+// are the SUM of its slots PLUS composition synergies. Templates are composed in the
+// menu and frozen for the session, giving players a flexible, pre-committed doctrine.
+
+/** The unit ids a template slot may hold — the formation roster (data.units above). */
+export const FORMATION_UNITS = ['infantry', 'tank', 'bomber'] as const;
+export type FormationUnit = (typeof FORMATION_UNITS)[number];
+/** Slots per template, and templates per player. */
+export const FORMATION_SLOTS = 6;
+export const FORMATION_TEMPLATE_COUNT = 3;
+
+/** A division template: a name + exactly FORMATION_SLOTS slots (a unit id or null). */
+export interface FormationTemplate {
+  name: string;
+  slots: (FormationUnit | null)[];
+}
+
+/** The three starter templates a player gets before customising them. */
+export const DEFAULT_TEMPLATES: FormationTemplate[] = [
+  { name: 'Линия', slots: ['infantry', 'infantry', 'infantry', 'infantry', 'tank', 'bomber'] },
+  { name: 'Кулак', slots: ['tank', 'tank', 'tank', 'infantry', 'infantry', 'bomber'] },
+  { name: 'Налёт', slots: ['bomber', 'bomber', 'tank', 'infantry', 'infantry', null] },
+];
+
+/** An active composition synergy (a doctrine bonus the template's mix unlocks). */
+export interface FormationSynergy {
+  key: string;
+  name: string;
+  desc: string;
+}
+/** Aggregate characteristics of a division template — what the designer previews and
+ *  what mobilisation/combat read. attack/defense already include synergy multipliers. */
+export interface FormationStats {
+  count: number;
+  byType: Record<FormationUnit, number>;
+  attack: number;
+  defense: number;
+  hp: number;
+  cost: Record<string, number>;
+  synergies: FormationSynergy[];
+}
+
+/** Compute a template's aggregate stats = Σ(slot stats) × composition synergies
+ *  (combined-arms / entrenched / armour / air-support). Pure + deterministic; used by
+ *  the menu preview and (later) by mobilisation. */
+export function formationStats(tpl: FormationTemplate): FormationStats {
+  const byType: Record<FormationUnit, number> = { infantry: 0, tank: 0, bomber: 0 };
+  let baseAtk = 0;
+  let baseDef = 0;
+  let hp = 0;
+  const cost: Record<string, number> = {};
+  for (const slot of tpl.slots) {
+    if (!slot) continue;
+    const def = data.units[slot];
+    if (!def) continue;
+    byType[slot] += 1;
+    baseAtk += def.stats.attack ?? 0;
+    baseDef += def.stats.defense ?? 0;
+    hp += def.stats.hp ?? 0;
+    for (const [res, amt] of Object.entries(def.cost ?? {})) cost[res] = (cost[res] ?? 0) + amt;
+  }
+  const count = byType.infantry + byType.tank + byType.bomber;
+  // Composition synergies — additive multipliers on attack / defense.
+  let atkMul = 1;
+  let defMul = 1;
+  const synergies: FormationSynergy[] = [];
+  if (byType.infantry > 0 && byType.tank > 0 && byType.bomber > 0) {
+    atkMul += 0.15;
+    defMul += 0.15;
+    synergies.push({
+      key: 'combined',
+      name: 'Комбинированные войска',
+      desc: '+15% атака и оборона — есть все три рода войск',
+    });
+  }
+  if (byType.infantry >= 4 && byType.tank === 0 && byType.bomber === 0) {
+    defMul += 0.25;
+    synergies.push({ key: 'entrench', name: 'Окопались', desc: '+25% оборона — чистая пехота' });
+  }
+  if (byType.tank >= 3) {
+    atkMul += 0.2;
+    synergies.push({ key: 'armor', name: 'Танковый кулак', desc: '+20% атака — ≥3 танков (прорыв)' });
+  }
+  if (byType.bomber >= 1) {
+    atkMul += 0.1;
+    synergies.push({
+      key: 'air',
+      name: 'Авиаподдержка',
+      desc: '+10% атака и удар по структурам — есть бомбардировщик',
+    });
+  }
+  return {
+    count,
+    byType,
+    attack: Math.round(baseAtk * atkMul),
+    defense: Math.round(baseDef * defMul),
+    hp,
+    cost,
+    synergies,
+  };
+}
+
 /** Default solo skirmish: you (p1) vs one AI (p2), at two of the start candidates. */
 export const DEFAULT_SETUP: SetupConfig = {
   seats: [
@@ -969,6 +1116,13 @@ export const assaultFleet = (playerId: string, fleetId: string) =>
   act(playerId, 'fleet.assault', { fleetId });
 export const bombardFleet = (playerId: string, fleetId: string, on: boolean) =>
   act(playerId, 'fleet.bombard', { fleetId, on });
+/** Focus an artillery fleet's standoff fire on one enemy fleet (targetId), or
+ *  clear (targetId null) to auto-target the nearest hostile in range. */
+export const barrageFleet = (playerId: string, fleetId: string, targetId: string | null) =>
+  act(playerId, 'fleet.barrage', { fleetId, targetId });
+/** Set an artillery fleet's rules of engagement (passive/return/standard/aggressive). */
+export const barrageModeFleet = (playerId: string, fleetId: string, mode: string) =>
+  act(playerId, 'fleet.barrageMode', { fleetId, mode });
 export const loadArmy = (playerId: string, fleetId: string, unit: string, count = 1) =>
   act(playerId, 'army.load', { fleetId, unit, count });
 export const unloadArmy = (playerId: string, fleetId: string, unit: string, count = 1) =>
