@@ -50,15 +50,27 @@ describe('ground combat — matrix damage weighted by target composition', () =>
     expect(t.toAttacker.tank).toBeCloseTo(2 * GROUND_ROSTER.tank!.def.tank!); // defender def (return fire)
   });
 
-  it('caps firepower at the 12 strongest units — the rest are reserve HP', () => {
+  it('caps firepower at 12 firing units — the rest are reserve HP', () => {
     const target = makeSide(GROUND_ROSTER, { tank: 1 });
     const out12 = damageBuckets(GROUND_ROSTER, makeSide(GROUND_ROSTER, { infantry: 12 }), target, 'atk');
     const out13 = damageBuckets(GROUND_ROSTER, makeSide(GROUND_ROSTER, { infantry: 13 }), target, 'atk');
     expect(out13.tank).toBeCloseTo(out12.tank!); // the 13th infantry adds no firepower
   });
 
-  it('fills the 12 firing slots with the STRONGEST units first', () => {
-    // 10 infantry + 5 tanks = 15 units; the top 12 = 5 tanks + 7 infantry (tank stronger).
+  it('the 12 firing slots go to the units MOST EFFECTIVE vs the enemy (AA fires at bombers)', () => {
+    // 12 infantry (our anti-air) + 12 tanks defend; 12 bombers attack. Only the infantry
+    // return fire — they out-rank the tanks against bombers; the tanks are benched.
+    const defenders = makeSide(GROUND_ROSTER, { infantry: 12, tank: 12 });
+    const bombers = makeSide(GROUND_ROSTER, { bomber: 12 });
+    const mixed = damageBuckets(GROUND_ROSTER, defenders, bombers, 'def').bomber!;
+    const infOnly = damageBuckets(GROUND_ROSTER, makeSide(GROUND_ROSTER, { infantry: 12 }), bombers, 'def').bomber!;
+    const tankOnly = damageBuckets(GROUND_ROSTER, makeSide(GROUND_ROSTER, { tank: 12 }), bombers, 'def').bomber!;
+    expect(mixed).toBeCloseTo(infOnly); // infantry do all the firing
+    expect(mixed).not.toBeCloseTo(tankOnly); // tanks (poor vs air) sit in reserve
+  });
+
+  it('vs an infantry enemy the best counter (tanks) fills the slots first', () => {
+    // 10 infantry + 5 tanks vs an infantry target → top 12 = 5 tanks + 7 infantry.
     const out = damageBuckets(GROUND_ROSTER, makeSide(GROUND_ROSTER, { infantry: 10, tank: 5 }), makeSide(GROUND_ROSTER, { infantry: 1 }), 'atk');
     const exp = 5 * GROUND_ROSTER.tank!.atk.infantry! + 7 * GROUND_ROSTER.infantry!.atk.infantry!;
     expect(out.infantry).toBeCloseTo(exp); // not all 10 infantry fire — 3 are bumped to reserve
