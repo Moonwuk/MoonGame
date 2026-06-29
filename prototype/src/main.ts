@@ -47,6 +47,9 @@ import {
   loadDivision,
   unloadDivision,
   setDivisionOfficer,
+  designateCapital,
+  capitalOf,
+  isInhabited,
   divisionCargo,
   fleetCargoFree,
   type FormationTemplate,
@@ -3195,6 +3198,15 @@ function panelHtml(): string {
     h += `<div class="row dim">${esc(ptName)} world — ${parts.join(' · ')}</div>`;
   }
 
+  // Capital marker / designate — heroes respawn here (and re-fit modules, Phase C).
+  if (mine) {
+    if (capitalOf(s, ME) === p.id) {
+      h += `<div class="row"><b style="color:var(--grn)">★ Столица</b> <span class="dim">— здесь возродятся и сменят модули герои</span></div>`;
+    } else if (isInhabited(p)) {
+      h += `<div class="row">${btn('capital', '', '★ Сделать столицей', true)}</div>`;
+    }
+  }
+
   h += `<div class="ptabs">${tabButton('ground', 'Ground', ground.length)}${tabButton(
     'ships',
     'Ships',
@@ -4136,6 +4148,8 @@ side.addEventListener('click', (ev) => {
     enqueueBuild(selPlanet!, { kind: 'unit', id: arg, count: 1 });
   } else if (act === 'mobilize') {
     playerOrder(mobilizeDivision(ME, selPlanet!, Number(arg)));
+  } else if (act === 'capital') {
+    playerOrder(designateCapital(ME, selPlanet!));
   } else if (act === 'orbit') {
     playerOrder(orbitFleet(ME, selFleet!, arg as 'near' | 'far'));
   } else if (act === 'bombard') {

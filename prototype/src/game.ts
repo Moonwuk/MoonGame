@@ -1013,9 +1013,11 @@ export function newGame(setup: SetupConfig = DEFAULT_SETUP): GameState {
   // The player's locked division templates ride into the match; the AI uses the defaults.
   const templates: Record<string, FormationTemplate[]> = {};
   const heroRoster: Record<string, HeroLoadout[]> = {};
+  const capital: Record<string, string> = {};
   for (const seat of setup.seats) {
     templates[seat.id] = !seat.ai && setup.templates ? setup.templates : DEFAULT_TEMPLATES;
     heroRoster[seat.id] = !seat.ai && setup.heroes ? setup.heroes : DEFAULT_HEROES;
+    capital[seat.id] = seat.start; // capital defaults to the homeworld; re-designatable in-match
   }
   // `divisions` / `divisionSeq` / `templates` / `groundBattles` / `heroRoster` are
   // prototype-only state (preserved by deepClone); cast past GameState's shape.
@@ -1031,6 +1033,7 @@ export function newGame(setup: SetupConfig = DEFAULT_SETUP): GameState {
     templates,
     groundBattles: {},
     heroRoster,
+    capital,
   } as GameState;
 }
 
@@ -1138,6 +1141,7 @@ type DivState = GameState & {
   templates?: Record<string, FormationTemplate[]>;
   groundBattles?: Record<string, number>;
   heroRoster?: Record<string, HeroLoadout[]>;
+  capital?: Record<string, string>;
 };
 export function divisionsOf(state: GameState): Record<string, Division> {
   const s = state as DivState;
@@ -1155,6 +1159,16 @@ export function templatesOf(state: GameState, playerId: string): FormationTempla
 /** A player's hero roster (the loadouts composed in the menu), or the defaults. */
 export function heroRosterOf(state: GameState, playerId: string): HeroLoadout[] {
   return (state as DivState).heroRoster?.[playerId] ?? DEFAULT_HEROES;
+}
+/** The capital map (playerId → planetId); lazily initialised. The capital is where a
+ *  hero respawns and (Phase C) re-fits modules; designatable, defaults to the homeworld. */
+function capitalsOf(state: GameState): Record<string, string> {
+  const s = state as DivState;
+  return (s.capital ??= {});
+}
+/** A player's current capital planet id, or undefined if unset. */
+export function capitalOf(state: GameState, playerId: string): string | undefined {
+  return (state as DivState).capital?.[playerId];
 }
 
 /** Base passive restoration: +1 HP per unit per day on a friendly planet (hospitals /
@@ -1554,6 +1568,27 @@ export const divisionModule: GameModule = {
   },
 };
 
+// --- capital: a designatable home world (hero respawn + module re-fit anchor) -----
+// "Назначаемая столица": each player's capital defaults to their homeworld and can be
+// moved to any owned inhabited world (e.g. if the old one is lost). Phase B/C: heroes
+// respawn here after the death cooldown, and modules are re-fitted here.
+export const capitalModule: GameModule = {
+  id: 'capital',
+  version: '0.1.0',
+  setup(api) {
+    api.onAction('capital.designate', (action, h) => {
+      const p = action.payload as { planetId?: string };
+      if (typeof p?.planetId !== 'string') return h.reject('E_BAD_PAYLOAD');
+      const planet = h.state.planets[p.planetId];
+      if (!planet) return h.reject('E_NO_PLANET');
+      if (planet.owner !== action.playerId) return h.reject('E_FORBIDDEN');
+      if (!isInhabited(planet)) return h.reject('E_NOT_INHABITED'); // a capital must be a real world
+      capitalsOf(h.state)[action.playerId] = p.planetId;
+      h.emit('capital.designated', { owner: action.playerId, planetId: p.planetId });
+    });
+  },
+};
+
 export const MODULES: GameModule[] = [
   sectorModule,
   planetTypeModule,
@@ -1569,6 +1604,7 @@ export const MODULES: GameModule[] = [
   fleetLaunchModule,
   diplomacyModule, // peace-by-default + declare-war action (combat reads state.diplomacy)
   divisionModule, // ground divisions: mobilise from a template + daily restoration
+  capitalModule, // designatable capital (hero respawn / module re-fit anchor)
 ];
 
 export const kernel = createKernel(MODULES);
@@ -1674,6 +1710,9 @@ export const unloadDivision = (playerId: string, divisionId: string) =>
 /** Attach an officer (OFFICERS key) to a division, or detach with `officer = null`. */
 export const setDivisionOfficer = (playerId: string, divisionId: string, officer: string | null) =>
   act(playerId, 'division.officer', { divisionId, officer });
+/** Designate one of your inhabited worlds as your capital (hero respawn / re-fit anchor). */
+export const designateCapital = (playerId: string, planetId: string) =>
+  act(playerId, 'capital.designate', { planetId });
 
 /** Can `mover`'s fleets enter/traverse a province owned by `owner`? Neutral, your own,
  *  and players you're at war / pact / alliance with are passable; a player you're at
