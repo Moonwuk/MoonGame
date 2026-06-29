@@ -491,6 +491,41 @@ button.b:disabled{opacity:.32;cursor:not-allowed;color:var(--dim);border-color:v
   color:var(--cyan);font-size:11px;cursor:pointer;white-space:nowrap;}
 #connect .mbtn.ghost{border-color:var(--line-hi);background:transparent;color:var(--dim);}
 #connect .mbtn:active{background:rgba(53,214,230,.24);}
+/* welcome stage — first-launch identity screen (new commander / sign-in / single-player) */
+#connect .cwrap{position:relative;width:min(520px,94vw);}
+#connect .clang{position:absolute;top:-46px;right:0;display:flex;align-items:center;gap:7px;
+  padding:7px 13px;background:rgba(3,12,16,.72);border:1px solid var(--line-hi);border-radius:7px;
+  color:var(--dim);font:11px ui-monospace,monospace;letter-spacing:2px;cursor:pointer;}
+#connect .clang:hover{border-color:var(--cyan-dim);color:var(--ink);}
+#connect .clang .car{font-size:7px;opacity:.7;}
+#connect .ccrest{display:flex;flex-direction:column;align-items:center;gap:9px;margin:4px 0 24px;}
+#connect .ccrest .ring{position:relative;width:62px;height:62px;display:grid;place-items:center;}
+#connect .ccrest .ring .dia{width:32px;height:32px;transform:rotate(45deg);border:2px solid var(--cyan);
+  background:rgba(53,214,230,.12);box-shadow:0 0 22px rgba(53,214,230,.5),inset 0 0 12px rgba(53,214,230,.3);}
+#connect .ccrest .ring::before{content:"";position:absolute;inset:-8px;border:1px solid var(--line-hi);
+  border-radius:50%;opacity:.55;}
+#connect .ccrest .wm{font-size:clamp(20px,6.5vw,26px);letter-spacing:clamp(3px,2vw,8px);color:var(--cyan);
+  font-weight:700;text-shadow:0 0 18px rgba(53,214,230,.45);text-align:center;white-space:nowrap;}
+#connect .ccrest .wtag{font-size:10px;letter-spacing:clamp(2px,1.4vw,5px);color:var(--cyan-dim);text-transform:uppercase;}
+#connect .cnew{width:100%;padding:16px;border-radius:10px;border:1px solid var(--cyan);cursor:pointer;
+  background:linear-gradient(180deg,rgba(53,214,230,.30),rgba(53,214,230,.12));color:#eafdff;
+  font:700 15px ui-monospace,monospace;letter-spacing:2px;box-shadow:0 0 26px rgba(53,214,230,.26);min-height:54px;}
+#connect .cnew:active{background:linear-gradient(180deg,rgba(53,214,230,.44),rgba(53,214,230,.20));}
+#connect .cdiv{display:flex;align-items:center;gap:10px;margin:18px 0 14px;color:var(--dim);
+  font-size:10px;letter-spacing:2px;text-transform:uppercase;}
+#connect .cdiv::before,#connect .cdiv::after{content:"";flex:1;height:1px;background:var(--line-hi);}
+#connect .csocial{display:flex;gap:12px;justify-content:center;}
+#connect .csoc{width:52px;height:52px;border-radius:50%;border:1px solid var(--line-hi);background:rgba(3,12,16,.72);
+  display:grid;place-items:center;cursor:pointer;color:var(--ink);font:700 17px system-ui,sans-serif;}
+#connect .csoc:hover{border-color:var(--cyan);box-shadow:0 0 12px rgba(53,214,230,.3);color:var(--cyan);}
+#connect .cstack{display:flex;flex-direction:column;gap:10px;margin-top:18px;}
+#connect .cback{align-self:flex-start;background:none;border:none;color:var(--dim);
+  font:12px ui-monospace,monospace;letter-spacing:1px;cursor:pointer;padding:0;margin-bottom:8px;}
+#connect .cback:hover{color:var(--cyan);}
+#connect .cfoot{position:absolute;left:0;right:0;bottom:-50px;display:flex;flex-wrap:wrap;
+  justify-content:center;gap:6px 16px;padding:0 8px;}
+#connect .cfoot a{color:var(--cyan-dim);font-size:10px;letter-spacing:.5px;text-decoration:none;cursor:pointer;opacity:.85;}
+#connect .cfoot a:hover{color:var(--cyan);opacity:1;}
 #lobby{position:fixed;inset:0;z-index:55;display:none;align-items:center;justify-content:center;
   background:rgba(2,8,11,.66);}
 #lobby .lbox{width:min(420px,94vw);background:var(--glass);border:1px solid var(--line-hi);
@@ -650,29 +685,57 @@ const html = `<!doctype html>
 <div id="fps"></div>
 <div id="banner"></div>
 <div id="connect">
-  <div class="cbox">
-    <div class="ctitle"><span class="dia"></span><b>VOID DOMINION</b></div>
-    <p class="csub">Выбери матч из списка и войди, или запусти одиночную игру.</p>
-    <label class="cfield">Сервер
-      <input id="csrv" type="text" inputmode="url" autocapitalize="off" autocomplete="off" spellcheck="false" placeholder="wss://… or ws://host:8788">
-    </label>
-    <label class="cfield">Имя
-      <input id="cnick" type="text" autocapitalize="off" autocomplete="off" spellcheck="false" maxlength="24" placeholder="commander name">
-    </label>
-    <div class="crow">
-      <button id="cgo" class="cbtn">Обновить список</button>
-      <button id="csolo" class="cbtn ghost">Одиночная игра</button>
+  <div class="cwrap">
+    <button id="clang" class="clang" type="button">РУССКИЙ <span class="car">▼</span></button>
+    <div class="cbox">
+      <div id="cwelcome">
+        <div class="ccrest">
+          <div class="ring"><span class="dia"></span></div>
+          <div class="wm">VOID DOMINION</div>
+          <div class="wtag">Грань пустоты</div>
+        </div>
+        <button id="cnew" class="cnew" type="button">Новый командир</button>
+        <div class="cdiv">войти через</div>
+        <div class="csocial">
+          <button id="cgoogle" class="csoc" type="button" aria-label="Войти через Google" title="Войти через Google">G</button>
+          <button id="capple" class="csoc" type="button" aria-label="Войти через Apple" title="Войти через Apple"><svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M16.4 12.9c0-2.3 1.9-3.4 2-3.4-1.1-1.6-2.8-1.8-3.4-1.8-1.5-.1-2.8.8-3.5.8s-1.8-.8-3-.8c-1.5 0-2.9.9-3.7 2.3-1.6 2.7-.4 6.8 1.1 9 .7 1.1 1.6 2.3 2.8 2.2 1.1 0 1.5-.7 2.9-.7s1.7.7 2.9.7c1.2 0 2-1.1 2.7-2.1.8-1.2 1.2-2.4 1.2-2.4s-2.3-.9-2.3-3zM14.3 6.3c.6-.8 1-1.8.9-2.9-.9 0-2 .6-2.6 1.3-.6.7-1.1 1.7-.9 2.7 1 .1 2-.5 2.6-1.1z"/></svg></button>
+        </div>
+        <div class="cstack">
+          <button id="clogin" class="cbtn ghost" type="button">Вход по позывному</button>
+          <button id="csolo" class="cbtn ghost" type="button">Одиночная игра</button>
+        </div>
+      </div>
+      <div id="cbrowse" style="display:none">
+        <button id="cback" class="cback" type="button">‹ назад</button>
+        <div class="ctitle"><span class="dia"></span><b>МАТЧИ</b></div>
+        <p class="csub">Выбери матч из списка и войди, или обнови список.</p>
+        <label class="cfield">Сервер
+          <input id="csrv" type="text" inputmode="url" autocapitalize="off" autocomplete="off" spellcheck="false" placeholder="wss://… or ws://host:8788">
+        </label>
+        <label class="cfield">Позывной
+          <input id="cnick" type="text" autocapitalize="off" autocomplete="off" spellcheck="false" maxlength="24" placeholder="позывной">
+        </label>
+        <div class="crow">
+          <button id="cgo" class="cbtn" type="button">Обновить список</button>
+        </div>
+        <div class="mtabs">
+          <button class="mtab active" data-tab="available">Доступные</button>
+          <button class="mtab" data-tab="active">Активные</button>
+          <button class="mtab" data-tab="archived">Архив</button>
+        </div>
+        <div id="mlist" class="mlist"></div>
+      </div>
+      <div id="cstatus" class="cstat"></div>
     </div>
     <!-- DEV TEST MODE — remove this button (and the #testmode block + CSS + main.ts hook) to cut the feature -->
     <button id="ctest" class="cbtn ghost tm-open">🧪 Тесты · режим разработчика</button>
     <!-- /DEV TEST MODE -->
-    <div class="mtabs">
-      <button class="mtab active" data-tab="available">Доступные</button>
-      <button class="mtab" data-tab="active">Активные</button>
-      <button class="mtab" data-tab="archived">Архив</button>
+    <div class="cfoot">
+      <a id="cl-imprint">Выходные данные</a>
+      <a id="cl-terms">Условия</a>
+      <a id="cl-privacy">Политика конфиденциальности</a>
+      <a id="cl-support">Поддержка</a>
     </div>
-    <div id="mlist" class="mlist"></div>
-    <div id="cstatus" class="cstat"></div>
   </div>
 </div>
 <div id="lobby">

@@ -4493,6 +4493,62 @@ initTestMode({
   back: () => showConnect(true),
 });
 
+// --- welcome stage: first-launch identity screen → match browser ------------
+// The entry overlay opens on a clean welcome (new commander / sign-in / single-
+// player); "Новый командир" and "Вход" reveal the match browser (stage 2). Social
+// sign-in is a styled stub until accounts land (docs/accounts-roadmap.md AC-1.1):
+// it drops you straight into guest play by callsign, with a "скоро" notice.
+const welcomeStageEl = $('cwelcome');
+const browseStageEl = $('cbrowse');
+function showStage(stage: 'welcome' | 'browse'): void {
+  welcomeStageEl.style.display = stage === 'welcome' ? '' : 'none';
+  browseStageEl.style.display = stage === 'browse' ? '' : 'none';
+}
+
+// A fresh callsign for a brand-new commander. Deterministic on purpose (no random/
+// time even in UI glue): a persisted counter walks a fixed wordlist.
+const CALLSIGNS = ['Носорог', 'Комета', 'Гадюка', 'Орион', 'Вектор', 'Сокол', 'Титан', 'Квазар'];
+function suggestCallsign(): string {
+  const n = (Number(localStorage.getItem('void.newcount') ?? '0') || 0) + 1;
+  localStorage.setItem('void.newcount', String(n));
+  return `${CALLSIGNS[(n - 1) % CALLSIGNS.length]}-${n}`;
+}
+function enterBrowse(): void {
+  if (!nickInput.value.trim()) nickInput.value = suggestCallsign();
+  showStage('browse');
+  void refreshMatches();
+}
+// Guest sign-in stub: enter the browser as a guest, then (after the list loads)
+// leave the "скоро" notice up so it isn't clobbered by the load status.
+async function enterBrowseGuest(notice: string): Promise<void> {
+  if (!nickInput.value.trim()) nickInput.value = suggestCallsign();
+  showStage('browse');
+  await refreshMatches();
+  statusEl.textContent = notice;
+}
+
+$('cnew').addEventListener('click', enterBrowse);
+$('cgoogle').addEventListener('click', () => void enterBrowseGuest('Вход через Google — скоро · ты вошёл гостем'));
+$('capple').addEventListener('click', () => void enterBrowseGuest('Вход через Apple — скоро · ты вошёл гостем'));
+$('clogin').addEventListener('click', () => {
+  showStage('browse');
+  statusEl.textContent = '';
+  void refreshMatches();
+  nickInput.focus();
+});
+$('cback').addEventListener('click', () => {
+  showStage('welcome');
+  statusEl.textContent = '';
+});
+$('clang').addEventListener('click', () => {
+  statusEl.textContent = 'Другие языки — скоро';
+});
+for (const a of Array.from(document.querySelectorAll('.cfoot a'))) {
+  a.addEventListener('click', () => {
+    statusEl.textContent = `${(a.textContent ?? '').trim()} — скоро`;
+  });
+}
+
 // --- single-player setup overlay --------------------------------------------
 // Pick your homeworld on a mini-map and choose how many AI rivals join, then
 // launch a fresh local match. Seat 1 is always you; seats 2-4 toggle AI/off.
@@ -4729,7 +4785,7 @@ function connect(): void {
   // Nick-login: the server maps this name → a fixed side and hands it back, so we
   // learn our seat from the welcome (snap.playerId), not from a side picker.
   const url = `${base}/matches/${encodeURIComponent(currentMatchId)}?nick=${encodeURIComponent(nick)}`;
-  statusEl.textContent = `connecting as ${nick}…`;
+  statusEl.textContent = `Подключение: ${nick}…`;
   localStorage.setItem('void.server', base);
   localStorage.setItem('void.nick', nick); // resume this seat next visit
 
@@ -4874,7 +4930,7 @@ function connect(): void {
 function resolveServer(): { base: string; nick: string } | null {
   let raw = srvInput.value.trim();
   if (!raw) {
-    statusEl.textContent = 'enter a server URL';
+    statusEl.textContent = 'Укажи адрес сервера';
     return null;
   }
   // Accept http(s)://, ws(s)://, or a bare host:port and normalize. Kills three
@@ -4891,12 +4947,12 @@ function resolveServer(): { base: string; nick: string } | null {
   try {
     base = `${new URL(raw).protocol}//${new URL(raw).host}`; // drop any path/query
   } catch {
-    statusEl.textContent = 'bad server URL';
+    statusEl.textContent = 'Неверный адрес сервера';
     return null;
   }
   const nick = nickInput.value.trim();
   if (!nick) {
-    statusEl.textContent = 'enter your name';
+    statusEl.textContent = 'Введи позывной';
     return null;
   }
   return { base, nick };
@@ -5028,10 +5084,8 @@ for (const btn of Array.from(document.querySelectorAll('.mtab'))) {
 // "Обновить список" reloads the read-model; per-row "Войти"/"В архив" act on a match.
 $('cgo').addEventListener('click', () => void refreshMatches());
 
-// Open the menu populated when a server is reachable (the page is usually served BY
-// the dev server, so the same-origin default just works); otherwise it shows a prompt
-// and Single-player still works.
-void refreshMatches();
+// The match browser (stage 2) loads its list on entry — "Новый командир" / "Вход"
+// call refreshMatches() themselves; nothing to prefetch while the clean welcome is up.
 
 // Auto-reconnect after an unexpected drop: rejoin our seat with capped exponential
 // backoff (1,2,4,8,8,8s, then give up). Same saved server + nick → same side.
@@ -5042,11 +5096,11 @@ function scheduleReconnect(): void {
     reconnecting = false;
     reconnectAttempts = 0;
     banner = null;
-    statusEl.textContent = 'reconnect failed — tap Connect to retry';
+    statusEl.textContent = 'Переподключение не удалось — войди заново';
     showConnect(true);
     return;
   }
-  banner = '⟳ reconnecting…';
+  banner = '⟳ переподключение…';
   const delay = Math.min(1000 * 2 ** (reconnectAttempts - 1), 8000);
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;
