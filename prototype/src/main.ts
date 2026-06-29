@@ -66,6 +66,9 @@ import {
   planRoute,
 } from '../../packages/shared-core/src/index';
 import { MultiplayerClient, type MultiplayerPing } from '../../packages/client/src/index';
+// DEV TEST MODE — self-contained dev-only scenarios; remove this import + the
+// initTestMode(...) call below + the #testmode HTML/CSS to cut it cleanly.
+import { initTestMode, openTestMode } from './testmode';
 import type {
   GameState,
   Fleet,
@@ -4464,10 +4467,37 @@ $('csolo').addEventListener('click', () => {
   openSetup(); // pick start + rivals before the skirmish begins
 });
 
+// DEV TEST MODE — fenced hook. The "Тесты" button opens the dev test overlay;
+// initTestMode wires it to the host with two tiny callbacks. Cut this whole block
+// (and the import + #testmode HTML/CSS) to remove the feature without a trace.
+$('ctest')?.addEventListener('click', () => {
+  userClosed = true;
+  NET = false;
+  showConnect(false);
+  openTestMode();
+});
+initTestMode({
+  startScenario: (state, resumeSpeed) => {
+    installMatch(state, new Set()); // scenarios drive themselves — no AI
+    speed = 0; // start paused at t=0
+    // prime the fast-forward (▶▶) control to the chosen multiplier and show paused
+    const spd = Array.from(document.querySelectorAll('[data-speed]')) as HTMLElement[];
+    const fast = spd[spd.length - 1];
+    if (fast) {
+      fast.dataset.speed = String(resumeSpeed);
+      fast.textContent = `${resumeSpeed}×`;
+    }
+    for (const x of spd) x.classList.toggle('on', Number(x.dataset.speed) === 0);
+    connectEl.style.display = 'none';
+  },
+  back: () => showConnect(true),
+});
+
 // --- single-player setup overlay --------------------------------------------
 // Pick your homeworld on a mini-map and choose how many AI rivals join, then
-// launch a fresh local match. Seat 1 is always you; seats 2-4 toggle AI/off,
-// with at least one rival (two seats) required to start.
+// launch a fresh local match. Seat 1 is always you; seats 2-4 toggle AI/off.
+// Switch every rival OFF for a solo sandbox — the core never ends a one-player
+// match, so it's a peaceful space to read descriptions and learn the interface.
 const setupEl = $('setup');
 const setupMapEl = $('setupmap');
 const setupSlotsEl = $('setupslots');
@@ -4602,9 +4632,16 @@ function renderSetupSlots(): void {
 function renderSetup(): void {
   renderSetupMap();
   renderSetupSlots();
-  const active = setupSlots.filter((r) => r !== 'off').length;
-  setupGoEl.disabled = active < 2;
-  setupHintEl.textContent = `Home: ${setupStart} — tap another glowing world to change`;
+  // Seat 1 (you) is always in, so the match can always launch — including with ZERO
+  // rivals: a calm solo sandbox to read descriptions, learn the UI and test in peace
+  // (the core never ends a one-player match — victory needs ≥2 active sides).
+  const rivals = setupSlots.slice(1).filter((r) => r === 'ai').length;
+  setupGoEl.disabled = false;
+  setupGoEl.textContent = rivals === 0 ? 'LAUNCH SOLO' : 'LAUNCH';
+  setupHintEl.textContent =
+    rivals === 0
+      ? `Home: ${setupStart} — solo sandbox, no rivals · tap a glowing world to change`
+      : `Home: ${setupStart} — tap another glowing world to change`;
 }
 
 function openSetup(): void {
@@ -4637,10 +4674,13 @@ function buildSetupConfig(): SetupConfig {
   return { seats, templates: setupTemplates.map((t) => ({ name: t.name, slots: [...t.slots] })) };
 }
 
-function startMatch(setup: SetupConfig): void {
-  s = newGame(setup);
+// Install a ready GameState as the live match: reset all interaction state, queues,
+// camera and log, then hide the setup overlay. `aiPlayers` are the seats the local
+// sim drives. Shared by the normal skirmish and (via a hook) the dev test mode.
+function installMatch(state: GameState, aiPlayers: Set<string>): void {
+  s = state;
   ME = 'p1';
-  AI_PLAYERS = new Set(setup.seats.filter((x) => x.ai).map((x) => x.id));
+  AI_PLAYERS = aiPlayers;
   lastAiAt = s.time;
   // Reset interaction + queues + camera to the framed whole-map view.
   selFleet = null;
@@ -4653,9 +4693,14 @@ function startMatch(setup: SetupConfig): void {
   splitState = null;
   killStats = { destroyed: 0, lost: 0 };
   myBattleLocs.clear();
+  logLines.length = 0; // fresh log — drop notes from the menu-background match
+  banner = null; // clear any end-banner left by the menu-background match (else it sticks)
   for (const k of Object.keys(buildQueues)) delete buildQueues[k];
   defaultView(); // phone: zoom onto home; desktop: whole-map fit
   setupEl.style.display = 'none';
+}
+function startMatch(setup: SetupConfig): void {
+  installMatch(newGame(setup), new Set(setup.seats.filter((x) => x.ai).map((x) => x.id)));
 }
 
 setupMapEl.addEventListener('click', (ev) => {
@@ -5149,6 +5194,8 @@ function frame(nowReal: number) {
   if (banner) {
     bannerEl.textContent = banner;
     bannerEl.style.display = 'block';
+  } else if (bannerEl.style.display !== 'none') {
+    bannerEl.style.display = 'none'; // banner cleared (e.g. a fresh match) → hide it
   }
   requestAnimationFrame(frame);
 }
