@@ -4664,60 +4664,83 @@ setupDivEl.addEventListener('click', (ev) => {
 // land in a later phase). Reuses the division designer's tab/slot/stats chrome.
 const setupHeroes: HeroLoadout[] = DEFAULT_HEROES.map((h) => ({ name: h.name, abilities: [...h.abilities] }));
 let setupHeroIdx = 0; // which hero is open in the designer
+let setupHeroSlot = 0; // the slot ("bay") the next inserted module drops into
+
+/** First empty slot of the open hero, or 0 if full. */
+function firstEmptyHeroSlot(): number {
+  const e = setupHeroes[setupHeroIdx]?.abilities.indexOf(null);
+  return e !== undefined && e >= 0 ? e : 0;
+}
 
 function renderHeroes(): void {
   const tabs = setupHeroes
     .map((h, i) => `<button data-hero="${i}" class="${i === setupHeroIdx ? 'on' : ''}">${esc(h.name)}</button>`)
     .join('');
   const hero = setupHeroes[setupHeroIdx]!;
-  const slots = hero.abilities
+  // Slot "bays" — where modules are inserted; the focused bay is the drop target.
+  const bays = hero.abilities
     .map((id, i) => {
       const ab = id ? HERO_ABILITIES[id] : undefined;
-      const ic = ab ? ab.icon : '＋';
-      const nm = ab ? ab.name : 'пусто';
-      return `<div class="tslot ${ab ? '' : 'empty'}" data-aslot="${i}"><span class="ic">${ic}</span><span class="nm">${esc(nm)}</span></div>`;
+      const cls = `${ab ? '' : 'empty'} ${i === setupHeroSlot ? 'focused' : ''}`;
+      return `<div class="tslot ${cls}" data-aslot="${i}"><span class="ic">${ab ? ab.icon : '＋'}</span><span class="nm">${esc(ab ? ab.name : 'пусто')}</span></div>`;
     })
     .join('');
+  // Module palette — tap to insert into the focused bay (or remove if already equipped).
+  const equipped = new Set(hero.abilities.filter(Boolean) as string[]);
+  const palette = HERO_ABILITY_IDS.map((id) => {
+    const a = HERO_ABILITIES[id]!;
+    const on = equipped.has(id);
+    return (
+      `<div class="habil ${on ? 'on' : ''} ${a.live ? '' : 'planned'}" data-abil="${id}">` +
+      `<span class="ic">${a.icon}</span>` +
+      `<div class="ht"><b>${esc(a.name)}</b> <span class="hcd">КД ${a.cooldownHours}ч${a.live ? '' : ' · скоро'}</span>` +
+      `<span class="hd">${esc(a.desc)}</span></div>` +
+      `${on ? '<span class="hcheck">✓</span>' : ''}</div>`
+    );
+  }).join('');
   const info = heroLoadoutInfo(hero);
-  const list = info.abilities.length
-    ? info.abilities
-        .map((a) => `<span class="syn">${a.icon} ${esc(a.name)} — ${esc(a.desc)}${a.live ? '' : ' <em>(скоро)</em>'}</span>`)
-        .join('')
-    : `<span class="syn none">◇ Нет способностей — выбери модули в слотах.</span>`;
   setupHeroEl.innerHTML =
-    `<p class="ssub">Выбери до 3 героев. У каждого ${HERO_SLOTS} слота под способности-«модули» + базовая аура (+5% атака/оборона флоту героя). В матче модули можно сменить в столице. Тапни слот, чтобы выбрать способность.</p>` +
+    `<p class="ssub">Выбери до 3 героев и вставь им модули. У каждого ${HERO_SLOTS} слота + базовая аура (+5% атака/оборона флоту героя). Тапни слот, затем модуль ниже — он встанет в слот; тап по вставленному модулю — убрать. В матче модули меняются в столице.</p>` +
     `<div class="tpl-tabs">${tabs}</div>` +
-    `<div class="tpl-slots">${slots}</div>` +
-    `<div class="tpl-stats"><div class="row"><span>★ Способности ${info.count}/${HERO_SLOTS}</span><span>✦ Аура +5%</span></div>${list}</div>`;
+    `<div class="tpl-slots heroslots">${bays}</div>` +
+    `<div class="tpl-stats"><div class="row"><span>★ Модули ${info.count}/${HERO_SLOTS}</span><span>✦ Аура +5%</span></div></div>` +
+    `<div class="hpal-h">Модули</div><div class="habils">${palette}</div>`;
 }
 
-/** Cycle a hero slot through: пусто → …pool…, skipping an ability already in another
- *  slot of the same hero (no point taking the same module twice). */
-function cycleHeroSlot(i: number): void {
+/** Insert / remove a module. Tapping an equipped module removes it; otherwise it drops
+ *  into the focused bay (or the first empty one), then focus advances to the next gap. */
+function toggleHeroAbility(id: string): void {
   const hero = setupHeroes[setupHeroIdx];
   if (!hero) return;
-  const order: (string | null)[] = [null, ...HERO_ABILITY_IDS];
-  const used = new Set(hero.abilities.filter((x, j) => j !== i && x));
-  let idx = (order.indexOf(hero.abilities[i] ?? null) + 1) % order.length;
-  for (let guard = 0; guard < order.length; guard++) {
-    const cand = order[idx] ?? null;
-    if (cand === null || !used.has(cand)) {
-      hero.abilities[i] = cand;
-      break;
+  const at = hero.abilities.indexOf(id);
+  if (at >= 0) {
+    hero.abilities[at] = null; // toggle off
+    setupHeroSlot = at;
+  } else {
+    let slot = setupHeroSlot;
+    if (hero.abilities[slot] != null) {
+      const empty = hero.abilities.indexOf(null);
+      slot = empty >= 0 ? empty : setupHeroSlot; // full bay → first gap, else replace focused
     }
-    idx = (idx + 1) % order.length;
+    hero.abilities[slot] = id;
+    const next = hero.abilities.indexOf(null);
+    setupHeroSlot = next >= 0 ? next : slot;
   }
   renderHeroes();
 }
 
 setupHeroEl.addEventListener('click', (ev) => {
-  const t = (ev.target as Element).closest('[data-aslot],[data-hero]') as HTMLElement | null;
+  const t = (ev.target as Element).closest('[data-aslot],[data-hero],[data-abil]') as HTMLElement | null;
   if (!t) return;
   if (t.dataset.hero !== undefined) {
     setupHeroIdx = Number(t.dataset.hero);
+    setupHeroSlot = firstEmptyHeroSlot();
     renderHeroes();
   } else if (t.dataset.aslot !== undefined) {
-    cycleHeroSlot(Number(t.dataset.aslot));
+    setupHeroSlot = Number(t.dataset.aslot); // focus this bay as the drop target
+    renderHeroes();
+  } else if (t.dataset.abil !== undefined) {
+    toggleHeroAbility(t.dataset.abil);
   }
 });
 

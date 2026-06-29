@@ -593,6 +593,22 @@ button.b:disabled{opacity:.32;cursor:not-allowed;color:var(--dim);border-color:v
 #setup .tpl-stats .syn{display:block;color:var(--cyan);font-size:11px;margin-top:4px;line-height:1.5;}
 #setup .tpl-stats .syn.none{color:var(--dim);}
 #setup .tpl-cost{color:var(--dim);font-size:11px;margin-top:6px;}
+/* hero fitting: 2 slot "bays" + a module palette you tap to insert */
+#setup-hero .heroslots{grid-template-columns:repeat(2,1fr);}
+#setup-hero .tslot.focused{border-style:solid;border-color:var(--cyan);box-shadow:0 0 12px rgba(53,214,230,.3);}
+#setup-hero .hpal-h{font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--grn-dim);margin:12px 0 7px;}
+#setup-hero .habils{display:flex;flex-direction:column;gap:6px;}
+#setup-hero .habil{display:flex;align-items:flex-start;gap:10px;padding:9px 11px;border:1px solid var(--line-hi);
+  border-radius:9px;background:rgba(255,255,255,.02);cursor:pointer;}
+#setup-hero .habil:active{background:rgba(53,214,230,.08);}
+#setup-hero .habil .ic{font-size:18px;line-height:1.3;color:var(--cyan);width:20px;text-align:center;flex:none;}
+#setup-hero .habil .ht{flex:1;min-width:0;}
+#setup-hero .habil .ht b{color:#eafffb;font-size:13px;}
+#setup-hero .habil .hcd{font-size:10px;color:var(--dim);letter-spacing:.5px;}
+#setup-hero .habil .hd{display:block;color:var(--dim);font-size:11px;line-height:1.4;margin-top:2px;}
+#setup-hero .habil.on{border-color:var(--cyan);background:rgba(53,214,230,.12);}
+#setup-hero .habil.planned{opacity:.6;}
+#setup-hero .habil .hcheck{color:var(--cyan);font:700 14px ui-monospace,monospace;flex:none;}
 
 /* === DEV TEST MODE — self-contained; delete this whole block to cut the styles === */
 #connect .tm-open{flex:none;width:100%;margin-top:10px;border-style:dashed;border-color:var(--line-hi);color:var(--cyan-dim);}
