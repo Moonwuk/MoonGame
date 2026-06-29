@@ -558,6 +558,52 @@ button.b:disabled{opacity:.32;cursor:not-allowed;color:var(--dim);border-color:v
 #setup .tpl-stats .syn{display:block;color:var(--cyan);font-size:11px;margin-top:4px;line-height:1.5;}
 #setup .tpl-stats .syn.none{color:var(--dim);}
 #setup .tpl-cost{color:var(--dim);font-size:11px;margin-top:6px;}
+
+/* === DEV TEST MODE — self-contained; delete this whole block to cut the styles === */
+#connect .tm-open{flex:none;width:100%;margin-top:10px;border-style:dashed;border-color:var(--line-hi);color:var(--cyan-dim);}
+#connect .tm-open:active{background:rgba(53,214,230,.12);}
+#testmode{position:fixed;inset:0;z-index:59;display:none;align-items:center;justify-content:center;padding:18px;
+  background:radial-gradient(120% 100% at 50% 30%,rgba(4,20,28,.94),rgba(1,4,10,.98));
+  -webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px);}
+#testmode .tmbox{width:min(620px,96vw);max-height:92vh;overflow:auto;background:var(--glass);border:1px solid var(--cyan);
+  border-radius:12px;padding:20px 20px 16px;box-shadow:0 0 40px rgba(0,0,0,.6),inset 0 0 0 1px rgba(53,214,230,.06);}
+#testmode .tm-title{display:flex;align-items:center;gap:10px;font-size:17px;letter-spacing:2px;color:var(--cyan);}
+#testmode .tm-title .dia{width:12px;height:12px;transform:rotate(45deg);background:var(--cyan);box-shadow:0 0 10px var(--cyan);}
+#testmode .tm-dev{margin-left:auto;font-size:9px;letter-spacing:2px;color:#0a0f12;background:var(--amber);padding:2px 7px;border-radius:3px;}
+#testmode .tm-sub{margin:8px 0 14px;color:var(--dim);font-size:12px;line-height:1.5;}
+#testmode .tm-label{font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--grn-dim);margin:12px 0 7px;}
+#testmode .tm-row{display:flex;gap:8px;flex-wrap:wrap;}
+#testmode .tm-spd{min-width:54px;padding:9px 10px;border:1px solid var(--line-hi);border-radius:8px;background:transparent;
+  color:var(--cyan-dim);font:700 13px ui-monospace,monospace;cursor:pointer;}
+#testmode .tm-spd.on{border-color:var(--cyan);color:var(--cyan);background:rgba(53,214,230,.14);box-shadow:0 0 10px rgba(53,214,230,.25);}
+#testmode .tm-scn{display:block;width:100%;text-align:left;margin:8px 0;padding:13px 14px;border:1px solid var(--line-hi);
+  border-radius:9px;background:rgba(53,214,230,.04);color:var(--ink);cursor:pointer;}
+#testmode .tm-scn:hover{border-color:var(--cyan);background:rgba(53,214,230,.1);}
+#testmode .tm-scn b{display:block;color:#eafffb;font-size:13px;letter-spacing:.5px;margin-bottom:4px;}
+#testmode .tm-scn span{color:var(--dim);font-size:11px;line-height:1.45;}
+#testmode .tm-back{width:100%;margin-top:10px;padding:10px;border-radius:8px;border:1px solid var(--line-hi);
+  background:transparent;color:var(--dim);cursor:pointer;font:12px ui-monospace,monospace;}
+#testmode .tm-sides{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;}
+#testmode .tm-side{border:1px solid var(--line-hi);border-radius:9px;padding:11px;}
+#testmode .tm-side-h{font:700 11px ui-monospace,monospace;letter-spacing:1px;color:var(--cyan);margin-bottom:9px;text-transform:uppercase;}
+#testmode .tm-slots{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;}
+#testmode .tm-slot{padding:9px 4px;border:1px dashed var(--line-hi);border-radius:7px;background:rgba(255,255,255,.02);
+  text-align:center;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:3px;}
+#testmode .tm-slot:hover{border-color:var(--cyan);}
+#testmode .tm-slot .ic{font-size:17px;line-height:1;}
+#testmode .tm-slot .nm{font:10px ui-monospace,monospace;color:var(--ink);}
+#testmode .tm-slot.empty{opacity:.5;}
+#testmode .tm-stats{margin-top:9px;font:11px ui-monospace,monospace;color:var(--ink);}
+#testmode .tm-fight{width:100%;padding:13px;border-radius:9px;border:1px solid var(--cyan);background:rgba(53,214,230,.14);
+  color:var(--cyan);font:700 14px ui-monospace,monospace;letter-spacing:2px;cursor:pointer;}
+#testmode .tm-fight:active{background:rgba(53,214,230,.26);}
+#testmode .tm-result{margin-top:12px;padding:12px 13px;border:1px solid var(--line-hi);border-radius:9px;
+  background:rgba(2,9,13,.5);font:12px ui-monospace,monospace;line-height:1.6;}
+#testmode .tm-result .win{color:var(--grn);}
+#testmode .tm-result .draw{color:var(--amber);}
+#testmode .tm-result .tm-surv{color:var(--dim);font-size:11px;margin-top:4px;}
+@media (max-width:520px){#testmode .tm-sides{grid-template-columns:1fr;}}
+/* === /DEV TEST MODE === */
 `;
 
 const html = `<!doctype html>
@@ -609,6 +655,9 @@ const html = `<!doctype html>
       <button id="cgo" class="cbtn">Обновить список</button>
       <button id="csolo" class="cbtn ghost">Одиночная игра</button>
     </div>
+    <!-- DEV TEST MODE — remove this button (and the #testmode block + CSS + main.ts hook) to cut the feature -->
+    <button id="ctest" class="cbtn ghost tm-open">🧪 Тесты · режим разработчика</button>
+    <!-- /DEV TEST MODE -->
     <div class="mtabs">
       <button class="mtab active" data-tab="available">Доступные</button>
       <button class="mtab" data-tab="active">Активные</button>
@@ -643,6 +692,8 @@ const html = `<!doctype html>
     <button id="setupcancel" class="scancel">Back</button>
   </div>
 </div>
+<!-- DEV TEST MODE — content rendered by testmode.ts; delete this one line to cut the markup -->
+<div id="testmode"></div>
 <script>${js}</script>
 </body></html>`;
 
