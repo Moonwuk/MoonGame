@@ -145,6 +145,13 @@
 > Дизайн — [`heroes.md`](heroes.md). Принцип: **всё — данные, движок один**
 > (`heroModule` интерпретирует JSON; экзотика — через `capability` `hero.effect.<type>`).
 > Герой = корабль (переиспользует `movement`/`combat`). Скелет (HERO-0) уже есть.
+>
+> **Прим. (прототип-маршрут):** часть HERO-2/HERO-9 уже в проде через прототип, в обход
+> data-first порядка: `GameState.heroes` **инстанс-ключёван** (`Hero.id`, фильтр по
+> `owner`), у героя есть `grade`/`abilities`/`home`/`fleetId`, смерть приписывается **по
+> `fleetId`**, респаун — в **столице** (`Hero.home`); пред-матч **ростер** до 4 героев
+> (главный + 3 по редкости) с фитинг-UI. Остаётся data-first ядро (HERO-1/4/5) и
+> развёртывание остальных героев ростера кораблями (`hero.spawn`, HERO-3). См. `state.md`.
 
 - **HERO-0** ✅ Скелет: герой-позиция (`GameState.heroes`/`tempLanes`/`topology`),
   `heroModule` с `hero.move`/`hero.path.create`/`planet.annihilate`, `dead_world`,
