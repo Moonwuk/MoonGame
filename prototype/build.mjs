@@ -592,6 +592,24 @@ body.sheet-open #log{display:none;}
 #setup .sgo:disabled{opacity:.4;cursor:not-allowed;}
 #setup .scancel{width:100%;margin-top:8px;padding:10px;border-radius:8px;border:1px solid var(--line-hi);
   background:transparent;color:var(--dim);font:12px ui-monospace,monospace;letter-spacing:1px;cursor:pointer;}
+/* --- wide landscape (tablets / large landscape): the build/asset panel docks to the
+   RIGHT as a full-height side panel instead of a short bottom sheet, so it uses the
+   width and keeps the map tall. Phones in landscape are too narrow/short → they keep
+   the bottom sheet. Panel overlays the right of the map the same way the sheet overlays
+   the bottom, so no camera reframe is needed. --- */
+@media (min-width:900px) and (orientation:landscape){
+  #side{left:auto;right:0;top:66px;bottom:0;width:min(380px,40vw);max-height:none;
+    flex-direction:column;clip-path:none;border:0;border-left:1px solid var(--cyan);
+    box-shadow:-8px 0 30px rgba(0,0,0,.55),inset 0 0 30px rgba(53,214,230,.04);}
+  /* content stacks: the scroll list fills, the hovered-object dossier pins below it */
+  #side .pscroll{flex:1 1 auto;}
+  #side .pdesc{flex:0 0 auto;max-height:44%;border-left:0;border-top:1px solid var(--line-hi);}
+  /* the panel is on the right now, not the bottom: don't lift the bars by a vh fraction,
+     just keep them clear of the panel's width */
+  body.sheet-open #cmdbar,body.sheet-open #speedbar{bottom:14px;}
+  #cmdbar{left:calc((100% - min(380px,40vw)) / 2);}
+  #speedbar,body.sheet-open #speedbar{right:calc(min(380px,40vw) + 14px);}
+}
 /* --- short viewports (landscape phones, split-screen): overlays scroll instead of
    clipping off-screen; the welcome card compacts and stacks its chip/footer in-flow --- */
 @media (max-height:680px){
