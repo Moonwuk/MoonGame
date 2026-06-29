@@ -12,6 +12,7 @@ import {
   buildingLevel,
   hasOrbit,
   allowedBuildings,
+  isCapturable,
   isBombarded,
   economyModule,
   movementModule,
@@ -42,7 +43,18 @@ import {
   type Battle,
 } from '../../packages/shared-core/src/index';
 import { canAfford, payCost } from '../../packages/shared-core/src/util/treasury';
-import { GROUND_ROSTER, makeSide, OFFICERS, type GroundStack } from './groundcombat';
+import { sumUnitStat } from '../../packages/shared-core/src/util/stacks';
+import { requireOwnedIdleFleet } from '../../packages/shared-core/src/util/fleet';
+import type { HandlerContext } from '../../packages/shared-core/src/kernel/module';
+import {
+  GROUND_ROSTER,
+  makeSide,
+  damageBuckets,
+  OFFICERS,
+  type GroundStack,
+  type DamageTable,
+  type Officer,
+} from './groundcombat';
 
 export const HOUR = 3_600_000;
 export const DAY = 24 * HOUR;
@@ -992,9 +1004,20 @@ export function newGame(setup: SetupConfig = DEFAULT_SETUP): GameState {
   for (const seat of setup.seats) {
     templates[seat.id] = !seat.ai && setup.templates ? setup.templates : DEFAULT_TEMPLATES;
   }
-  // `divisions` / `divisionSeq` / `templates` are prototype-only state (preserved by
-  // deepClone); cast past GameState's shape.
-  return { ...base, players, planets, fleets, heroes, diplomacy, divisions: {}, divisionSeq: 0, templates } as GameState;
+  // `divisions` / `divisionSeq` / `templates` / `groundBattles` are prototype-only state
+  // (preserved by deepClone); cast past GameState's shape.
+  return {
+    ...base,
+    players,
+    planets,
+    fleets,
+    heroes,
+    diplomacy,
+    divisions: {},
+    divisionSeq: 0,
+    templates,
+    groundBattles: {},
+  } as GameState;
 }
 
 /** Net per-hour income for a player: production from owned, un-bombarded worlds
@@ -1085,20 +1108,31 @@ export interface Division {
   units: GroundStack[];
   /** Optional attached officer (OFFICERS key) — its bonuses apply in battle / toughness. */
   officer?: string;
-  /** Planet id it garrisons. (Transport will carry it as 1 slot — later.) */
+  /** Planet id it garrisons (the world it sits on when not aboard a fleet). */
   location: string;
+  /** Fleet id carrying it as cargo, or null/absent when garrisoning `location`.
+   *  A carried division is "in the hold": it rides the fleet and does not fight. */
+  carriedBy?: string | null;
 }
 
-/** Prototype state extended with the division registry + per-player locked templates.
+/** Prototype state extended with the division registry, per-player locked templates,
+ *  and the live ground-battle clock (planetId → unticked combat-time remainder, ms).
  *  These are non-`GameState` fields, but deepClone preserves them (own-key copy). */
 type DivState = GameState & {
   divisions?: Record<string, Division>;
   divisionSeq?: number;
   templates?: Record<string, FormationTemplate[]>;
+  groundBattles?: Record<string, number>;
 };
 export function divisionsOf(state: GameState): Record<string, Division> {
   const s = state as DivState;
   return (s.divisions ??= {});
+}
+/** The live ground-battle accumulator (planetId → combat-time remainder not yet
+ *  ticked, ms). A world is in here exactly while a ground battle is underway. */
+function groundBattlesOf(state: GameState): Record<string, number> {
+  const s = state as DivState;
+  return (s.groundBattles ??= {});
 }
 export function templatesOf(state: GameState, playerId: string): FormationTemplate[] {
   return (state as DivState).templates?.[playerId] ?? DEFAULT_TEMPLATES;
@@ -1134,6 +1168,204 @@ export function regenDivision(div: Division, days: number): void {
     if (count > 0) next.push({ type, count, hp: healed, hpEach });
   }
   div.units = next;
+}
+
+// --- ground transport: divisions ride a fleet by cargo capacity --------------
+// "По грузоподъёмности": a division's transport footprint is the summed `cargoSize`
+// of its template, and a fleet carries as many divisions as fit in its ships' summed
+// `cargoCapacity`. A carried division is "in the hold" — it rides the fleet and does
+// not garrison or fight until unloaded onto a world.
+
+/** A division's transport footprint = Σ template-unit `cargoSize` (stable across
+ *  casualties — the hold is reserved for the whole formation). */
+export function divisionCargo(div: Division): number {
+  let total = 0;
+  for (const type of Object.keys(div.max) as FormationUnit[]) {
+    total += (div.max[type] ?? 0) * (data.units[type]?.stats.cargoSize ?? 0);
+  }
+  return total;
+}
+
+/** Hold left on a fleet = Σ ship `cargoCapacity` − Σ carried divisions' footprint
+ *  − the legacy `landing` army aboard (both share the same hold, billed by cargoSize). */
+export function fleetCargoFree(state: GameState, fleet: Fleet): number {
+  const cap = sumUnitStat(fleet.units, data, 'cargoCapacity');
+  const landingUsed = sumUnitStat(fleet.landing ?? [], data, 'cargoSize');
+  let divUsed = 0;
+  for (const d of Object.values(divisionsOf(state))) {
+    if (d.carriedBy === fleet.id) divUsed += divisionCargo(d);
+  }
+  return cap - landingUsed - divUsed;
+}
+
+// --- ground battle: co-located hostile divisions trade matrix damage ---------
+// "Потиково во времени": each owner's divisions on a contested world merge into one
+// fighting side (so combat width 12 spans the whole force), the two sides trade
+// `damageBuckets` each tick, casualties spread back per division by HP share, a wiped
+// division is removed, and the attacker that clears the defenders CAPTURES the world.
+// Resolved in discrete ticks as the clock advances — driven by `time.advanced` with a
+// per-world remainder, so the tick sequence is the same however finely time is stepped.
+// (Near/mid/far lines are a FLEET concept; ground routes damage by the type matrix.)
+
+/** Hours of real time per ground combat tick (a ground assault plays out over hours). */
+export const GROUND_TICK_HOURS = 3;
+const GROUND_TICK_MS = GROUND_TICK_HOURS * HOUR;
+/** Fail-secure cap on ticks resolved in one span (real battles end far sooner). */
+const MAX_GROUND_TICKS_PER_SPAN = 1000;
+
+const atWar = (state: GameState, a: string, b: string): boolean =>
+  a !== b && getStance(state, a, b) === 'war';
+
+/** The garrisoning (not in-transit) divisions at a world that still have units,
+ *  lowest id first (deterministic order). */
+function divisionsAt(state: GameState, planetId: string): Division[] {
+  return Object.values(divisionsOf(state))
+    .filter((d) => d.carriedBy == null && d.location === planetId && d.units.some((u) => u.count > 0))
+    .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+}
+
+/** Merge a side's divisions into one stack list (summed counts per type). Only the
+ *  per-type COUNT matters to `damageBuckets`; hp/hpEach here are unused placeholders. */
+function mergeSide(divs: Division[]): GroundStack[] {
+  const byType = {} as Record<FormationUnit, number>;
+  for (const d of divs) for (const u of d.units) byType[u.type] = (byType[u.type] ?? 0) + u.count;
+  const out: GroundStack[] = [];
+  for (const type of Object.keys(byType) as FormationUnit[]) {
+    if (byType[type] > 0) out.push({ type, count: byType[type], hp: byType[type], hpEach: 1 });
+  }
+  return out;
+}
+
+/** A merged side's effective officer = count-weighted mean of its divisions'
+ *  attack/defence officer bonuses (per-division hp/atkVs are omitted in the merge). */
+function mergeOfficer(divs: Division[]): Officer | undefined {
+  let total = 0;
+  let atk = 0;
+  let def = 0;
+  for (const d of divs) {
+    const c = d.units.reduce((n, u) => n + u.count, 0);
+    if (c <= 0) continue;
+    total += c;
+    const o = d.officer ? OFFICERS[d.officer] : undefined;
+    if (o) {
+      atk += (o.atk ?? 0) * c;
+      def += (o.def ?? 0) * c;
+    }
+  }
+  if (total <= 0 || (atk === 0 && def === 0)) return undefined;
+  return { name: 'merged', atk: atk / total, def: def / total };
+}
+
+/** Spread a per-type damage bucket across a side's divisions, proportional to each
+ *  stack's current HP; whole units die as the pool drops (per-division `hpEach`). */
+function applyBucketsToDivs(divs: Division[], buckets: DamageTable): void {
+  for (const type of Object.keys(buckets) as FormationUnit[]) {
+    const dmg = buckets[type] ?? 0;
+    if (dmg <= 0) continue;
+    const stacks: GroundStack[] = [];
+    for (const d of divs) for (const u of d.units) if (u.type === type && u.count > 0) stacks.push(u);
+    const totalHp = stacks.reduce((n, u) => n + u.hp, 0);
+    if (totalHp <= 0) continue;
+    for (const u of stacks) {
+      u.hp = Math.max(0, u.hp - dmg * (u.hp / totalHp));
+      u.count = u.hp <= 0 ? 0 : Math.ceil(u.hp / u.hpEach);
+    }
+  }
+  for (const d of divs) d.units = d.units.filter((u) => u.count > 0);
+}
+
+/** Drop fully-wiped divisions (last unit gone) from the registry. Survivors keep
+ *  their HP; restoration regrows dead TYPES, never a fully-wiped division. */
+function reapWipedDivisions(state: GameState): void {
+  const divs = divisionsOf(state);
+  for (const id of Object.keys(divs)) {
+    if (!divs[id]!.units.some((u) => u.count > 0)) delete divs[id];
+  }
+}
+
+/** Hand a world to the lowest-id attacker present (a non-`defenderOwner` owner),
+ *  unless it isn't capturable or a hostile fleet garrison still holds it. The legacy
+ *  marine garrison is NOT engaged by division combat yet (a documented seam): a
+ *  garrisoned world resists division capture until cleared via the fleet-assault path. */
+function captureGround(h: HandlerContext, planetId: string, defenderOwner: string | null): void {
+  const planet = h.state.planets[planetId];
+  if (!planet || !isCapturable(data, planet)) return;
+  if (planet.garrison.some((srv) => srv.count > 0)) return;
+  const owners = [...new Set(divisionsAt(h.state, planetId).map((d) => d.owner))]
+    .filter((o) => o !== defenderOwner)
+    .sort();
+  const taker = owners[0];
+  if (taker === undefined) return;
+  const from = planet.owner;
+  planet.owner = taker;
+  h.emit('division.captured', { planetId, owner: taker, from });
+}
+
+/** Whether a world currently hosts a ground battle: its owner's divisions facing a
+ *  co-located at-war intruder's. (Undefended/neutral capture is a walk-in, not here.) */
+function groundContested(state: GameState, planetId: string): boolean {
+  const O = state.planets[planetId]?.owner ?? null;
+  if (O === null) return false;
+  const divs = divisionsAt(state, planetId);
+  return (
+    divs.some((d) => d.owner === O) && divs.some((d) => d.owner !== O && atWar(state, d.owner, O))
+  );
+}
+
+/** Resolve ONE ground tick at a contested world. Returns true if a two-sided fight is
+ *  still ongoing afterwards (keep ticking), false once it has resolved. */
+function groundTickAt(h: HandlerContext, planetId: string): boolean {
+  const O = h.state.planets[planetId]?.owner ?? null;
+  if (O === null) return false;
+  const divs = divisionsAt(h.state, planetId);
+  const defenders = divs.filter((d) => d.owner === O);
+  const attackers = divs.filter((d) => d.owner !== O && atWar(h.state, d.owner, O));
+  if (attackers.length === 0) return false; // no hostiles → no battle
+  if (defenders.length === 0) {
+    captureGround(h, planetId, O); // undefended by division → attacker seizes it
+    return false;
+  }
+  // Both sides present: one simultaneous tick from the pre-tick snapshot.
+  const atkOfficer = mergeOfficer(attackers);
+  const defOfficer = mergeOfficer(defenders);
+  const atkMerged = mergeSide(attackers);
+  const defMerged = mergeSide(defenders);
+  const toDefender = damageBuckets(GROUND_ROSTER, atkMerged, defMerged, 'atk', atkOfficer);
+  const toAttacker = damageBuckets(GROUND_ROSTER, defMerged, atkMerged, 'def', defOfficer);
+  applyBucketsToDivs(defenders, toDefender);
+  applyBucketsToDivs(attackers, toAttacker);
+  reapWipedDivisions(h.state);
+  const after = divisionsAt(h.state, planetId);
+  const defLeft = after.some((d) => d.owner === O);
+  const atkLeft = after.some((d) => d.owner !== O && atWar(h.state, d.owner, O));
+  if (!defLeft && atkLeft) {
+    captureGround(h, planetId, O); // defenders wiped → attacker captures
+    return false;
+  }
+  return defLeft && atkLeft; // continue only while both still stand
+}
+
+/** Drive ground combat over a continuous span: accumulate combat time per contested
+ *  world and resolve one whole tick per GROUND_TICK_MS elapsed (carrying the
+ *  remainder, so the tick sequence is identical however finely time is stepped). */
+function runGroundCombat(h: HandlerContext, elapsed: number): void {
+  const battles = groundBattlesOf(h.state);
+  // Candidate worlds: any holding a garrisoning division, plus any mid-battle.
+  const worlds = new Set<string>(Object.keys(battles));
+  for (const d of Object.values(divisionsOf(h.state))) if (d.carriedBy == null) worlds.add(d.location);
+  for (const planetId of [...worlds].sort()) {
+    if (!groundContested(h.state, planetId)) {
+      delete battles[planetId];
+      continue;
+    }
+    const acc = (battles[planetId] ?? 0) + elapsed;
+    const remainder = acc % GROUND_TICK_MS;
+    const ticks = Math.min(Math.floor(acc / GROUND_TICK_MS), MAX_GROUND_TICKS_PER_SPAN);
+    let ongoing = true;
+    for (let i = 0; i < ticks && ongoing; i++) ongoing = groundTickAt(h, planetId);
+    if (ongoing) battles[planetId] = remainder;
+    else delete battles[planetId];
+  }
 }
 
 export const divisionModule: GameModule = {
@@ -1175,14 +1407,101 @@ export const divisionModule: GameModule = {
       h.emit('division.mobilized', { id, owner: action.playerId, planetId: p.planetId, template: p.template });
     });
 
-    // Daily restoration: +1 HP/unit/day, only on a friendly planet (not in transit/hold).
+    /** Own-key division lookup owned by `playerId` (rejects a poisoned id / a foreign
+     *  or missing division — fail-secure, mirroring the artillery `ownFleet` guard). */
+    const ownDivision = (h: HandlerContext, id: unknown, playerId: string): Division => {
+      if (typeof id !== 'string' || !Object.prototype.hasOwnProperty.call(divisionsOf(h.state), id)) {
+        h.reject('E_NO_DIVISION');
+      }
+      const div = divisionsOf(h.state)[id as string]!;
+      if (div.owner !== playerId) h.reject('E_FORBIDDEN');
+      return div;
+    };
+
+    // Load a garrisoning division into a co-located, idle fleet — bounded by the
+    // fleet's free hold ("по грузоподъёмности"). A carried division rides the fleet.
+    api.onAction('division.load', (action, h) => {
+      const p = action.payload as { divisionId?: string; fleetId?: string };
+      if (typeof p?.fleetId !== 'string') return h.reject('E_BAD_PAYLOAD');
+      const div = ownDivision(h, p.divisionId, action.playerId);
+      if (div.carriedBy != null) return h.reject('E_ALREADY_LOADED');
+      const fleet = requireOwnedIdleFleet(h, p.fleetId, action.playerId); // docked, not in battle
+      if (fleet.location !== div.location) return h.reject('E_NOT_COLOCATED');
+      if (divisionCargo(div) > fleetCargoFree(h.state, fleet)) return h.reject('E_NO_CARGO');
+      div.carriedBy = fleet.id;
+      h.emit('division.loaded', { id: div.id, fleetId: fleet.id, owner: action.playerId, at: div.location });
+    });
+
+    // Unload a carried division onto the world its carrier is docked over. An
+    // undefended, capturable hostile/neutral world is seized on the spot (walk-in
+    // capture), mirroring fleet capture-on-arrival; otherwise the world's ground
+    // battle (if any) is resolved by the continuous-time driver below.
+    api.onAction('division.unload', (action, h) => {
+      const div = ownDivision(h, (action.payload as { divisionId?: string })?.divisionId, action.playerId);
+      if (div.carriedBy == null) return h.reject('E_NOT_LOADED');
+      const fleet = requireOwnedIdleFleet(h, div.carriedBy, action.playerId); // docked at a node
+      const target = fleet.location;
+      div.carriedBy = null;
+      div.location = target;
+      const planet = h.state.planets[target];
+      if (
+        planet &&
+        planet.owner !== div.owner &&
+        isCapturable(data, planet) &&
+        (planet.owner === null || atWar(h.state, div.owner, planet.owner)) &&
+        !planet.garrison.some((srv) => srv.count > 0) &&
+        !divisionsAt(h.state, target).some((d) => d.owner !== div.owner)
+      ) {
+        const from = planet.owner;
+        planet.owner = div.owner;
+        h.emit('division.captured', { planetId: target, owner: div.owner, from });
+      }
+      h.emit('division.unloaded', { id: div.id, fleetId: fleet.id, owner: action.playerId, at: target });
+    });
+
+    // Attach / detach an officer (a hero-like leader granting tunable bonuses). The
+    // officer's toughness re-scales the current units' HP so attaching it never costs
+    // a unit. Pass `officer: null` to detach.
+    api.onAction('division.officer', (action, h) => {
+      const p = action.payload as { divisionId?: string; officer?: string | null };
+      const div = ownDivision(h, p?.divisionId, action.playerId);
+      const key = p?.officer ?? null;
+      if (key !== null && !Object.prototype.hasOwnProperty.call(OFFICERS, key)) {
+        return h.reject('E_NO_OFFICER');
+      }
+      div.officer = key ?? undefined;
+      for (const u of div.units) {
+        const newHpEach = unitMaxHp(div, u.type);
+        if (newHpEach > 0 && u.hpEach > 0) u.hp *= newHpEach / u.hpEach; // re-toughen, keep count
+        u.hpEach = newHpEach;
+      }
+      h.emit('division.officer', { id: div.id, officer: key, owner: action.playerId });
+    });
+
+    // Per-span ground upkeep: lose divisions with their destroyed carrier, resolve
+    // tick-based ground battles, then restore survivors on friendly soil.
     api.on('time.advanced', (event, h) => {
       const { from, to } = event.payload as { from: number; to: number };
       const span = to - from;
       if (span <= 0) return;
-      const days = (span / DAY) * (h.ctx.config?.timeScale ?? 1);
+      const elapsed = span * (h.ctx.config?.timeScale ?? 1);
+      // A division aboard a destroyed carrier is lost with the ship.
+      const divs = divisionsOf(h.state);
+      for (const id of Object.keys(divs)) {
+        const d = divs[id]!;
+        if (d.carriedBy != null && !Object.prototype.hasOwnProperty.call(h.state.fleets, d.carriedBy)) {
+          h.emit('division.lost', { id, owner: d.owner });
+          delete divs[id];
+        }
+      }
+      // Tick-based ground combat on contested worlds (real time → discrete ticks).
+      runGroundCombat(h, elapsed);
+      // Daily restoration: +1 HP/unit/day for a garrisoning division on a friendly
+      // planet (not in transit; a wiped division is gone, never resurrected).
+      const days = (elapsed / DAY);
       if (days <= 0) return;
       for (const div of Object.values(divisionsOf(h.state))) {
+        if (div.carriedBy != null) continue; // in transit / in a hold — no restoration
         const planet = h.state.planets[div.location];
         if (!planet || planet.owner !== div.owner) continue; // own planet only
         if (!div.units.some((s) => s.count > 0)) continue; // wiped → gone, never resurrected
@@ -1303,6 +1622,15 @@ export const declareWar = (playerId: string, target: string, stance: DiplomaticS
 /** Mobilise division template `template` (0-based) on your world `planetId`. */
 export const mobilizeDivision = (playerId: string, planetId: string, template: number) =>
   act(playerId, 'division.mobilize', { planetId, template });
+/** Load a garrisoning division into a co-located, idle fleet (by free hold). */
+export const loadDivision = (playerId: string, divisionId: string, fleetId: string) =>
+  act(playerId, 'division.load', { divisionId, fleetId });
+/** Unload a carried division onto the world its carrier is docked over. */
+export const unloadDivision = (playerId: string, divisionId: string) =>
+  act(playerId, 'division.unload', { divisionId });
+/** Attach an officer (OFFICERS key) to a division, or detach with `officer = null`. */
+export const setDivisionOfficer = (playerId: string, divisionId: string, officer: string | null) =>
+  act(playerId, 'division.officer', { divisionId, officer });
 
 /** Can `mover`'s fleets enter/traverse a province owned by `owner`? Neutral, your own,
  *  and players you're at war / pact / alliance with are passable; a player you're at
