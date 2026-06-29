@@ -20,7 +20,9 @@ Monorepo (pnpm workspaces):
   `MatchRoom` (advance → applyAction → **per-player fog deltas**), durable+bounded+rate-limited
   receipts, a Postgres match/receipt store + a **v1 offline scheduler** (both wired in the prototype
   host, `prototype/netserver.ts`). Not yet: auth/JWT, multi-match registry, `@void/action-layer` wiring.
-- `packages/client` — React Native client (Stage 4). Thin `MultiplayerClient` transport adapter; app shell still a placeholder.
+- `packages/client` — client (Stage 4). Direction is a **PWA-first web client** (TWA Android +
+  Capacitor iOS), not React Native — see `docs/cross-platform-roadmap.md` (decision record). Thin
+  `MultiplayerClient` transport adapter; app shell still a placeholder.
 - `data/` — game content as JSON. `docs/` — design docs.
 
 ## Commands
