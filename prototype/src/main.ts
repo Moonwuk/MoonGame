@@ -4590,6 +4590,7 @@ function installMatch(state: GameState, aiPlayers: Set<string>): void {
   killStats = { destroyed: 0, lost: 0 };
   myBattleLocs.clear();
   logLines.length = 0; // fresh log — drop notes from the menu-background match
+  banner = null; // clear any end-banner left by the menu-background match (else it sticks)
   for (const k of Object.keys(buildQueues)) delete buildQueues[k];
   defaultView(); // phone: zoom onto home; desktop: whole-map fit
   setupEl.style.display = 'none';
@@ -5089,6 +5090,8 @@ function frame(nowReal: number) {
   if (banner) {
     bannerEl.textContent = banner;
     bannerEl.style.display = 'block';
+  } else if (bannerEl.style.display !== 'none') {
+    bannerEl.style.display = 'none'; // banner cleared (e.g. a fresh match) → hide it
   }
   requestAnimationFrame(frame);
 }
