@@ -27,6 +27,7 @@ import {
   getStance,
   setStance,
   pairKey,
+  timeScaleOf,
   type DiplomaticStance,
   type GameData,
   type GameModule,
@@ -680,6 +681,12 @@ export const fleetLaunchModule: GameModule = {
       }
       into.units = mergeStacks(into.units, from.units);
       into.landing = mergeStacks(into.landing ?? [], from.landing ?? []);
+      // Carried divisions ride `from` — re-point them to `into` BEFORE deleting `from`,
+      // or the carrier-destroyed reaper (time.advanced) would mistake them for cargo lost
+      // with a sunk ship and delete them. Merge is the one fleet-removal that isn't a death.
+      for (const d of Object.values(divisionsOf(h.state))) {
+        if (d.carriedBy === payload.from) d.carriedBy = into.id;
+      }
       delete h.state.fleets[payload.from];
       h.emit('fleet.merged', {
         from: payload.from,
@@ -1291,14 +1298,22 @@ function captureGround(h: HandlerContext, planetId: string, defenderOwner: strin
   const planet = h.state.planets[planetId];
   if (!planet || !isCapturable(data, planet)) return;
   if (planet.garrison.some((srv) => srv.count > 0)) return;
-  const owners = [...new Set(divisionsAt(h.state, planetId).map((d) => d.owner))]
-    .filter((o) => o !== defenderOwner)
-    .sort();
+  // The taker is the lowest-id owner present that is actually AT WAR with the defender —
+  // a co-located ally / non-belligerent must never steal the capture.
+  const owners = [
+    ...new Set(
+      divisionsAt(h.state, planetId)
+        .filter((d) => d.owner !== defenderOwner && defenderOwner !== null && atWar(h.state, d.owner, defenderOwner))
+        .map((d) => d.owner),
+    ),
+  ].sort();
   const taker = owners[0];
   if (taker === undefined) return;
   const from = planet.owner;
   planet.owner = taker;
-  h.emit('division.captured', { planetId, owner: taker, from });
+  // Emit the SAME event the fleet path uses (`via: 'ground'`), so victory re-evaluates
+  // and the UI logs + refreshes — a division-only event had no listener.
+  h.emit('planet.captured', { planetId, owner: taker, from, via: 'ground' });
 }
 
 /** Whether a world currently hosts a ground battle: its owner's divisions facing a
@@ -1319,8 +1334,15 @@ function groundTickAt(h: HandlerContext, planetId: string): boolean {
   if (O === null) return false;
   const divs = divisionsAt(h.state, planetId);
   const defenders = divs.filter((d) => d.owner === O);
-  const attackers = divs.filter((d) => d.owner !== O && atWar(h.state, d.owner, O));
-  if (attackers.length === 0) return false; // no hostiles → no battle
+  const hostiles = divs.filter((d) => d.owner !== O && atWar(h.state, d.owner, O));
+  if (hostiles.length === 0) return false; // no hostiles → no battle
+  // One attacker owner at a time: the lowest-id at-war owner engages the defender this
+  // tick. Distinct owners are NOT fused into a single side — that would force mutual
+  // enemies into an alliance and let them share the combat-width-12 budget. When this
+  // attacker captures, the next tick re-evaluates with the NEW owner, so an FFA resolves
+  // as a deterministic sequence of pairwise fights (driver re-checks groundContested).
+  const foe = [...new Set(hostiles.map((d) => d.owner))].sort()[0]!;
+  const attackers = hostiles.filter((d) => d.owner === foe);
   if (defenders.length === 0) {
     captureGround(h, planetId, O); // undefended by division → attacker seizes it
     return false;
@@ -1337,33 +1359,41 @@ function groundTickAt(h: HandlerContext, planetId: string): boolean {
   reapWipedDivisions(h.state);
   const after = divisionsAt(h.state, planetId);
   const defLeft = after.some((d) => d.owner === O);
-  const atkLeft = after.some((d) => d.owner !== O && atWar(h.state, d.owner, O));
-  if (!defLeft && atkLeft) {
+  const foeLeft = after.some((d) => d.owner === foe);
+  if (!defLeft && foeLeft) {
     captureGround(h, planetId, O); // defenders wiped → attacker captures
     return false;
   }
-  return defLeft && atkLeft; // continue only while both still stand
+  return defLeft && foeLeft; // this pairwise fight continues only while both stand
 }
 
-/** Drive ground combat over a continuous span: accumulate combat time per contested
- *  world and resolve one whole tick per GROUND_TICK_MS elapsed (carrying the
- *  remainder, so the tick sequence is identical however finely time is stepped). */
+/** Drive ground combat over a continuous span: accumulate combat time per world and
+ *  resolve one whole tick per GROUND_TICK_MS elapsed. The accumulated time is spent
+ *  ACROSS battle transitions — a capture that opens a follow-on fight (new owner faces
+ *  the next attacker) keeps ticking within the same span — and only the sub-tick
+ *  remainder is carried. So the tick sequence is identical however finely time is
+ *  stepped (a single big span === many small spans), which a coarse offline catch-up
+ *  and a per-frame live client both depend on (replay / multiplayer determinism). */
 function runGroundCombat(h: HandlerContext, elapsed: number): void {
   const battles = groundBattlesOf(h.state);
   // Candidate worlds: any holding a garrisoning division, plus any mid-battle.
   const worlds = new Set<string>(Object.keys(battles));
   for (const d of Object.values(divisionsOf(h.state))) if (d.carriedBy == null) worlds.add(d.location);
   for (const planetId of [...worlds].sort()) {
-    if (!groundContested(h.state, planetId)) {
-      delete battles[planetId];
-      continue;
+    let acc = (battles[planetId] ?? 0) + elapsed;
+    let guard = 0;
+    // Tick while there's a whole tick of time AND a live contest; re-check the contest
+    // each iteration so a mid-span capture's follow-on fight is resolved here, not
+    // discarded (which would diverge from finer stepping).
+    while (acc >= GROUND_TICK_MS && guard < MAX_GROUND_TICKS_PER_SPAN) {
+      if (!groundContested(h.state, planetId)) break;
+      groundTickAt(h, planetId);
+      acc -= GROUND_TICK_MS;
+      guard += 1;
     }
-    const acc = (battles[planetId] ?? 0) + elapsed;
-    const remainder = acc % GROUND_TICK_MS;
-    const ticks = Math.min(Math.floor(acc / GROUND_TICK_MS), MAX_GROUND_TICKS_PER_SPAN);
-    let ongoing = true;
-    for (let i = 0; i < ticks && ongoing; i++) ongoing = groundTickAt(h, planetId);
-    if (ongoing) battles[planetId] = remainder;
+    // Carry the sub-tick remainder while a contest survives; otherwise the world is
+    // settled — drop it (no contest left to spend leftover time on).
+    if (groundContested(h.state, planetId)) battles[planetId] = acc % GROUND_TICK_MS;
     else delete battles[planetId];
   }
 }
@@ -1454,7 +1484,8 @@ export const divisionModule: GameModule = {
       ) {
         const from = planet.owner;
         planet.owner = div.owner;
-        h.emit('division.captured', { planetId: target, owner: div.owner, from });
+        // Same event the fleet capture path uses (`via: 'ground'`) → victory + UI react.
+        h.emit('planet.captured', { planetId: target, owner: div.owner, from, via: 'ground' });
       }
       h.emit('division.unloaded', { id: div.id, fleetId: fleet.id, owner: action.playerId, at: target });
     });
@@ -1484,7 +1515,7 @@ export const divisionModule: GameModule = {
       const { from, to } = event.payload as { from: number; to: number };
       const span = to - from;
       if (span <= 0) return;
-      const elapsed = span * (h.ctx.config?.timeScale ?? 1);
+      const elapsed = span * timeScaleOf(h.ctx); // clamps a missing/non-positive scale to 1, like every sibling module
       // A division aboard a destroyed carrier is lost with the ship.
       const divs = divisionsOf(h.state);
       for (const id of Object.keys(divs)) {

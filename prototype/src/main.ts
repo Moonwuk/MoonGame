@@ -949,7 +949,10 @@ function fleetDivisionsHtml(f: Fleet, here: Planet): string {
   const carried = all.filter((d) => d.carriedBy === f.id);
   const loadable = all.filter((d) => d.owner === ME && d.carriedBy == null && d.location === here.id);
   if (!carried.length && !loadable.length) return '';
-  const free = fleetCargoFree(s, f);
+  // Clamp the readout: a carrier that lost ships while loaded can hold more footprint
+  // than its remaining capacity (carried footprint is reserved at load time, not
+  // re-validated against later losses), so raw free can go negative.
+  const free = Math.max(0, fleetCargoFree(s, f));
   let g = `<div class="sec">Дивизии ⇄ трюм (своб. ${free})</div>`;
   if (loadable.length) {
     g += `<div class="row">`;

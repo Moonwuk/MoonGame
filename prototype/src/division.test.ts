@@ -8,10 +8,12 @@ import {
   unloadDivision,
   setDivisionOfficer,
   declareWar,
+  mergeFleet,
   divisionCargo,
   fleetCargoFree,
   divisionsOf,
   DAY,
+  HOUR,
   START_CANDIDATES,
   type Division,
 } from './game';
@@ -254,5 +256,124 @@ describe('divisions — officer attach / detach', () => {
     const st = order(richGame(), mobilizeDivision('p1', HOME, 0), 0).state;
     const id = Object.keys(divisionsOf(st))[0]!;
     expect(order(st, setDivisionOfficer('p1', id, 'nope'), st.time).error).toBe('E_NO_OFFICER');
+  });
+});
+
+// --- adversarial-review fixes (multi-party + lifecycle determinism) ----------
+
+/** A 3-seat skirmish (p1 human + p2/p3 AI) with p1's treasury topped up. */
+function game3() {
+  const s = newGame({
+    seats: [
+      { id: 'p1', name: 'A', faction: 'blue', start: START_CANDIDATES[0]!, ai: false },
+      { id: 'p2', name: 'B', faction: 'red', start: START_CANDIDATES[1]!, ai: true },
+      { id: 'p3', name: 'C', faction: 'green', start: START_CANDIDATES[2]!, ai: true },
+    ],
+  });
+  s.players.p1!.resources.metal = 5000;
+  s.players.p1!.resources.credits = 5000;
+  return s;
+}
+/** Canonical signature of a world's garrisoning divisions (owner + per-type count@hp). */
+function worldSig(s: GameState, w: string): string {
+  const divs = Object.values(divisionsOf(s))
+    .filter((d) => d.location === w && d.carriedBy == null)
+    .map((d) => `${d.owner}:${d.units.map((u) => `${u.type}x${u.count}@${Math.round(u.hp)}`).sort().join(',')}`)
+    .sort();
+  return `${divs.join('|')}#owner=${s.planets[w]!.owner}`;
+}
+
+describe('divisions — ground battle is cadence-independent (one big span === many small)', () => {
+  it('a 3-way FFA resolves identically whether stepped coarsely or finely', () => {
+    const build = () => {
+      const s = game3();
+      const w = ownedWorld(s, 'p2');
+      inject(s, 'p1', w, { tank: 6 });
+      inject(s, 'p3', w, { tank: 6 });
+      // Everyone at war with everyone — so a capture opens a follow-on fight mid-span.
+      let st = order(s, declareWar('p1', 'p2'), 0).state;
+      st = order(st, declareWar('p3', 'p2'), st.time).state;
+      st = order(st, declareWar('p1', 'p3'), st.time).state;
+      return { st, w };
+    };
+    const coarse = build();
+    const coarseOut = advance(coarse.st, coarse.st.time + 60 * HOUR).state;
+    // Same 60h, stepped one hour at a time.
+    const fine = build();
+    let cur = fine.st;
+    for (let t = HOUR; t <= 60 * HOUR; t += HOUR) cur = advance(cur, fine.st.time + t).state;
+    expect(worldSig(coarseOut, coarse.w)).toBe(worldSig(cur, fine.w));
+    expect(coarseOut.planets[coarse.w]!.owner).not.toBeNull(); // someone won
+  });
+});
+
+describe('divisions — distinct attacker owners are not fused into one allied side', () => {
+  it('two mutually-at-peace attackers do NOT share a side; the defender engages one at a time', () => {
+    const s = game3();
+    const w = ownedWorld(s, 'p2');
+    inject(s, 'p2', w, { tank: 6 }); // defender
+    inject(s, 'p1', w, { tank: 6 }); // attacker (lowest id → engages first)
+    inject(s, 'p3', w, { tank: 6 }); // also at war with p2, but at PEACE with p1
+    let st = order(s, declareWar('p1', 'p2'), 0).state;
+    st = order(st, declareWar('p3', 'p2'), st.time).state; // p1 & p3 stay at peace (default)
+    const after = advance(st, st.time + 6 * HOUR).state; // a couple of ticks — fight ongoing
+    const p3div = Object.values(divisionsOf(after)).find((d) => d.owner === 'p3')!;
+    const p1div = Object.values(divisionsOf(after)).find((d) => d.owner === 'p1')!;
+    expect(total(p3div.units)).toBe(6); // p3 untouched — it was NOT fused with p1
+    expect(hpTotal(p3div.units)).toBe(6 * GROUND_ROSTER.tank!.hp); // pristine
+    expect(hpTotal(p1div.units)).toBeLessThan(6 * GROUND_ROSTER.tank!.hp); // p1 alone took the defender's fire
+  });
+});
+
+describe('divisions — capture goes to the real attacker, not a co-located ally', () => {
+  it('an allied (pact) division present does not steal the world the attacker won', () => {
+    const s = game3();
+    const w = ownedWorld(s, 'p2');
+    inject(s, 'p2', w, { infantry: 1 }); // token defender
+    inject(s, 'p3', w, { tank: 6 }); // the real attacker (at war with p2)
+    inject(s, 'p1', w, { infantry: 1 }); // p1 allied to p2 (pact), sorts BELOW p3
+    let st = order(s, declareWar('p3', 'p2'), 0).state; // p3 vs p2 = war
+    st = order(st, declareWar('p1', 'p2', 'pact'), st.time).state; // p1 ↔ p2 = pact (not at war)
+    const after = advance(st, st.time + 30 * HOUR).state;
+    expect(after.planets[w]!.owner).toBe('p3'); // the attacker took it, not the ally p1
+  });
+});
+
+describe('divisions — fleet.merge keeps a carried division', () => {
+  it('a division riding the absorbed fleet survives the merge (re-pointed, not reaped)', () => {
+    const st = order(richGame(), mobilizeDivision('p1', HOME, 0), 0).state;
+    const id = Object.keys(divisionsOf(st))[0]!;
+    // A second co-located fleet with enough hold to carry the Линия (cargo 9).
+    st.fleets['p1-2'] = {
+      id: 'p1-2',
+      owner: 'p1',
+      location: HOME,
+      movement: null,
+      units: [{ unit: 'cruiser', count: 2 }],
+      landing: [],
+      traits: [],
+      battleId: null,
+    };
+    const loaded = order(st, loadDivision('p1', id, 'p1-2'), st.time).state;
+    expect(divisionsOf(loaded)[id]!.carriedBy).toBe('p1-2');
+    const merged = order(loaded, mergeFleet('p1', 'p1-2', 'p1-1'), loaded.time).state;
+    expect(divisionsOf(merged)[id]!.carriedBy).toBe('p1-1'); // re-pointed to the survivor
+    const later = advance(merged, merged.time + DAY).state; // the reaper must NOT eat it
+    expect(divisionsOf(later)[id]).toBeDefined();
+    expect(divisionsOf(later)[id]!.carriedBy).toBe('p1-1');
+  });
+});
+
+describe('divisions — ground capture emits planet.captured (victory + UI react)', () => {
+  it('a division capture fires planet.captured, not a listenerless division.captured', () => {
+    const s = richGame();
+    const w = ownedWorld(s, 'p2');
+    inject(s, 'p1', w, { tank: 6 });
+    inject(s, 'p2', w, { infantry: 1 });
+    const st = order(s, declareWar('p1', 'p2'), 0).state;
+    const out = advance(st, st.time + 30 * HOUR);
+    expect(out.state.planets[w]!.owner).toBe('p1');
+    expect(out.events.some((e) => e.type === 'planet.captured')).toBe(true);
+    expect(out.events.some((e) => e.type === 'division.captured')).toBe(false);
   });
 });
