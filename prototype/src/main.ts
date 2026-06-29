@@ -110,7 +110,10 @@ const TAU = Math.PI * 2;
 const TOP = 50; // top-bar height
 const RAIL = 50; // left-rail width
 const BUILDABLE = ['mine', 'refinery', 'tax_office', 'barracks', 'radar', 'fort'];
-const BUILD_UNITS = ['marine', 'orbital_aa', 'cruiser', 'scout', 'siege'];
+// `orbital_aa` (orbital ПВО — anti-ship near-orbit emplacement) is NOT freely
+// buildable: it's a tech unlock (pending the in-session research tree). It still
+// comes pre-installed with a space fortress (installFortressAA).
+const BUILD_UNITS = ['marine', 'cruiser', 'scout', 'siege'];
 const BUILD_ICON: Record<string, string> = {
   mine: '⬢',
   refinery: '◇',
