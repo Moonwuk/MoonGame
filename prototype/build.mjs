@@ -411,6 +411,55 @@ button.b:disabled{opacity:.32;cursor:not-allowed;color:var(--dim);border-color:v
   font:11px/1.6 ui-monospace,Menlo,monospace;color:#73b6a2;scrollbar-width:thin;}
 #log div::before{content:"> ";color:var(--grn-dim);}
 
+/* === FLOATING CHAT (desktop) — sized/positioned/opacity inline by renderChat() === */
+.desk-only{} /* shown by default; the media query below hides it on phones */
+@media (max-width:720px){.desk-only{display:none!important;}}
+#chatwin{position:fixed;z-index:27;display:none;flex-direction:column;overflow:visible;
+  background:var(--glass);border:1px solid var(--cyan);border-radius:9px;
+  box-shadow:0 0 30px rgba(0,0,0,.6),inset 0 0 0 1px rgba(53,214,230,.06);}
+#chatwin.open{display:flex;}
+#chatwin.min{height:auto!important;}
+#chatwin.min .cw-tabs,#chatwin.min .cw-feed,#chatwin.min .cw-compose,#chatwin.min .cw-resize{display:none;}
+#chatwin.pinned .cw-move{opacity:.4;}
+.cw-head{display:flex;align-items:center;gap:6px;padding:6px 6px 6px 9px;border-bottom:1px solid var(--line-hi);
+  cursor:default;flex:0 0 auto;}
+.cw-title{font:700 10px ui-monospace,monospace;letter-spacing:2px;color:var(--cyan-dim);flex:1;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.cw-btn{width:24px;height:24px;flex:0 0 auto;border:1px solid var(--line);border-radius:5px;background:transparent;
+  color:var(--cyan-dim);font-size:12px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;}
+.cw-btn:hover{border-color:var(--cyan);color:var(--cyan);background:rgba(53,214,230,.12);}
+.cw-btn.on{border-color:var(--cyan);color:var(--cyan);background:rgba(53,214,230,.16);}
+.cw-move{cursor:move;}
+.cw-tabs{display:flex;gap:3px;padding:6px 6px 0;flex-wrap:wrap;flex:0 0 auto;}
+.cw-tab{padding:4px 8px;border:1px solid var(--line);border-bottom:0;border-radius:6px 6px 0 0;background:transparent;
+  color:var(--dim);font:11px ui-monospace,monospace;cursor:pointer;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.cw-tab.on{color:var(--cyan);border-color:var(--cyan-dim);background:rgba(53,214,230,.1);}
+.cw-feed{flex:1;min-height:0;overflow:auto;padding:9px 11px;display:flex;flex-direction:column;gap:6px;
+  border-top:1px solid var(--line-hi);scrollbar-width:thin;}
+#chatwin .dp-line{font-size:inherit;}
+.cw-empty{color:var(--dim);font-size:11px;text-align:center;margin:auto;padding:14px;line-height:1.5;}
+.cw-compose{display:flex;gap:6px;padding:7px 8px;border-top:1px solid var(--line-hi);flex:0 0 auto;}
+.cw-compose input{flex:1;min-width:0;padding:7px 9px;background:rgba(2,10,14,.9);border:1px solid var(--line-hi);
+  border-radius:6px;color:var(--ink);font:12px ui-monospace,monospace;}
+.cw-compose input:focus{outline:none;border-color:var(--cyan);}
+.cw-send{flex:0 0 auto;width:34px;border:1px solid var(--cyan);border-radius:6px;background:rgba(53,214,230,.14);
+  color:var(--cyan);cursor:pointer;font-size:13px;}
+.cw-resize{position:absolute;right:0;bottom:0;width:16px;height:16px;cursor:nwse-resize;
+  background:linear-gradient(135deg,transparent 50%,var(--cyan-dim) 50%,var(--cyan-dim) 60%,transparent 60%,transparent 75%,var(--cyan-dim) 75%,var(--cyan-dim) 85%,transparent 85%);}
+/* settings popover — flies out to the right of the window */
+.cw-set{position:absolute;left:calc(100% + 8px);top:0;width:208px;padding:12px;background:var(--glass);
+  border:1px solid var(--cyan);border-radius:9px;box-shadow:0 0 26px rgba(0,0,0,.6);font:11px ui-monospace,monospace;}
+.cw-set h4{margin:0 0 9px;color:var(--cyan);font-size:11px;letter-spacing:1.5px;}
+.cw-srow{display:flex;align-items:center;gap:8px;margin:9px 0;color:var(--ink);}
+.cw-srow label{flex:1;color:var(--dim);}
+.cw-srow input[type=number]{width:54px;padding:4px 6px;background:rgba(2,10,14,.9);border:1px solid var(--line-hi);
+  border-radius:5px;color:var(--ink);font:11px ui-monospace,monospace;}
+.cw-srow input[type=range]{flex:1;accent-color:var(--cyan);}
+.cw-srow input[disabled]{opacity:.4;cursor:not-allowed;}
+.cw-sub{font-size:9px;color:var(--amber);letter-spacing:.5px;}
+.cw-set .cw-dim{font-size:9px;color:var(--dim);}
+/* === /FLOATING CHAT === */
+
 #banner{display:none;position:fixed;inset:0;margin:auto;height:fit-content;width:fit-content;z-index:40;
   padding:18px 34px;font-size:20px;font-weight:700;letter-spacing:3px;text-align:center;text-transform:uppercase;
   background:rgba(2,9,13,.94);border:1px solid var(--cyan);color:var(--cyan);
@@ -796,8 +845,11 @@ const html = `<!doctype html>
 <nav id="rail">
   <button id="rail-diplo" title="Дипломатия">⬡</button>
   <button id="rail-msgs" title="Сообщения">✉</button>
+  <button id="rail-chat" title="Чат" class="desk-only">🗨</button>
   <button id="rail-log" title="Сводки">≡<span class="badge" id="alertbadge" style="display:none">0</span></button>
 </nav>
+<!-- floating chat window (desktop only) — content rendered by renderChat() in main.ts -->
+<div id="chatwin" class="desk-only"></div>
 <div id="logwin"><div class="lwbox"><div class="lw-head"><b>СВОДКИ</b><button class="lw-close">✕</button></div><div id="log"></div></div></div>
 <aside id="side"></aside>
 <div id="speedbar" class="spd">
