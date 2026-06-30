@@ -98,6 +98,16 @@ export const data: GameData = parseGameData({
       buildTimeHours: 5,
       upkeep: { credits: 6 },
     },
+    dropship: {
+      // Carrier hull (GDD §6.1 / backlog SHIP): the biggest hold in the fleet but almost
+      // no guns — it hauls divisions (and, later, squadrons) and wants an escort.
+      faction: 'blue',
+      stats: { attack: 2, defense: 6, speed: 44, hp: 50, cargoCapacity: 8 },
+      signature: 3, // a fat hauler — easy to spot
+      cost: { metal: 70, credits: 20 },
+      buildTimeHours: 4,
+      upkeep: { credits: 3 },
+    },
     marine: {
       faction: 'blue',
       stats: { attack: 12, defense: 12, speed: 52, hp: 24 },

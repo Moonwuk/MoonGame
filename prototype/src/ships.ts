@@ -30,9 +30,9 @@ export interface ShipHull {
 
 export const SHIP_HULLS: Record<string, ShipHull> = {
   cruiser: { name: 'Крейсер', icon: '▲', slots: 3, base: 'cruiser' },
-  siege_lance: { name: 'Осадная ланса', icon: '✦', slots: 2, base: 'siege_lance' },
-  scout_drone: { name: 'Скаут-дрон', icon: '◌', slots: 1, base: 'scout_drone' },
-  dropship: { name: 'Десантный', icon: '⊟', slots: 2, base: 'dropship' },
+  siege_lance: { name: 'Осадная ланса', icon: '✦', slots: 2, base: 'siege' },
+  scout_drone: { name: 'Скаут-дрон', icon: '◌', slots: 1, base: 'scout' },
+  dropship: { name: 'Носитель', icon: '⊟', slots: 2, base: 'dropship' },
 };
 
 export const SHIP_HULL_IDS: string[] = Object.keys(SHIP_HULLS);
