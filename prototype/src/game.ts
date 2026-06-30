@@ -57,6 +57,7 @@ import {
   type Officer,
 } from './groundcombat';
 import { DEFAULT_HEROES, type HeroLoadout } from './heroes';
+import { DEFAULT_SHIP_LOADOUTS, type ShipLoadout } from './ships';
 
 export const HOUR = 3_600_000;
 export const DAY = 24 * HOUR;
@@ -859,6 +860,9 @@ export interface SetupConfig {
   /** The player's hero roster (up to 3 loadouts), composed in the main menu. Absent →
    *  DEFAULT_HEROES. In-match instances / capital / respawn land in a later phase. */
   heroes?: HeroLoadout[];
+  /** The player's ship blueprints — a module loadout per hull class (the "Верфь"
+   *  designer). Frozen at session start (GDD §2). Absent → DEFAULT_SHIP_LOADOUTS. */
+  ships?: ShipLoadout[];
 }
 
 // --- ground formations (HOI4-style division templates) -----------------------
@@ -1063,10 +1067,12 @@ export function newGame(setup: SetupConfig = DEFAULT_SETUP): GameState {
   // The player's locked division templates ride into the match; the AI uses the defaults.
   const templates: Record<string, FormationTemplate[]> = {};
   const heroRoster: Record<string, HeroLoadout[]> = {};
+  const shipLoadouts: Record<string, ShipLoadout[]> = {};
   const capital: Record<string, string> = {};
   for (const seat of setup.seats) {
     templates[seat.id] = !seat.ai && setup.templates ? setup.templates : DEFAULT_TEMPLATES;
     heroRoster[seat.id] = !seat.ai && setup.heroes ? setup.heroes : DEFAULT_HEROES;
+    shipLoadouts[seat.id] = !seat.ai && setup.ships ? setup.ships : DEFAULT_SHIP_LOADOUTS;
     capital[seat.id] = seat.start; // capital defaults to the homeworld; re-designatable in-match
   }
   // `divisions` / `divisionSeq` / `templates` / `groundBattles` / `heroRoster` are
@@ -1083,6 +1089,7 @@ export function newGame(setup: SetupConfig = DEFAULT_SETUP): GameState {
     templates,
     groundBattles: {},
     heroRoster,
+    shipLoadouts,
     capital,
   } as GameState;
 }
@@ -1191,6 +1198,7 @@ type DivState = GameState & {
   templates?: Record<string, FormationTemplate[]>;
   groundBattles?: Record<string, number>;
   heroRoster?: Record<string, HeroLoadout[]>;
+  shipLoadouts?: Record<string, ShipLoadout[]>;
   capital?: Record<string, string>;
 };
 export function divisionsOf(state: GameState): Record<string, Division> {

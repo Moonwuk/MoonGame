@@ -595,32 +595,32 @@ button.b:disabled{opacity:.32;cursor:not-allowed;color:var(--dim);border-color:v
 #setup .tpl-cost{color:var(--dim);font-size:11px;margin-top:6px;}
 /* hero fitting — Minecraft-inventory style: equip "bays" + a module inventory grid you
    grab from (tap to pick onto the cursor, tap a bay to place; a ghost trails the pointer) */
-#setup-hero .heroslots{grid-template-columns:repeat(2,1fr);}
-#setup-hero .tslot.drop{border-style:solid;border-color:var(--amber);box-shadow:0 0 12px rgba(255,180,58,.35);}
-#setup-hero .hpal-h{font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--grn-dim);margin:12px 0 7px;}
-#setup-hero .mheld{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:10px 0 4px;padding:9px 11px;
+.fitpane .heroslots{grid-template-columns:repeat(2,1fr);}
+.fitpane .tslot.drop{border-style:solid;border-color:var(--amber);box-shadow:0 0 12px rgba(255,180,58,.35);}
+.fitpane .hpal-h{font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--grn-dim);margin:12px 0 7px;}
+.fitpane .mheld{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:10px 0 4px;padding:9px 11px;
   border:1px dashed var(--line-hi);border-radius:8px;color:var(--dim);font-size:12px;line-height:1.4;min-height:40px;}
-#setup-hero .mheld.active{border-style:solid;border-color:var(--amber);color:var(--amber);cursor:pointer;background:rgba(255,180,58,.06);}
-#setup-hero .mheld b{color:#eafffb;}
-#setup-hero .minv{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;}
-#setup-hero .mcell{position:relative;padding:11px 4px;border:1px solid var(--line-hi);border-radius:9px;
+.fitpane .mheld.active{border-style:solid;border-color:var(--amber);color:var(--amber);cursor:pointer;background:rgba(255,180,58,.06);}
+.fitpane .mheld b{color:#eafffb;}
+.fitpane .minv{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;}
+.fitpane .mcell{position:relative;padding:11px 4px;border:1px solid var(--line-hi);border-radius:9px;
   background:rgba(255,255,255,.02);text-align:center;cursor:pointer;display:flex;flex-direction:column;
   align-items:center;justify-content:center;gap:4px;min-height:64px;}
-#setup-hero .mcell:active{background:rgba(53,214,230,.08);}
-#setup-hero .mcell .ic{font-size:21px;line-height:1;color:var(--cyan);}
-#setup-hero .mcell .nm{font:10px ui-monospace,monospace;color:var(--ink);}
-#setup-hero .mcell.equip{border-color:var(--cyan);background:rgba(53,214,230,.1);}
-#setup-hero .mcell.held{border-color:var(--amber);box-shadow:0 0 12px rgba(255,180,58,.45);}
-#setup-hero .mcell.planned{opacity:.55;}
-#setup-hero .mcell .badge{position:absolute;top:3px;right:6px;font:700 10px ui-monospace,monospace;color:var(--cyan);}
+.fitpane .mcell:active{background:rgba(53,214,230,.08);}
+.fitpane .mcell .ic{font-size:21px;line-height:1;color:var(--cyan);}
+.fitpane .mcell .nm{font:10px ui-monospace,monospace;color:var(--ink);}
+.fitpane .mcell.equip{border-color:var(--cyan);background:rgba(53,214,230,.1);}
+.fitpane .mcell.held{border-color:var(--amber);box-shadow:0 0 12px rgba(255,180,58,.45);}
+.fitpane .mcell.planned{opacity:.55;}
+.fitpane .mcell .badge{position:absolute;top:3px;right:6px;font:700 10px ui-monospace,monospace;color:var(--cyan);}
 #heldghost{position:fixed;z-index:80;pointer-events:none;display:none;transform:translate(-50%,-50%);
   font-size:26px;filter:drop-shadow(0 0 7px rgba(53,214,230,.9));}
 /* hero grade (rarity) line — colour by tier */
-#setup-hero .hgradeline{font:600 12px ui-monospace,monospace;letter-spacing:.5px;margin:2px 0 10px;}
-#setup-hero .hgradeline.g-common{color:#8fa6ad;}
-#setup-hero .hgradeline.g-rare{color:#5fd0ff;}
-#setup-hero .hgradeline.g-legendary{color:var(--amber);}
-#setup-hero .hgradeline.g-main{color:var(--grn);}
+.fitpane .hgradeline{font:600 12px ui-monospace,monospace;letter-spacing:.5px;margin:2px 0 10px;}
+.fitpane .hgradeline.g-common{color:#8fa6ad;}
+.fitpane .hgradeline.g-rare{color:#5fd0ff;}
+.fitpane .hgradeline.g-legendary{color:var(--amber);}
+.fitpane .hgradeline.g-main{color:var(--grn);}
 
 /* === DEV TEST MODE — self-contained; delete this whole block to cut the styles === */
 #connect .tm-open{flex:none;width:100%;margin-top:10px;border-style:dashed;border-color:var(--line-hi);color:var(--cyan-dim);}
@@ -813,7 +813,7 @@ const html = `<!doctype html>
 <div id="setup">
   <div class="sbox">
     <div class="stitle"><span class="dia"></span><b>SKIRMISH SETUP</b></div>
-    <div class="stabs"><button data-stab="start" class="on">Старт</button><button data-stab="div">Дивизии</button><button data-stab="hero">Герои</button></div>
+    <div class="stabs"><button data-stab="start" class="on">Старт</button><button data-stab="div">Дивизии</button><button data-stab="hero">Герои</button><button data-stab="ship">Верфь</button></div>
     <div id="setup-start" class="spane">
       <p class="ssub">Pick your homeworld on the map, choose how many rivals join, then launch. Empty
         slots are taken by the AI — switch a slot OFF to command a smaller sector, or switch
@@ -823,7 +823,8 @@ const html = `<!doctype html>
       <div id="setupslots" class="sslots"></div>
     </div>
     <div id="setup-div" class="spane" style="display:none"></div>
-    <div id="setup-hero" class="spane" style="display:none"></div>
+    <div id="setup-hero" class="spane fitpane" style="display:none"></div>
+    <div id="setup-ship" class="spane fitpane" style="display:none"></div>
     <button id="setupgo" class="sgo" disabled>LAUNCH</button>
     <button id="setupcancel" class="scancel">Back</button>
   </div>

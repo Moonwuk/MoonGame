@@ -71,6 +71,16 @@ import {
   type HeroLoadout,
 } from './heroes';
 import {
+  SHIP_HULLS,
+  SHIP_MODULES,
+  SHIP_MODULE_IDS,
+  hullSlots,
+  shipStats,
+  shipLoadoutInfo,
+  DEFAULT_SHIP_LOADOUTS,
+  type ShipLoadout,
+} from './ships';
+import {
   buildingLevel,
   buildingMaxLevel,
   estimateTravelHours,
@@ -4663,6 +4673,7 @@ const setupHintEl = $('setuphint');
 const setupGoEl = $('setupgo') as HTMLButtonElement;
 const setupDivEl = $('setup-div');
 const setupHeroEl = $('setup-hero');
+const setupShipEl = $('setup-ship');
 
 // --- division designer (main-menu "Дивизии" tab) ----------------------------
 // The player's 3 templates, composed before the match and LOCKED once it starts.
@@ -4734,11 +4745,12 @@ let heldModule: string | null = null; // the module on the "cursor" (grab → pl
 const heldGhostEl = $('heldghost');
 
 /** Put a module on the cursor (or clear with null); reflect it in the floating ghost. */
-function setHeld(id: string | null): void {
+function setHeld(id: string | null, kind: 'hero' | 'ship' = 'hero'): void {
   heldModule = id;
-  const a = id ? HERO_ABILITIES[id] : undefined;
-  heldGhostEl.textContent = a ? a.icon : '';
-  heldGhostEl.style.display = a ? 'block' : 'none';
+  const icon =
+    id == null ? '' : kind === 'ship' ? (SHIP_MODULES[id]?.icon ?? '') : (HERO_ABILITIES[id]?.icon ?? '');
+  heldGhostEl.textContent = icon;
+  heldGhostEl.style.display = icon ? 'block' : 'none';
 }
 /** Move the floating ghost to the pointer (called on grab + pointermove). */
 function moveGhost(x: number, y: number): void {
@@ -4829,6 +4841,99 @@ setupHeroEl.addEventListener('click', (ev) => {
   }
 });
 
+// --- shipyard designer (main-menu "Верфь" tab) ------------------------------
+// The player's ship blueprints: a module loadout per hull class, frozen at session
+// start (GDD §2). Reuses the SAME Minecraft-inventory fitting chrome as heroes — but
+// ship modules STACK (no per-loadout duplicate guard), and the stat preview is derived
+// from the hull's base unit stats. Effects reach combat in a later brick (SHIP-3).
+const setupShips: ShipLoadout[] = DEFAULT_SHIP_LOADOUTS.map((l) => ({ hull: l.hull, modules: [...l.modules] }));
+let setupShipIdx = 0;
+
+function renderShips(): void {
+  const tabs = setupShips
+    .map((l, i) => `<button data-hull="${i}" class="${i === setupShipIdx ? 'on' : ''}">${SHIP_HULLS[l.hull]?.icon ?? '▦'} ${esc(SHIP_HULLS[l.hull]?.name ?? l.hull)}</button>`)
+    .join('');
+  const loadout = setupShips[setupShipIdx]!;
+  const hull = SHIP_HULLS[loadout.hull];
+  const slots = hullSlots(loadout.hull);
+  const holding = heldModule != null;
+  const bays = Array.from({ length: slots }, (_, i) => {
+    const id = loadout.modules[i] ?? null;
+    const m = id ? SHIP_MODULES[id] : undefined;
+    return `<div class="tslot ${m ? '' : 'empty'} ${holding ? 'drop' : ''}" data-mslot="${i}"><span class="ic">${m ? m.icon : '＋'}</span><span class="nm">${esc(m ? m.name : 'пусто')}</span></div>`;
+  }).join('');
+  const baseUnit = hull ? data.units[hull.base] : undefined;
+  const base = {
+    attack: baseUnit?.stats.attack ?? 0,
+    defense: baseUnit?.stats.defense ?? 0,
+    speed: baseUnit?.stats.speed ?? 0,
+    hp: baseUnit?.stats.hp ?? 0,
+  };
+  const der = shipStats(base, loadout);
+  const stat = (label: string, b: number, d: number): string =>
+    `<span>${label} ${d}${d !== b ? ` <em>(${b})</em>` : ''}</span>`;
+  const info = shipLoadoutInfo(loadout);
+  const syn = info.modules.length
+    ? info.modules
+        .map((m) => `<span class="syn">${m.icon} ${esc(m.name)} — ${esc(m.desc)}${m.live ? '' : ' <em>(скоро)</em>'}</span>`)
+        .join('')
+    : `<span class="syn none">◇ Слоты пусты — возьми модуль из инвентаря ниже.</span>`;
+  const inv = SHIP_MODULE_IDS.map((id) => {
+    const m = SHIP_MODULES[id]!;
+    const cls = `${heldModule === id ? 'held' : ''} ${m.live ? '' : 'planned'}`;
+    return `<div class="mcell ${cls}" data-smod="${id}"><span class="ic">${m.icon}</span><span class="nm">${esc(m.name)}</span></div>`;
+  }).join('');
+  const heldM = heldModule ? SHIP_MODULES[heldModule] : undefined;
+  const heldBar = heldM
+    ? `<div class="mheld active" data-drop="1">В руке: ${heldM.icon} <b>${esc(heldM.name)}</b> — тапни слот корпуса · <em>(тап сюда — убрать)</em></div>`
+    : `<div class="mheld">Возьми модуль из инвентаря и вставь в слот корпуса. Модули стэкаются. Тап по слоту — снять.</div>`;
+  setupShipEl.innerHTML =
+    `<p class="ssub">Чертёж корабля: на класс корпуса навешиваешь модули в слоты (крейсер ${hullSlots('cruiser')} · осадная ${hullSlots('siege_lance')} · скаут ${hullSlots('scout_drone')} · десантный ${hullSlots('dropship')}). Модули стэкаются и меняют статы. На старте матча чертёж замораживается. <em>(статы — превью; бой их читает скоро)</em></p>` +
+    `<div class="tpl-tabs">${tabs}</div>` +
+    `<div class="hgradeline">${hull?.icon ?? '▦'} ${esc(hull?.name ?? loadout.hull)} · ${slots} ${slots === 1 ? 'слот' : 'слота'} под модули</div>` +
+    `<div class="tpl-slots" style="display:grid;gap:8px;margin-bottom:10px;grid-template-columns:repeat(${Math.min(slots, 4)},1fr)">${bays}</div>` +
+    `<div class="tpl-stats"><div class="row">${stat('⚔ Атака', base.attack, der.attack)}${stat('🛡 Оборона', base.defense, der.defense)}${stat('» Скор', base.speed, der.speed)}${stat('❤ HP', base.hp, der.hp)}</div>${syn}</div>` +
+    heldBar +
+    `<div class="hpal-h">Инвентарь модулей</div><div class="minv">${inv}</div>`;
+}
+
+/** Tap a hull slot: place the held module (swapping out any current one), or — empty-
+ *  handed — pick the slot's module up. Ship modules STACK, so no duplicate guard. */
+function tapShipSlot(i: number): void {
+  const loadout = setupShips[setupShipIdx];
+  if (!loadout) return;
+  if (heldModule == null) {
+    const cur = loadout.modules[i];
+    if (cur != null) {
+      loadout.modules[i] = null;
+      setHeld(cur, 'ship');
+    }
+  } else {
+    const prev = loadout.modules[i] ?? null;
+    loadout.modules[i] = heldModule;
+    setHeld(prev, 'ship'); // swap (null = hand emptied)
+  }
+  renderShips();
+}
+
+setupShipEl.addEventListener('click', (ev) => {
+  const t = (ev.target as Element).closest('[data-mslot],[data-hull],[data-smod],[data-drop]') as HTMLElement | null;
+  if (!t) return;
+  if (t.dataset.hull !== undefined) {
+    setupShipIdx = Number(t.dataset.hull);
+    renderShips();
+  } else if (t.dataset.drop !== undefined) {
+    setHeld(null);
+    renderShips();
+  } else if (t.dataset.mslot !== undefined) {
+    tapShipSlot(Number(t.dataset.mslot));
+  } else if (t.dataset.smod !== undefined) {
+    setHeld(heldModule === t.dataset.smod ? null : t.dataset.smod, 'ship'); // grab (tap again = drop)
+    moveGhost(ev.clientX, ev.clientY);
+    renderShips();
+  }
+});
+
 // The held module's ghost trails the pointer while carried (desktop hover; on touch it
 // sits where you grabbed it). Bound to the setup overlay — never to `document`.
 setupEl.addEventListener('pointermove', (ev) => {
@@ -4844,9 +4949,11 @@ document.querySelector('#setup .stabs')?.addEventListener('click', (ev) => {
   $('setup-start').style.display = tab === 'start' ? '' : 'none';
   setupDivEl.style.display = tab === 'div' ? '' : 'none';
   setupHeroEl.style.display = tab === 'hero' ? '' : 'none';
-  if (tab !== 'hero') setHeld(null); // never carry a held module off the Герои tab
+  setupShipEl.style.display = tab === 'ship' ? '' : 'none';
+  setHeld(null); // a held module never crosses a tab switch (hero ↔ ship pools differ)
   if (tab === 'div') renderTemplates();
   if (tab === 'hero') renderHeroes();
+  if (tab === 'ship') renderShips();
 });
 
 function renderSetupMap(): void {
@@ -4927,6 +5034,7 @@ function openSetup(): void {
   $('setup-start').style.display = '';
   setupDivEl.style.display = 'none';
   setupHeroEl.style.display = 'none';
+  setupShipEl.style.display = 'none';
   setHeld(null);
   renderSetup();
 }
@@ -4950,6 +5058,7 @@ function buildSetupConfig(): SetupConfig {
     seats,
     templates: setupTemplates.map((t) => ({ name: t.name, slots: [...t.slots] })),
     heroes: setupHeroes.map((h) => ({ name: heroName(h), grade: h.grade, abilities: [...h.abilities] })),
+    ships: setupShips.map((l) => ({ hull: l.hull, modules: [...l.modules] })),
   };
 }
 
