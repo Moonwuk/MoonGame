@@ -163,30 +163,34 @@ function errCode(r: ApplyResult): string {
 }
 
 describe('technology module — session research tree', () => {
-  it('day-gate: research is locked until session day N, scaled by timeScale', () => {
+  it('day-gate: a node stays locked until the match reaches session day N', () => {
     const kernel = createKernel([technologyModule]);
-    const DAY = 24 * HOUR;
-    const st = stateWith({ players: [player('p1', { metal: 30 })] });
+    const DAY = 24 * HOUR; // = MS_PER_DAY
+    // World clock at `t` (match started at 0 ⇒ startedAt 0); ctx.now tracks state.time.
+    const at = (t: number) => ({ ...stateWith({ players: [player('p1', { metal: 30 })] }), time: t });
 
-    // blockade has dayGate 2 → unavailable before game-day 2 (state.time 0 ⇒ startedAt 0).
-    expect(errCode(kernel.applyAction(st, research('blockade'), ctx(0)))).toBe('E_TOO_EARLY');
-    expect(errCode(kernel.applyAction(st, research('blockade'), ctx(2 * DAY - 1)))).toBe(
-      'E_TOO_EARLY',
-    );
+    // blockade has dayGate 2 → locked until world day 2 = 2 * MS_PER_DAY.
+    expect(errCode(kernel.applyAction(at(0), research('blockade'), ctx(0)))).toBe('E_TOO_EARLY');
+    expect(
+      errCode(kernel.applyAction(at(2 * DAY - 1), research('blockade'), ctx(2 * DAY - 1))),
+    ).toBe('E_TOO_EARLY');
 
-    // From day 2 it researches; resources are spent only once it is actually available.
-    const ok = okApply(kernel.applyAction(st, research('blockade'), ctx(2 * DAY)));
+    // From day 2 it researches; resources are spent only once it is available.
+    const ok = okApply(kernel.applyAction(at(2 * DAY), research('blockade'), ctx(2 * DAY)));
     expect(ok.state.players.p1?.resources.metal).toBe(20);
     expect(ok.state.players.p1?.technologies?.active?.technology).toBe('blockade');
 
-    // timeScale compresses the gate like every duration: at ×2, game-day 2 lands at DAY real-ms.
-    expect(errCode(kernel.applyAction(st, research('blockade'), ctx(DAY - 1, 2)))).toBe(
-      'E_TOO_EARLY',
+    // The gate counts the WORLD clock (state.time), exactly like the match-browser day
+    // count — independent of the kernel ctx timeScale (the room runs the clock fast).
+    expect(
+      errCode(kernel.applyAction(at(2 * DAY - 1), research('blockade'), ctx(2 * DAY - 1, 4))),
+    ).toBe('E_TOO_EARLY');
+    expect(okApply(kernel.applyAction(at(2 * DAY), research('blockade'), ctx(2 * DAY, 4))).ok).toBe(
+      true,
     );
-    expect(okApply(kernel.applyAction(st, research('blockade'), ctx(DAY, 2))).ok).toBe(true);
 
     // dayGate 0 / absent ⇒ available from the start (existing techs unchanged).
-    expect(okApply(kernel.applyAction(st, research('industry'), ctx(0))).ok).toBe(true);
+    expect(okApply(kernel.applyAction(at(0), research('industry'), ctx(0))).ok).toBe(true);
   });
 
   it('parses a tech branch and defaults it for nodes that omit it (back-compat)', () => {

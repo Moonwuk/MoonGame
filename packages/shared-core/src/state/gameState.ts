@@ -281,9 +281,11 @@ export interface GameState {
   /** Current simulation time (ms), server-authoritative. */
   time: number;
   /** World time (ms) at which the match began — the anchor for "session day N"
-   *  gates (e.g. a technology's `dayGate`). Set to the initial `time` at creation,
-   *  so elapsed game-time = (now − startedAt) × timeScale. Optional: matches
-   *  persisted before this field existed read as 0 (all such nodes are ungated). */
+   *  gates (e.g. a technology's `dayGate`). Set to the initial `time` at creation;
+   *  the match's elapsed day count is `(time − startedAt) / MS_PER_DAY`, the same
+   *  formula the match browser shows (matchRegistry). Optional: matches persisted
+   *  before this field existed read as 0 — correct for the 0-based world clock, and
+   *  all such nodes are ungated (dayGate 0) anyway. */
   startedAt?: number;
   /** Terminal match state and the latest scoreboard. */
   match: MatchState;

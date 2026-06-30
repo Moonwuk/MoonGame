@@ -1,5 +1,6 @@
 import type { Action } from '../action/types';
 import { hoursToMs } from '../action/types';
+import { MS_PER_DAY } from '../util/time';
 import type { GameData, ResourceBag, TechnologyDef } from '../data/schemas';
 import type { GameModule, HandlerContext } from '../kernel/module';
 import type { Player, PlayerTechnologyState } from '../state/gameState';
@@ -126,16 +127,15 @@ function startResearch(action: Action, h: HandlerContext): void {
       return h.reject('E_PREREQUISITE');
     }
   }
-  // Day-gate: a node may stay locked until session day N. "Day" is game-time, so
-  // the threshold scales with timeScale exactly like researchTimeHours (a ×2 match
-  // reaches an era in half the wall-clock). elapsed = now − match start; gate on
-  // ctx.now (the authoritative present), never state.time (it may lag in applyAction).
+  // Day-gate: a node may stay locked until session day N. "Day N" is the match's
+  // world clock counted exactly as the match browser shows it — matchRegistry uses
+  // floor((state.time − startedAt) / MS_PER_DAY) — so the lock lines up with the
+  // displayed day on any config. timeScale already lives in state.time (the room
+  // runs the world clock fast), so there is no extra scaling here; startedAt
+  // defaults to 0 like the browser (correct for the 0-based world clock).
   const dayGate = def.dayGate ?? 0;
-  if (dayGate > 0) {
-    const elapsed = h.ctx.now - (h.state.startedAt ?? 0);
-    if (elapsed < hoursToMs(h.ctx, dayGate * 24)) {
-      return h.reject('E_TOO_EARLY');
-    }
+  if (dayGate > 0 && h.state.time - (h.state.startedAt ?? 0) < dayGate * MS_PER_DAY) {
+    return h.reject('E_TOO_EARLY');
   }
   if (!canAfford(player.resources, def.cost)) {
     return h.reject('E_INSUFFICIENT');
