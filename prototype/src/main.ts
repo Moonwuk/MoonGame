@@ -2870,6 +2870,10 @@ function render(now: number) {
 
   // fleets — glowing chevrons on their orbit ring (stationed) or along the lane
   cx.textAlign = 'center';
+  // carried divisions per fleet (rendered as cargo diamonds) — counted once.
+  const carriedDivCount: Record<string, number> = {};
+  for (const d of Object.values(divisionsOf(s)))
+    if (d.carriedBy) carriedDivCount[d.carriedBy] = (carriedDivCount[d.carriedBy] ?? 0) + 1;
   for (const f of Object.values(s.fleets)) {
     if (f.owner !== ME) {
       const fn = fleetNode(f);
@@ -2921,44 +2925,118 @@ function render(now: number) {
       }
     }
 
-    // fleet model = a squadron of 1 / 2 / 3 triangles by ship count
-    const squad = Math.min(3, Math.max(1, ships));
-    const formation: ReadonlyArray<readonly [number, number]> =
-      squad === 1
-        ? [[0, 0]]
-        : squad === 2
-          ? [
-              [-4, 1],
-              [4, 1],
-            ]
-          : [
-              [0, -3.5],
-              [-5, 5],
-              [5, 5],
-            ];
-    cx.save();
-    cx.translate(A.x, A.y);
-    cx.rotate(A.ang + Math.PI / 2);
-    cx.shadowColor = col;
-    cx.shadowBlur = 8 + 7 * engine;
-    cx.fillStyle = rgba(col, 0.14 + 0.12 * engine);
-    cx.strokeStyle = col;
-    cx.lineWidth = 1.5;
-    for (const [ox, oy] of formation) {
-      cx.beginPath();
-      cx.moveTo(ox, oy - 5);
-      cx.lineTo(ox + 3.6, oy + 4);
-      cx.lineTo(ox - 3.6, oy + 4);
-      cx.closePath();
-      cx.fill();
-      cx.stroke();
+    // Squadron emblem (upright): ships are up-triangles, ONE per three ships, packed
+    // into a pyramid — "каждые 3 корабля = один треугольник". Cargo glues under the
+    // base: carried divisions as diamonds first ("эскадрильи ромбиком"), then ground
+    // troops as squares (loaded = filled, loading ~1h = an empty square filling up).
+    const BW = 6,
+      TH = 5; // triangle base width / height; rows stack TH apart
+    const nTri = Math.max(1, Math.ceil(ships / 3));
+    // pack the triangles into a bottom-heavy pyramid: full rows 1..R, then shave the
+    // apex rows of any empty slots so the BASE is always widest (1→[1], 2→[2],
+    // 4→[1,3], 6→[1,2,3], 10→[1,2,3,4]).
+    let R = 1;
+    while ((R * (R + 1)) / 2 < nTri) R++;
+    const tri: number[] = [];
+    for (let r = 1; r <= R; r++) tri.push(r);
+    for (let r = 0, trim = (R * (R + 1)) / 2 - nTri; trim > 0 && r < tri.length; r++) {
+      const cut = Math.min(tri[r]!, trim);
+      tri[r]! -= cut;
+      trim -= cut;
     }
-    const lead = formation[0]!;
-    cx.fillStyle = rgba('#ffffff', 0.4 + 0.35 * engine);
-    cx.beginPath();
-    cx.arc(lead[0], lead[1], 1 + 0.8 * engine, 0, TAU);
-    cx.fill();
+    const rows = tri.filter((x) => x > 0);
+    const yBase = A.y; // baseline of the bottom (widest) row
+    const apexTop = yBase - rows.length * TH;
+    cx.save();
+    cx.shadowColor = col;
+    cx.shadowBlur = 6 + 6 * engine;
+    cx.fillStyle = rgba(col, 0.16 + 0.12 * engine);
+    cx.strokeStyle = col;
+    cx.lineWidth = 1.3;
+    for (let r = 0; r < rows.length; r++) {
+      const base = apexTop + (r + 1) * TH; // this row's baseline
+      const rw = rows[r]! * BW;
+      for (let i = 0; i < rows[r]!; i++) {
+        const x0 = A.x - rw / 2 + i * BW;
+        cx.beginPath();
+        cx.moveTo(x0 + BW / 2, base - TH); // apex up
+        cx.lineTo(x0 + BW, base); // flat base, right corner
+        cx.lineTo(x0, base); // flat base, left corner
+        cx.closePath();
+        cx.fill();
+        cx.stroke();
+      }
+    }
     cx.restore();
+
+    // cargo glued under the base: diamonds (carried divisions) first, then squares
+    // (ground troops). A loading troop (~1h) is an empty square that fills bottom-up.
+    const loads = pendingLoads.filter((p) => p.fleetId === f.id); // empty for enemy/idle fleets
+    const cargo: { kind: 'div' | 'troop' | 'load'; load?: PendingLoad }[] = [];
+    for (let i = 0; i < (carriedDivCount[f.id] ?? 0); i++) cargo.push({ kind: 'div' });
+    for (let i = 0; i < troops; i++) cargo.push({ kind: 'troop' });
+    for (const p of loads) cargo.push({ kind: 'load', load: p });
+    if (cargo.length > 0) {
+      const CELL = 6.5,
+        SQ = 4,
+        DR = 3,
+        MAX = 8; // cap; rare overflow gets a "+N" tail
+      const n = Math.min(cargo.length, MAX);
+      const over = cargo.length - n;
+      const rowW = n * CELL + (over > 0 ? 12 : 0);
+      let px = A.x - rowW / 2 + CELL / 2; // centre of the first cell
+      const cyc = yBase + 4; // a touch below the flat base
+      cx.save();
+      cx.shadowColor = col;
+      cx.shadowBlur = 3;
+      cx.lineWidth = 1;
+      for (let i = 0; i < n; i++) {
+        const pip = cargo[i]!;
+        if (pip.kind === 'div') {
+          // carried division → a solid diamond ("ромбик")
+          cx.beginPath();
+          cx.moveTo(px, cyc - DR);
+          cx.lineTo(px + DR, cyc);
+          cx.lineTo(px, cyc + DR);
+          cx.lineTo(px - DR, cyc);
+          cx.closePath();
+          cx.fillStyle = rgba(col, 0.85);
+          cx.strokeStyle = rgba(col, 0.95);
+          cx.fill();
+          cx.stroke();
+        } else {
+          const x = px - SQ / 2,
+            y = cyc - SQ / 2;
+          if (pip.kind === 'troop') {
+            // loaded troop → solid square
+            cx.fillStyle = rgba(col, 0.85);
+            cx.fillRect(x, y, SQ, SQ);
+            cx.strokeStyle = rgba(col, 0.95);
+            cx.strokeRect(x + 0.5, y + 0.5, SQ - 1, SQ - 1);
+          } else {
+            // loading troop → empty square filling from the bottom (0→1 over ~1h)
+            const p = pip.load!;
+            const prog = clamp((s.time - p.startAt) / (p.doneAt - p.startAt), 0, 1);
+            cx.strokeStyle = rgba(col, 0.85);
+            cx.strokeRect(x + 0.5, y + 0.5, SQ - 1, SQ - 1);
+            if (prog > 0) {
+              const fh = (SQ - 1) * prog;
+              cx.fillStyle = rgba(col, 0.8);
+              cx.fillRect(x + 0.5, y + 0.5 + (SQ - 1 - fh), SQ - 1, fh);
+            }
+          }
+        }
+        px += CELL;
+      }
+      cx.restore();
+      if (over > 0) {
+        cx.fillStyle = rgba(col, 0.92);
+        cx.font = '700 8px ui-monospace,Menlo,monospace';
+        cx.textAlign = 'left';
+        cx.fillText(`+${over}`, px - CELL / 2 + 1, cyc + SQ / 2);
+        cx.textAlign = 'center';
+      }
+    }
 
     if (selFleet === f.id || selFleets.has(f.id)) {
       targetBrackets(A.x, A.y, 12, now);
@@ -2987,59 +3065,10 @@ function render(now: number) {
       }
     }
 
-    // fleet readout: ship count as a number below the chevron.
+    // ship count, small, under the whole emblem (exact size for fleets past 5 ships).
     cx.fillStyle = rgba(col, 0.95);
-    cx.font = '700 10px ui-monospace,Menlo,monospace';
-    cx.fillText(String(ships), A.x, A.y + 20);
-
-    // cargo-hold load ("загрузка трюма") ABOVE the chevron, as little owner-coloured
-    // squares — one crisp container per loaded troop. Loads still in progress (~1h
-    // each) are hollow cells that fill from the bottom up as the hour elapses.
-    const loads = pendingLoads.filter((p) => p.fleetId === f.id); // empty for enemy/idle fleets
-    const totalPips = troops + loads.length;
-    if (totalPips > 0) {
-      const SQ = 4,
-        GAP = 2.5,
-        MAX = 8; // cap the pips; rare overflow gets a "+N" tail
-      const n = Math.min(totalPips, MAX);
-      const over = totalPips - n;
-      const rowW = n * (SQ + GAP) - GAP + (over > 0 ? 13 : 0);
-      let sx = A.x - rowW / 2;
-      const sy = A.y - 17; // above the chevron triangles ("за треугольники")
-      cx.save();
-      cx.shadowColor = col;
-      cx.shadowBlur = 4;
-      cx.lineWidth = 1;
-      for (let i = 0; i < n; i++) {
-        if (i < troops) {
-          // already in the hold → solid container
-          cx.fillStyle = rgba(col, 0.85);
-          cx.fillRect(sx, sy, SQ, SQ);
-          cx.strokeStyle = rgba(col, 0.95);
-          cx.strokeRect(sx + 0.5, sy + 0.5, SQ - 1, SQ - 1);
-        } else {
-          // loading → outline that fills from the bottom by progress (0→1 over ~1h)
-          const p = loads[i - troops];
-          const prog = p ? clamp((s.time - p.startAt) / (p.doneAt - p.startAt), 0, 1) : 0;
-          cx.strokeStyle = rgba(col, 0.85);
-          cx.strokeRect(sx + 0.5, sy + 0.5, SQ - 1, SQ - 1);
-          if (prog > 0) {
-            const fh = (SQ - 1) * prog;
-            cx.fillStyle = rgba(col, 0.8);
-            cx.fillRect(sx + 0.5, sy + 0.5 + (SQ - 1 - fh), SQ - 1, fh);
-          }
-        }
-        sx += SQ + GAP;
-      }
-      cx.restore();
-      if (over > 0) {
-        cx.font = '700 8px ui-monospace,Menlo,monospace';
-        cx.fillStyle = rgba(col, 0.92);
-        cx.textAlign = 'left';
-        cx.fillText(`+${over}`, sx, sy + SQ);
-        cx.textAlign = 'center';
-      }
-    }
+    cx.font = '700 9px ui-monospace,Menlo,monospace';
+    cx.fillText(String(ships), A.x, A.y + 18);
   }
 
   drawRadarContacts(now); // swept enemy signatures — last-known ghosts until repainted
@@ -3167,10 +3196,23 @@ function panelHtml(): string {
       const nShips = sumUnits(f.units);
       const nTr = sumUnits(f.landing ?? []);
       const inOrbit = f.orbit === 'near';
+      // Hull integrity across the squadron (persistent between fights now): a stack's
+      // current hp ?? full. Below 30% the fleet limps (route.ts) until it repairs.
+      let curHull = 0,
+        maxHull = 0;
+      for (const st of f.units) {
+        const u = data.units[st.unit];
+        if (!u) continue;
+        const m = st.count * u.stats.hp;
+        maxHull += m;
+        curHull += st.hp ?? m;
+      }
+      const hullPct = maxHull > 0 ? Math.round((curHull / maxHull) * 100) : 100;
+      const hullTag = hullPct < 100 ? ` · ${hullPct < 30 ? '⚠ ' : ''}корпус ${hullPct}%` : '';
       let h = cardHeader(
         ownerColor(f.owner),
         'FLEET',
-        `${nShips} ships · ${nTr} troops${inOrbit ? ' · in orbit' : ''}${f.bombarding ? ' · ⊗ bombarding' : ''}`,
+        `${nShips} ships · ${nTr} troops${hullTag}${inOrbit ? ' · in orbit' : ''}${f.bombarding ? ' · ⊗ bombarding' : ''}`,
       );
       // Aggregate combat weight, summed across the squadron's ships (it moves at its
       // slowest hull). The hero aura (+5%, noted below) is not folded into these totals.

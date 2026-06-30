@@ -16,14 +16,27 @@ export function distance(a: { x: number; y: number }, b: { x: number; y: number 
   return Math.sqrt(dx * dx + dy * dy);
 }
 
-/** Fleet speed = the slowest unit in it (data-driven), 0 if it cannot move. */
+/**
+ * Fleet speed = the slowest SHIP in it (data-driven), 0 if it cannot move. Ground
+ * troops ride in `landing`, never `units`, so they never affect speed. A badly
+ * damaged hull drags: at/above 30% HP a ship runs at full speed; below 30% its
+ * speed scales down with the remaining hull (floored so a crippled ship still limps
+ * rather than freezing). `stack.hp` is set only during combat — full health
+ * otherwise (gameState.ts §30-32) — so the penalty bites once a ship carries hull
+ * damage outside a battle.
+ */
 export function fleetBaseSpeed(fleet: Fleet, data: GameData): number {
   let speed = Infinity;
   for (const stack of fleet.units) {
     const def = data.units[stack.unit];
-    if (def) {
-      speed = Math.min(speed, def.stats.speed);
+    if (!def) continue;
+    let s = def.stats.speed;
+    const maxHp = stack.count * def.stats.hp;
+    if (stack.hp !== undefined && maxHp > 0) {
+      const frac = stack.hp / maxHp;
+      if (frac < 0.3) s *= Math.max(0.2, frac / 0.3); // limp below 30% hull
     }
+    speed = Math.min(speed, s);
   }
   return Number.isFinite(speed) ? speed : 0;
 }
