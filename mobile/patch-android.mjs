@@ -19,22 +19,29 @@ const manifest = fileURLToPath(
 let xml = readFileSync(manifest, 'utf8');
 
 if (xml.includes('android:screenOrientation')) {
-  console.log('AndroidManifest already pins screenOrientation — leaving it as-is.');
+  console.log('AndroidManifest already sets screenOrientation — leaving it as-is.');
 } else {
   const before = xml;
-  // Inject both attributes right before the MainActivity name so they land inside that
-  // activity's opening tag (Capacitor's template lists android:name=".MainActivity").
-  // `fullUser` = every orientation the user's auto-rotate allows (so a user who locked
-  // portrait still gets portrait); `configChanges` keeps the activity alive on rotation.
+  // Capacitor's MainActivity template ALREADY declares `android:configChanges` (it keeps
+  // the activity alive across config changes). Injecting a second one makes the manifest
+  // merger fail with a duplicate-attribute error, so only add it when Capacitor didn't.
+  const hasConfigChanges = xml.includes('android:configChanges');
+  // Inject right before the MainActivity name so the attrs land inside that activity's
+  // opening tag. `fullUser` = every orientation the user's auto-rotate allows (so a user
+  // who locked portrait still gets portrait); `configChanges` keeps state across rotation.
   xml = xml.replace(
     /(\s*)android:name="\.MainActivity"/,
     '$1android:screenOrientation="fullUser"' +
-      '$1android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden"' +
+      (hasConfigChanges
+        ? ''
+        : '$1android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden"') +
       '$1android:name=".MainActivity"',
   );
   if (xml === before) {
     throw new Error('patch-android: could not find .MainActivity in AndroidManifest to set orientation');
   }
   writeFileSync(manifest, xml);
-  console.log('patch-android: enabled rotation (fullUser) + in-place config changes');
+  console.log(
+    `patch-android: set screenOrientation=fullUser${hasConfigChanges ? ' (configChanges already present)' : ' + in-place config changes'}`,
+  );
 }
