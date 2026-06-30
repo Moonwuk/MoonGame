@@ -447,6 +447,9 @@ const logEl = $('log');
 const devlineEl = $('devline'); // status strip below the top bar: day/time + worlds/fleets/score
 const purse = $('purse');
 const bannerEl = $('banner');
+let lastBannerHtml = ''; // dirty-check so the banner's restart button isn't recreated each frame
+const restartBtn = $('restart'); // speedbar restart (shown in the no-bots solo sandbox)
+const restartSep = $('restart-sep');
 const hovercard = $('hovercard');
 const alertBadge = $('alertbadge');
 const cmdbar = $('cmdbar');
@@ -4538,6 +4541,13 @@ for (const b of Array.from(document.querySelectorAll('[data-speed]'))) {
   });
 }
 
+// Restart → back to the skirmish setup (bot selection). The speedbar button serves the
+// no-bots sandbox; the end-banner button (delegated) serves a finished bot match.
+restartBtn.addEventListener('click', () => openSetup());
+bannerEl.addEventListener('click', (ev) => {
+  if ((ev.target as Element).closest('[data-restart]')) openSetup();
+});
+
 // Event-log window: the rail's ≡ opens it; ✕ or the backdrop closes it. The feed
 // (#log) updates in place each frame whether the window is open or not.
 const logWin = document.getElementById('logwin');
@@ -5578,11 +5588,26 @@ function frame(nowReal: number) {
     lastLogHtml = logHtml;
   }
   if (banner) {
-    bannerEl.textContent = banner;
+    // On a genuine single-player match END, offer a restart straight from the banner
+    // (back to bot selection). Net-status banners (reconnecting / waiting) get no button.
+    const ended = !NET && s.match?.status === 'ended';
+    const html = ended
+      ? `<div class="bn-text">${esc(banner)}</div><button class="bn-btn" data-restart>⟳ К выбору ботов</button>`
+      : `<div class="bn-text">${esc(banner)}</div>`;
+    if (html !== lastBannerHtml) {
+      bannerEl.innerHTML = html;
+      lastBannerHtml = html;
+    }
     bannerEl.style.display = 'block';
   } else if (bannerEl.style.display !== 'none') {
     bannerEl.style.display = 'none'; // banner cleared (e.g. a fresh match) → hide it
+    lastBannerHtml = '';
   }
+  // Speedbar restart — only the no-bots sandbox (no match end to restart from); other
+  // modes use the end-banner button instead. Toggle each frame as the mode can change.
+  const soloNoBots = !NET && AI_PLAYERS.size === 0;
+  restartBtn.style.display = soloNoBots ? '' : 'none';
+  restartSep.style.display = soloNoBots ? '' : 'none';
   requestAnimationFrame(frame);
 }
 

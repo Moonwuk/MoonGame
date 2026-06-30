@@ -416,6 +416,10 @@ button.b:disabled{opacity:.32;cursor:not-allowed;color:var(--dim);border-color:v
   background:rgba(2,9,13,.94);border:1px solid var(--cyan);color:var(--cyan);
   box-shadow:0 0 40px rgba(53,214,230,.25),inset 0 0 30px rgba(53,214,230,.06);
   clip-path:polygon(0 12px,12px 0,100% 0,100% calc(100% - 12px),calc(100% - 12px) 100%,0 100%);}
+#banner .bn-btn{display:inline-block;margin-top:16px;padding:10px 22px;cursor:pointer;border:1px solid var(--cyan);
+  border-radius:6px;background:rgba(53,214,230,.14);color:var(--cyan);text-transform:none;letter-spacing:1px;
+  font:700 13px ui-monospace,monospace;}
+#banner .bn-btn:hover{background:rgba(53,214,230,.26);box-shadow:0 0 12px rgba(53,214,230,.4);}
 
 @media (max-width:720px){
   #top{height:44px;}
@@ -737,6 +741,7 @@ const html = `<!doctype html>
 <aside id="side"></aside>
 <div id="speedbar" class="spd">
   <button data-speed="0">‖</button><button data-speed="2" class="on">▶</button><button data-speed="6">▶▶</button>
+  <span class="sep" id="restart-sep" style="display:none"></span><button id="restart" title="Перезапуск — к выбору ботов" style="display:none">⟳</button>
 </div>
 <div id="hovercard"></div>
 <div id="cmdbar"></div>
