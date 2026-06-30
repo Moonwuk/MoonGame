@@ -365,7 +365,24 @@ type SessionMsg = {
   pingId?: string;
 };
 const COALITION = 'coalition';
+const CH_SESSION = 'session'; // everyone in this match
+const CH_GLOBAL = 'global'; // cross-session lobby (placeholder until a global server)
+const GROUP_CHANNELS = new Set([COALITION, CH_SESSION, CH_GLOBAL]); // group rooms vs 1:1 DMs
 let sessionMessages: SessionMsg[] = [];
+// --- floating chat window (desktop only) -------------------------------------
+// A movable/resizable in-game chat overlay (bottom-left by default). It reuses the
+// session message store + convoLineHtml; geometry/opacity/font are applied inline so a
+// frame never rebuilds it. Settings live in a popover flown out to its right.
+let chatOpen = false;
+let chatMin = false; // collapsed to just its title bar
+let chatPinned = false; // position locked (move handle disabled)
+let chatSettingsOpen = false;
+let chatPlaced = false; // has it been parked bottom-left at least once?
+let chatTab: string = CH_SESSION; // the open channel/DM key
+const chatGeom = { x: 12, y: 0, w: 360, h: 300 }; // CSS px; y is set on first open
+const chatCfg = { fontPx: 13, transparency: 8, censor: false, color: '' };
+// Active move/resize gesture: pointer origin + the geometry snapshot we drag from.
+let chatDrag: { mode: 'move' | 'resize'; px: number; py: number; gx: number; gy: number; gw: number; gh: number } | null = null;
 let diploOpen = false;
 let diploTab: 'diplo' | 'msgs' = 'diplo';
 let diploSort: 'name' | 'worlds' | 'stance' = 'stance';
@@ -476,6 +493,10 @@ function resize() {
   canvas.height = Math.round(VH * DPR);
   canvas.style.width = VW + 'px';
   canvas.style.height = VH + 'px';
+  if (chatOpen) {
+    clampChatGeom(); // the half-screen cap follows the new viewport
+    applyChatGeom();
+  }
 }
 if (typeof window !== 'undefined') window.addEventListener('resize', resize);
 resize();
@@ -3633,6 +3654,7 @@ function pushMsg(to: string, text: string, sys: boolean, from = ME, ping?: strin
   sessionMessages.push({ at: s.time, from, to, text, sys, ping });
   if (sessionMessages.length > 300) sessionMessages.shift();
   if (diploOpen && diploTab === 'msgs') renderDiploFeed();
+  if (chatOpen && !chatMin) renderChatFeed();
 }
 
 /** Player-driven stance change toward `target`. War (and any cooling-off) is
@@ -3737,12 +3759,13 @@ function diploRowsHtml(): string {
 function coalitionMembers(): string[] {
   return [ME, ...diploSeats().filter((id) => id !== ME && getStance(s, ME, id) === 'alliance')];
 }
-/** Messages in a conversation: COALITION = the group channel; a seat id = the 1:1
- *  DM between you and them (either direction). */
+/** Messages in a conversation: a group channel (coalition / session / global) collects
+ *  everything addressed to it; a seat id = the 1:1 DM between you and them (either dir). */
 function convoMessages(key: string): SessionMsg[] {
-  if (key === COALITION) return sessionMessages.filter((m) => m.to === COALITION);
+  if (GROUP_CHANNELS.has(key)) return sessionMessages.filter((m) => m.to === key);
   return sessionMessages.filter(
-    (m) => m.to !== COALITION && ((m.from === ME && m.to === key) || (m.from === key && m.to === ME)),
+    (m) =>
+      !GROUP_CHANNELS.has(m.to) && ((m.from === ME && m.to === key) || (m.from === key && m.to === ME)),
   );
 }
 function convoLast(key: string): SessionMsg | undefined {
@@ -5683,6 +5706,267 @@ if (pingPopEl) {
 // Session menu: the rail's Diplomacy / Dispatches buttons open the roster / message log.
 document.getElementById('rail-diplo')?.addEventListener('click', () => openDiplo('diplo'));
 document.getElementById('rail-msgs')?.addEventListener('click', () => openDiplo('msgs'));
+
+// === floating chat window (desktop only) =====================================
+// A naive profanity scrub for the optional censor toggle — whole-word match, the
+// letters swapped for asterisks (length kept so the line doesn't reflow).
+const CHAT_BADWORDS = ['идиот', 'дурак', 'тупой', 'damn', 'hell', 'crap'];
+function censorText(t: string): string {
+  let out = t;
+  for (const w of CHAT_BADWORDS) out = out.replace(new RegExp(w, 'gi'), (m) => '*'.repeat(m.length));
+  return out;
+}
+/** The chat's tabs: the three fixed group rooms, then a tab per DM that exists (plus
+ *  the open one). Other rooms (e.g. a coalition-to-coalition line) join here later. */
+function chatChannels(): Array<{ key: string; label: string; icon: string }> {
+  const base = [
+    { key: CH_SESSION, label: 'Сессия', icon: '△' },
+    { key: CH_GLOBAL, label: 'Глобальный', icon: '🌐' },
+    { key: COALITION, label: 'Коалиция', icon: '⬡' },
+  ];
+  const dm = new Set<string>();
+  for (const m of sessionMessages) {
+    if (GROUP_CHANNELS.has(m.to)) continue;
+    if (m.from === ME) dm.add(m.to);
+    else if (m.to === ME) dm.add(m.from);
+  }
+  if (!GROUP_CHANNELS.has(chatTab)) dm.add(chatTab); // keep a freshly opened DM's tab
+  for (const id of dm) if (s.players[id]) base.push({ key: id, label: NAME[id] ?? id, icon: seatBadge(id).icon });
+  return base;
+}
+function chatChannelLabel(key: string): string {
+  return chatChannels().find((c) => c.key === key)?.label ?? NAME[key] ?? key;
+}
+/** Cap geometry at half the screen and keep the window on-screen (title bar reachable). */
+function clampChatGeom(): void {
+  const maxW = Math.max(220, Math.floor(VW / 2));
+  const maxH = Math.max(150, Math.floor(VH / 2));
+  chatGeom.w = Math.max(220, Math.min(chatGeom.w, maxW));
+  chatGeom.h = Math.max(150, Math.min(chatGeom.h, maxH));
+  chatGeom.x = Math.max(0, Math.min(chatGeom.x, Math.max(0, VW - chatGeom.w)));
+  chatGeom.y = Math.max(46, Math.min(chatGeom.y, Math.max(46, VH - 40)));
+}
+/** Push geometry / opacity / font to the DOM without rebuilding it (frame-safe). */
+function applyChatGeom(): void {
+  const win = document.getElementById('chatwin');
+  if (!win) return;
+  const st = (win as HTMLElement).style;
+  st.left = chatGeom.x + 'px';
+  st.top = chatGeom.y + 'px';
+  st.width = chatGeom.w + 'px';
+  st.height = chatMin ? 'auto' : chatGeom.h + 'px';
+  // Transparency adjusts the background alpha (not element opacity) so the settings
+  // popover and text stay crisp at any setting.
+  const a = 0.82 * (1 - chatCfg.transparency / 100);
+  st.background = `rgba(3,14,18,${a.toFixed(3)})`;
+  const feed = document.getElementById('cw-feed') as HTMLElement | null;
+  if (feed) feed.style.fontSize = chatCfg.fontPx + 'px';
+}
+function chatFeedInnerHtml(key: string): string {
+  const msgs = convoMessages(key);
+  if (!msgs.length) return `<div class="cw-empty">Канал «${esc(chatChannelLabel(key))}» пуст.<br>Напишите первое сообщение.</div>`;
+  return msgs.map((m) => convoLineHtml(chatCfg.censor ? { ...m, text: censorText(m.text) } : m)).join('');
+}
+function renderChatFeed(): void {
+  const feed = document.getElementById('cw-feed');
+  if (!feed) return;
+  feed.innerHTML = chatFeedInnerHtml(chatTab);
+  (feed as HTMLElement).scrollTop = (feed as HTMLElement).scrollHeight;
+}
+/** Settings popover (flown out to the right): size fields, font, colour (sub-only),
+ *  censor, transparency. Inputs carry data-cset; their handler patches state live. */
+function chatSettingsHtml(): string {
+  const maxW = Math.max(220, Math.floor(VW / 2));
+  const maxH = Math.max(150, Math.floor(VH / 2));
+  return (
+    `<div class="cw-set">` +
+    `<h4>НАСТРОЙКИ</h4>` +
+    `<div class="cw-srow"><label>Ширина, px</label><input type="number" data-cset="w" min="220" max="${maxW}" value="${chatGeom.w}"></div>` +
+    `<div class="cw-srow"><label>Высота, px</label><input type="number" data-cset="h" min="150" max="${maxH}" value="${chatGeom.h}"></div>` +
+    `<div class="cw-dim">макс. — половина экрана (${maxW}×${maxH})</div>` +
+    `<div class="cw-srow"><label>Шрифт, пт</label><input type="number" data-cset="font" min="8" max="42" value="${chatCfg.fontPx}"></div>` +
+    `<div class="cw-srow"><label>Цвет шрифта</label><input type="color" data-cset="color" value="#7fe7ff" disabled></div>` +
+    `<div class="cw-sub">🔒 только по подписке</div>` +
+    `<div class="cw-srow"><label>Цензура</label><input type="checkbox" data-cset="censor"${chatCfg.censor ? ' checked' : ''}></div>` +
+    `<div class="cw-srow"><label>Прозрачность</label><input type="range" data-cset="opacity" min="0" max="100" value="${chatCfg.transparency}"></div>` +
+    `<div class="cw-dim">${chatCfg.transparency}%</div>` +
+    `</div>`
+  );
+}
+/** Full (innerHTML) rebuild — only on an interaction (open / tab / button), never per
+ *  frame. Geometry/feed are then applied/patched in place. */
+function renderChat(): void {
+  const win = document.getElementById('chatwin');
+  if (!win) return;
+  win.classList.toggle('open', chatOpen);
+  win.classList.toggle('min', chatMin);
+  win.classList.toggle('pinned', chatPinned);
+  if (!chatOpen) {
+    win.innerHTML = '';
+    return;
+  }
+  const tabs = chatChannels()
+    .map(
+      (c) =>
+        `<button class="cw-tab${c.key === chatTab ? ' on' : ''}" data-cwtab="${esc(c.key)}" title="${esc(c.label)}">${c.icon} ${esc(c.label)}</button>`,
+    )
+    .join('');
+  win.innerHTML =
+    `<div class="cw-head">` +
+    `<span class="cw-title">ЧАТ — ${esc(chatChannelLabel(chatTab))}</span>` +
+    `<button class="cw-btn${chatPinned ? ' on' : ''}" data-cwact="pin" title="Закрепить положение">📎</button>` +
+    `<button class="cw-btn cw-move" data-cwmove title="Переместить (тащите)">✥</button>` +
+    `<button class="cw-btn${chatSettingsOpen ? ' on' : ''}" data-cwact="settings" title="Настройки">⚙</button>` +
+    `<button class="cw-btn" data-cwact="min" title="${chatMin ? 'Развернуть' : 'Свернуть'}">${chatMin ? '▢' : '—'}</button>` +
+    `</div>` +
+    `<div class="cw-tabs">${tabs}</div>` +
+    `<div class="cw-feed" id="cw-feed">${chatFeedInnerHtml(chatTab)}</div>` +
+    `<div class="cw-compose"><input id="cw-text" type="text" maxlength="240" placeholder="Сообщение…" autocomplete="off"><button class="cw-send" data-cwact="send" title="Отправить">▶</button></div>` +
+    `<div class="cw-resize" data-cwresize></div>` +
+    (chatSettingsOpen ? chatSettingsHtml() : '');
+  applyChatGeom();
+  const feed = document.getElementById('cw-feed') as HTMLElement | null;
+  if (feed) feed.scrollTop = feed.scrollHeight;
+}
+function openChat(): void {
+  if (MOBILE) return;
+  chatOpen = true;
+  chatMin = false;
+  if (!chatPlaced) {
+    // First open: park it in the bottom-left corner.
+    chatGeom.w = Math.min(360, Math.max(220, Math.floor(VW / 2)));
+    chatGeom.h = Math.min(300, Math.max(150, Math.floor(VH / 2)));
+    chatGeom.x = 12;
+    chatGeom.y = Math.max(46, VH - chatGeom.h - 12);
+    chatPlaced = true;
+  }
+  clampChatGeom();
+  renderChat();
+  (document.getElementById('cw-text') as HTMLInputElement | null)?.focus?.();
+}
+function closeChat(): void {
+  chatOpen = false;
+  chatMin = false;
+  renderChat();
+}
+function sendChatMsg(): void {
+  const input = document.getElementById('cw-text') as HTMLInputElement | null;
+  const text = input?.value.trim();
+  if (!text) return;
+  pushMsg(chatTab, text, false); // to the open channel / DM (net play would broadcast)
+  if (input) {
+    input.value = '';
+    input.focus?.();
+  }
+}
+/** Mirror a corner-drag back into the size fields while the settings popover is open. */
+function syncChatSizeInputs(): void {
+  const w = document.querySelector('[data-cset="w"]') as HTMLInputElement | null;
+  const h = document.querySelector('[data-cset="h"]') as HTMLInputElement | null;
+  if (w) w.value = String(chatGeom.w);
+  if (h) h.value = String(chatGeom.h);
+}
+document.getElementById('rail-chat')?.addEventListener('click', () => (chatOpen ? closeChat() : openChat()));
+const chatwinEl = document.getElementById('chatwin');
+if (chatwinEl) {
+  // Start a move/resize gesture from the move handle or the corner grip.
+  chatwinEl.addEventListener('pointerdown', (e) => {
+    const t = e.target as HTMLElement;
+    const onResize = !!t.closest('[data-cwresize]');
+    const onMove = !!t.closest('[data-cwmove]');
+    if (!onResize && !onMove) return;
+    if (onMove && chatPinned) return; // pinned → position locked
+    e.preventDefault();
+    chatDrag = {
+      mode: onResize ? 'resize' : 'move',
+      px: (e as PointerEvent).clientX,
+      py: (e as PointerEvent).clientY,
+      gx: chatGeom.x,
+      gy: chatGeom.y,
+      gw: chatGeom.w,
+      gh: chatGeom.h,
+    };
+  });
+  // Tabs / corner buttons / send.
+  chatwinEl.addEventListener('click', (e) => {
+    const t = e.target as HTMLElement;
+    const tab = (t.closest('[data-cwtab]') as HTMLElement | null)?.dataset.cwtab;
+    if (tab) {
+      chatTab = tab;
+      renderChat();
+      (document.getElementById('cw-text') as HTMLInputElement | null)?.focus?.();
+      return;
+    }
+    const act = (t.closest('[data-cwact]') as HTMLElement | null)?.dataset.cwact;
+    if (act === 'pin') {
+      chatPinned = !chatPinned;
+      renderChat();
+    } else if (act === 'settings') {
+      chatSettingsOpen = !chatSettingsOpen;
+      renderChat();
+    } else if (act === 'min') {
+      chatMin = !chatMin;
+      renderChat();
+    } else if (act === 'send') {
+      sendChatMsg();
+    }
+  });
+  chatwinEl.addEventListener('keydown', (e) => {
+    const ke = e as KeyboardEvent;
+    if (ke.key === 'Enter' && (ke.target as HTMLElement).id === 'cw-text') {
+      e.preventDefault();
+      sendChatMsg();
+    }
+  });
+  // Live settings: size/font/opacity patch geometry in place (no rebuild → no focus
+  // loss); the censor toggle re-renders just the feed.
+  chatwinEl.addEventListener('input', (e) => {
+    const t = e.target as HTMLInputElement;
+    const k = t.dataset.cset;
+    if (!k) return;
+    if (k === 'w') {
+      chatGeom.w = Number(t.value) || chatGeom.w;
+      clampChatGeom();
+      applyChatGeom();
+    } else if (k === 'h') {
+      chatGeom.h = Number(t.value) || chatGeom.h;
+      clampChatGeom();
+      applyChatGeom();
+    } else if (k === 'font') {
+      chatCfg.fontPx = Math.max(8, Math.min(42, Number(t.value) || chatCfg.fontPx));
+      applyChatGeom();
+    } else if (k === 'opacity') {
+      chatCfg.transparency = Math.max(0, Math.min(100, Number(t.value) || 0));
+      applyChatGeom();
+      const lbl = chatwinEl.querySelector('.cw-set .cw-dim:last-child');
+      if (lbl) lbl.textContent = chatCfg.transparency + '%';
+    } else if (k === 'censor') {
+      chatCfg.censor = t.checked;
+      renderChatFeed();
+    }
+  });
+}
+if (typeof window !== 'undefined') {
+  window.addEventListener('pointermove', (e) => {
+    if (!chatDrag) return;
+    const dx = (e as PointerEvent).clientX - chatDrag.px;
+    const dy = (e as PointerEvent).clientY - chatDrag.py;
+    if (chatDrag.mode === 'move') {
+      chatGeom.x = chatDrag.gx + dx;
+      chatGeom.y = chatDrag.gy + dy;
+    } else {
+      chatGeom.w = chatDrag.gw + dx;
+      chatGeom.h = chatDrag.gh + dy;
+    }
+    clampChatGeom();
+    applyChatGeom();
+    if (chatDrag.mode === 'resize' && chatSettingsOpen) syncChatSizeInputs();
+  });
+  window.addEventListener('pointerup', () => {
+    chatDrag = null;
+  });
+}
+
 function toggleSet<T>(set: Set<T>, v: T): void {
   if (set.has(v)) set.delete(v);
   else set.add(v);
