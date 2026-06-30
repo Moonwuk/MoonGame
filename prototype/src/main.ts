@@ -2928,9 +2928,40 @@ function render(now: number) {
       }
     }
 
+    // fleet readout: ship count as a number, with the cargo-hold load ("загрузка трюма")
+    // drawn as a row of little owner-coloured squares beneath it — one pip per carried troop.
     cx.fillStyle = rgba(col, 0.95);
     cx.font = '700 10px ui-monospace,Menlo,monospace';
-    cx.fillText(`${ships}${troops ? '+' + troops : ''}`, A.x, A.y + 20);
+    cx.fillText(String(ships), A.x, A.y + 20);
+    if (troops > 0) {
+      const SQ = 4,
+        GAP = 2.5,
+        MAX = 8; // cap the pips; rare overflow gets a "+N" tail
+      const n = Math.min(troops, MAX);
+      const over = troops - n;
+      const rowW = n * (SQ + GAP) - GAP + (over > 0 ? 13 : 0);
+      let sx = A.x - rowW / 2;
+      const sy = A.y + 25;
+      cx.save();
+      cx.shadowColor = col;
+      cx.shadowBlur = 4;
+      cx.fillStyle = rgba(col, 0.85);
+      cx.strokeStyle = rgba(col, 0.95);
+      cx.lineWidth = 1;
+      for (let i = 0; i < n; i++) {
+        cx.fillRect(sx, sy, SQ, SQ); // crisp little cargo containers
+        cx.strokeRect(sx + 0.5, sy + 0.5, SQ - 1, SQ - 1);
+        sx += SQ + GAP;
+      }
+      cx.restore();
+      if (over > 0) {
+        cx.font = '700 8px ui-monospace,Menlo,monospace';
+        cx.fillStyle = rgba(col, 0.92);
+        cx.textAlign = 'left';
+        cx.fillText(`+${over}`, sx, sy + SQ);
+        cx.textAlign = 'center';
+      }
+    }
   }
 
   drawRadarContacts(now); // swept enemy signatures — last-known ghosts until repainted
