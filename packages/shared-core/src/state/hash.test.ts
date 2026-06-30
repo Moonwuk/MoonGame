@@ -55,8 +55,9 @@ function reorderKeys(value: unknown): unknown {
 describe('hashState', () => {
   // Golden: locks the digest algorithm + canonical serialization. If this changes
   // unintentionally, cross-version hash comparison is invalid — change on purpose.
+  // Last deliberate change: added GameState.startedAt (match-start anchor for dayGate).
   it('is a stable golden digest of a fixture state', () => {
-    expect(hashState(fixtureState())).toBe('1fec849d941b2d');
+    expect(hashState(fixtureState())).toBe('0e9f320374ccc4');
   });
 
   it('is independent of object key order (server-built vs delta-reconstructed)', () => {

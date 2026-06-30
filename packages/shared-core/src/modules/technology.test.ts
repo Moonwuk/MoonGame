@@ -43,6 +43,7 @@ const data: GameData = parseGameData({
     },
     logistics: {
       name: 'Logistics',
+      branch: 'space',
       cost: { credits: 10 },
       researchTimeHours: 2,
       unlocks: { units: ['dropship'] },
@@ -54,6 +55,12 @@ const data: GameData = parseGameData({
       researchTimeHours: 3,
       prerequisites: ['logistics'],
       effects: { combatDamageBonus: 0.1 },
+    },
+    blockade: {
+      name: 'Blockade',
+      cost: { metal: 10 },
+      researchTimeHours: 1,
+      dayGate: 2,
     },
   },
 });
@@ -156,6 +163,49 @@ function errCode(r: ApplyResult): string {
 }
 
 describe('technology module — session research tree', () => {
+  it('day-gate: a node stays locked until the match reaches session day N', () => {
+    const kernel = createKernel([technologyModule]);
+    const DAY = 24 * HOUR; // = MS_PER_DAY
+    // World clock at `t` (match started at 0 ⇒ startedAt 0); ctx.now tracks state.time.
+    const at = (t: number) => ({ ...stateWith({ players: [player('p1', { metal: 30 })] }), time: t });
+
+    // blockade has dayGate 2 → locked until world day 2 = 2 * MS_PER_DAY.
+    expect(errCode(kernel.applyAction(at(0), research('blockade'), ctx(0)))).toBe('E_TOO_EARLY');
+    expect(
+      errCode(kernel.applyAction(at(2 * DAY - 1), research('blockade'), ctx(2 * DAY - 1))),
+    ).toBe('E_TOO_EARLY');
+
+    // From day 2 it researches; resources are spent only once it is available.
+    const ok = okApply(kernel.applyAction(at(2 * DAY), research('blockade'), ctx(2 * DAY)));
+    expect(ok.state.players.p1?.resources.metal).toBe(20);
+    expect(ok.state.players.p1?.technologies?.active?.technology).toBe('blockade');
+
+    // The gate counts the WORLD clock (state.time), exactly like the match-browser day
+    // count — independent of the kernel ctx timeScale (the room runs the clock fast).
+    expect(
+      errCode(kernel.applyAction(at(2 * DAY - 1), research('blockade'), ctx(2 * DAY - 1, 4))),
+    ).toBe('E_TOO_EARLY');
+    expect(okApply(kernel.applyAction(at(2 * DAY), research('blockade'), ctx(2 * DAY, 4))).ok).toBe(
+      true,
+    );
+
+    // dayGate 0 / absent ⇒ available from the start (existing techs unchanged).
+    expect(okApply(kernel.applyAction(at(0), research('industry'), ctx(0))).ok).toBe(true);
+  });
+
+  it('parses a tech branch and defaults it for nodes that omit it (back-compat)', () => {
+    expect(data.technologies.logistics?.branch).toBe('space'); // explicit in fixture
+    expect(data.technologies.industry?.branch).toBe('space'); // schema default
+    const byBranch: Record<string, string[]> = {};
+    for (const [id, def] of Object.entries(data.technologies)) {
+      (byBranch[def.branch] ??= []).push(id);
+    }
+    expect(byBranch.space).toContain('logistics');
+    expect(
+      Object.keys(byBranch).every((b) => ['ground', 'space', 'squadron', 'missile'].includes(b)),
+    ).toBe(true);
+  });
+
   it('pays up front, records active research, then completes on the timeline', () => {
     const kernel = createKernel([technologyModule]);
     const st = stateWith({ players: [player('p1', { metal: 30 })] });

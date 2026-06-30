@@ -2,6 +2,7 @@
   "industrial_automation": {
     "name": "Industrial Automation",
     "description": "Session research that upgrades planetary logistics and unlocks higher-output extractors.",
+    "branch": "space",
     "tier": 1,
     "cost": { "credits": 120, "metal": 80 },
     "researchTimeHours": 4,
@@ -11,6 +12,7 @@
   "orbital_logistics": {
     "name": "Orbital Logistics",
     "description": "Standardizes dropship operations and makes fleets faster across the session map.",
+    "branch": "space",
     "tier": 1,
     "cost": { "credits": 160, "metal": 120 },
     "researchTimeHours": 6,
@@ -20,6 +22,7 @@
   "siege_doctrine": {
     "name": "Siege Doctrine",
     "description": "Advanced assault calculations for long-range siege lances.",
+    "branch": "space",
     "tier": 2,
     "cost": { "credits": 260, "metal": 220 },
     "researchTimeHours": 10,
@@ -30,6 +33,7 @@
   "fortified_infrastructure": {
     "name": "Fortified Infrastructure",
     "description": "Session doctrine for hardened frontier worlds and formal fortress construction.",
+    "branch": "ground",
     "tier": 2,
     "cost": { "credits": 180, "metal": 240 },
     "researchTimeHours": 8,
@@ -39,6 +43,7 @@
   "microelectronics_fabrication": {
     "name": "Microelectronics Fabrication",
     "description": "Cleanroom doctrine that unlocks orbital fabs turning energy and metal into microelectronics.",
+    "branch": "space",
     "tier": 2,
     "cost": { "credits": 220, "metal": 180, "energy": 120 },
     "researchTimeHours": 10,

@@ -5,6 +5,7 @@ type Collection = (typeof COLLECTIONS)[number];
 const META_KEYS = [
   'version',
   'time',
+  'startedAt',
   'match',
   'rng',
   'battleSeq',
