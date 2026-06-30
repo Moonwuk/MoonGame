@@ -1449,6 +1449,58 @@ function playerOrder(action: Action) {
   if (out.error) note('✖ ' + out.error.replace(/^E_/, '').toLowerCase().replace(/_/g, ' '));
 }
 
+// --- timed cargo loading (prototype UX: "погрузка занимает час") --------------
+// A ground-army load doesn't snap into the hold — it takes ~1 game-hour. The order
+// is queued here and the real `army.load` only fires once the world clock has
+// advanced LOAD_TIME, while the fleet marker animates the hold filling up. This is
+// prototype-only client state; the deterministic core is untouched.
+const LOAD_TIME = HOUR; // ~1 game-hour to lift one ground unit into the hold
+interface PendingLoad {
+  fleetId: string;
+  unit: string;
+  startAt: number; // world time the load was ordered
+  doneAt: number; // world time it completes
+}
+let pendingLoads: PendingLoad[] = [];
+
+/** Hold footprint (cargoSize) already reserved by this fleet's in-progress loads. */
+function pendingLoadCargo(fleetId: string): number {
+  let n = 0;
+  for (const p of pendingLoads)
+    if (p.fleetId === fleetId) n += data.units[p.unit]?.stats.cargoSize ?? 1;
+  return n;
+}
+
+/** Queue a ~1h ground-army load if the hold has room (reserving for loads already
+ *  under way), so the player can't over-fill the trim before any of them land. */
+function beginLoad(fleetId: string, unit: string): void {
+  const f = s.fleets[fleetId];
+  if (!f || f.movement || f.battleId || !f.location) return;
+  const need = data.units[unit]?.stats.cargoSize ?? 1;
+  if (need > fleetCargoFree(s, f) - pendingLoadCargo(fleetId)) {
+    note('✖ no cargo'); // hold full once the loads already in progress land
+    return;
+  }
+  pendingLoads.push({ fleetId, unit, startAt: s.time, doneAt: s.time + LOAD_TIME });
+}
+
+/** Drive queued loads each frame: drop any whose carrier moved / fights / vanished
+ *  (load cancelled), and fire the real `army.load` once a load's hour has elapsed. */
+function pumpPendingLoads(): void {
+  if (!pendingLoads.length) return;
+  const keep: PendingLoad[] = [];
+  for (const p of pendingLoads) {
+    const f = s.fleets[p.fleetId];
+    if (!f || f.movement || f.battleId || !f.location) continue; // cancelled
+    if (s.time >= p.doneAt) {
+      playerOrder(loadArmy(ME, p.fleetId, p.unit, 1)); // kernel moves garrison → hold
+      continue;
+    }
+    keep.push(p);
+  }
+  pendingLoads = keep;
+}
+
 // --- diplomacy gate (client order layer) -------------------------------------
 // A move that would cross or end on territory of a player you're at PEACE with is
 // blocked: you must declare war first. Such a move opens a confirmation ("this
@@ -2928,29 +2980,48 @@ function render(now: number) {
       }
     }
 
-    // fleet readout: ship count as a number, with the cargo-hold load ("загрузка трюма")
-    // drawn as a row of little owner-coloured squares beneath it — one pip per carried troop.
+    // fleet readout: ship count as a number below the chevron.
     cx.fillStyle = rgba(col, 0.95);
     cx.font = '700 10px ui-monospace,Menlo,monospace';
     cx.fillText(String(ships), A.x, A.y + 20);
-    if (troops > 0) {
+
+    // cargo-hold load ("загрузка трюма") ABOVE the chevron, as little owner-coloured
+    // squares — one crisp container per loaded troop. Loads still in progress (~1h
+    // each) are hollow cells that fill from the bottom up as the hour elapses.
+    const loads = pendingLoads.filter((p) => p.fleetId === f.id); // empty for enemy/idle fleets
+    const totalPips = troops + loads.length;
+    if (totalPips > 0) {
       const SQ = 4,
         GAP = 2.5,
         MAX = 8; // cap the pips; rare overflow gets a "+N" tail
-      const n = Math.min(troops, MAX);
-      const over = troops - n;
+      const n = Math.min(totalPips, MAX);
+      const over = totalPips - n;
       const rowW = n * (SQ + GAP) - GAP + (over > 0 ? 13 : 0);
       let sx = A.x - rowW / 2;
-      const sy = A.y + 25;
+      const sy = A.y - 17; // above the chevron triangles ("за треугольники")
       cx.save();
       cx.shadowColor = col;
       cx.shadowBlur = 4;
-      cx.fillStyle = rgba(col, 0.85);
-      cx.strokeStyle = rgba(col, 0.95);
       cx.lineWidth = 1;
       for (let i = 0; i < n; i++) {
-        cx.fillRect(sx, sy, SQ, SQ); // crisp little cargo containers
-        cx.strokeRect(sx + 0.5, sy + 0.5, SQ - 1, SQ - 1);
+        if (i < troops) {
+          // already in the hold → solid container
+          cx.fillStyle = rgba(col, 0.85);
+          cx.fillRect(sx, sy, SQ, SQ);
+          cx.strokeStyle = rgba(col, 0.95);
+          cx.strokeRect(sx + 0.5, sy + 0.5, SQ - 1, SQ - 1);
+        } else {
+          // loading → outline that fills from the bottom by progress (0→1 over ~1h)
+          const p = loads[i - troops];
+          const prog = p ? clamp((s.time - p.startAt) / (p.doneAt - p.startAt), 0, 1) : 0;
+          cx.strokeStyle = rgba(col, 0.85);
+          cx.strokeRect(sx + 0.5, sy + 0.5, SQ - 1, SQ - 1);
+          if (prog > 0) {
+            const fh = (SQ - 1) * prog;
+            cx.fillStyle = rgba(col, 0.8);
+            cx.fillRect(sx + 0.5, sy + 0.5 + (SQ - 1 - fh), SQ - 1, fh);
+          }
+        }
         sx += SQ + GAP;
       }
       cx.restore();
@@ -3189,9 +3260,14 @@ function panelHtml(): string {
           let ga = `<div class="sec">Ground army ⇄ garrison</div>`;
           const groundHere = here!.garrison.filter((st) => isGround(st.unit));
           const carried = f.landing ?? [];
+          const loadingN = pendingLoads.filter((p) => p.fleetId === f.id).length;
+          const freeHold = fleetCargoFree(s, f) - pendingLoadCargo(f.id); // reserve in-progress loads
           if (groundHere.length) {
             ga += `<div class="row">`;
-            for (const st of groundHere) ga += btn('load', st.unit, `▲ Load ${st.unit}`, true);
+            for (const st of groundHere) {
+              const sz = data.units[st.unit]?.stats.cargoSize ?? 1;
+              ga += btn('load', st.unit, `▲ Load ${st.unit}`, sz <= freeHold);
+            }
             ga += `</div>`;
           }
           if (carried.length) {
@@ -3199,7 +3275,8 @@ function panelHtml(): string {
             for (const st of carried) ga += btn('unload', st.unit, `▼ Unload ${st.unit}`, true);
             ga += `</div>`;
           }
-          if (!groundHere.length && !carried.length)
+          if (loadingN) ga += `<div class="hint">⏳ погрузка: ${loadingN} (≈1ч на единицу)</div>`;
+          if (!groundHere.length && !carried.length && !loadingN)
             ga += `<div class="row dim">no ground army here</div>`;
           cols.push(ga);
         }
@@ -4214,7 +4291,7 @@ side.addEventListener('click', (ev) => {
   } else if (act === 'assault') {
     playerOrder(assaultFleet(ME, selFleet!));
   } else if (act === 'load') {
-    playerOrder(loadArmy(ME, selFleet!, arg, 1));
+    beginLoad(selFleet!, arg); // ~1h timed load (animated in the marker)
   } else if (act === 'unload') {
     playerOrder(unloadArmy(ME, selFleet!, arg, 1));
   } else if (act === 'divload') {
@@ -5064,6 +5141,7 @@ function installMatch(state: GameState, aiPlayers: Set<string>): void {
   selPlanet = null;
   selFleets = new Set();
   pendingMerges = [];
+  pendingLoads = [];
   aiming = false;
   merging = false;
   additive = false;
@@ -5139,6 +5217,7 @@ function connect(): void {
           NET = true;
           ME = snap.playerId ?? ME;
           clearSelection();
+          pendingLoads = []; // drop any queued loads from a prior/local session
           showConnect(false);
           note(`● connected as ${NAME[ME] ?? ME}`);
           // Latency probe: ping every 2s with a client timestamp the pong echoes.
@@ -5499,6 +5578,7 @@ function frame(nowReal: number) {
   // The orbit spin only advances while the world is actually running (sim ticking, or a
   // live net match), so pausing freezes the ships on their rings instead of drifting on.
   if (dt > 0 && dt < 1000 && (NET || (speed > 0 && !banner))) orbitPhase += dt;
+  pumpPendingLoads(); // fire ~1h cargo loads whose hour has elapsed (both modes)
   resolvePendingMerges(); // complete fleet merges whose movers have arrived
   checkEnd(); // terminal banner from `match` — runs in BOTH modes (net snapshots carry it)
   vision = computeVision(); // fog projection for this frame (always on)
