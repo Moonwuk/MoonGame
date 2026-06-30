@@ -440,6 +440,9 @@ const myBattleLocs = new Set<string>();
 // chosen homeworld. Seats 2-4 toggle 'ai'/'off'; an 'ai' seat spawns a rival.
 let setupSlots: Array<'human' | 'ai' | 'off'> = ['human', 'ai', 'off', 'off'];
 let setupStart: string = START_CANDIDATES[0] ?? MAP[0]!.id;
+// Chosen time-flow multiplier for the launched match (×1/×2/×5/×10). ×1 = today's
+// normal play pace; the launch maps it onto the speedbar (applyTimeSpeed).
+let setupSpeed = 1;
 let lastPanelHtml = '';
 let lastCmdHtml = '';
 let lastSplitHtml = '';
@@ -4685,6 +4688,22 @@ for (const b of Array.from(document.querySelectorAll('[data-speed]'))) {
   });
 }
 
+// Map a setup time-flow multiplier (×1/×2/×5/×10) onto the speedbar and start running at
+// it. ×1 keeps today's pace (play = 2 game-hours per real second, fast = 6); ×N scales
+// both. The play/fast buttons carry the live values so pause→resume returns to the chosen
+// pace rather than snapping back to the default.
+const PLAY_BASE = 2; // game-hours per real second at ×1 (the default play speed)
+function applyTimeSpeed(mult: number): void {
+  const play = PLAY_BASE * mult;
+  const playBtn = $('spd-play');
+  const fastBtn = $('spd-fast');
+  if (playBtn) playBtn.dataset.speed = String(play);
+  if (fastBtn) fastBtn.dataset.speed = String(play * 3);
+  speed = play;
+  for (const x of Array.from(document.querySelectorAll('[data-speed]')))
+    x.classList.toggle('on', Number((x as HTMLElement).dataset.speed) === speed);
+}
+
 // Restart → back to the skirmish setup (bot selection). The speedbar button serves the
 // no-bots sandbox; the end-banner button (delegated) serves a finished bot match.
 restartBtn.addEventListener('click', () => openSetup());
@@ -4865,6 +4884,7 @@ for (const t of Array.from(document.querySelectorAll('#hp-more .hub-tile[data-mo
 const setupEl = $('setup');
 const setupMapEl = $('setupmap');
 const setupSlotsEl = $('setupslots');
+const setupSpeedEl = $('setupspeed');
 const setupHintEl = $('setuphint');
 const setupGoEl = $('setupgo') as HTMLButtonElement;
 const setupDivEl = $('setup-div');
@@ -5218,11 +5238,14 @@ function renderSetup(): void {
     rivals === 0
       ? `Home: ${setupStart} — solo sandbox, no rivals · tap a glowing world to change`
       : `Home: ${setupStart} — tap another glowing world to change`;
+  for (const c of Array.from(setupSpeedEl.querySelectorAll('[data-spd]')))
+    c.classList.toggle('on', Number((c as HTMLElement).dataset.spd) === setupSpeed);
 }
 
 function openSetup(): void {
   setupSlots = ['human', 'ai', 'off', 'off'];
   setupStart = START_CANDIDATES[0] ?? MAP[0]!.id;
+  setupSpeed = 1; // default to normal time flow each time the setup opens
   showConnect(false);
   setupEl.style.display = 'flex';
   // Always open on the Старт tab (the division designer keeps its own state).
@@ -5286,6 +5309,7 @@ function installMatch(state: GameState, aiPlayers: Set<string>): void {
 }
 function startMatch(setup: SetupConfig): void {
   installMatch(newGame(setup), new Set(setup.seats.filter((x) => x.ai).map((x) => x.id)));
+  applyTimeSpeed(setupSpeed); // launch running at the chosen time-flow multiplier
 }
 
 setupMapEl.addEventListener('click', (ev) => {
@@ -5299,6 +5323,12 @@ setupSlotsEl.addEventListener('click', (ev) => {
   if (!t) return;
   const i = Number(t.getAttribute('data-slot'));
   setupSlots[i] = setupSlots[i] === 'ai' ? 'off' : 'ai';
+  renderSetup();
+});
+setupSpeedEl.addEventListener('click', (ev) => {
+  const t = (ev.target as Element).closest('[data-spd]');
+  if (!t) return;
+  setupSpeed = Number(t.getAttribute('data-spd'));
   renderSetup();
 });
 setupGoEl.addEventListener('click', () => startMatch(buildSetupConfig()));

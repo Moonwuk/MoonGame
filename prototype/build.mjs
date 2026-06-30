@@ -620,6 +620,11 @@ button.b:disabled{opacity:.32;cursor:not-allowed;color:var(--dim);border-color:v
 #setup .srow .stog{font:11px ui-monospace,monospace;letter-spacing:1px;border:1px solid var(--line-hi);
   border-radius:6px;padding:6px 12px;min-width:64px;cursor:pointer;background:transparent;color:var(--dim);}
 #setup .srow .stog.ai{border-color:var(--cyan);color:var(--cyan);background:rgba(53,214,230,.12);}
+#setup .sspeedlabel{font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--cyan-dim);margin:0 0 8px;}
+#setup .sspeed{display:flex;gap:8px;margin-bottom:16px;}
+#setup .sspeed .spdchip{flex:1;padding:10px 6px;border-radius:8px;border:1px solid var(--line-hi);background:transparent;
+  color:var(--dim);font:13px ui-monospace,monospace;letter-spacing:1px;cursor:pointer;}
+#setup .sspeed .spdchip.on{border-color:var(--cyan);color:var(--cyan);background:rgba(53,214,230,.14);}
 #setup .sgo{width:100%;padding:13px 10px;border-radius:8px;border:1px solid var(--cyan);
   background:rgba(53,214,230,.16);color:var(--cyan);font:600 13px ui-monospace,monospace;letter-spacing:1px;cursor:pointer;min-height:46px;}
 #setup .sgo:disabled{opacity:.4;cursor:not-allowed;}
@@ -868,7 +873,7 @@ const html = `<!doctype html>
 <div id="logwin"><div class="lwbox"><div class="lw-head"><b>СВОДКИ</b><button class="lw-close">✕</button></div><div id="log"></div></div></div>
 <aside id="side"></aside>
 <div id="speedbar" class="spd">
-  <button data-speed="0">‖</button><button data-speed="2" class="on">▶</button><button data-speed="6">▶▶</button>
+  <button id="spd-pause" data-speed="0">‖</button><button id="spd-play" data-speed="2" class="on">▶</button><button id="spd-fast" data-speed="6">▶▶</button>
   <span class="sep" id="restart-sep" style="display:none"></span><button id="restart" title="Перезапуск — к выбору ботов" style="display:none">⟳</button>
 </div>
 <div id="hovercard"></div>
@@ -1017,6 +1022,13 @@ const html = `<!doctype html>
       <svg id="setupmap" class="smap" preserveAspectRatio="xMidYMid meet"></svg>
       <p class="smaphint" id="setuphint">Tap a glowing world to choose your start</p>
       <div id="setupslots" class="sslots"></div>
+      <div class="sspeedlabel">Скорость времени</div>
+      <div id="setupspeed" class="sspeed">
+        <button class="spdchip on" type="button" data-spd="1">×1</button>
+        <button class="spdchip" type="button" data-spd="2">×2</button>
+        <button class="spdchip" type="button" data-spd="5">×5</button>
+        <button class="spdchip" type="button" data-spd="10">×10</button>
+      </div>
     </div>
     <div id="setup-div" class="spane" style="display:none"></div>
     <div id="setup-hero" class="spane fitpane" style="display:none"></div>
