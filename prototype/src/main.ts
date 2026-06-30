@@ -90,6 +90,7 @@ import {
   planRoute,
 } from '../../packages/shared-core/src/index';
 import { MultiplayerClient, type MultiplayerPing } from '../../packages/client/src/index';
+import { buildLabel, checkForUpdate, currentBuild, type UpdateInfo } from './updater';
 // DEV TEST MODE — self-contained dev-only scenarios; remove this import + the
 // initTestMode(...) call below + the #testmode HTML/CSS to cut it cleanly.
 import { initTestMode, openTestMode } from './testmode';
@@ -6323,3 +6324,54 @@ note(
   'Welcome, Commander. A wide frontier of provinces separates you from CRIMSON — the worlds among them score 50, every other sector 10. Reach 600 points or take the enemy capital.',
 );
 requestAnimationFrame(frame);
+
+// --- in-app APK auto-update -------------------------------------------------
+// Only live in the packaged APK (it carries a baked window.__BUILD__); the browser /
+// dev build has none, so currentBuild() is null and every path below no-ops. We check
+// the rolling release on launch (when online) and via a manual button, and surface a
+// banner whose "Обновить" link navigates to the APK asset — inside the APK the native
+// WebView DownloadListener (MainActivity) downloads + installs it; in a browser it would
+// just download. See prototype/src/updater.ts and mobile/patch-updater.mjs.
+{
+  const myBuild = currentBuild();
+  if (myBuild) {
+    const cver = $('cver');
+    if (cver) cver.textContent = `сборка ${buildLabel(myBuild)}`;
+    const cupd = $('cupd');
+    if (cupd) cupd.style.display = '';
+
+    const showUpdate = (u: UpdateInfo): void => {
+      const ver = $('ub-ver');
+      if (ver) ver.textContent = buildLabel(u);
+      const go = $('ub-go') as HTMLAnchorElement | null;
+      if (go) go.href = u.apkUrl;
+      $('updbar').style.display = 'block'; // override the stylesheet's display:none
+    };
+
+    let checking = false;
+    const runCheck = async (manual: boolean): Promise<void> => {
+      if (checking) return;
+      checking = true;
+      try {
+        const u = await checkForUpdate();
+        if (u) showUpdate(u);
+        else if (manual && cupd) {
+          const prev = cupd.textContent;
+          cupd.textContent = 'Установлена последняя версия';
+          window.setTimeout(() => {
+            cupd.textContent = prev;
+          }, 2200);
+        }
+      } finally {
+        checking = false;
+      }
+    };
+
+    $('ub-later')?.addEventListener('click', () => {
+      $('updbar').style.display = 'none';
+    });
+    cupd?.addEventListener('click', () => void runCheck(true));
+    // Silent check on launch — only when the device reports it's online.
+    if (navigator.onLine !== false) void runCheck(false);
+  }
+}

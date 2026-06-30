@@ -40,6 +40,35 @@ needs a real (secret) keystore — a later step.
   debug APK from an unverified developer. Tap **Подробнее → Установить всё равно**
   (More details → Install anyway). It's the same code you build here.
 
+## In-app auto-update
+
+Install once; after that the app updates itself — no need to keep re-downloading from
+the release page. On launch (when online) and via **«Проверить обновления»** on the
+welcome screen, the app checks the rolling `alpha` release and, if a newer build exists,
+shows a **«Доступна новая сборка»** banner. Tapping **«Обновить»** downloads the new APK
+in-app and opens the system installer; because every build shares the committed debug
+signature, it installs straight over the top, keeping your data.
+
+How it's wired (all four pieces ship together so the running build and the published
+build are compared on the same integer):
+
+- **versionCode = git commit count** (monotonic), `versionName = alpha-<sha>` — stamped
+  into the APK by `patch-updater.mjs` and baked into the web layer as `window.__BUILD__`
+  by `inject-build.mjs` (CI `Compute build version` step → `$GITHUB_ENV`).
+- The release **body** carries a machine marker `<!-- void:versionCode=N void:sha=X -->`.
+- `prototype/src/updater.ts` reads `window.__BUILD__`, fetches the release via the
+  CORS-enabled GitHub REST API, compares versionCode, and surfaces the banner. It is
+  **dormant in the browser / dev build** (no `__BUILD__`), where content is always live.
+- The native side (`patch-updater.mjs` → `MainActivity.java`) adds
+  `REQUEST_INSTALL_PACKAGES` + a `FileProvider`, intercepts the APK download via the
+  WebView `DownloadListener` → `DownloadManager`, and fires the install intent on
+  completion. The download notification stays visible as a manual fallback if a device
+  blocks the auto-launched installer.
+
+> Authenticity caveat: the debug keystore is committed (public), so the signature proves
+> only "built by this pipeline's key", not a secret identity. Fine for an alpha; a real
+> (secret) release keystore is the Play-Store step.
+
 ## Get the APK as a CI artifact (any branch build)
 
 Each run also uploads the APK as an artifact (handy for `claude/*` branch builds that
@@ -61,9 +90,14 @@ npm run apk          # sync → brand (icon/splash + landscape) → ./gradlew as
 ```
 
 `npm run apk` runs `npm run brand` between sync and the Gradle build:
-`capacitor-assets generate --android` (icons + splash from `assets/`) then
+`capacitor-assets generate --android` (icons + splash from `assets/`), then
 `node patch-android.mjs` (enables rotation — `fullUser` + in-place `configChanges`
-so rotating never reloads the WebView / drops game state).
+so rotating never reloads the WebView / drops game state), then `node patch-updater.mjs`
+(wires the in-app updater: install permission + FileProvider + MainActivity download/
+install hook, and stamps `versionCode`/`versionName` from `VOID_VC`/`VOID_VN` when set).
+A local build leaves `versionCode 1` and ships no `window.__BUILD__`, so its updater stays
+dormant — those are injected by CI from the git commit count; the native hook still
+compiles locally, which is the point of running it here.
 
 Requirements: JDK 17, Android SDK (set `ANDROID_HOME`), and accepted SDK licenses.
 `gradlew` downloads its own Gradle. Capacitor 6 ⇒ JDK 17.

@@ -28,6 +28,21 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
+          fetch-depth: 0 # full history so the commit count = a monotonic versionCode
+
+      # Build identity baked into BOTH the APK and the release: versionCode = commit count
+      # (monotonic, so every rolling build is a strictly newer update), versionName/sha for
+      # display. The in-app updater (prototype/src/updater.ts) compares these integers.
+      - name: Compute build version
+        run: |
+          VC=$(git rev-list --count HEAD)
+          SHA=$(git rev-parse --short HEAD)
+          {
+            echo "VOID_VC=$VC"
+            echo "VOID_SHA=$SHA"
+            echo "VOID_VN=alpha-$SHA"
+          } >> "$GITHUB_ENV"
+          echo "build version: versionCode=$VC versionName=alpha-$SHA"
 
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4 (version from package.json "packageManager")
 
@@ -51,6 +66,8 @@ jobs:
         run: |
           mkdir -p www
           cp ../prototype/dist/void-dominion.html www/index.html
+          # Bake window.__BUILD__ into the packaged HTML so the APK knows its own version.
+          node inject-build.mjs www/index.html "$VOID_VC" "$VOID_SHA"
           npm install
 
       - name: Generate the Android project
@@ -64,6 +81,9 @@ jobs:
         run: |
           npx capacitor-assets generate --android
           node patch-android.mjs
+          # Wire the in-app updater (install permission + FileProvider + MainActivity hook)
+          # and stamp versionCode/versionName (VOID_VC / VOID_VN from the env above).
+          node patch-updater.mjs
 
       # Sign with a COMMITTED debug keystore (standard android/android credentials —
       # not a secret) so every build has the SAME signature. Without this, the Gradle
@@ -95,12 +115,18 @@ jobs:
         run: |
           cp mobile/android/app/build/outputs/apk/debug/app-debug.apk void-dominion-alpha.apk
           {
-            echo "Rolling alpha — the latest debug APK built from main (${GITHUB_SHA:0:7})."
+            echo "Rolling alpha — the latest debug APK built from main (${VOID_SHA})."
+            echo
+            # Machine-readable marker the in-app updater parses (prototype/src/updater.ts):
+            # it compares this versionCode against the installed build's baked one.
+            echo "<!-- void:versionCode=${VOID_VC} void:sha=${VOID_SHA} -->"
+            echo "Build: alpha-${VOID_SHA} · versionCode ${VOID_VC}."
             echo
             echo "Install on Android:"
             echo "1. Download void-dominion-alpha.apk below."
             echo "2. Open it; allow \"install from unknown sources\" if prompted."
             echo "3. Launch — single-player works fully offline. Rotates freely (phone / tablet)."
+            echo "Once installed, the app checks this release on launch and offers a one-tap update."
             echo
             echo "Debug-signed (testing only, not Play-Store ready). For multiplayer, point the"
             echo "connect screen at a host running pnpm dev:proto-server (see docs/multiplayer.md)."

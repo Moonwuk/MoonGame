@@ -675,6 +675,21 @@ button.b:disabled{opacity:.32;cursor:not-allowed;color:var(--dim);border-color:v
 .fitpane .hgradeline.g-legendary{color:var(--amber);}
 .fitpane .hgradeline.g-main{color:var(--grn);}
 
+/* in-app APK update banner + manual check (APK only; updater.ts toggles visibility) */
+#connect #updbar{display:none;margin:14px 0 0;padding:12px 14px;border:1px solid var(--cyan);border-radius:10px;
+  background:rgba(53,214,230,.10);box-shadow:0 0 22px rgba(53,214,230,.12);}
+#connect #updbar .ub-t{font-size:12px;color:var(--cyan-dim);letter-spacing:.5px;line-height:1.5;}
+#connect #updbar .ub-t b{color:var(--ink);}
+#connect #updbar .ub-row{display:flex;gap:10px;margin-top:10px;}
+#connect #updbar .ub-go{flex:1;text-align:center;padding:11px 10px;border-radius:8px;border:1px solid var(--cyan);
+  background:rgba(53,214,230,.18);color:var(--cyan);font-size:13px;letter-spacing:1px;text-decoration:none;cursor:pointer;}
+#connect #updbar .ub-go:active{background:rgba(53,214,230,.3);}
+#connect #updbar .ub-later{flex:none;padding:11px 16px;border-radius:8px;border:1px solid var(--line-hi);
+  background:transparent;color:var(--dim);font-size:12px;cursor:pointer;}
+#connect .cupd{flex:none;width:100%;margin-top:10px;padding:9px 10px;border:1px dashed var(--line-hi);border-radius:8px;
+  background:transparent;color:var(--cyan-dim);font-size:12px;letter-spacing:.5px;cursor:pointer;}
+#connect .cupd:active{background:rgba(53,214,230,.12);}
+#connect .cver{margin-top:8px;text-align:center;font-size:10px;letter-spacing:.5px;color:var(--dim);opacity:.8;}
 /* === DEV TEST MODE — self-contained; delete this whole block to cut the styles === */
 #connect .tm-open{flex:none;width:100%;margin-top:10px;border-style:dashed;border-color:var(--line-hi);color:var(--cyan-dim);}
 #connect .tm-open:active{background:rgba(53,214,230,.12);}
@@ -909,6 +924,16 @@ const html = `<!doctype html>
       </div>
       <div id="cstatus" class="cstat"></div>
     </div>
+    <!-- in-app APK update (APK only; dormant in the browser — driven by updater.ts) -->
+    <div id="updbar">
+      <div class="ub-t">Доступна новая сборка <b id="ub-ver"></b></div>
+      <div class="ub-row">
+        <a id="ub-go" class="ub-go" href="#" rel="noopener">Обновить</a>
+        <button id="ub-later" class="ub-later" type="button">Позже</button>
+      </div>
+    </div>
+    <button id="cupd" class="cupd" type="button" style="display:none">Проверить обновления</button>
+    <div id="cver" class="cver"></div>
     <!-- DEV TEST MODE — remove this button (and the #testmode block + CSS + main.ts hook) to cut the feature -->
     <button id="ctest" class="cbtn ghost tm-open">🧪 Тесты · режим разработчика</button>
     <!-- /DEV TEST MODE -->
