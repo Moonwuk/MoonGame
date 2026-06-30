@@ -320,7 +320,7 @@ const CARDINAL: ReadonlyArray<readonly [number, number]> = [
   [-1, 0],
   [1, 0],
 ];
-const ORBIT_COLOR = { near: '#ffb15f', far: '#7df0d0' } as const; // hot zone / safe ring
+const ORBIT_COLOR = '#7df0d0'; // the single orbit ring (GDD §7.4 — no near/far split)
 
 // --- state -------------------------------------------------------------------
 
@@ -1056,7 +1056,7 @@ function fleetDivisionsHtml(f: Fleet, here: Planet): string {
   return g;
 }
 
-const ORBIT_R: Record<'near' | 'far', number> = { near: 30, far: 50 };
+const ORBIT_R = 44; // single orbit-ring radius in screen px (before the zoom bloom)
 // Past this camera zoom the orbital layer "opens up": rings widen and stationed
 // fleets start to circle their planet. Below it everything stays static (and
 // fixed-size), exactly as before — cheap at the whole-map view where it'd be invisible.
@@ -1075,14 +1075,10 @@ function orbitZoom(): number {
 }
 /** Orbit-ring radius for a planet at the current zoom, in screen px. The base radius
  *  blooms with zoom (orbitZoom), but is capped to a fraction of the on-screen gap to the
- *  nearest LINKED neighbour so a ring never spills onto the adjacent sectors — zoomed in
- *  tight on a phone the un-capped rings reached their neighbours and looked messy. Both
- *  rings scale by the one factor so the near/far proportion holds; fleets sit on this same
- *  radius (so a chevron never floats off its ring). */
-function orbitRingRadius(
-  pl: { position: { x: number; y: number }; links?: string[] },
-  orb: 'near' | 'far',
-): number {
+ *  nearest LINKED neighbour so the ring never spills onto the adjacent sectors — zoomed in
+ *  tight on a phone the un-capped ring reached its neighbours and looked messy. Fleets sit
+ *  on this same radius (so a chevron never floats off the ring). */
+function orbitRingRadius(pl: { position: { x: number; y: number }; links?: string[] }): number {
   const pc = world(pl.position);
   let nearest = Infinity;
   for (const nb of pl.links ?? []) {
@@ -1091,26 +1087,22 @@ function orbitRingRadius(
     const npc = world(np.position);
     nearest = Math.min(nearest, Math.hypot(npc.x - pc.x, npc.y - pc.y));
   }
-  // cap the OUTER (far) ring at ~40% of the gap to the nearest neighbour, then scale both
-  // rings by that one factor (so two adjacent rings keep a gap and never cover a node).
-  const scale = nearest === Infinity ? orbitZoom() : Math.min(orbitZoom(), (nearest * 0.4) / ORBIT_R.far);
-  return ORBIT_R[orb] * scale;
+  // cap the ring at ~40% of the gap to the nearest neighbour, then scale by zoom (so two
+  // adjacent rings keep a gap and the ring never covers a neighbouring node).
+  const scale = nearest === Infinity ? orbitZoom() : Math.min(orbitZoom(), (nearest * 0.4) / ORBIT_R);
+  return ORBIT_R * scale;
 }
 /** Angular position (radians) of a stationed fleet's orbit slot at index `idx` of
  *  `nPeers` sharing the ring — fanned out, and spinning when zoomed in close. */
-function orbitAngle(orbit: 'near' | 'far', idx: number, nPeers: number): number {
+function orbitAngle(idx: number, nPeers: number): number {
   let a = -Math.PI / 2 + (idx - (nPeers - 1) / 2) * 0.55;
-  if (orbitsLive()) {
-    // inner (near) ring sweeps a touch faster than the outer (far) one
-    const speed = orbit === 'near' ? 0.00052 : 0.00034; // rad/ms
-    a += orbitPhase * speed;
-  }
+  if (orbitsLive()) a += orbitPhase * 0.00052; // the single ring's steady sweep (rad/ms)
   return a;
 }
 
 /** Screen anchor (+ heading) for a fleet's chevron: the interpolated lane
- *  position while moving, or a slot on its near/far orbit ring while stationed
- *  (fleets sharing a ring are fanned out so they don't overlap). */
+ *  position while moving, or a slot on the orbit ring while stationed
+ *  (fleets sharing the ring are fanned out so they don't overlap). */
 function fleetAnchor(f: Fleet): { x: number; y: number; ang: number } | null {
   if (f.movement || !f.location) {
     const mp = fleetPos(f);
@@ -1132,16 +1124,14 @@ function fleetAnchor(f: Fleet): { x: number; y: number; ang: number } | null {
   const pl = s.planets[f.location];
   if (!pl) return null;
   const pc = world(pl.position);
-  const orbit = f.orbit ?? 'far';
-  const peers = Object.values(s.fleets).filter(
-    (g) => g.location === f.location && !g.movement && (g.orbit ?? 'far') === orbit,
-  );
+  // a single orbit: every stationed (non-transit) fleet here shares the one ring
+  const peers = Object.values(s.fleets).filter((g) => g.location === f.location && !g.movement);
   const idx = Math.max(
     0,
     peers.findIndex((g) => g.id === f.id),
   );
-  const a0 = orbitAngle(orbit, idx, peers.length);
-  const r = orbitRingRadius(pl, orbit);
+  const a0 = orbitAngle(idx, peers.length);
+  const r = orbitRingRadius(pl);
   // when circling, the chevron faces along its travel (tangent); static = radial as before
   const ang = orbitsLive() ? a0 + Math.PI / 2 : a0;
   return { x: pc.x + Math.cos(a0) * r, y: pc.y + Math.sin(a0) * r, ang };
@@ -2789,7 +2779,7 @@ function render(now: number) {
     cx.restore();
   }
 
-  // orbit rings around any CITY that holds a stationed fleet (near vs far).
+  // the orbit ring around any CITY that holds a stationed fleet (a single orbit).
   // Asteroid-field junctions have no orbits, so they are skipped.
   const stationed: Record<string, Fleet[]> = {};
   for (const f of Object.values(s.fleets))
@@ -2806,24 +2796,17 @@ function render(now: number) {
     if (!SECTOR_TYPES[SECTOR_OF[pid]]?.orbit && !fortified) continue;
     const pc = world(pl.position);
     if (!visible(pc, 80)) continue;
-    for (const orb of ['far', 'near'] as const) {
-      const warm = orb === 'near'; // near = hot zone (bombard / AA reaches), far = safe
-      const rr = orbitRingRadius(pl, orb);
-      cx.save();
-      cx.setLineDash(warm ? [2, 5] : [7, 6]);
-      cx.lineDashOffset = warm ? now / 200 : -now / 280;
-      cx.strokeStyle = rgba(ORBIT_COLOR[orb], warm ? 0.42 : 0.22);
-      cx.lineWidth = warm ? 1.3 : 1;
-      cx.beginPath();
-      cx.arc(pc.x, pc.y, rr, 0, TAU);
-      cx.stroke();
-      cx.setLineDash([]);
-      cx.fillStyle = rgba(ORBIT_COLOR[orb], 0.7);
-      cx.font = '700 7px ui-monospace,Menlo,monospace';
-      cx.textAlign = 'center';
-      cx.fillText(warm ? 'NEAR' : 'FAR', pc.x, pc.y + rr + 8);
-      cx.restore();
-    }
+    // A single orbit ring (GDD §7.4) — one orbit, so no N/F labels cluttering the map.
+    const rr = orbitRingRadius(pl);
+    cx.save();
+    cx.setLineDash([2, 5]);
+    cx.lineDashOffset = now / 200;
+    cx.strokeStyle = rgba(ORBIT_COLOR, 0.4);
+    cx.lineWidth = 1.3;
+    cx.beginPath();
+    cx.arc(pc.x, pc.y, rr, 0, TAU);
+    cx.stroke();
+    cx.restore();
   }
 
   // fleets — glowing chevrons on their orbit ring (stationed) or along the lane
@@ -2948,13 +2931,6 @@ function render(now: number) {
     cx.fillStyle = rgba(col, 0.95);
     cx.font = '700 10px ui-monospace,Menlo,monospace';
     cx.fillText(`${ships}${troops ? '+' + troops : ''}`, A.x, A.y + 20);
-
-    // orbit tag for a stationed fleet (N = near / F = far)
-    if (f.location && !f.movement) {
-      cx.fillStyle = rgba(ORBIT_COLOR[f.orbit ?? 'far'], 0.9);
-      cx.font = '700 8px ui-monospace,Menlo,monospace';
-      cx.fillText(f.orbit === 'near' ? 'N' : 'F', A.x, A.y - 12);
-    }
   }
 
   drawRadarContacts(now); // swept enemy signatures — last-known ghosts until repainted
@@ -3081,11 +3057,11 @@ function panelHtml(): string {
     if (f) {
       const nShips = sumUnits(f.units);
       const nTr = sumUnits(f.landing ?? []);
-      const orbit = f.orbit ?? '—';
+      const inOrbit = f.orbit === 'near';
       let h = cardHeader(
         ownerColor(f.owner),
         'FLEET',
-        `${nShips} ships · ${nTr} troops · orbit ${orbit}${f.bombarding ? ' · ⊗ bombarding' : ''}`,
+        `${nShips} ships · ${nTr} troops${inOrbit ? ' · in orbit' : ''}${f.bombarding ? ' · ⊗ bombarding' : ''}`,
       );
       // Aggregate combat weight, summed across the squadron's ships (it moves at its
       // slowest hull). The hero aura (+5%, noted below) is not folded into these totals.
@@ -3164,23 +3140,17 @@ function panelHtml(): string {
         // enemy/neutral world you can act on — empty space is pass-through only
         const hostile = here!.owner !== f.owner && (SECTOR_TYPES[SECTOR_OF[here!.id]]?.capturable ?? false);
         const cols: string[] = [];
-        // orbit toggle
-        let ob = `<div class="sec">Orbit · ${esc(here!.id)}</div><div class="row">`;
-        ob += btn('orbit', 'near', '▼ Descend (near)', orbit !== 'near');
-        ob += btn('orbit', 'far', '▲ Pull back (far)', orbit !== 'far');
-        ob += `</div>`;
-        cols.push(ob);
         if (hostile) {
           let at = `<div class="sec">Strike</div><div class="row">`;
           at += btn(
             'bombard',
             f.bombarding ? 'off' : 'on',
             f.bombarding ? '⊗ Stop bombard' : '⊗ Bombard',
-            orbit === 'near' && nShips > 0,
+            inOrbit && nShips > 0,
           );
-          at += btn('assault', '', '⚔ Assault', orbit === 'near');
+          at += btn('assault', '', '⚔ Assault', inOrbit);
           at += `</div>`;
-          at += `<div class="hint">Near orbit lets you bombard (wears buildings &amp; freezes their output) but the garrison's AA reaches you; far orbit is safe. Assault lands your carried troops against the garrison.</div>`;
+          at += `<div class="hint">In orbit you can bombard (wears buildings &amp; freezes their output), but the garrison's AA reaches you. Assault lands your carried troops against the garrison.</div>`;
           cols.push(at);
         }
         // load / unload ground army at your own world
@@ -3302,7 +3272,7 @@ function panelHtml(): string {
         const fShips = sumUnits(f.units);
         const tr = sumUnits(f.landing ?? []);
         const sel = f.owner === ME ? btn('selfleet', f.id, 'Select →', true) : '';
-        orbit += `<div class="asset-row" data-desc="fleet" style="color:${ownerColor(f.owner)}"><span class="bicon">▲</span><b>${fShips} ships${tr ? ' +' + tr + ' troops' : ''}</b><span class="dim">orbit ${f.orbit ?? 'far'}</span>${sel}</div>`;
+        orbit += `<div class="asset-row" data-desc="fleet" style="color:${ownerColor(f.owner)}"><span class="bicon">▲</span><b>${fShips} ships${tr ? ' +' + tr + ' troops' : ''}</b>${sel}</div>`;
       }
       cols.push(orbit);
     }
@@ -4044,8 +4014,6 @@ function renderCmdBar() {
   const fleets = ids.map((id) => s.fleets[id]).filter((f): f is Fleet => !!f);
   const anyMoving = fleets.some((f) => f.movement);
   const docked = fleets.filter((f) => f.location && !f.movement && !f.battleId);
-  const anyDocked = docked.length > 0;
-  const anyFar = docked.some((f) => (f.orbit ?? 'far') === 'far');
   const canAssault = docked.some(
     (f) =>
       f.orbit === 'near' &&
@@ -4053,7 +4021,6 @@ function renderCmdBar() {
       s.planets[f.location]?.owner !== f.owner &&
       SECTOR_TYPES[SECTOR_OF[f.location]]?.capturable, // empty space can't be taken
   );
-  const descend = anyFar; // at least one far → primary orbit action is descend to near
   // Merge: a group fuses in one tap; a lone fleet arms target-pick (needs a partner).
   const myFleetTotal = Object.values(s.fleets).filter((f) => f.owner === ME).length;
   const canMerge = ids.length >= 2 || (ids.length === 1 && myFleetTotal >= 2);
@@ -4067,7 +4034,6 @@ function renderCmdBar() {
     cmdBtn('move', '⤳', 'Move', aiming ? 'on' : '', false) +
     cmdBtn('stop', '■', 'Stop', 'danger', !anyMoving) +
     cmdBtn('attack', '⚔', 'Attack', '', !canAssault) +
-    cmdBtn(descend ? 'near' : 'far', descend ? '▼' : '▲', descend ? 'Near' : 'Far', '', !anyDocked) +
     (anyArtillery ? cmdBtn('barrage', '🎯', 'Обстрел', barrageAim ? 'on' : '', false) : '') +
     cmdBtn('merge', '⛬', ids.length > 1 ? 'Merge' : 'Merge…', merging ? 'on' : '', !canMerge) +
     cmdBtn('split', '⊟', 'Split', splitState ? 'on' : '', !canSplit);
@@ -4210,8 +4176,6 @@ side.addEventListener('click', (ev) => {
     playerOrder(mobilizeDivision(ME, selPlanet!, Number(arg)));
   } else if (act === 'capital') {
     playerOrder(designateCapital(ME, selPlanet!));
-  } else if (act === 'orbit') {
-    playerOrder(orbitFleet(ME, selFleet!, arg as 'near' | 'far'));
   } else if (act === 'bombard') {
     playerOrder(bombardFleet(ME, selFleet!, arg === 'on'));
   } else if (act === 'barragemode') {
@@ -4275,12 +4239,6 @@ cmdbar.addEventListener('click', (ev) => {
     for (const id of ids) if (s.fleets[id]?.movement) playerOrder(stopFleet(ME, id));
   } else if (cmd === 'attack') {
     for (const id of ids) if (s.fleets[id]?.orbit === 'near') playerOrder(assaultFleet(ME, id));
-    aiming = false;
-  } else if (cmd === 'near' || cmd === 'far') {
-    for (const id of ids) {
-      const f = s.fleets[id];
-      if (f?.location && !f.movement) playerOrder(orbitFleet(ME, id, cmd));
-    }
     aiming = false;
   } else if (cmd === 'split') {
     const id = ids[0];
