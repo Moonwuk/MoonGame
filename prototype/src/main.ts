@@ -364,6 +364,7 @@ type SessionMsg = {
   sys: boolean;
   ping?: string;
   pingId?: string;
+  realAt?: number; // wall-clock ms at creation, for the chat's "real time" stamp
 };
 const COALITION = 'coalition';
 const CH_SESSION = 'session'; // everyone in this match
@@ -373,17 +374,36 @@ let sessionMessages: SessionMsg[] = [];
 // --- floating chat window (desktop only) -------------------------------------
 // A movable/resizable in-game chat overlay (bottom-left by default). It reuses the
 // session message store + convoLineHtml; geometry/opacity/font are applied inline so a
-// frame never rebuilds it. Settings live in a popover flown out to its right.
+// frame never rebuilds it. Settings live in a popover flown out to its right, and are
+// cached client-side (localStorage) — never round-tripped to the server.
 let chatOpen = false;
 let chatMin = false; // collapsed to just its title bar
-let chatPinned = false; // position locked (move handle disabled)
+let chatPinned = false; // position + size locked (drag/resize disabled)
 let chatSettingsOpen = false;
-let chatPlaced = false; // has it been parked bottom-left at least once?
+let chatPlaced = false; // has it been parked / restored at least once?
 let chatTab: string = CH_SESSION; // the open channel/DM key
 const chatGeom = { x: 12, y: 0, w: 360, h: 300 }; // CSS px; y is set on first open
-const chatCfg = { fontPx: 13, transparency: 8, censor: false, color: '' };
+// Message-stamp toggles (showDay/showTime/showReal) ride along in the cached config.
+const chatCfg = {
+  fontPx: 13,
+  transparency: 8,
+  censor: false,
+  color: '',
+  showDay: true,
+  showTime: true,
+  showReal: false,
+};
 // Active move/resize gesture: pointer origin + the geometry snapshot we drag from.
-let chatDrag: { mode: 'move' | 'resize'; px: number; py: number; gx: number; gy: number; gw: number; gh: number } | null = null;
+let chatDrag: {
+  mode: 'move' | 'resize';
+  dir: string;
+  px: number;
+  py: number;
+  gx: number;
+  gy: number;
+  gw: number;
+  gh: number;
+} | null = null;
 let diploOpen = false;
 let diploTab: 'diplo' | 'msgs' = 'diplo';
 let diploSort: 'name' | 'worlds' | 'stance' = 'stance';
@@ -3744,12 +3764,20 @@ function isAiSeat(id: string): boolean {
 function diploSeats(): string[] {
   return SEAT_META.map((m) => m.id).filter((id) => !!s.players[id]);
 }
-/** `Day N · HH:MM` stamp for a sim time (mirrors the status strip). */
-function fmtStamp(at: number): string {
-  const d = floor(at / DAY) + 1;
-  const h = floor((at % DAY) / HOUR);
-  const m = floor((at % HOUR) / 60000);
-  return `D${d} ${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+type StampOpts = { day?: boolean; time?: boolean; real?: boolean; realAt?: number };
+/** Message stamp. Defaults to `Day N · HH:MM` (game day + game time, mirrors the status
+ *  strip); the chat passes toggles to add/drop fields and append the real wall-clock. */
+function fmtStamp(at: number, opts?: StampOpts): string {
+  const o = opts ?? { day: true, time: true };
+  const p2 = (n: number) => String(n).padStart(2, '0');
+  const parts: string[] = [];
+  if (o.day) parts.push(`D${floor(at / DAY) + 1}`);
+  if (o.time) parts.push(`${p2(floor((at % DAY) / HOUR))}:${p2(floor((at % HOUR) / 60000))}`);
+  if (o.real && o.realAt != null) {
+    const dt = new Date(o.realAt);
+    parts.push(`⌚${p2(dt.getHours())}:${p2(dt.getMinutes())}`);
+  }
+  return parts.join(' ');
 }
 
 /** Deterministic AI verdict on a proposal to warm relations, by relative strength
@@ -3771,7 +3799,7 @@ function aiAcceptsStance(target: string, to: DiplomaticStance): boolean {
 
 /** Append a line to the session log (bounded). Patches the feed if it's on screen. */
 function pushMsg(to: string, text: string, sys: boolean, from = ME, ping?: string): void {
-  sessionMessages.push({ at: s.time, from, to, text, sys, ping });
+  sessionMessages.push({ at: s.time, from, to, text, sys, ping, realAt: Date.now() });
   if (sessionMessages.length > 300) sessionMessages.shift();
   if (diploOpen && diploTab === 'msgs') renderDiploFeed();
   if (chatOpen && !chatMin) renderChatFeed();
@@ -3895,9 +3923,11 @@ function convoLast(key: string): SessionMsg | undefined {
 function fromName(id: string): string {
   return id === ME ? 'Вы' : NAME[id] ?? id;
 }
-/** One message line. A ping renders as a clickable marker that flies the camera. */
-function convoLineHtml(m: SessionMsg): string {
-  const t = fmtStamp(m.at);
+/** One message line. A ping renders as a clickable marker that flies the camera.
+ *  `stamp` overrides which time fields show (the chat passes its cached toggles);
+ *  omitted → the default `Day N · HH:MM` used by the diplomacy feed. */
+function convoLineHtml(m: SessionMsg, stamp?: StampOpts): string {
+  const t = fmtStamp(m.at, stamp && { ...stamp, realAt: m.realAt });
   if (m.ping) {
     return (
       `<div class="dp-line ping" data-ping="${esc(m.ping)}"><span class="dp-when">${t}</span>` +
@@ -3909,7 +3939,7 @@ function convoLineHtml(m: SessionMsg): string {
 }
 function convoFeedInnerHtml(key: string): string {
   const msgs = convoMessages(key);
-  if (msgs.length) return msgs.map(convoLineHtml).join('');
+  if (msgs.length) return msgs.map((m) => convoLineHtml(m)).join('');
   return `<div class="dp-empty">${key === COALITION ? 'Чат коалиции пуст.<br>Отметьте провинцию пингом 📍 или напишите.' : 'Сообщений пока нет.'}</div>`;
 }
 /** Left column: the coalition channel pinned on top, then a DM per participant
@@ -5329,8 +5359,10 @@ function connect(): void {
           sys: false,
           ping: node,
           pingId: ping.id,
+          realAt: Date.now(),
         });
         if (diploOpen && diploTab === 'msgs') renderDiploFeed();
+        if (chatOpen && !chatMin) renderChatFeed();
       },
       onPingRemoved: (pingId: string) => {
         sessionMessages = sessionMessages.filter((m) => m.pingId !== pingId);
@@ -5846,17 +5878,21 @@ function applyChatGeom(): void {
   st.top = chatGeom.y + 'px';
   st.width = chatGeom.w + 'px';
   st.height = chatMin ? 'auto' : chatGeom.h + 'px';
-  // Transparency adjusts the background alpha (not element opacity) so the settings
-  // popover and text stay crisp at any setting.
-  const a = 0.82 * (1 - chatCfg.transparency / 100);
-  st.background = `rgba(3,14,18,${a.toFixed(3)})`;
+  // Transparency fades both the fill AND the frame (not element opacity — that would
+  // dim the settings popover and text too). Background and border alpha track together.
+  const k = 1 - chatCfg.transparency / 100;
+  st.background = `rgba(3,14,18,${(0.82 * k).toFixed(3)})`;
+  st.borderColor = `rgba(53,214,230,${k.toFixed(3)})`;
   const feed = document.getElementById('cw-feed') as HTMLElement | null;
   if (feed) feed.style.fontSize = chatCfg.fontPx + 'px';
 }
 function chatFeedInnerHtml(key: string): string {
   const msgs = convoMessages(key);
   if (!msgs.length) return `<div class="cw-empty">Канал «${esc(chatChannelLabel(key))}» пуст.<br>Напишите первое сообщение.</div>`;
-  return msgs.map((m) => convoLineHtml(chatCfg.censor ? { ...m, text: censorText(m.text) } : m)).join('');
+  const stamp: StampOpts = { day: chatCfg.showDay, time: chatCfg.showTime, real: chatCfg.showReal };
+  return msgs
+    .map((m) => convoLineHtml(chatCfg.censor ? { ...m, text: censorText(m.text) } : m, stamp))
+    .join('');
 }
 function renderChatFeed(): void {
   const feed = document.getElementById('cw-feed');
@@ -5864,23 +5900,27 @@ function renderChatFeed(): void {
   feed.innerHTML = chatFeedInnerHtml(chatTab);
   (feed as HTMLElement).scrollTop = (feed as HTMLElement).scrollHeight;
 }
-/** Settings popover (flown out to the right): size fields, font, colour (sub-only),
- *  censor, transparency. Inputs carry data-cset; their handler patches state live. */
+/** Settings popover (flown out to the right): size (h,w on one line), font, colour
+ *  (sub-only, label inline), censor, transparency, and the message-stamp toggles.
+ *  Inputs carry data-cset; their handler patches state live and caches it. */
 function chatSettingsHtml(): string {
   const maxW = Math.max(220, Math.floor(VW / 2));
   const maxH = Math.max(150, Math.floor(VH / 2));
+  const chk = (on: boolean) => (on ? ' checked' : '');
   return (
     `<div class="cw-set">` +
     `<h4>НАСТРОЙКИ</h4>` +
-    `<div class="cw-srow"><label>Ширина, px</label><input type="number" data-cset="w" min="220" max="${maxW}" value="${chatGeom.w}"></div>` +
-    `<div class="cw-srow"><label>Высота, px</label><input type="number" data-cset="h" min="150" max="${maxH}" value="${chatGeom.h}"></div>` +
-    `<div class="cw-dim">макс. — половина экрана (${maxW}×${maxH})</div>` +
+    `<div class="cw-srow"><label>Размер h,w</label>` +
+    `<input type="number" data-cset="h" min="150" max="${maxH}" value="${chatGeom.h}">` +
+    `<input type="number" data-cset="w" min="220" max="${maxW}" value="${chatGeom.w}"></div>` +
     `<div class="cw-srow"><label>Шрифт, пт</label><input type="number" data-cset="font" min="8" max="42" value="${chatCfg.fontPx}"></div>` +
-    `<div class="cw-srow"><label>Цвет шрифта</label><input type="color" data-cset="color" value="#7fe7ff" disabled></div>` +
-    `<div class="cw-sub">🔒 только по подписке</div>` +
-    `<div class="cw-srow"><label>Цензура</label><input type="checkbox" data-cset="censor"${chatCfg.censor ? ' checked' : ''}></div>` +
-    `<div class="cw-srow"><label>Прозрачность</label><input type="range" data-cset="opacity" min="0" max="100" value="${chatCfg.transparency}"></div>` +
-    `<div class="cw-dim">${chatCfg.transparency}%</div>` +
+    `<div class="cw-srow"><label>Цвет шрифта</label><input type="color" data-cset="color" value="#7fe7ff" disabled><span class="cw-sub">🔒 подписка</span></div>` +
+    `<div class="cw-srow"><label>Цензура</label><input type="checkbox" data-cset="censor"${chk(chatCfg.censor)}></div>` +
+    `<div class="cw-srow"><label>Прозрачность</label><input type="range" data-cset="opacity" min="0" max="100" value="${chatCfg.transparency}"><span class="cw-opval">${chatCfg.transparency}%</span></div>` +
+    `<div class="cw-shdr">Штамп сообщений</div>` +
+    `<div class="cw-srow"><label>День</label><input type="checkbox" data-cset="showDay"${chk(chatCfg.showDay)}></div>` +
+    `<div class="cw-srow"><label>Время</label><input type="checkbox" data-cset="showTime"${chk(chatCfg.showTime)}></div>` +
+    `<div class="cw-srow"><label>Реальное время</label><input type="checkbox" data-cset="showReal"${chk(chatCfg.showReal)}></div>` +
     `</div>`
   );
 }
@@ -5903,33 +5943,64 @@ function renderChat(): void {
     )
     .join('');
   win.innerHTML =
-    `<div class="cw-head">` +
+    `<div class="cw-head" data-cwhead title="${chatPinned ? '' : 'Тащите за шапку, чтобы переместить'}">` +
     `<span class="cw-title">ЧАТ — ${esc(chatChannelLabel(chatTab))}</span>` +
-    `<button class="cw-btn${chatPinned ? ' on' : ''}" data-cwact="pin" title="Закрепить положение">📎</button>` +
-    `<button class="cw-btn cw-move" data-cwmove title="Переместить (тащите)">✥</button>` +
+    `<button class="cw-btn${chatPinned ? ' on' : ''}" data-cwact="pin" title="Закрепить размер и положение">📎</button>` +
     `<button class="cw-btn${chatSettingsOpen ? ' on' : ''}" data-cwact="settings" title="Настройки">⚙</button>` +
     `<button class="cw-btn" data-cwact="min" title="${chatMin ? 'Развернуть' : 'Свернуть'}">${chatMin ? '▢' : '—'}</button>` +
     `</div>` +
     `<div class="cw-tabs">${tabs}</div>` +
     `<div class="cw-feed" id="cw-feed">${chatFeedInnerHtml(chatTab)}</div>` +
     `<div class="cw-compose"><input id="cw-text" type="text" maxlength="240" placeholder="Сообщение…" autocomplete="off"><button class="cw-send" data-cwact="send" title="Отправить">▶</button></div>` +
-    `<div class="cw-resize" data-cwresize></div>` +
     (chatSettingsOpen ? chatSettingsHtml() : '');
   applyChatGeom();
   const feed = document.getElementById('cw-feed') as HTMLElement | null;
   if (feed) feed.scrollTop = feed.scrollHeight;
+}
+const CHAT_STORE_KEY = 'vd.chat.v1';
+/** Persist chat preferences client-side (localStorage) — never on the server, so the
+ *  same machine reopens to the same look. Geometry, pin and every setting ride along. */
+function saveChat(): void {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    localStorage.setItem(
+      CHAT_STORE_KEY,
+      JSON.stringify({ cfg: chatCfg, geom: chatGeom, pinned: chatPinned }),
+    );
+  } catch {
+    /* storage disabled / full — preferences just won't persist */
+  }
+}
+/** Restore cached chat preferences (once, at startup). Marks the window placed so its
+ *  first open uses the saved geometry instead of the default bottom-left parking. */
+function loadChat(): void {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    const raw = localStorage.getItem(CHAT_STORE_KEY);
+    if (!raw) return;
+    const v = JSON.parse(raw) as { cfg?: Partial<typeof chatCfg>; geom?: Partial<typeof chatGeom>; pinned?: boolean };
+    if (v.cfg) Object.assign(chatCfg, v.cfg);
+    if (v.geom) {
+      Object.assign(chatGeom, v.geom);
+      chatPlaced = true;
+    }
+    if (typeof v.pinned === 'boolean') chatPinned = v.pinned;
+  } catch {
+    /* corrupt cache — fall back to defaults */
+  }
 }
 function openChat(): void {
   if (MOBILE) return;
   chatOpen = true;
   chatMin = false;
   if (!chatPlaced) {
-    // First open: park it in the bottom-left corner.
+    // First open (no cached geometry): park it in the bottom-left corner.
     chatGeom.w = Math.min(360, Math.max(220, Math.floor(VW / 2)));
     chatGeom.h = Math.min(300, Math.max(150, Math.floor(VH / 2)));
     chatGeom.x = 12;
     chatGeom.y = Math.max(46, VH - chatGeom.h - 12);
     chatPlaced = true;
+    saveChat();
   }
   clampChatGeom();
   renderChat();
@@ -5950,35 +6021,68 @@ function sendChatMsg(): void {
     input.focus?.();
   }
 }
-/** Mirror a corner-drag back into the size fields while the settings popover is open. */
+/** Mirror a drag back into the size fields while the settings popover is open. */
 function syncChatSizeInputs(): void {
   const w = document.querySelector('[data-cset="w"]') as HTMLInputElement | null;
   const h = document.querySelector('[data-cset="h"]') as HTMLInputElement | null;
   if (w) w.value = String(chatGeom.w);
   if (h) h.value = String(chatGeom.h);
 }
+/** Which window edge (n/s/e/w + corners, or '') the pointer is within a few px of —
+ *  drives both the resize cursor and which edge a drag from here moves. */
+function chatEdgeAt(e: PointerEvent): string {
+  if (!chatwinEl) return '';
+  const r = (chatwinEl as HTMLElement).getBoundingClientRect();
+  const EDGE = 7;
+  const x = e.clientX - r.left;
+  const y = e.clientY - r.top;
+  let d = '';
+  if (y <= EDGE) d += 'n';
+  else if (y >= r.height - EDGE) d += 's';
+  if (x <= EDGE) d += 'w';
+  else if (x >= r.width - EDGE) d += 'e';
+  return d;
+}
+function chatResizeCursor(d: string): string {
+  if (d === 'n' || d === 's') return 'ns-resize';
+  if (d === 'e' || d === 'w') return 'ew-resize';
+  if (d === 'ne' || d === 'sw') return 'nesw-resize';
+  if (d === 'nw' || d === 'se') return 'nwse-resize';
+  return '';
+}
+loadChat(); // restore cached preferences before the window can be opened
 document.getElementById('rail-chat')?.addEventListener('click', () => (chatOpen ? closeChat() : openChat()));
 const chatwinEl = document.getElementById('chatwin');
 if (chatwinEl) {
-  // Start a move/resize gesture from the move handle or the corner grip.
+  // Begin a gesture: a drag near any edge resizes in that direction; a drag on the
+  // title bar moves the window. The pin (📎) locks both. Interactive controls opt out.
   chatwinEl.addEventListener('pointerdown', (e) => {
     const t = e.target as HTMLElement;
-    const onResize = !!t.closest('[data-cwresize]');
-    const onMove = !!t.closest('[data-cwmove]');
-    if (!onResize && !onMove) return;
-    if (onMove && chatPinned) return; // pinned → position locked
+    if (t.closest('button, input, .cw-tab, .cw-set')) return;
+    if (chatPinned) return;
+    const pe = e as PointerEvent;
+    const dir = chatMin ? '' : chatEdgeAt(pe); // collapsed → no resize, header still moves
+    const onHead = !!t.closest('[data-cwhead]');
+    if (!dir && !onHead) return;
     e.preventDefault();
     chatDrag = {
-      mode: onResize ? 'resize' : 'move',
-      px: (e as PointerEvent).clientX,
-      py: (e as PointerEvent).clientY,
+      mode: dir ? 'resize' : 'move',
+      dir,
+      px: pe.clientX,
+      py: pe.clientY,
       gx: chatGeom.x,
       gy: chatGeom.y,
       gw: chatGeom.w,
       gh: chatGeom.h,
     };
   });
-  // Tabs / corner buttons / send.
+  // Hover cursor: show the resize arrow when near an edge (unless pinned/collapsed).
+  chatwinEl.addEventListener('pointermove', (e) => {
+    if (chatDrag) return; // an active gesture owns the cursor
+    const dir = !chatPinned && !chatMin ? chatEdgeAt(e as PointerEvent) : '';
+    (chatwinEl as HTMLElement).style.cursor = chatResizeCursor(dir);
+  });
+  // Tabs / head buttons / send.
   chatwinEl.addEventListener('click', (e) => {
     const t = e.target as HTMLElement;
     const tab = (t.closest('[data-cwtab]') as HTMLElement | null)?.dataset.cwtab;
@@ -5991,6 +6095,7 @@ if (chatwinEl) {
     const act = (t.closest('[data-cwact]') as HTMLElement | null)?.dataset.cwact;
     if (act === 'pin') {
       chatPinned = !chatPinned;
+      saveChat();
       renderChat();
     } else if (act === 'settings') {
       chatSettingsOpen = !chatSettingsOpen;
@@ -6010,7 +6115,7 @@ if (chatwinEl) {
     }
   });
   // Live settings: size/font/opacity patch geometry in place (no rebuild → no focus
-  // loss); the censor toggle re-renders just the feed.
+  // loss); stamp + censor toggles repaint just the feed. Every change is cached.
   chatwinEl.addEventListener('input', (e) => {
     const t = e.target as HTMLInputElement;
     const k = t.dataset.cset;
@@ -6029,31 +6134,58 @@ if (chatwinEl) {
     } else if (k === 'opacity') {
       chatCfg.transparency = Math.max(0, Math.min(100, Number(t.value) || 0));
       applyChatGeom();
-      const lbl = chatwinEl.querySelector('.cw-set .cw-dim:last-child');
+      const lbl = chatwinEl.querySelector('.cw-opval');
       if (lbl) lbl.textContent = chatCfg.transparency + '%';
     } else if (k === 'censor') {
       chatCfg.censor = t.checked;
       renderChatFeed();
+    } else if (k === 'showDay') {
+      chatCfg.showDay = t.checked;
+      renderChatFeed();
+    } else if (k === 'showTime') {
+      chatCfg.showTime = t.checked;
+      renderChatFeed();
+    } else if (k === 'showReal') {
+      chatCfg.showReal = t.checked;
+      renderChatFeed();
     }
+    saveChat();
   });
 }
 if (typeof window !== 'undefined') {
   window.addEventListener('pointermove', (e) => {
     if (!chatDrag) return;
-    const dx = (e as PointerEvent).clientX - chatDrag.px;
-    const dy = (e as PointerEvent).clientY - chatDrag.py;
+    const pe = e as PointerEvent;
+    const dx = pe.clientX - chatDrag.px;
+    const dy = pe.clientY - chatDrag.py;
     if (chatDrag.mode === 'move') {
       chatGeom.x = chatDrag.gx + dx;
       chatGeom.y = chatDrag.gy + dy;
     } else {
-      chatGeom.w = chatDrag.gw + dx;
-      chatGeom.h = chatDrag.gh + dy;
+      const maxW = Math.max(220, Math.floor(VW / 2));
+      const maxH = Math.max(150, Math.floor(VH / 2));
+      const d = chatDrag.dir;
+      // Edges anchored opposite the drag: pulling 'w'/'n' moves that edge while the
+      // far edge stays put (so the box grows toward the pointer, not away from it).
+      if (d.includes('e')) chatGeom.w = chatDrag.gw + dx;
+      if (d.includes('s')) chatGeom.h = chatDrag.gh + dy;
+      if (d.includes('w')) {
+        const nw = Math.max(220, Math.min(chatDrag.gw - dx, maxW));
+        chatGeom.x = chatDrag.gx + (chatDrag.gw - nw);
+        chatGeom.w = nw;
+      }
+      if (d.includes('n')) {
+        const nh = Math.max(150, Math.min(chatDrag.gh - dy, maxH));
+        chatGeom.y = chatDrag.gy + (chatDrag.gh - nh);
+        chatGeom.h = nh;
+      }
     }
     clampChatGeom();
     applyChatGeom();
     if (chatDrag.mode === 'resize' && chatSettingsOpen) syncChatSizeInputs();
   });
   window.addEventListener('pointerup', () => {
+    if (chatDrag) saveChat(); // cache the new geometry once the drag ends
     chatDrag = null;
   });
 }
