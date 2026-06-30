@@ -126,6 +126,17 @@ function startResearch(action: Action, h: HandlerContext): void {
       return h.reject('E_PREREQUISITE');
     }
   }
+  // Day-gate: a node may stay locked until session day N. "Day" is game-time, so
+  // the threshold scales with timeScale exactly like researchTimeHours (a ×2 match
+  // reaches an era in half the wall-clock). elapsed = now − match start; gate on
+  // ctx.now (the authoritative present), never state.time (it may lag in applyAction).
+  const dayGate = def.dayGate ?? 0;
+  if (dayGate > 0) {
+    const elapsed = h.ctx.now - (h.state.startedAt ?? 0);
+    if (elapsed < hoursToMs(h.ctx, dayGate * 24)) {
+      return h.reject('E_TOO_EARLY');
+    }
+  }
   if (!canAfford(player.resources, def.cost)) {
     return h.reject('E_INSUFFICIENT');
   }

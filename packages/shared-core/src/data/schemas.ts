@@ -228,6 +228,13 @@ export const TechnologyDefSchema = z.object({
   name: z.string(),
   description: z.string().optional(),
   tier: z.number().int().positive().default(1),
+  /** Tech-tree branch (UI tab). Defaults to 'space' so existing nodes that omit
+   *  it stay valid (back-compat); squadron/missile branches may have no content yet. */
+  branch: z.enum(['ground', 'space', 'squadron', 'missile']).default('space'),
+  /** Session day from which the node becomes researchable (0 = from match start).
+   *  A "day" is game-time, timeScale-scaled — mirrors how `researchTimeHours`
+   *  compresses (enforced in the technology module). */
+  dayGate: z.number().int().nonnegative().default(0),
   cost: ResourceBagSchema.default({}),
   researchTimeHours: z.number().nonnegative().default(0),
   prerequisites: z.array(z.string()).default([]),

@@ -280,6 +280,11 @@ export interface GameState {
   version: GameVersion;
   /** Current simulation time (ms), server-authoritative. */
   time: number;
+  /** World time (ms) at which the match began — the anchor for "session day N"
+   *  gates (e.g. a technology's `dayGate`). Set to the initial `time` at creation,
+   *  so elapsed game-time = (now − startedAt) × timeScale. Optional: matches
+   *  persisted before this field existed read as 0 (all such nodes are ungated). */
+  startedAt?: number;
   /** Terminal match state and the latest scoreboard. */
   match: MatchState;
   rng: RngState;
@@ -409,6 +414,7 @@ export function createInitialState(params: {
   return {
     version: params.version,
     time: params.time ?? 0,
+    startedAt: params.time ?? 0,
     match: { status: 'ongoing', winner: null, scores: {} },
     rng: seedRng(params.seed),
     players: {},

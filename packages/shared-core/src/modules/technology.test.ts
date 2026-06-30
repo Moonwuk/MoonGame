@@ -43,6 +43,7 @@ const data: GameData = parseGameData({
     },
     logistics: {
       name: 'Logistics',
+      branch: 'space',
       cost: { credits: 10 },
       researchTimeHours: 2,
       unlocks: { units: ['dropship'] },
@@ -54,6 +55,12 @@ const data: GameData = parseGameData({
       researchTimeHours: 3,
       prerequisites: ['logistics'],
       effects: { combatDamageBonus: 0.1 },
+    },
+    blockade: {
+      name: 'Blockade',
+      cost: { metal: 10 },
+      researchTimeHours: 1,
+      dayGate: 2,
     },
   },
 });
@@ -156,6 +163,45 @@ function errCode(r: ApplyResult): string {
 }
 
 describe('technology module — session research tree', () => {
+  it('day-gate: research is locked until session day N, scaled by timeScale', () => {
+    const kernel = createKernel([technologyModule]);
+    const DAY = 24 * HOUR;
+    const st = stateWith({ players: [player('p1', { metal: 30 })] });
+
+    // blockade has dayGate 2 → unavailable before game-day 2 (state.time 0 ⇒ startedAt 0).
+    expect(errCode(kernel.applyAction(st, research('blockade'), ctx(0)))).toBe('E_TOO_EARLY');
+    expect(errCode(kernel.applyAction(st, research('blockade'), ctx(2 * DAY - 1)))).toBe(
+      'E_TOO_EARLY',
+    );
+
+    // From day 2 it researches; resources are spent only once it is actually available.
+    const ok = okApply(kernel.applyAction(st, research('blockade'), ctx(2 * DAY)));
+    expect(ok.state.players.p1?.resources.metal).toBe(20);
+    expect(ok.state.players.p1?.technologies?.active?.technology).toBe('blockade');
+
+    // timeScale compresses the gate like every duration: at ×2, game-day 2 lands at DAY real-ms.
+    expect(errCode(kernel.applyAction(st, research('blockade'), ctx(DAY - 1, 2)))).toBe(
+      'E_TOO_EARLY',
+    );
+    expect(okApply(kernel.applyAction(st, research('blockade'), ctx(DAY, 2))).ok).toBe(true);
+
+    // dayGate 0 / absent ⇒ available from the start (existing techs unchanged).
+    expect(okApply(kernel.applyAction(st, research('industry'), ctx(0))).ok).toBe(true);
+  });
+
+  it('parses a tech branch and defaults it for nodes that omit it (back-compat)', () => {
+    expect(data.technologies.logistics?.branch).toBe('space'); // explicit in fixture
+    expect(data.technologies.industry?.branch).toBe('space'); // schema default
+    const byBranch: Record<string, string[]> = {};
+    for (const [id, def] of Object.entries(data.technologies)) {
+      (byBranch[def.branch] ??= []).push(id);
+    }
+    expect(byBranch.space).toContain('logistics');
+    expect(
+      Object.keys(byBranch).every((b) => ['ground', 'space', 'squadron', 'missile'].includes(b)),
+    ).toBe(true);
+  });
+
   it('pays up front, records active research, then completes on the timeline', () => {
     const kernel = createKernel([technologyModule]);
     const st = stateWith({ players: [player('p1', { metal: 30 })] });
