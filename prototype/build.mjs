@@ -72,10 +72,10 @@ body::before{content:"";position:fixed;inset:0;z-index:1;pointer-events:none;mix
   color:var(--cyan);font-variant-emoji:text;text-shadow:0 0 6px rgba(53,214,230,.4);}
 .res b{color:#eafffb;font-weight:700;font-size:12px;font-variant-numeric:tabular-nums;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-/* donate/premium currency (Суверены): gold accent */
-.res.donate{border-left:1px solid var(--line);}
-.res.donate i{color:#ffd45e;text-shadow:0 0 7px rgba(255,212,94,.5);}
-.res.donate b{color:#ffe6a3;}
+/* donate/premium currency (Суверены): gold accent — moved out of the resource bar onto
+   the status line right under it (#devline .dl-donate), pushed to the right end. */
+#devline .dl-donate{margin-left:auto;flex:0 0 auto;display:flex;align-items:center;gap:4px;color:#ffe6a3;font-weight:700;}
+#devline .dl-donate i{color:#ffd45e;text-shadow:0 0 7px rgba(255,212,94,.5);font-style:normal;}
 #speedbar{position:fixed;right:14px;bottom:14px;z-index:24;display:flex;align-items:center;gap:4px;
   padding:5px 7px;background:rgba(3,12,16,.78);border:1px solid var(--line-hi);border-radius:3px;
   box-shadow:0 0 16px rgba(40,200,210,.10);transition:bottom .2s ease;}

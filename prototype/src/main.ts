@@ -5749,7 +5749,9 @@ function frame(nowReal: number) {
   renderCmdBar();
   renderSplitDialog();
   renderLobby();
-  // Status strip below the top bar: day/time + victory progress. (World/fleet counts
+  // Status strip below the top bar: day/time + victory progress, plus the donate currency
+  // (Суверены ◆) pushed to the right end — it sits one level down, directly under the
+  // resource bar, instead of crowding the six session-resource chips. (World/fleet counts
   // moved to the player card — tap the crest in the top-left corner.)
   const d = floor(s.time / DAY) + 1;
   const h = floor((s.time % DAY) / HOUR);
@@ -5758,7 +5760,8 @@ function frame(nowReal: number) {
   const need = Math.max(0, SCORE_LIMIT - score);
   const statusHtml =
     `<span id="clock">Day ${d} · ${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}</span>` +
-    `<span class="dstat${need === 0 ? ' win' : ''}">✦ ${score}/${SCORE_LIMIT}${need === 0 ? ' · ★ WIN' : ' · ' + need + ' to win'}</span>`;
+    `<span class="dstat${need === 0 ? ' win' : ''}">✦ ${score}/${SCORE_LIMIT}${need === 0 ? ' · ★ WIN' : ' · ' + need + ' to win'}</span>` +
+    `<span class="dl-donate" title="Суверены — donate currency"><i>◆</i>${kfmt(SOVEREIGNS)}</span>`;
   if (statusHtml !== lastClockText) {
     devlineEl.innerHTML = statusHtml;
     lastClockText = statusHtml;
@@ -5776,20 +5779,19 @@ function frame(nowReal: number) {
     fpsEl.style.color = NET && netDesync ? 'var(--red, #ff5a4d)' : '';
     lastFpsText = fpsText;
   }
-  // Top bar = the six currencies (icon + amount). Five are session resources; the
-  // donate currency (Суверены ◆) is a meta-layer balance pinned to the far-right corner.
+  // Top bar = the five session resources (icon + amount). The donate currency (Суверены ◆)
+  // is rendered separately on the status line right under this bar (see statusHtml above).
   const r = s.players[ME]?.resources ?? {};
   // Monochrome line glyphs from the console's own icon family (no emoji variants, so
   // they render as text, not colour emoji). Name in `title` for hover/long-press.
-  const chip = (icon: string, val: string, name: string, donate = false) =>
-    `<span class="res${donate ? ' donate' : ''}" title="${name}"><i>${icon}</i><b>${val}</b></span>`;
+  const chip = (icon: string, val: string, name: string) =>
+    `<span class="res" title="${name}"><i>${icon}</i><b>${val}</b></span>`;
   const hudHtml =
     chip('¤', kfmt(r.credits ?? 0), 'Credits') +
     chip('❖', kfmt(r.food ?? 0), 'Food') +
     chip('⬢', kfmt(r.metal ?? 0), 'Metal') +
     chip('↯', kfmt(r.energy ?? 0), 'Energy') +
-    chip('▦', kfmt(r.microelectronics ?? 0), 'Microelectronics') +
-    chip('◆', kfmt(SOVEREIGNS), 'Суверены — donate currency', true);
+    chip('▦', kfmt(r.microelectronics ?? 0), 'Microelectronics');
   if (hudHtml !== lastHudHtml) {
     purse.innerHTML = hudHtml;
     lastHudHtml = hudHtml;
