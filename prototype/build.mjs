@@ -297,8 +297,11 @@ body.sheet-open #cmdbar{bottom:calc(34vh + 12px);}
 /* scrollable content (left) + a dossier pane glued to the right edge, filling the
    panel's otherwise-empty space. The pane shows the hovered object's description. */
 .pscroll{flex:1 1 auto;min-width:0;overflow:auto;padding:13px 15px;touch-action:pan-y;}
-.pdesc{flex:0 0 236px;overflow:auto;padding:14px 15px;border-left:1px solid var(--line-hi);
-  background:rgba(53,214,230,.035);}
+/* dossier pane: width fits its content (grows as rows are added) instead of a
+   fixed column, and it never scrolls internally — the colleague's no-scroll rule */
+.pdesc{flex:0 1 auto;width:fit-content;min-width:188px;max-width:48%;overflow:visible;
+  padding:14px 16px;border-left:1px solid var(--line-hi);border-radius:0 10px 10px 0;
+  background:rgba(53,214,230,.045);}
 .pdesc .pd-title{font-size:14px;font-weight:700;letter-spacing:1.5px;color:#eafffb;margin-bottom:9px;
   padding-bottom:7px;border-bottom:1px solid var(--line);}
 .pdesc .pd-body{font-size:12px;line-height:1.65;color:#9fc9c4;}
@@ -404,22 +407,27 @@ button.b:disabled{opacity:.32;cursor:not-allowed;color:var(--dim);border-color:v
 /* === FLOATING CHAT (desktop) — sized/positioned/opacity inline by renderChat() === */
 .desk-only{} /* shown by default; the media query below hides it on phones */
 @media (max-width:720px){.desk-only{display:none!important;}}
+/* border-color + background alpha are set inline by applyChatGeom() so the
+   transparency slider fades the frame too, not just the fill */
 #chatwin{position:fixed;z-index:27;display:none;flex-direction:column;overflow:visible;
-  background:var(--glass);border:1px solid var(--cyan);border-radius:9px;
+  background:var(--glass);border:1px solid var(--cyan);border-radius:11px;
   box-shadow:0 0 30px rgba(0,0,0,.6),inset 0 0 0 1px rgba(53,214,230,.06);}
 #chatwin.open{display:flex;}
 #chatwin.min{height:auto!important;}
-#chatwin.min .cw-tabs,#chatwin.min .cw-feed,#chatwin.min .cw-compose,#chatwin.min .cw-resize{display:none;}
-#chatwin.pinned .cw-move{opacity:.4;}
+#chatwin.min .cw-tabs,#chatwin.min .cw-feed,#chatwin.min .cw-compose{display:none;}
+/* the title bar doubles as the drag handle (Windows-style); locked when pinned */
 .cw-head{display:flex;align-items:center;gap:6px;padding:6px 6px 6px 9px;border-bottom:1px solid var(--line-hi);
-  cursor:default;flex:0 0 auto;}
+  cursor:move;flex:0 0 auto;border-radius:11px 11px 0 0;}
+#chatwin.pinned .cw-head{cursor:default;}
 .cw-title{font:700 10px ui-monospace,monospace;letter-spacing:2px;color:var(--cyan-dim);flex:1;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+/* head controls reveal only while the pointer is over the window */
 .cw-btn{width:24px;height:24px;flex:0 0 auto;border:1px solid var(--line);border-radius:5px;background:transparent;
-  color:var(--cyan-dim);font-size:12px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;}
+  color:var(--cyan-dim);font-size:12px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;
+  opacity:0;transition:opacity .12s;}
+#chatwin:hover .cw-btn{opacity:1;}
 .cw-btn:hover{border-color:var(--cyan);color:var(--cyan);background:rgba(53,214,230,.12);}
 .cw-btn.on{border-color:var(--cyan);color:var(--cyan);background:rgba(53,214,230,.16);}
-.cw-move{cursor:move;}
 .cw-tabs{display:flex;gap:3px;padding:6px 6px 0;flex-wrap:wrap;flex:0 0 auto;}
 .cw-tab{padding:4px 8px;border:1px solid var(--line);border-bottom:0;border-radius:6px 6px 0 0;background:transparent;
   color:var(--dim);font:11px ui-monospace,monospace;cursor:pointer;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
@@ -434,20 +442,22 @@ button.b:disabled{opacity:.32;cursor:not-allowed;color:var(--dim);border-color:v
 .cw-compose input:focus{outline:none;border-color:var(--cyan);}
 .cw-send{flex:0 0 auto;width:34px;border:1px solid var(--cyan);border-radius:6px;background:rgba(53,214,230,.14);
   color:var(--cyan);cursor:pointer;font-size:13px;}
-.cw-resize{position:absolute;right:0;bottom:0;width:16px;height:16px;cursor:nwse-resize;
-  background:linear-gradient(135deg,transparent 50%,var(--cyan-dim) 50%,var(--cyan-dim) 60%,transparent 60%,transparent 75%,var(--cyan-dim) 75%,var(--cyan-dim) 85%,transparent 85%);}
 /* settings popover — flies out to the right of the window */
-.cw-set{position:absolute;left:calc(100% + 8px);top:0;width:208px;padding:12px;background:var(--glass);
-  border:1px solid var(--cyan);border-radius:9px;box-shadow:0 0 26px rgba(0,0,0,.6);font:11px ui-monospace,monospace;}
+.cw-set{position:absolute;left:calc(100% + 8px);top:0;width:230px;padding:12px;background:var(--glass);
+  border:1px solid var(--cyan);border-radius:11px;box-shadow:0 0 26px rgba(0,0,0,.6);font:11px ui-monospace,monospace;}
+.cw-set,.cw-set *{box-sizing:border-box;}
 .cw-set h4{margin:0 0 9px;color:var(--cyan);font-size:11px;letter-spacing:1.5px;}
 .cw-srow{display:flex;align-items:center;gap:8px;margin:9px 0;color:var(--ink);}
-.cw-srow label{flex:1;color:var(--dim);}
-.cw-srow input[type=number]{width:54px;padding:4px 6px;background:rgba(2,10,14,.9);border:1px solid var(--line-hi);
+.cw-srow label{flex:1;min-width:0;color:var(--dim);}
+.cw-srow input[type=number]{width:52px;padding:4px 6px;background:rgba(2,10,14,.9);border:1px solid var(--line-hi);
   border-radius:5px;color:var(--ink);font:11px ui-monospace,monospace;}
-.cw-srow input[type=range]{flex:1;accent-color:var(--cyan);}
+.cw-srow input[type=range]{flex:1;min-width:0;accent-color:var(--cyan);}
+.cw-srow input[type=color]{width:34px;height:22px;padding:0;border:1px solid var(--line-hi);border-radius:5px;background:none;}
 .cw-srow input[disabled]{opacity:.4;cursor:not-allowed;}
-.cw-sub{font-size:9px;color:var(--amber);letter-spacing:.5px;}
-.cw-set .cw-dim{font-size:9px;color:var(--dim);}
+.cw-sub{flex:0 0 auto;font-size:9px;color:var(--amber);letter-spacing:.5px;white-space:nowrap;}
+.cw-opval{flex:0 0 auto;font-size:9px;color:var(--dim);width:30px;text-align:right;}
+.cw-shdr{margin:13px 0 4px;font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:var(--grn-dim);
+  border-top:1px solid var(--line);padding-top:9px;}
 /* === /FLOATING CHAT === */
 
 #banner{display:none;position:fixed;inset:0;margin:auto;height:fit-content;width:fit-content;z-index:40;
@@ -724,12 +734,19 @@ button.b:disabled{opacity:.32;cursor:not-allowed;color:var(--dim);border-color:v
    the bottom sheet. Panel overlays the right of the map the same way the sheet overlays
    the bottom, so no camera reframe is needed. --- */
 @media (min-width:900px) and (orientation:landscape){
-  #side{left:auto;right:0;top:66px;bottom:0;width:min(380px,40vw);max-height:none;
-    flex-direction:column;clip-path:none;border:0;border-left:1px solid var(--cyan);
+  /* a floating card on the right whose HEIGHT fits its content (grows as rows are
+     added, shrinks for a sparse fleet) instead of a fixed full-height column — only
+     caps at the viewport, so ordinary panels never need an inner scrollbar */
+  #side{left:auto;right:12px;top:66px;bottom:auto;width:min(380px,40vw);height:auto;
+    max-height:calc(100vh - 80px);flex-direction:column;clip-path:none;
+    border:1px solid var(--cyan);border-radius:12px;
     box-shadow:-8px 0 30px rgba(0,0,0,.55),inset 0 0 30px rgba(53,214,230,.04);}
-  /* content stacks: the scroll list fills, the hovered-object dossier pins below it */
-  #side .pscroll{flex:1 1 auto;}
-  #side .pdesc{flex:0 0 auto;max-height:44%;border-left:0;border-top:1px solid var(--line-hi);}
+  /* content stacks: list on top, hovered-object dossier pinned below. While the card
+     fits its content it just grows; once it hits the viewport cap the list (not the
+     whole card) scrolls — so the dossier stays put and nothing is ever clipped away */
+  #side .pscroll{flex:1 1 auto;min-height:0;}
+  #side .pdesc{flex:0 0 auto;width:auto;max-width:none;max-height:none;
+    border-left:0;border-radius:0;border-top:1px solid var(--line-hi);}
   /* the panel is on the right now, not the bottom: don't lift the bars by a vh fraction,
      just keep them clear of the panel's width */
   body.sheet-open #cmdbar,body.sheet-open #speedbar{bottom:14px;}
