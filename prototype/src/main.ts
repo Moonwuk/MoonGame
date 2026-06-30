@@ -2863,6 +2863,10 @@ function render(now: number) {
 
   // fleets — glowing chevrons on their orbit ring (stationed) or along the lane
   cx.textAlign = 'center';
+  // carried divisions per fleet (rendered as cargo diamonds) — counted once.
+  const carriedDivCount: Record<string, number> = {};
+  for (const d of Object.values(divisionsOf(s)))
+    if (d.carriedBy) carriedDivCount[d.carriedBy] = (carriedDivCount[d.carriedBy] ?? 0) + 1;
   for (const f of Object.values(s.fleets)) {
     if (f.owner !== ME) {
       const fn = fleetNode(f);
@@ -2914,92 +2918,115 @@ function render(now: number) {
       }
     }
 
-    // Upright squadron emblem (axis-aligned so the cargo reads cleanly):
-    //  · ships = up-triangles glued in a row, one per ship (capped) sharing a flat
-    //    base — "как клеются треугольники друг другу, от количества";
-    //  · a small diamond rides above the row to mark the squadron — "эскадрильи ромбиком";
-    //  · cargo glues under that flat base as little cubes (see below).
+    // Squadron emblem (upright): ships are up-triangles, ONE per three ships, packed
+    // into a pyramid — "каждые 3 корабля = один треугольник". Cargo glues under the
+    // base: carried divisions as diamonds first ("эскадрильи ромбиком"), then ground
+    // troops as squares (loaded = filled, loading ~1h = an empty square filling up).
     const BW = 6,
-      TH = 7; // ship-triangle base width / height
-    const nTri = Math.min(5, Math.max(1, ships));
-    const triW = nTri * BW;
-    const yBase = A.y + 1; // shared flat baseline of the ship row
-    const apexY = yBase - TH;
+      TH = 5; // triangle base width / height; rows stack TH apart
+    const nTri = Math.max(1, Math.ceil(ships / 3));
+    // pack the triangles into a bottom-heavy pyramid: full rows 1..R, then shave the
+    // apex rows of any empty slots so the BASE is always widest (1→[1], 2→[2],
+    // 4→[1,3], 6→[1,2,3], 10→[1,2,3,4]).
+    let R = 1;
+    while ((R * (R + 1)) / 2 < nTri) R++;
+    const tri: number[] = [];
+    for (let r = 1; r <= R; r++) tri.push(r);
+    for (let r = 0, trim = (R * (R + 1)) / 2 - nTri; trim > 0 && r < tri.length; r++) {
+      const cut = Math.min(tri[r]!, trim);
+      tri[r]! -= cut;
+      trim -= cut;
+    }
+    const rows = tri.filter((x) => x > 0);
+    const yBase = A.y; // baseline of the bottom (widest) row
+    const apexTop = yBase - rows.length * TH;
     cx.save();
     cx.shadowColor = col;
     cx.shadowBlur = 6 + 6 * engine;
     cx.fillStyle = rgba(col, 0.16 + 0.12 * engine);
     cx.strokeStyle = col;
-    cx.lineWidth = 1.4;
-    for (let i = 0; i < nTri; i++) {
-      const x0 = A.x - triW / 2 + i * BW;
-      cx.beginPath();
-      cx.moveTo(x0 + BW / 2, apexY); // apex up
-      cx.lineTo(x0 + BW, yBase); // flat base, right corner
-      cx.lineTo(x0, yBase); // flat base, left corner
-      cx.closePath();
-      cx.fill();
-      cx.stroke();
+    cx.lineWidth = 1.3;
+    for (let r = 0; r < rows.length; r++) {
+      const base = apexTop + (r + 1) * TH; // this row's baseline
+      const rw = rows[r]! * BW;
+      for (let i = 0; i < rows[r]!; i++) {
+        const x0 = A.x - rw / 2 + i * BW;
+        cx.beginPath();
+        cx.moveTo(x0 + BW / 2, base - TH); // apex up
+        cx.lineTo(x0 + BW, base); // flat base, right corner
+        cx.lineTo(x0, base); // flat base, left corner
+        cx.closePath();
+        cx.fill();
+        cx.stroke();
+      }
     }
-    // squadron marker — a small diamond riding above the formation ("ромбик")
-    const dcy = apexY - 6,
-      dr = 3 + 0.6 * engine;
-    cx.beginPath();
-    cx.moveTo(A.x, dcy - dr);
-    cx.lineTo(A.x + dr, dcy);
-    cx.lineTo(A.x, dcy + dr);
-    cx.lineTo(A.x - dr, dcy);
-    cx.closePath();
-    cx.fillStyle = rgba(col, 0.9);
-    cx.fill();
-    cx.stroke();
     cx.restore();
 
-    // cargo cubes glued UNDER the flat base — one per troop "от количества". Loaded
-    // troops are solid cubes; a load still under way (~1h) is an empty cube that fills
-    // from the bottom up as the hour elapses.
+    // cargo glued under the base: diamonds (carried divisions) first, then squares
+    // (ground troops). A loading troop (~1h) is an empty square that fills bottom-up.
     const loads = pendingLoads.filter((p) => p.fleetId === f.id); // empty for enemy/idle fleets
-    const totalPips = troops + loads.length;
-    if (totalPips > 0) {
-      const SQ = 4,
-        GAP = 2,
-        MAX = 8; // cap the cubes; rare overflow gets a "+N" tail
-      const n = Math.min(totalPips, MAX);
-      const over = totalPips - n;
-      const rowW = n * (SQ + GAP) - GAP + (over > 0 ? 13 : 0);
-      let sx = A.x - rowW / 2;
-      const cy = yBase + 1.5; // glued just under the flat base
+    const cargo: { kind: 'div' | 'troop' | 'load'; load?: PendingLoad }[] = [];
+    for (let i = 0; i < (carriedDivCount[f.id] ?? 0); i++) cargo.push({ kind: 'div' });
+    for (let i = 0; i < troops; i++) cargo.push({ kind: 'troop' });
+    for (const p of loads) cargo.push({ kind: 'load', load: p });
+    if (cargo.length > 0) {
+      const CELL = 6.5,
+        SQ = 4,
+        DR = 3,
+        MAX = 8; // cap; rare overflow gets a "+N" tail
+      const n = Math.min(cargo.length, MAX);
+      const over = cargo.length - n;
+      const rowW = n * CELL + (over > 0 ? 12 : 0);
+      let px = A.x - rowW / 2 + CELL / 2; // centre of the first cell
+      const cyc = yBase + 4; // a touch below the flat base
       cx.save();
       cx.shadowColor = col;
       cx.shadowBlur = 3;
       cx.lineWidth = 1;
       for (let i = 0; i < n; i++) {
-        if (i < troops) {
-          // already in the hold → solid cube
+        const pip = cargo[i]!;
+        if (pip.kind === 'div') {
+          // carried division → a solid diamond ("ромбик")
+          cx.beginPath();
+          cx.moveTo(px, cyc - DR);
+          cx.lineTo(px + DR, cyc);
+          cx.lineTo(px, cyc + DR);
+          cx.lineTo(px - DR, cyc);
+          cx.closePath();
           cx.fillStyle = rgba(col, 0.85);
-          cx.fillRect(sx, cy, SQ, SQ);
           cx.strokeStyle = rgba(col, 0.95);
-          cx.strokeRect(sx + 0.5, cy + 0.5, SQ - 1, SQ - 1);
+          cx.fill();
+          cx.stroke();
         } else {
-          // loading → empty cube that fills from the bottom by progress (0→1 over ~1h)
-          const p = loads[i - troops];
-          const prog = p ? clamp((s.time - p.startAt) / (p.doneAt - p.startAt), 0, 1) : 0;
-          cx.strokeStyle = rgba(col, 0.85);
-          cx.strokeRect(sx + 0.5, cy + 0.5, SQ - 1, SQ - 1);
-          if (prog > 0) {
-            const fh = (SQ - 1) * prog;
-            cx.fillStyle = rgba(col, 0.8);
-            cx.fillRect(sx + 0.5, cy + 0.5 + (SQ - 1 - fh), SQ - 1, fh);
+          const x = px - SQ / 2,
+            y = cyc - SQ / 2;
+          if (pip.kind === 'troop') {
+            // loaded troop → solid square
+            cx.fillStyle = rgba(col, 0.85);
+            cx.fillRect(x, y, SQ, SQ);
+            cx.strokeStyle = rgba(col, 0.95);
+            cx.strokeRect(x + 0.5, y + 0.5, SQ - 1, SQ - 1);
+          } else {
+            // loading troop → empty square filling from the bottom (0→1 over ~1h)
+            const p = pip.load!;
+            const prog = clamp((s.time - p.startAt) / (p.doneAt - p.startAt), 0, 1);
+            cx.strokeStyle = rgba(col, 0.85);
+            cx.strokeRect(x + 0.5, y + 0.5, SQ - 1, SQ - 1);
+            if (prog > 0) {
+              const fh = (SQ - 1) * prog;
+              cx.fillStyle = rgba(col, 0.8);
+              cx.fillRect(x + 0.5, y + 0.5 + (SQ - 1 - fh), SQ - 1, fh);
+            }
           }
         }
-        sx += SQ + GAP;
+        px += CELL;
       }
       cx.restore();
       if (over > 0) {
         cx.fillStyle = rgba(col, 0.92);
         cx.font = '700 8px ui-monospace,Menlo,monospace';
         cx.textAlign = 'left';
-        cx.fillText(`+${over}`, sx, cy + SQ);
+        cx.fillText(`+${over}`, px - CELL / 2 + 1, cyc + SQ / 2);
         cx.textAlign = 'center';
       }
     }
