@@ -4652,27 +4652,46 @@ function enterBrowse(): void {
   showStage('browse');
   void refreshMatches();
 }
-// Guest sign-in stub: enter the browser as a guest, then (after the list loads)
-// leave the "скоро" notice up so it isn't clobbered by the load status.
-async function enterBrowseGuest(notice: string): Promise<void> {
+// --- meta-shell hub: post-login home + bottom nav (docs/main-menu.md) -------
+// After identity you land on the hub (home + PLAY + bottom nav), not the raw match
+// list. The nav routes into the existing flow: "Игры"/"ИГРАТЬ" → the match browser
+// (стадия 2 of #connect, untouched), Рейтинг/Альянсы → заглушки до мета-слоя, Ещё →
+// настройки. Social sign-in is a guest stub (accounts AC-1.1) with a "скоро" note.
+const hubEl = $('hub');
+const hubNote = $('hub-note');
+function showHub(show: boolean): void {
+  hubEl.style.display = show ? 'flex' : 'none';
+}
+const HUB_PANELS: Record<string, string> = { home: 'hp-home', rank: 'hp-rank', ally: 'hp-ally', more: 'hp-more' };
+function hubTab(tab: string): void {
+  hubNote.textContent = '';
+  if (tab === 'games') {
+    showHub(false);
+    showConnect(true);
+    enterBrowse(); // hand off to the existing match browser
+    return;
+  }
+  for (const [k, pid] of Object.entries(HUB_PANELS)) $(pid).style.display = k === tab ? 'flex' : 'none';
+  for (const b of Array.from(document.querySelectorAll('.hub-tab')))
+    b.classList.toggle('active', (b as HTMLElement).dataset.hub === tab);
+}
+function openHub(note = ''): void {
   if (!nickInput.value.trim()) nickInput.value = suggestCallsign();
-  showStage('browse');
-  await refreshMatches();
-  statusEl.textContent = notice;
+  $('hub-name').textContent = nickInput.value.trim() || 'Командир';
+  showConnect(false);
+  showHub(true);
+  hubTab('home');
+  hubNote.textContent = note;
 }
 
-$('cnew').addEventListener('click', enterBrowse);
-$('cgoogle').addEventListener('click', () => void enterBrowseGuest('Вход через Google — скоро · ты вошёл гостем'));
-$('capple').addEventListener('click', () => void enterBrowseGuest('Вход через Apple — скоро · ты вошёл гостем'));
-$('clogin').addEventListener('click', () => {
-  showStage('browse');
-  statusEl.textContent = '';
-  void refreshMatches();
-  nickInput.focus();
-});
+$('cnew').addEventListener('click', () => openHub());
+$('clogin').addEventListener('click', () => openHub());
+$('cgoogle').addEventListener('click', () => openHub('Вход через Google — скоро · ты вошёл гостем'));
+$('capple').addEventListener('click', () => openHub('Вход через Apple — скоро · ты вошёл гостем'));
 $('cback').addEventListener('click', () => {
-  showStage('welcome');
+  showStage('welcome'); // reset #connect's inner stage for next time
   statusEl.textContent = '';
+  openHub(); // back from the browser → the hub
 });
 $('clang').addEventListener('click', () => {
   statusEl.textContent = 'Другие языки — скоро';
@@ -4680,6 +4699,29 @@ $('clang').addEventListener('click', () => {
 for (const a of Array.from(document.querySelectorAll('.cfoot a'))) {
   a.addEventListener('click', () => {
     statusEl.textContent = `${(a.textContent ?? '').trim()} — скоро`;
+  });
+}
+
+// hub interactions
+$('hub-play').addEventListener('click', () => hubTab('games'));
+$('hub-solo').addEventListener('click', () => {
+  showHub(false);
+  openSetup();
+});
+$('hub-msg').addEventListener('click', () => {
+  hubNote.textContent = 'Сообщения — скоро';
+});
+$('hub-logout').addEventListener('click', () => {
+  showHub(false);
+  showConnect(true);
+  showStage('welcome');
+});
+for (const b of Array.from(document.querySelectorAll('.hub-tab'))) {
+  b.addEventListener('click', () => hubTab((b as HTMLElement).dataset.hub ?? 'home'));
+}
+for (const t of Array.from(document.querySelectorAll('#hp-more .hub-tile[data-more]'))) {
+  t.addEventListener('click', () => {
+    hubNote.textContent = `${(t as HTMLElement).dataset.more} — скоро`;
   });
 }
 

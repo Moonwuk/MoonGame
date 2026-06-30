@@ -715,6 +715,67 @@ button.b:disabled{opacity:.32;cursor:not-allowed;color:var(--dim);border-color:v
   #connect .csoc{width:46px;height:46px;}
   #connect .cstack{margin-top:14px;}
 }
+/* --- meta-shell hub: post-login home + bottom nav (docs/main-menu.md) --- */
+#hub{position:fixed;inset:0;z-index:52;display:none;flex-direction:column;
+  background:radial-gradient(130% 80% at 50% 0%,#06161e,#010409);color:var(--ink);}
+#hub .hub-banner{position:relative;flex:0 0 auto;height:118px;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:8px;border-bottom:1px solid var(--line-hi);overflow:hidden;}
+#hub .hub-banner::before{content:"";position:absolute;inset:0;
+  background:radial-gradient(62% 130% at 50% -16%,rgba(53,214,230,.18),transparent 70%);}
+#hub .hub-crest{position:relative;width:46px;height:46px;display:grid;place-items:center;}
+#hub .hub-crest .dia{width:26px;height:26px;transform:rotate(45deg);border:2px solid var(--cyan);
+  background:rgba(53,214,230,.12);box-shadow:0 0 18px rgba(53,214,230,.5),inset 0 0 9px rgba(53,214,230,.3);}
+#hub .hub-bt{position:relative;font-size:18px;letter-spacing:6px;color:var(--cyan);font-weight:700;
+  text-shadow:0 0 14px rgba(53,214,230,.45);}
+#hub .hub-id{flex:0 0 auto;display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--line);}
+#hub .hub-av{width:42px;height:42px;border-radius:50%;border:1px solid var(--line-hi);background:rgba(3,12,16,.8);
+  display:grid;place-items:center;color:var(--cyan);font-size:17px;flex:0 0 auto;box-shadow:inset 0 0 10px rgba(53,214,230,.1);}
+#hub .hub-who{flex:1;min-width:0;}
+#hub .hub-name{font-size:15px;color:#eafffb;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+#hub .hub-st{font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:var(--cyan-dim);margin-top:3px;}
+#hub .hub-st::before{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;background:#3ad17a;
+  box-shadow:0 0 6px #3ad17a;margin-right:6px;vertical-align:middle;}
+#hub .hub-msg{position:relative;width:42px;height:42px;border-radius:10px;border:1px solid var(--line-hi);
+  background:rgba(3,12,16,.7);color:var(--cyan);font-size:16px;cursor:pointer;flex:0 0 auto;}
+#hub .hub-msg .badge{position:absolute;top:-6px;right:-6px;min-width:18px;height:18px;border-radius:9px;padding:0 4px;
+  background:var(--red);color:#180605;font:700 10px/18px ui-monospace,monospace;text-align:center;}
+#hub .hub-body{flex:1 1 auto;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:18px 16px 14px;}
+#hub .hub-panel{display:flex;flex-direction:column;gap:14px;}
+#hub .hub-play{width:100%;padding:18px;border-radius:12px;border:1px solid var(--cyan);cursor:pointer;
+  background:linear-gradient(180deg,rgba(53,214,230,.30),rgba(53,214,230,.12));color:#eafdff;
+  font:700 17px ui-monospace,monospace;letter-spacing:2px;box-shadow:0 0 28px rgba(53,214,230,.26);min-height:58px;}
+#hub .hub-play:active{background:linear-gradient(180deg,rgba(53,214,230,.44),rgba(53,214,230,.2));}
+#hub .hub-solo{width:100%;padding:12px;border-radius:10px;border:1px solid var(--line-hi);background:transparent;
+  color:var(--dim);font:13px ui-monospace,monospace;letter-spacing:1px;cursor:pointer;}
+#hub .hub-sec{font-size:11px;letter-spacing:2px;text-transform:uppercase;color:var(--cyan-dim);margin-top:4px;
+  padding-bottom:6px;border-bottom:1px solid var(--line);}
+#hub .hub-card{display:flex;gap:12px;align-items:flex-start;border:1px solid var(--line-hi);border-radius:10px;
+  padding:13px 14px;background:rgba(255,255,255,.02);}
+#hub .hub-card .hc-ic{width:38px;height:38px;border-radius:8px;display:grid;place-items:center;flex:0 0 auto;
+  background:rgba(53,214,230,.1);color:var(--cyan);font-size:18px;}
+#hub .hub-card .hc-t{font-size:13px;color:#dfeef2;}
+#hub .hub-card .hc-s{font-size:11px;color:var(--dim);margin-top:4px;line-height:1.45;}
+#hub .hub-empty{padding:54px 16px;text-align:center;color:var(--dim);font-size:14px;letter-spacing:1px;line-height:1.9;}
+#hub .hub-empty .he-ic{font-size:38px;color:var(--cyan-dim);display:block;margin-bottom:14px;
+  text-shadow:0 0 16px rgba(53,214,230,.3);}
+#hub .hub-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+#hub .hub-tile{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:9px;padding:20px 10px;
+  border-radius:12px;border:1px solid var(--line-hi);background:rgba(3,12,16,.6);color:#dfeef2;
+  font:600 12px ui-monospace,monospace;letter-spacing:1px;cursor:pointer;min-height:94px;}
+#hub .hub-tile .ht-ic{font-size:23px;color:var(--cyan);}
+#hub .hub-tile:active{background:rgba(53,214,230,.12);border-color:var(--cyan);}
+#hub .hub-tile.wide{grid-column:1 / -1;flex-direction:row;gap:12px;min-height:0;padding:14px;color:var(--dim);}
+#hub .hub-tile.wide .ht-ic{font-size:17px;color:var(--dim);}
+#hub .hub-note{flex:0 0 auto;min-height:0;text-align:center;color:var(--amber);font-size:12px;
+  padding:0 16px;}
+#hub .hub-note:not(:empty){padding:8px 16px;}
+#hub .hub-nav{flex:0 0 auto;display:flex;border-top:1px solid var(--line-hi);background:rgba(2,9,13,.94);
+  padding-bottom:env(safe-area-inset-bottom,0);}
+#hub .hub-tab{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;padding:9px 2px 8px;cursor:pointer;
+  background:transparent;border:0;color:var(--cyan-dim);font:9px ui-monospace,monospace;letter-spacing:.5px;}
+#hub .hub-tab .hn-ic{font-size:18px;line-height:1;}
+#hub .hub-tab.active{color:var(--cyan);}
+#hub .hub-tab.active .hn-ic{text-shadow:0 0 8px rgba(53,214,230,.6);}
 `;
 
 const html = `<!doctype html>
@@ -806,6 +867,59 @@ const html = `<!doctype html>
       <a id="cl-support">Поддержка</a>
     </div>
   </div>
+</div>
+<div id="hub">
+  <div class="hub-banner">
+    <div class="hub-crest"><span class="dia"></span></div>
+    <div class="hub-bt">VOID DOMINION</div>
+  </div>
+  <div class="hub-id">
+    <div class="hub-av">◆</div>
+    <div class="hub-who">
+      <div class="hub-name" id="hub-name">Командир</div>
+      <div class="hub-st">в сети</div>
+    </div>
+    <button class="hub-msg" id="hub-msg" type="button" aria-label="Сообщения">✉</button>
+  </div>
+  <div class="hub-body">
+    <div class="hub-panel" id="hp-home">
+      <button id="hub-play" class="hub-play" type="button">ИГРАТЬ СЕЙЧАС</button>
+      <button id="hub-solo" class="hub-solo" type="button">Одиночная игра</button>
+      <div class="hub-sec">Сводка</div>
+      <div class="hub-card">
+        <div class="hc-ic">◷</div>
+        <div><div class="hc-t">Нет матчей, ждущих приказа</div><div class="hc-s">Войди в матч на вкладке «Игры» — здесь появятся ходы, требующие внимания.</div></div>
+      </div>
+      <div class="hub-card">
+        <div class="hc-ic">✦</div>
+        <div><div class="hc-t">Сезон ещё не начат</div><div class="hc-s">Рейтинги и альянсы откроются со стартом мета-слоя.</div></div>
+      </div>
+    </div>
+    <div class="hub-panel" id="hp-rank" style="display:none">
+      <div class="hub-empty"><span class="he-ic">▤</span>Рейтинги — скоро<br><span style="font-size:11px;color:var(--cyan-dim)">сезонный рейтинг по местам в матчах</span></div>
+    </div>
+    <div class="hub-panel" id="hp-ally" style="display:none">
+      <div class="hub-empty"><span class="he-ic">⚑</span>Альянсы — скоро<br><span style="font-size:11px;color:var(--cyan-dim)">корпорации · общие AvA-битвы · влияние</span></div>
+    </div>
+    <div class="hub-panel" id="hp-more" style="display:none">
+      <div class="hub-grid">
+        <button class="hub-tile" data-more="Аккаунт" type="button"><span class="ht-ic">◉</span>Аккаунт</button>
+        <button class="hub-tile" data-more="Сообщество" type="button"><span class="ht-ic">◍</span>Сообщество</button>
+        <button class="hub-tile" data-more="Поддержка" type="button"><span class="ht-ic">⚠</span>Поддержка</button>
+        <button class="hub-tile" data-more="Уведомления" type="button"><span class="ht-ic">◔</span>Уведомления</button>
+        <button class="hub-tile" data-more="Чат" type="button"><span class="ht-ic">▭</span>Чат</button>
+        <button class="hub-tile wide" id="hub-logout" type="button"><span class="ht-ic">↩</span>Сменить командира</button>
+      </div>
+    </div>
+  </div>
+  <div class="hub-note" id="hub-note"></div>
+  <nav class="hub-nav">
+    <button class="hub-tab active" data-hub="home" type="button"><span class="hn-ic">⌂</span>Домой</button>
+    <button class="hub-tab" data-hub="games" type="button"><span class="hn-ic">▶</span>Игры</button>
+    <button class="hub-tab" data-hub="rank" type="button"><span class="hn-ic">▤</span>Рейтинг</button>
+    <button class="hub-tab" data-hub="ally" type="button"><span class="hn-ic">⚑</span>Альянсы</button>
+    <button class="hub-tab" data-hub="more" type="button"><span class="hn-ic">≡</span>Ещё</button>
+  </nav>
 </div>
 <div id="lobby">
   <div class="lbox">
