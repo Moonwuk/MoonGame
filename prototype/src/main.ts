@@ -5664,6 +5664,13 @@ const fpsEl = $('fps');
 let fpsEma = 60; // smoothed frames-per-second readout
 let lastFpsText = '';
 let lastReal = performance.now();
+// Build tag for the dev overlay so the RUNNING build is always visible in-game (not just
+// on the welcome screen) — makes "am I on the latest APK?" answerable at a glance. Empty
+// in the browser / dev build (no baked __BUILD__).
+const BUILD_TAG = (() => {
+  const b = currentBuild();
+  return b ? buildLabel(b) : '';
+})();
 function frame(nowReal: number) {
   const dt = nowReal - lastReal;
   lastReal = nowReal;
@@ -5719,6 +5726,7 @@ function frame(nowReal: number) {
     const sync = netDesync ? `desync ✗ ${netDesyncCount}` : 'sync ✓';
     fpsText += ` · ${rtt} · ${sync}`;
   }
+  if (BUILD_TAG) fpsText += ` · ${BUILD_TAG}`; // running build, always visible
   if (fpsText !== lastFpsText) {
     fpsEl.textContent = fpsText;
     fpsEl.style.color = NET && netDesync ? 'var(--red, #ff5a4d)' : '';
@@ -6406,9 +6414,9 @@ requestAnimationFrame(frame);
 // Only live in the packaged APK (it carries a baked window.__BUILD__); the browser /
 // dev build has none, so currentBuild() is null and every path below no-ops. We check
 // the rolling release on launch (when online) and via a manual button, and surface a
-// banner whose "Обновить" link navigates to the APK asset — inside the APK the native
-// WebView DownloadListener (MainActivity) downloads + installs it; in a browser it would
-// just download. See prototype/src/updater.ts and mobile/patch-updater.mjs.
+// banner whose "Обновить" hands the APK asset URL to the SYSTEM BROWSER via the native
+// bridge (window.VoidNative.open) — the browser downloads it and offers to install,
+// which is reliable on any device. See prototype/src/updater.ts and mobile/patch-updater.mjs.
 {
   const myBuild = currentBuild();
   if (myBuild) {
@@ -6444,6 +6452,17 @@ requestAnimationFrame(frame);
       }
     };
 
+    // "Обновить" → open the APK in the system browser via the native bridge (downloads +
+    // offers install, reliable everywhere). Falls back to the plain <a href> navigation
+    // when the bridge is absent (a real browser / dev build).
+    $('ub-go')?.addEventListener('click', (e) => {
+      const native = (globalThis as { VoidNative?: { open?: (u: string) => void } }).VoidNative;
+      const url = ($('ub-go') as HTMLAnchorElement).href;
+      if (native?.open && url) {
+        e.preventDefault();
+        native.open(url);
+      }
+    });
     $('ub-later')?.addEventListener('click', () => {
       $('updbar').style.display = 'none';
     });

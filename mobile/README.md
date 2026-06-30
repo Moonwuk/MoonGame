@@ -42,12 +42,17 @@ needs a real (secret) keystore — a later step.
 
 ## In-app auto-update
 
-Install once; after that the app updates itself — no need to keep re-downloading from
-the release page. On launch (when online) and via **«Проверить обновления»** on the
-welcome screen, the app checks the rolling `alpha` release and, if a newer build exists,
-shows a **«Доступна новая сборка»** banner. Tapping **«Обновить»** downloads the new APK
-in-app and opens the system installer; because every build shares the committed debug
-signature, it installs straight over the top, keeping your data.
+Install once; after that the app checks for updates itself — no need to hunt the release
+page. On launch (when online) and via **«Проверить обновления»** on the welcome screen,
+the app checks the rolling `alpha` release and, if a newer build exists, shows a
+**«Доступна новая сборка»** banner. Tapping **«Обновить»** opens the APK in the **system
+browser**, which downloads it and offers to install; because every build shares the
+committed debug signature, it installs straight over the top, keeping your data.
+
+> An earlier version tried to download + install the APK entirely in-app (WebView
+> `DownloadListener` → `DownloadManager` → `FileProvider` install intent). That path was
+> unreliable across devices (the installer often never appeared), so the update action now
+> just hands the URL to the browser — robust everywhere, one extra tap.
 
 How it's wired (all four pieces ship together so the running build and the published
 build are compared on the same integer):
@@ -59,11 +64,10 @@ build are compared on the same integer):
 - `prototype/src/updater.ts` reads `window.__BUILD__`, fetches the release via the
   CORS-enabled GitHub REST API, compares versionCode, and surfaces the banner. It is
   **dormant in the browser / dev build** (no `__BUILD__`), where content is always live.
-- The native side (`patch-updater.mjs` → `MainActivity.java`) adds
-  `REQUEST_INSTALL_PACKAGES` + a `FileProvider`, intercepts the APK download via the
-  WebView `DownloadListener` → `DownloadManager`, and fires the install intent on
-  completion. The download notification stays visible as a manual fallback if a device
-  blocks the auto-launched installer.
+- The native side (`patch-updater.mjs` → `MainActivity.java`) exposes a tiny
+  `window.VoidNative.open(url)` bridge that fires an `ACTION_VIEW` intent — so «Обновить»
+  opens the APK URL in the system browser. The web layer falls back to a plain `<a href>`
+  when the bridge is absent (a real browser / dev build).
 
 > Authenticity caveat: the debug keystore is committed (public), so the signature proves
 > only "built by this pipeline's key", not a secret identity. Fine for an alpha; a real

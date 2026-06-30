@@ -95,94 +95,49 @@ const buildGradlePath = here('./android/app/build.gradle');
 {
   const java = `package ${appId};
 
-import android.app.DownloadManager;
-import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
-import android.content.IntentFilter;
 import android.net.Uri;
 import android.os.Bundle;
-import android.os.Environment;
-import androidx.core.content.ContextCompat;
-import androidx.core.content.FileProvider;
+import android.webkit.JavascriptInterface;
 import com.getcapacitor.BridgeActivity;
-import java.io.File;
 
 /**
- * Capacitor host activity, augmented with a one-tap in-app updater for the sideloaded APK.
+ * Capacitor host activity + a tiny native bridge for the in-app updater.
  *
- * The web layer (updater.ts) checks the rolling GitHub release and, when a newer build
- * exists, shows "Обновить" as a link to the APK asset URL. GitHub serves that asset with
- * Content-Disposition: attachment, so navigating to it makes the WebView fire this
- * DownloadListener instead of trying to render it. We hand the URL to the system
- * DownloadManager and, on completion, launch the package installer through a FileProvider
- * URI. The download notification stays visible as a manual install fallback.
+ * The earlier build tried to download AND install the update APK itself (a WebView
+ * DownloadListener → DownloadManager → FileProvider install intent). That path proved
+ * unreliable across devices (the auto-launched installer often never appeared). The
+ * updater now does the robust thing instead: it hands the APK asset URL to the SYSTEM
+ * BROWSER via window.VoidNative.open(url). The browser downloads it and offers to install
+ * from the download — which works everywhere, with no DownloadManager/FileProvider
+ * plumbing or extra install permission to misfire.
  */
 public class MainActivity extends BridgeActivity {
-    private static final String APK_FILE = "void-dominion-update.apk";
-    private long downloadId = -1L;
-
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-
-        this.bridge.getWebView().setDownloadListener((url, userAgent, contentDisposition, mimeType, contentLength) -> {
-            DownloadManager dm = (DownloadManager) getSystemService(Context.DOWNLOAD_SERVICE);
-            if (dm == null) {
-                return;
-            }
-            // Drop any stale copy so the installer always reads the freshly downloaded build.
-            File prior = new File(getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), APK_FILE);
-            if (prior.exists()) {
-                prior.delete();
-            }
-            DownloadManager.Request req = new DownloadManager.Request(Uri.parse(url));
-            req.setMimeType("application/vnd.android.package-archive");
-            req.setTitle("Void Dominion — обновление");
-            req.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
-            req.setDestinationInExternalFilesDir(this, Environment.DIRECTORY_DOWNLOADS, APK_FILE);
-            downloadId = dm.enqueue(req);
-        });
-
-        ContextCompat.registerReceiver(
-            this,
-            onDownloadComplete,
-            new IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE),
-            ContextCompat.RECEIVER_EXPORTED
-        );
+        // Exposed to the bundled web app (local content only) as window.VoidNative.
+        this.bridge.getWebView().addJavascriptInterface(new UpdaterBridge(getApplicationContext()), "VoidNative");
     }
 
-    private final BroadcastReceiver onDownloadComplete = new BroadcastReceiver() {
-        @Override
-        public void onReceive(Context context, Intent intent) {
-            long id = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1L);
-            if (downloadId == -1L || id != downloadId) {
-                return;
-            }
-            try {
-                File apk = new File(getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), APK_FILE);
-                if (!apk.exists()) {
-                    return;
-                }
-                Uri uri = FileProvider.getUriForFile(context, getPackageName() + ".fileprovider", apk);
-                Intent install = new Intent(Intent.ACTION_VIEW);
-                install.setDataAndType(uri, "application/vnd.android.package-archive");
-                install.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
-                startActivity(install);
-            } catch (Exception ignored) {
-                // The visible DownloadManager notification remains as a manual install fallback.
-            }
+    public static class UpdaterBridge {
+        private final Context ctx;
+        UpdaterBridge(Context c) {
+            this.ctx = c;
         }
-    };
 
-    @Override
-    public void onDestroy() {
-        try {
-            unregisterReceiver(onDownloadComplete);
-        } catch (Exception ignored) {
-            // never registered / already gone — nothing to do.
+        /** Open a URL in the external browser (used to fetch the update APK). */
+        @JavascriptInterface
+        public void open(String url) {
+            try {
+                Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+                i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                ctx.startActivity(i);
+            } catch (Exception ignored) {
+                // The web layer keeps a plain-link fallback, so nothing more to do here.
+            }
         }
-        super.onDestroy();
     }
 }
 `;
@@ -190,7 +145,7 @@ public class MainActivity extends BridgeActivity {
     throw new Error(`patch-updater: MainActivity not found at ${mainActivityPath}`);
   }
   writeFileSync(mainActivityPath, java);
-  console.log('patch-updater: MainActivity.java — installed the updater download/install hook.');
+  console.log('patch-updater: MainActivity.java — installed the VoidNative browser-open bridge.');
 }
 
 // --- 4. app/build.gradle (versionCode / versionName) ------------------------
