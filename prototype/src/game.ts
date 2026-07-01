@@ -2052,7 +2052,8 @@ export const declareWar = (playerId: string, target: string, stance: DiplomaticS
 export type QStep =
   | { kind: 'move'; to: string } // route to a world, then hold for the next step
   | { kind: 'orbit' } // enter orbit over the fleet's current world
-  | { kind: 'assault' }; // land carried troops (enters orbit first when needed)
+  | { kind: 'assault' } // land carried troops (enters orbit first when needed)
+  | { kind: 'load' }; // re-embark the liftable garrison here (pick your troops back up)
 
 /** A fleet may run its next queued step only when idle — not in transit, not locked in
  *  a battle. (A fleet parked on a lane counts as idle; its next move routes from there.) */
@@ -2073,7 +2074,38 @@ export function stepActions(me: string, fleetId: string, step: QStep, fleet: Fle
       return fleet.orbit === 'near'
         ? [assaultFleet(me, fleetId)]
         : [orbitFleet(me, fleetId), assaultFleet(me, fleetId)];
+    case 'load':
+      // Loading depends on the world's garrison + the fleet's free cargo, not just the
+      // fleet, so the driver computes it via loadHereActions(state, me, fleet) instead.
+      return [];
   }
+}
+
+/**
+ * Actions to re-embark the liftable garrison of the fleet's CURRENT world back into its
+ * cargo — the "auto-load after capture" step. After a defended assault the storming
+ * troops become the world's garrison (combat.ts capturePlanet), so this picks them up
+ * again to carry onward, letting one army leapfrog a whole chain of worlds unattended.
+ * Only lifts from a world you own; skips ships/immobile emplacements; respects cargo. Pure.
+ */
+export function loadHereActions(state: GameState, me: string, fleet: Fleet): Action[] {
+  const at = fleet.location;
+  if (at === null) return [];
+  const planet = state.planets[at];
+  if (!planet || planet.owner !== me) return []; // only your own world's troops are liftable
+  let free = fleetCargoFree(state, fleet);
+  const out: Action[] = [];
+  for (const st of planet.garrison) {
+    const u = data.units[st.unit];
+    if (!u || st.count <= 0 || u.domain !== 'ground') continue; // ships/AA aren't cargo
+    if (u.traits.includes('immobile')) continue; // fixed emplacements can't be lifted (E_IMMOBILE)
+    const size = u.stats.cargoSize || 1;
+    const fit = Math.min(st.count, Math.floor(free / size));
+    if (fit <= 0) continue; // no room left
+    out.push(loadArmy(me, fleet.id, st.unit, fit));
+    free -= fit * size;
+  }
+  return out;
 }
 /** Place a market lot: `sell` escrows `amount` of `resource` for `price` credits/unit;
  *  `buy` escrows the credits and offers to buy that much of `resource`. */

@@ -65,6 +65,7 @@ import {
   type StepOut,
   stepActions,
   fleetIdle,
+  loadHereActions,
   type QStep,
 } from './game';
 import { OFFICERS } from './groundcombat';
@@ -1897,7 +1898,9 @@ function driveQueues(): void {
     }
     if (!fleetIdle(f)) continue; // in transit / fighting → hold
     const step = steps[0]!;
-    for (const a of stepActions(ME, fid, step, f)) playerOrder(a);
+    // 'load' needs the world garrison + cargo (see loadHereActions); the rest are fleet-only.
+    const actions = step.kind === 'load' ? loadHereActions(s, ME, f) : stepActions(ME, fid, step, f);
+    for (const a of actions) playerOrder(a);
     steps.shift();
     if (steps.length === 0) fleetQueues.delete(fid);
   }
@@ -3369,14 +3372,21 @@ function panelHtml(): string {
         h += `<div class="sec">Очередь приказов</div><div class="row">`;
         h += btn('qmode', '', queuing ? '● тапай миры' : '➕ строить', true);
         h += btn('qassault', '', '⚔ + штурм', true);
+        h += btn('qload', '', '▲ + погрузка', true);
         h += btn('qclear', '', '✕ очистить', q.length > 0);
         h += `</div>`;
         if (q.length) {
           const label = (st: QStep): string =>
-            st.kind === 'move' ? '→ ' + esc(st.to) : st.kind === 'assault' ? '⚔ штурм' : '🛰 орбита';
+            st.kind === 'move'
+              ? '→ ' + esc(st.to)
+              : st.kind === 'assault'
+                ? '⚔ штурм'
+                : st.kind === 'load'
+                  ? '▲ погрузка'
+                  : '🛰 орбита';
           h += `<div class="row dim">${q.map((st, i) => `${i + 1}. ${label(st)}`).join(' · ')}</div>`;
         }
-        h += `<div class="hint">Включите «строить», тапайте миры на карте (шаги-переходы) и добавляйте «Штурм». Флот выполнит цепочку по очереди, как освободится — даже пока вы вышли.</div>`;
+        h += `<div class="hint">Включите «строить», тапайте миры (переходы) и добавляйте «штурм» / «погрузку». «Погрузка» забирает гарнизон захваченного мира обратно в трюм — так одна армия прыгает по цепочке миров (переход→штурм→погрузка→…) сама, пока вы вышли.</div>`;
       }
 
       if (f.movement) {
@@ -4422,6 +4432,8 @@ side.addEventListener('click', (ev) => {
     }
   } else if (act === 'qassault') {
     enqueueStep(selectedFleetIds(), { kind: 'assault' });
+  } else if (act === 'qload') {
+    enqueueStep(selectedFleetIds(), { kind: 'load' });
   } else if (act === 'qclear') {
     for (const id of selectedFleetIds()) fleetQueues.delete(id);
   } else if (act === 'load') {
