@@ -59,7 +59,9 @@ export interface ActiveResearch {
 
 export interface PlayerTechnologyState {
   completed: TechnologyId[];
-  active?: ActiveResearch;
+  /** Research currently in progress — one entry per occupied slot (base 2,
+   *  raisable to a max of 3 via the `research.slots` hook). Absent/empty = idle labs. */
+  active?: ActiveResearch[];
 }
 
 /** Diplomatic stance between two players (symmetric). Richer than the combat

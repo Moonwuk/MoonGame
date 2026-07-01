@@ -3,7 +3,14 @@ import { hoursToMs } from '../action/types';
 import { MS_PER_DAY } from '../util/time';
 import type { GameData, ResourceBag, TechnologyCondition, TechnologyDef } from '../data/schemas';
 import type { GameModule, HandlerContext } from '../kernel/module';
-import type { GameState, Planet, Player, PlayerTechnologyState, UnitStack } from '../state/gameState';
+import type {
+  ActiveResearch,
+  GameState,
+  Planet,
+  Player,
+  PlayerTechnologyState,
+  UnitStack,
+} from '../state/gameState';
 import { canAfford, payCost } from '../util/treasury';
 
 interface ResearchPayload {
@@ -39,11 +46,21 @@ interface DamageArgs {
   attacker?: string | null;
 }
 
+/** Concurrent research slots: 2 by the base rule, raised via the `research.slots`
+ *  hook (e.g. a "+1 slot" scientist) up to a design maximum of 3. */
+const BASE_RESEARCH_SLOTS = 2;
+const MAX_RESEARCH_SLOTS = 3;
+
 function technologyState(player: Player): PlayerTechnologyState {
-  if (!player.technologies) {
-    player.technologies = { completed: [] };
+  const tech = player.technologies ?? (player.technologies = { completed: [] });
+  // Migrate a pre-multi-slot single-object `active` (from a match persisted before
+  // slots existed) into the list, so the concurrent-research code never meets a
+  // non-array and throws E_INTERNAL.
+  const active = tech.active as ActiveResearch[] | ActiveResearch | undefined;
+  if (active !== undefined && !Array.isArray(active)) {
+    tech.active = [active];
   }
-  return player.technologies;
+  return tech;
 }
 
 function hasCompleted(player: Player | undefined, technology: string): boolean {
@@ -194,11 +211,21 @@ function startResearch(action: Action, h: HandlerContext): void {
     return h.reject('E_UNKNOWN_TECHNOLOGY');
   }
   const tech = technologyState(player);
-  if (tech.completed.includes(payload.technology)) {
-    return h.reject('E_ALREADY_RESEARCHED');
+  const active = (tech.active ??= []);
+  if (
+    tech.completed.includes(payload.technology) ||
+    active.some((a) => a.technology === payload.technology)
+  ) {
+    return h.reject('E_ALREADY_RESEARCHED'); // already completed or in progress
   }
-  if (tech.active) {
-    return h.reject('E_RESEARCH_BUSY');
+  const raw = h.hook<number>('research.slots', BASE_RESEARCH_SLOTS, { playerId: action.playerId });
+  // Clamp to the design range [2, 3]; a misbehaving hook (non-finite / out of range)
+  // falls back to the base rather than fail-open to unlimited slots.
+  const slots = Number.isFinite(raw)
+    ? Math.min(MAX_RESEARCH_SLOTS, Math.max(BASE_RESEARCH_SLOTS, Math.floor(raw)))
+    : BASE_RESEARCH_SLOTS;
+  if (active.length >= slots) {
+    return h.reject('E_RESEARCH_SLOTS_FULL'); // every research slot is occupied
   }
   const lock = technologyLock(def, h.state, action.playerId);
   if (lock) {
@@ -214,7 +241,7 @@ function startResearch(action: Action, h: HandlerContext): void {
     action.playerId,
     def.researchTimeHours,
   );
-  tech.active = { technology: payload.technology, startedAt: h.ctx.now, completesAt };
+  active.push({ technology: payload.technology, startedAt: h.ctx.now, completesAt });
   h.emit('technology.research.started', {
     playerId: action.playerId,
     technology: payload.technology,
@@ -242,14 +269,17 @@ export const technologyModule: GameModule = {
         return;
       }
       const tech = technologyState(player);
-      if (
-        !tech.active ||
-        tech.active.technology !== payload.technology ||
-        tech.active.completesAt !== payload.completesAt
-      ) {
+      const active = tech.active;
+      if (!active) {
         return;
       }
-      delete tech.active;
+      const idx = active.findIndex(
+        (a) => a.technology === payload.technology && a.completesAt === payload.completesAt,
+      );
+      if (idx < 0) {
+        return; // no matching slot (stale / duplicate completion) → no-op
+      }
+      active.splice(idx, 1);
       if (!tech.completed.includes(payload.technology)) {
         tech.completed.push(payload.technology);
       }
