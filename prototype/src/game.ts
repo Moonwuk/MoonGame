@@ -2248,6 +2248,29 @@ export function patrolTarget(
   return best;
 }
 
+/** One reactive-scramble tick for a patrolling wing (CC-4 — "auto-sortie at an identified
+ *  target in vision + range"): pick the in-range contact (SQ-4.1) and launch at it — engage
+ *  if co-located, else fly to intercept its node — burning one fuel (SQ-2.1). `targets` are
+ *  the pre-filtered hostile, identified contacts that are sitting on a node. Returns the
+ *  order to issue (null = hold fire) plus the wing's new sortie state. Pure — the driver
+ *  gathers the world (vision + diplomacy) and issues the order. */
+export function scrambleOrder(
+  me: string,
+  fleet: Fleet,
+  patrol: Patrol,
+  targets: Array<{ id: string; location: string; pos: { x: number; y: number } }>,
+  rearmRounds: number,
+): { action: Action | null; sortie: SortieState } {
+  const pick = patrolTarget(patrol, targets);
+  if (pick === null) return { action: null, sortie: patrol.sortie };
+  const foe = targets.find((t) => t.id === pick)!;
+  const action =
+    fleet.location === foe.location
+      ? engageFleet(me, fleet.id, foe.id)
+      : moveFleet(me, fleet.id, foe.location);
+  return { action, sortie: spendSortie(patrol.sortie, rearmRounds) };
+}
+
 /**
  * Actions to re-embark the liftable garrison of the fleet's CURRENT world back into its
  * cargo — the "auto-load after capture" step. After a defended assault the storming

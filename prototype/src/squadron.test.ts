@@ -10,6 +10,7 @@ import {
   withinRange,
   squadronReaches,
   patrolTarget,
+  scrambleOrder,
   type SortieState,
   type Patrol,
 } from './game';
@@ -174,5 +175,42 @@ describe('squadron patrol (SQ-4.1)', () => {
     // Refuelled → the patrol re-engages the same loitering raider.
     expect(patrolTarget(p, enemy)).toBe('raider');
     expect(canSortie(p.sortie)).toBe(true);
+  });
+});
+
+describe('reactive auto-scramble order (CC-4)', () => {
+  const center = { x: 500, y: 500 };
+  const patrol = (sortie = freshSortie(3)): Patrol => ({ center, radius: 180, sortie });
+  const wing = (location: string | null): Fleet =>
+    ({ id: 'wing', owner: 'green', location, movement: null, units: [] }) as unknown as Fleet;
+  const targets = [
+    { id: 'raider', location: 'p2', pos: { x: 540, y: 500 } }, // in range, on a node
+    { id: 'far', location: 'p9', pos: { x: 5000, y: 5000 } }, // out of range
+  ];
+
+  it('engages a co-located in-range contact and burns a sortie', () => {
+    const r = scrambleOrder('green', wing('p2'), patrol(), targets, 2);
+    expect(r.action?.type).toBe('fleet.engage');
+    expect(r.action?.payload).toMatchObject({ fleetId: 'wing', targetId: 'raider' });
+    expect(r.sortie).toEqual({ fuel: 2, rearming: 0 }); // one fuel spent
+  });
+
+  it('flies to intercept an in-range contact parked elsewhere', () => {
+    const r = scrambleOrder('green', wing('p1'), patrol(), targets, 2);
+    expect(r.action?.type).toBe('fleet.move');
+    expect(r.action?.payload).toMatchObject({ fleetId: 'wing', to: 'p2' }); // toward the raider's node
+    expect(r.sortie.fuel).toBe(2);
+  });
+
+  it('holds fire (no order, no fuel spent) when nothing is in range', () => {
+    const r = scrambleOrder('green', wing('p1'), patrol(), [targets[1]!], 2);
+    expect(r.action).toBeNull();
+    expect(r.sortie).toEqual({ fuel: 3, rearming: 0 });
+  });
+
+  it('holds fire while rearming', () => {
+    const r = scrambleOrder('green', wing('p2'), patrol({ fuel: 0, rearming: 2 }), targets, 2);
+    expect(r.action).toBeNull();
+    expect(r.sortie).toEqual({ fuel: 0, rearming: 2 });
   });
 });
