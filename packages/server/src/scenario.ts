@@ -24,6 +24,7 @@ import {
   type Planet,
   type Player,
 } from '@void/shared-core';
+import type { ActionGate } from '@void/action-layer';
 import { MatchRoom, type ActionReceipt, type RoomObservation } from './matchRoom';
 import type { MatchSnapshot, StoredReceipt } from './store';
 
@@ -95,6 +96,12 @@ export interface DevMatchOptions {
   initialSeq?: number;
   /** Strict commit-before-broadcast durable write (see `MatchRoom.persist`). */
   persist?: (snapshot: MatchSnapshot, receipt: StoredReceipt) => Promise<void>;
+  /** Opt-in `@void/action-layer` front-door (see `MatchRoom.gate`). */
+  gate?: ActionGate;
+  /** Per-player action rate limit (see `MatchRoom.actionRateMax` / `actionRateWindowMs`);
+   *  pinned in tests to exercise throttling deterministically. */
+  actionRateMax?: number;
+  actionRateWindowMs?: number;
 }
 
 function player(id: string, name: string, faction: string): Player {
@@ -191,5 +198,8 @@ export function createDevMatch(data: GameData, options: DevMatchOptions = {}): M
     initialReceipts: options.initialReceipts,
     initialSeq: options.initialSeq,
     persist: options.persist,
+    gate: options.gate,
+    actionRateMax: options.actionRateMax,
+    actionRateWindowMs: options.actionRateWindowMs,
   });
 }

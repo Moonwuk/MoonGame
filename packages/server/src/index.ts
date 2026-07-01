@@ -21,6 +21,7 @@ export {
 export { InMemoryEphemeralStore, type EphemeralStore } from './ephemeral';
 export type {
   ClientActionMessage,
+  ClientActionEnvelopeMessage,
   ClientMessage,
   ClientPingMessage,
   ServerErrorCode,

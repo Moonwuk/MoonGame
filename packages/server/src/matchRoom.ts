@@ -9,6 +9,7 @@ import type {
   SignatureContact,
 } from '@void/shared-core';
 import { diffState, hashState, identifiedNodes, visibleState } from '@void/shared-core';
+import type { ActionGate } from '@void/action-layer';
 import {
   parseClientMessage,
   serializeServerMessage,
@@ -88,6 +89,16 @@ export interface MatchRoomOptions {
    *  Omit ⇒ the current synchronous path (broadcast then persist-after via `observe`),
    *  which every existing test and the tick/driver path keep using unchanged. */
   persist?: (snapshot: MatchSnapshot, receipt: StoredReceipt) => Promise<void>;
+  /** Opt-in `@void/action-layer` front-door (SV-1.1). When set, this room accepts
+   *  gated `action.v1` envelope messages and refuses bare `action` messages: every
+   *  action is validated → authorized → sequence-checked → deduped BEFORE the reducer,
+   *  yielding stable `E_*` codes with no internal leak. `receive` must be passed the
+   *  connection's `sessionId` (the transport binds it at handshake). Omit ⇒ the current
+   *  bare-action path (no envelope), which every existing caller keeps using unchanged.
+   *  NOTE: gated actions apply through the SYNC path this brick — combining `gate` with
+   *  `persist` (the durable committed path) is not wired yet (constructor throws), a
+   *  deliberate SV-1.x follow-up (durable sequence cursors + committed-path verdicts). */
+  gate?: ActionGate;
   /** Cap on retained idempotency receipts; past it the oldest are evicted (FIFO).
    *  Bounds memory for a long match — a retried action older than the last N is no
    *  longer deduped (idempotency is needed for minutes, not forever). Default 10000. */
@@ -159,6 +170,17 @@ function canSend(peer: RoomPeer): boolean {
   return peer.readyState === undefined || peer.readyState === OPEN;
 }
 
+/** Best-effort actionId from a raw envelope, for correlating a gate rejection back to the
+ *  client's action. A malformed payload may carry none — then `''`, and the client
+ *  correlates by its own clientSeq instead. */
+function envelopeActionId(envelope: unknown): string {
+  if (envelope !== null && typeof envelope === 'object') {
+    const id = (envelope as { actionId?: unknown }).actionId;
+    if (typeof id === 'string') return id;
+  }
+  return '';
+}
+
 /** Ally-ping tuning (ephemeral, server-side; never part of the deterministic core). */
 const PING_DEFAULT_TTL_MS = 5 * 60_000;
 const PING_MAX_PER_PLAYER = 8;
@@ -193,6 +215,8 @@ export class MatchRoom {
   private readonly observe?: (event: RoomObservation) => void;
   /** Durable write for strict commit-before-broadcast (see options.persist). */
   private readonly persist?: (snapshot: MatchSnapshot, receipt: StoredReceipt) => Promise<void>;
+  /** Opt-in action-layer front-door (see options.gate). */
+  private readonly gate?: ActionGate;
   /** The actor mailbox (SV-0.2): serializes state-touching operations whose critical
    *  section spans an `await` — a committed submit (its persist) and a lobby `start`
    *  — so one runs fully before the next, and neither interleaves with the other's
@@ -256,6 +280,13 @@ export class MatchRoom {
     this.singlePeerPerPlayer = options.singlePeerPerPlayer ?? false;
     this.observe = options.observe;
     this.persist = options.persist;
+    this.gate = options.gate;
+    if (this.gate && this.persist) {
+      // Gated actions apply through the sync path this brick; routing them through the
+      // durable committed path (so a gated action is persisted before broadcast) is a
+      // deliberate SV-1.x follow-up. Fail fast rather than silently drop durability.
+      throw new Error('MatchRoom: `gate` + `persist` is not supported yet (SV-1.x)');
+    }
     if (options.initialSeq && options.initialSeq > 0) this.seq = options.initialSeq;
     this.maxReceipts = options.maxReceipts ?? RECEIPTS_MAX_DEFAULT;
     this.actionRateMax = options.actionRateMax ?? ACTION_RATE_MAX_DEFAULT;
@@ -446,7 +477,12 @@ export class MatchRoom {
     if (this.syncLobbyClock() || (this.manualStart && !this.started)) this.broadcastState([]);
   }
 
-  async receive(playerId: PlayerId, peer: RoomPeer, raw: string): Promise<void> {
+  async receive(
+    playerId: PlayerId,
+    peer: RoomPeer,
+    raw: string,
+    sessionId?: string,
+  ): Promise<void> {
     if (raw.length > this.maxPayloadBytes) {
       this.send(peer, { type: 'error', matchId: this.id, code: 'E_PAYLOAD_TOO_LARGE' });
       return;
@@ -485,11 +521,69 @@ export class MatchRoom {
       await this.handlePingClear(playerId, message.pingId);
       return;
     }
+    if (message.type === 'action.v1') {
+      // Gated envelope path (SV-1.1). Requires a configured gate AND the connection's
+      // sessionId (bound by the transport at handshake) — without both there is nothing
+      // to authorize against, so it is an unroutable message.
+      if (this.gate && sessionId !== undefined) {
+        this.admitEnvelope(playerId, peer, message.envelope, sessionId);
+      } else {
+        this.send(peer, { type: 'error', matchId: this.id, code: 'E_BAD_MESSAGE' });
+      }
+      return;
+    }
+    // Bare-action path. A gated room refuses it: a bare action would bypass envelope
+    // validation, authorization and the sequence gate.
+    if (this.gate) {
+      this.send(peer, { type: 'error', matchId: this.id, code: 'E_BAD_MESSAGE' });
+      return;
+    }
     if (this.persist) {
       await this.submitActionCommitted(playerId, message.action, peer);
     } else {
       this.submitAction(playerId, message.action, peer);
     }
+  }
+
+  /**
+   * The `@void/action-layer` front door (SV-1.1): validate → authorize → sequence →
+   * dedup an incoming envelope, then apply an accepted action through the sync reducer
+   * core and record the verdict in the gate for idempotent replay. Every failure is a
+   * stable `E_*` code with no internal detail (fail-secure, OWASP A10).
+   */
+  private admitEnvelope(
+    playerId: PlayerId,
+    peer: RoomPeer,
+    envelope: unknown,
+    sessionId: string,
+  ): void {
+    // Rate-limit BEFORE the sequence-reserving admit: a throttled action must not reserve
+    // its clientSeq, or a legitimate backoff-retry of the same seq would hit E_REPLAY. This
+    // is the fine-grained per-player limit (the connection-level flood guard is in wsServer).
+    if (this.rateLimited(playerId)) {
+      this.sendGateRejection(peer, envelopeActionId(envelope), 'E_RATE_LIMIT');
+      return;
+    }
+    const admission = this.gate!.admit(envelope, { matchId: this.id, playerId, sessionId });
+    if (!admission.ok) {
+      this.sendGateRejection(peer, envelopeActionId(envelope), admission.code);
+      return;
+    }
+    const value = admission.value;
+    if (value.status === 'duplicate') {
+      // Idempotent replay — mirror the bare path's dedup response: a full resync for an
+      // action that succeeded, the cached rejection otherwise. No re-apply.
+      if (value.receipt.ok) this.send(peer, this.stateMessageFor(playerId));
+      else this.sendGateRejection(peer, value.receipt.actionId, value.receipt.code ?? 'E_INTERNAL');
+      return;
+    }
+    // Accepted: apply through the shared reducer core — no re-dedup / re-rate-limit /
+    // re-ownership (the gate already enforced them, and the rate-limit ran above).
+    const result = this.applyAndBroadcast(playerId, value.action, peer);
+    this.gate!.commit(
+      value.envelope,
+      result.ok ? { ok: true } : { ok: false, code: result.code ?? 'E_INTERNAL' },
+    );
   }
 
   submitAction(playerId: PlayerId, action: Action, peer?: RoomPeer): SubmitResult {
@@ -505,11 +599,7 @@ export class MatchRoom {
     // Rate limit (F-03): cap submits per player per window. A flood past the cap is
     // rejected TRANSIENTLY — no receipt is recorded, so a genuine retry after backoff
     // still lands (idempotency must never turn a rate-limit into a permanent reject).
-    const rateNow = this.now();
-    const recent = (this.actionTimes.get(playerId) ?? []).filter(
-      (t) => rateNow - t < this.actionRateWindowMs,
-    );
-    if (recent.length >= this.actionRateMax) {
+    if (this.rateLimited(playerId)) {
       if (peer) {
         this.send(peer, {
           type: 'rejection',
@@ -521,8 +611,6 @@ export class MatchRoom {
       }
       return { ok: false, seq: this.seq, events: [], code: 'E_RATE_LIMIT' };
     }
-    recent.push(rateNow);
-    this.actionTimes.set(playerId, recent);
 
     if (action.playerId !== playerId || !this.hasPlayer(playerId)) {
       const receipt = this.recordReceipt(action, playerId, false, 'E_FORBIDDEN');
@@ -530,6 +618,16 @@ export class MatchRoom {
       return { ok: false, seq: receipt.seq, events: [], code: receipt.code };
     }
 
+    return this.applyAndBroadcast(playerId, action, peer);
+  }
+
+  /**
+   * The reducer core, AFTER the front gates (dedup, rate-limit, ownership): catch the
+   * world up to now, apply the action, commit + broadcast. Shared by the bare
+   * `submitAction` and the gated `admitEnvelope` (which pre-clears the gates via the
+   * ActionGate), so neither re-runs a gate the other already applied.
+   */
+  private applyAndBroadcast(playerId: PlayerId, action: Action, peer?: RoomPeer): SubmitResult {
     const serverNow = this.clock();
     const advanced = this.advance(serverNow);
     if (!advanced.ok) {
@@ -557,6 +655,21 @@ export class MatchRoom {
     this.broadcastState(events);
     this.observeEndIfNeeded();
     return { ok: true, seq: receipt.seq, events };
+  }
+
+  /** Per-player action rate limit (F-03): true if `playerId` is over `actionRateMax`
+   *  submits in the trailing `actionRateWindowMs`. When under, records this submit's
+   *  timestamp and returns false. Shared by every action path so the cap is per-player,
+   *  not per-path. Pure check-and-record — the caller sends the transient reject. */
+  private rateLimited(playerId: PlayerId): boolean {
+    const rateNow = this.now();
+    const recent = (this.actionTimes.get(playerId) ?? []).filter(
+      (t) => rateNow - t < this.actionRateWindowMs,
+    );
+    if (recent.length >= this.actionRateMax) return true;
+    recent.push(rateNow);
+    this.actionTimes.set(playerId, recent);
+    return false;
   }
 
   /** Advance the world to the current clock and broadcast what changed — the
@@ -763,16 +876,10 @@ export class MatchRoom {
       return;
     }
     // Rate limit — transient reject, NO receipt (a genuine retry after backoff lands).
-    const rateNow = this.now();
-    const recent = (this.actionTimes.get(playerId) ?? []).filter(
-      (t) => rateNow - t < this.actionRateWindowMs,
-    );
-    if (recent.length >= this.actionRateMax) {
+    if (this.rateLimited(playerId)) {
       if (peer) this.sendTransientReject(peer, action.id, 'E_RATE_LIMIT');
       return;
     }
-    recent.push(rateNow);
-    this.actionTimes.set(playerId, recent);
 
     this.committing = true;
     try {
@@ -866,6 +973,14 @@ export class MatchRoom {
   /** A rejection that records NO receipt — the action is retriable (rate-limit / a
    *  durable-write failure / an unexpected error), not a permanent verdict. */
   private sendTransientReject(peer: RoomPeer, actionId: string, code: string): void {
+    this.send(peer, { type: 'rejection', matchId: this.id, seq: this.seq, actionId, code });
+  }
+
+  /** A rejection from the action-layer front door (SV-1.1). The stable `E_*` code goes
+   *  to the client with no internal detail; whether it is retriable depends on the code
+   *  (transient E_RATE_LIMIT vs. permanent E_FORBIDDEN / E_BAD_PAYLOAD), which the client
+   *  decides — the room records no receipt (the gate owns idempotency). */
+  private sendGateRejection(peer: RoomPeer, actionId: string, code: string): void {
     this.send(peer, { type: 'rejection', matchId: this.id, seq: this.seq, actionId, code });
   }
 

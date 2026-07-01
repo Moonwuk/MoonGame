@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@void/action-layer": "workspace:*",
     "@void/shared-core": "workspace:*",
     "pg": "^8.22.0",
     "ws": "8.21.0"
