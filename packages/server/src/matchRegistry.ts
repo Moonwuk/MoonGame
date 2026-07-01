@@ -81,11 +81,17 @@ export interface LazyMatchRegistryOptions {
  * connection it reloads and its clock driver catches the world up deterministically —
  * so hibernation is invisible to correctness.
  *
- * Note: an evicted match's due scheduled events do NOT fire while it sleeps (nobody is
- * watching); they resolve on reload's catch-up. Waking a hibernated match for an event
- * with all players offline (push notifications / offline victory) is a cross-process
- * scheduler concern (pg-boss, SV-4.1) — out of scope here.
+ * The 24/7 world keeps running for a fully-offline match too: on hibernation the registry
+ * arms a WAKE timer at the match's next scheduled event; when it fires, the match is
+ * reloaded, caught up (its due events processed + persisted), and re-hibernated — re-armed
+ * for the following event. So a battle/economy/arrival resolves at its real time even with
+ * nobody connected. The timer is injectable (the same seam a cross-process pg-boss "wake
+ * match X at T" delayed job plugs into for a multi-process deployment — SV-4.1).
  */
+/** setTimeout caps at ~24.8 days (2^31−1 ms); a farther wake is split — we fire early,
+ *  the reload's catch-up is a no-op if nothing is due yet, and re-arm. */
+const MAX_WAKE_DELAY = 2_147_483_647;
+
 export class LazyMatchRegistry implements MatchRegistry {
   private readonly live = new Map<string, LoadedMatch>();
   private readonly loading = new Map<string, Promise<MatchRoom | undefined>>();
@@ -93,6 +99,8 @@ export class LazyMatchRegistry implements MatchRegistry {
    *  reloads the freshly-persisted state, not the pre-hibernation snapshot. */
   private readonly disposing = new Map<string, Promise<void>>();
   private readonly idle = new Map<string, unknown>();
+  /** Armed wake timers for hibernated matches (fire at the next scheduled event). */
+  private readonly wakes = new Map<string, unknown>();
   private readonly idleMs: number;
   private readonly schedule: (fn: () => void, ms: number) => unknown;
   private readonly cancel: (handle: unknown) => void;
@@ -140,6 +148,7 @@ export class LazyMatchRegistry implements MatchRegistry {
     const loaded = await this.options.load(matchId);
     if (!loaded) return undefined;
     this.live.set(matchId, loaded);
+    this.disarmWake(matchId); // now live — the loaded room's clock driver supersedes the wake
     return loaded.room;
   }
 
@@ -160,6 +169,8 @@ export class LazyMatchRegistry implements MatchRegistry {
   async shutdown(): Promise<void> {
     for (const h of this.idle.values()) this.cancel(h);
     this.idle.clear();
+    for (const h of this.wakes.values()) this.cancel(h);
+    this.wakes.clear();
     const all = [...this.live.values()];
     this.live.clear();
     // Persist + tear down every live match, plus any hibernation already in flight.
@@ -183,6 +194,8 @@ export class LazyMatchRegistry implements MatchRegistry {
     this.idle.delete(matchId);
     const live = this.live.get(matchId);
     if (!live || live.room.peerCount > 0) return; // a socket reconnected during the window
+    // Read the next scheduled event's wall-ms BEFORE teardown, to wake for it while asleep.
+    const nextEventMs = live.room.msUntilNextEvent();
     this.live.delete(matchId);
     // `dispose` persists + tears down; it can REJECT on a store error. Contain it: a
     // failed idle-persist must never crash the process (this runs as `void hibernate`).
@@ -201,5 +214,36 @@ export class LazyMatchRegistry implements MatchRegistry {
     } finally {
       this.disposing.delete(matchId);
     }
+    // Keep the world running while asleep: fire the next scheduled event at its time.
+    this.armWake(matchId, nextEventMs);
+  }
+
+  private armWake(matchId: string, ms: number | null): void {
+    this.disarmWake(matchId);
+    if (ms === null) return; // nothing scheduled — nothing to wake for
+    this.wakes.set(
+      matchId,
+      this.schedule(() => void this.wake(matchId), Math.max(0, Math.min(ms, MAX_WAKE_DELAY))),
+    );
+  }
+
+  private disarmWake(matchId: string): void {
+    const h = this.wakes.get(matchId);
+    if (h !== undefined) {
+      this.cancel(h);
+      this.wakes.delete(matchId);
+    }
+  }
+
+  /** A hibernated match's next event came due: reload it, catch the world up (processing
+   *  the due events), and — if still unwatched — re-hibernate, which re-arms for the event
+   *  after. A connection that arrived meanwhile leaves it live (its driver takes over). */
+  private async wake(matchId: string): Promise<void> {
+    this.wakes.delete(matchId);
+    if (this.live.get(matchId)) return; // already live (someone connected) → driver handles it
+    const room = await this.resolve(matchId);
+    if (!room) return; // no longer in the store
+    room.tick(); // process events due up to now; the re-hibernation below persists the result
+    if (room.peerCount === 0) await this.hibernate(matchId);
   }
 }

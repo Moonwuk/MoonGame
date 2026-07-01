@@ -5,11 +5,15 @@ import {
   createInitialState,
   createKernel,
   parseGameData,
+  type GameData,
   type GameModule,
+  type GameState,
   type Player,
 } from '@void/shared-core';
 import { MatchRoom, type RoomPeer } from './matchRoom';
 import { InMemoryMatchRegistry, LazyMatchRegistry } from './matchRegistry';
+import { MemoryMatchStore } from './store';
+import { snapshotOf } from './persistence';
 import { createMultiplayerServer } from './wsServer';
 import type { ServerMessage } from './protocol';
 
@@ -410,5 +414,126 @@ describe('LazyMatchRegistry · load on demand + idle hibernation', () => {
     } finally {
       await server.close();
     }
+  });
+});
+
+// The 24/7 world keeps running for a fully-offline match: a hibernated match wakes at
+// its next scheduled event, processes + persists it, and re-sleeps armed for the next.
+const beatModule: GameModule = {
+  id: 'beat',
+  version: '1.0.0',
+  setup(api) {
+    api.on('beat', (_e, h) => {
+      const p = h.state.players.p1;
+      if (p) p.resources.beats = (p.resources.beats ?? 0) + 1;
+      h.schedule(h.state.time + 100, 'beat'); // schedule the next beat
+    });
+  },
+};
+function beatData(): GameData {
+  return parseGameData({
+    version: 'test',
+    resources: ['beats'],
+    units: {},
+    factions: {},
+    buildings: {},
+    events: {},
+    sectors: {},
+    planetTypes: {},
+  });
+}
+function beatState(at: number): GameState {
+  const base = createInitialState({ seed: 'beat', version: { data: 'test', manifest: 'test' } });
+  return {
+    ...base,
+    players: { p1: player('p1'), p2: player('p2') },
+    scheduled: [{ id: 'evt:0', at, type: 'beat', payload: null, seq: 0 }],
+    scheduleSeq: 1,
+  };
+}
+
+describe('LazyMatchRegistry · wake scheduler (24/7 offline world)', () => {
+  function beatHarness() {
+    const clock = { now: 0 };
+    const timer = idleHarness();
+    const store = new MemoryMatchStore();
+    void store.save({ matchId: 'm', dataVersion: 'test', seq: 0, status: 'ongoing', state: beatState(100) });
+    const data = beatData();
+    const kernel = createKernel([beatModule]);
+    const registry = new LazyMatchRegistry({
+      load: async (id) => {
+        const snap = await store.load(id);
+        if (!snap) return null;
+        const room = new MatchRoom({ id, initialState: snap.state, kernel, data, now: () => clock.now });
+        return { room, dispose: () => void store.save(snapshotOf(room)) };
+      },
+      idleMs: 1000,
+      schedule: timer.schedule,
+      cancel: timer.cancel,
+    });
+    return { clock, timer, store, registry };
+  }
+
+  it('wakes a hibernated match at its next event, processes + persists it, re-arms the next', async () => {
+    const { clock, timer, store, registry } = beatHarness();
+
+    // Load, then a socket connects and leaves → idle countdown.
+    await registry.resolve('m');
+    const peer = fakePeer();
+    const room = registry.get('m')!;
+    room.addPeer('p1', peer);
+    registry.retain('m');
+    room.removePeer('p1', peer);
+    registry.release('m');
+
+    timer.fire(); // idle elapsed → hibernate
+    await flush();
+    expect(registry.get('m')).toBeUndefined(); // asleep
+    expect(timer.pending?.ms).toBe(100); // wake armed for the beat at t=100
+
+    // The beat's wall-clock time arrives while nobody is connected.
+    clock.now = 150;
+    timer.fire(); // wake
+    await flush();
+
+    const snap = await store.load('m');
+    expect(snap?.state.players.p1?.resources.beats).toBe(1); // the beat fired + was persisted
+    expect(registry.get('m')).toBeUndefined(); // re-hibernated (still unwatched)
+    expect(timer.pending?.ms).toBe(50); // re-armed for the NEXT beat (t=200, now=150)
+  });
+
+  it('cancels a pending wake when a player reconnects', async () => {
+    const { registry, timer } = beatHarness();
+    await registry.resolve('m');
+    const room = registry.get('m')!;
+    const peer = fakePeer();
+    room.addPeer('p1', peer);
+    registry.retain('m');
+    room.removePeer('p1', peer);
+    registry.release('m');
+    timer.fire(); // hibernate → wake armed
+    await flush();
+    expect(timer.pending?.ms).toBe(100);
+
+    await registry.resolve('m'); // a reconnection loads it live
+    expect(timer.pending).toBeNull(); // the wake was disarmed (the live driver takes over)
+    expect(registry.get('m')).toBeDefined();
+  });
+
+  it('shutdown disarms pending wakes', async () => {
+    const { registry, timer } = beatHarness();
+    await registry.resolve('m');
+    const room = registry.get('m')!;
+    const peer = fakePeer();
+    room.addPeer('p1', peer);
+    registry.retain('m');
+    room.removePeer('p1', peer);
+    registry.release('m');
+    timer.fire(); // hibernate → wake armed
+    await flush();
+    expect(timer.pending?.ms).toBe(100);
+
+    await registry.shutdown();
+    expect(timer.pending).toBeNull(); // wake cancelled
   });
 });
