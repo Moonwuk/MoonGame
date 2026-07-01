@@ -1063,6 +1063,28 @@ export function formationStats(tpl: FormationTemplate): FormationStats {
   };
 }
 
+// --- bot favour (approval) scale ---------------------------------------------
+// A bot's opinion of each other seat on a 0..100 meter, seeded neutral-friendly. It
+// only falls when a player sours it (declares war on the bot, or a sustained war), and
+// slowly heals while at peace. A bot NEVER starts a war for expansion (see aiOrders);
+// it escalates by tier: normal → embargo (won't trade with you, wired once a session
+// market exists) → and only at rock bottom does it declare war back. All tunable.
+export const FAVOUR_BASE = 60; // starting favour toward every seat
+export const FAVOUR_EMBARGO = 35; // below → the bot embargoes you on the market (future)
+export const FAVOUR_WAR = 15; // below → the bot itself declares war (the extreme case)
+export const FAVOUR_WAR_DECLARED_HIT = 30; // drop when a seat declares WAR on the bot
+export const FAVOUR_WAR_DECAY_PER_DAY = 5; // sustained war keeps eroding favour
+export const FAVOUR_HEAL_PER_DAY = 6; // peace slowly mends it back toward FAVOUR_BASE
+
+/** A bot's favour toward `player` (FAVOUR_BASE if untracked / not a bot). */
+export function botFavour(state: GameState, bot: string, player: string): number {
+  return (state as DivState).approval?.[bot]?.[player] ?? FAVOUR_BASE;
+}
+/** Does `bot` embargo `player` on the market (favour below the embargo line)? */
+export function botEmbargoes(state: GameState, bot: string, player: string): boolean {
+  return (state as DivState).approval?.[bot] !== undefined && botFavour(state, bot, player) < FAVOUR_EMBARGO;
+}
+
 /** Default solo skirmish: you (p1) vs one AI (p2), at two of the start candidates. */
 export const DEFAULT_SETUP: SetupConfig = {
   seats: [
@@ -1150,6 +1172,14 @@ export function newGame(setup: SetupConfig = DEFAULT_SETUP): GameState {
   const ids = setup.seats.map((seat) => seat.id);
   for (let i = 0; i < ids.length; i++)
     for (let j = i + 1; j < ids.length; j++) diplomacy[pairKey(ids[i]!, ids[j]!)] = 'peace';
+  // Bots track a favour meter toward every other seat (seeded neutral-friendly). Only a
+  // player's aggression lowers it; a bot never wars for expansion (see botDiplomacyModule).
+  const approval: Record<string, Record<string, number>> = {};
+  for (const seat of setup.seats) {
+    if (!seat.ai) continue;
+    approval[seat.id] = {};
+    for (const other of ids) if (other !== seat.id) approval[seat.id]![other] = FAVOUR_BASE;
+  }
   // The player's locked division templates ride into the match; the AI uses the defaults.
   const templates: Record<string, FormationTemplate[]> = {};
   const heroRoster: Record<string, HeroLoadout[]> = {};
@@ -1170,6 +1200,7 @@ export function newGame(setup: SetupConfig = DEFAULT_SETUP): GameState {
     fleets,
     heroes,
     diplomacy,
+    approval,
     divisions: {},
     divisionSeq: 0,
     templates,
@@ -1253,6 +1284,52 @@ export const diplomacyModule: GameModule = {
   },
 };
 
+// --- bot diplomacy: the favour meter reacts to a player's aggression ----------
+// Bots are passive-friendly — they never start a war to expand (see aiOrders). This
+// module lowers a bot's favour when a seat wrongs it and, only once the meter bottoms
+// out, has the bot declare war back (venting to the embargo line so it won't re-war
+// every tick). Peace slowly mends favour. The embargo tier (refuse to trade below
+// FAVOUR_EMBARGO, reported by botEmbargoes) activates once a session market exists.
+export const botDiplomacyModule: GameModule = {
+  id: 'bot-diplomacy',
+  version: '0.1.0',
+  setup(api) {
+    // A seat declaring WAR on a bot sours that bot's favour toward the declarer.
+    api.on('diplomacy.changed', (event, h) => {
+      const { a, b, stance } = event.payload as { a: string; b: string; stance: DiplomaticStance };
+      if (stance !== 'war') return;
+      const meter = (h.state as DivState).approval?.[b];
+      if (!meter || meter[a] === undefined) return; // b isn't a tracked bot vs a
+      meter[a] = Math.max(0, meter[a]! - FAVOUR_WAR_DECLARED_HIT);
+    });
+    // Per span: sustained war erodes favour, peace mends it; a bottomed-out meter makes
+    // the bot commit to war (once), then vents so it won't thrash war/peace every tick.
+    api.on('time.advanced', (event, h) => {
+      const { from, to } = event.payload as { from: number; to: number };
+      const span = to - from;
+      if (span <= 0) return;
+      const days = (span * timeScaleOf(h.ctx)) / DAY;
+      const approval = (h.state as DivState).approval;
+      if (!approval) return;
+      for (const bot of Object.keys(approval)) {
+        if (!h.state.players[bot]) continue; // eliminated seat
+        const meter = approval[bot]!;
+        for (const player of Object.keys(meter)) {
+          const atWar = getStance(h.state, bot, player) === 'war';
+          meter[player] = atWar
+            ? Math.max(0, meter[player]! - FAVOUR_WAR_DECAY_PER_DAY * days)
+            : Math.min(FAVOUR_BASE, meter[player]! + FAVOUR_HEAL_PER_DAY * days);
+          if (meter[player]! < FAVOUR_WAR && !atWar) {
+            setStance(h.state, bot, player, 'war');
+            meter[player] = FAVOUR_EMBARGO; // vent: hostile now, but above the war line
+            h.emit('diplomacy.changed', { a: bot, b: player, stance: 'war' });
+          }
+        }
+      }
+    });
+  },
+};
+
 // --- ground divisions: mobilisation + daily restoration ----------------------
 // A division is a cohesive ground formation built from a LOCKED template. It lives in
 // `state.divisions` (a prototype-only field, preserved through deepClone), garrisons a
@@ -1287,6 +1364,8 @@ type DivState = GameState & {
   heroRoster?: Record<string, HeroLoadout[]>;
   shipLoadouts?: Record<string, ShipLoadout[]>;
   capital?: Record<string, string>;
+  /** Bot favour toward each other seat: approval[bot][player] on a 0..100 meter. */
+  approval?: Record<string, Record<string, number>>;
 };
 export function divisionsOf(state: GameState): Record<string, Division> {
   const s = state as DivState;
@@ -1753,6 +1832,7 @@ export const MODULES: GameModule[] = [
   victoryModule, // terminal match state from authoritative state (domination / elimination / score / timeout)
   fleetLaunchModule,
   diplomacyModule, // peace-by-default + declare-war action (combat reads state.diplomacy)
+  botDiplomacyModule, // bots: friendly-by-default favour meter → embargo/war only when provoked
   divisionModule, // ground divisions: mobilise from a template + daily restoration
   capitalModule, // designatable capital (hero respawn / module re-fit anchor)
 ];
@@ -1893,7 +1973,6 @@ export function aiOrders(state: GameState, ai: string): Action[] {
     Math.hypot(a.x - b.x, a.y - b.y);
   // Send each idle AI fleet toward the nearest capturable world it can reach — only
   // neutral worlds or territory of someone it's at WAR with (peace = off-limits).
-  let blockedByPeace = false;
   for (const f of Object.values(state.fleets)) {
     if (f.owner !== ai || f.location == null || f.movement || f.battleId) continue;
     const here = state.planets[f.location];
@@ -1902,10 +1981,7 @@ export function aiOrders(state: GameState, ai: string): Action[] {
     let bestD = Infinity;
     for (const p of Object.values(state.planets)) {
       if (p.owner === ai || !capturable(p)) continue;
-      if (!canTraverse(state, ai, p.owner)) {
-        blockedByPeace = true; // a target it could only take by declaring war
-        continue;
-      }
+      if (!canTraverse(state, ai, p.owner)) continue; // a peace-locked target — leave it be
       const dd = d(here.position, p.position);
       if (dd < bestD) {
         bestD = dd;
@@ -1914,23 +1990,10 @@ export function aiOrders(state: GameState, ai: string): Action[] {
     }
     if (best) out.push(moveFleet(ai, f.id, best.id));
   }
-  // Peaceful expansion exhausted (only peace-locked targets left) → commit to a war on
-  // the nearest such rival, so the match doesn't stall. Next tick it advances on them.
-  if (out.length === 0 && blockedByPeace) {
-    const base0 = Object.values(state.planets).find((p) => p.owner === ai);
-    let foe: string | null = null;
-    let foeD = Infinity;
-    for (const p of Object.values(state.planets)) {
-      if (!capturable(p) || p.owner == null || p.owner === ai) continue;
-      if (getStance(state, ai, p.owner) !== 'peace') continue;
-      const dd = base0 ? d(base0.position, p.position) : 0;
-      if (dd < foeD) {
-        foeD = dd;
-        foe = p.owner;
-      }
-    }
-    if (foe) out.push(declareWar(ai, foe));
-  }
+  // NB: a passive bot never declares war just to keep expanding. Once neutral worlds run
+  // out it simply builds (below) — "тихо копит армию". It only turns hostile when a player
+  // sours its favour to rock bottom (botDiplomacyModule), then fights whoever it's at war
+  // with via the same expansion loop above (war territory is traversable/capturable).
   // Build + launch from this AI's home base (its first developed owned world).
   const base =
     Object.values(state.planets).find((p) => p.owner === ai && p.buildings.length > 0) ??
