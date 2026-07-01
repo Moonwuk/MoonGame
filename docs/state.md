@@ -203,19 +203,29 @@ E_NO_DESTINATION, E_NO_ROUTE, E_NOT_A_LANE, E_FLEET_IMMOBILE`.
 
 ### technology (`technology`) — сессионное дерево технологий
 
-Действие **`technology.research {technology}`** запускает одно активное
-исследование игрока в рамках матча: стоимость списывается из казны сразу,
+Действие **`technology.research {technology}`** запускает исследование игрока в
+рамках матча — до **2 одновременных** (база; поднимается хуком `research.slots`,
+напр. учёным-«+слот», до максимума **3**). Стоимость списывается из казны сразу,
 завершение планируется как `technology.complete` с учётом `timeScale`. Состояние
-лежит в `Player.technologies` (`completed[]`, `active`). Коды: `E_BAD_PAYLOAD,
-E_FORBIDDEN, E_UNKNOWN_TECHNOLOGY, E_ALREADY_RESEARCHED, E_RESEARCH_BUSY,
-E_PREREQUISITE, E_INSUFFICIENT`.
+лежит в `Player.technologies` (`completed[]`, `active[]` — по записи на слот).
 
-Данные `data/technologies.json` задают tier, cost, researchTimeHours,
-prerequisites, unlocks и effects. Модуль подключается только через хуки:
-`construction.requirement` закрывает юниты/здания, перечисленные в unlocks, пока
-нужная технология не завершена; `economy.production`, `fleet.speed` и
-`combat.damage` применяют сессионные бонусы. Без модуля unlock-гейт мягко
-деградирует: строительство остаётся открытым.
+**Гейтинг данными — `technologyLock(def, state, playerId)`** (чистая, экспортируется
+для сервера/UI): техно доступно, когда все `prerequisites` завершены **И** наступил
+день `dayGate` (мировой клок: `state.time − startedAt ≥ dayGate·MS_PER_DAY`,
+совпадает с «Day N» матч-браузера) **И** выполнены все `conditions`. Условия —
+курируемый каталог (`own_sectors` / `has_building` / `controls_planet_type` /
+`has_unit`, каждое с count-порогом `min`), диспетч по `type`, fail-secure на
+неизвестный тип. Коды: `E_BAD_PAYLOAD, E_FORBIDDEN, E_UNKNOWN_TECHNOLOGY,
+E_ALREADY_RESEARCHED, E_RESEARCH_SLOTS_FULL, E_PREREQUISITE, E_TOO_EARLY,
+E_CONDITIONS_UNMET, E_INSUFFICIENT`.
+
+Данные `data/technologies.json` задают **branch** (4 ветки-вкладки), **dayGate**,
+**conditions**, tier, cost, researchTimeHours, prerequisites, unlocks и effects.
+Модуль подключается только через хуки: `construction.requirement` закрывает
+юниты/здания из unlocks, пока технология не завершена; `economy.production`,
+`fleet.speed` и `combat.damage` применяют сессионные бонусы; `research.slots`
+поднимает число слотов. Без модуля unlock-гейт мягко деградирует: строительство
+остаётся открытым.
 
 ### combat (`combat`) — бой, орбиты, ПВО, бомбардировка
 

@@ -35,8 +35,9 @@
 - **TT-0.3 условия** — курируемый каталог `TechnologyConditionSchema` (`z.discriminatedUnion`): `own_sectors` · `has_building` · `controls_planet_type` · `has_unit`, каждое с count-порогом `min` (default 1) — **балансируется чистыми данными**. Новый тип = 1 вариант схемы + 1 `case` (пропуск `case` = ошибка компиляции через `never`-guard).
 - **TT-1.1 правило доступности** — чистая **`technologyLock(def, state, playerId)`** = prereqs → день-гейт → условия; отдаёт первый непройденный гейт стабильным кодом (`E_PREREQUISITE`/`E_TOO_EARLY`/`E_CONDITIONS_UNMET`) или `null`. Экспортирована для будущего UI/action-слоя («что доступно и почему нет»).
 - **TT-1.2** — уже работал (reuse отложенного завершения).
+- **TT-1.3 слоты** — `active` стал списком (запись на слот); **2 базовых → до 3** через хук `research.slots` (клампится к [2,3]); одинаковое техно не занимает два слота; миграция legacy single-object `active`.
 
-**⏳ Дальше (follow-up):** TT-1.3 слоты 2→3 · TT-2.1 мета-гейтинг (ждёт `account-level` в коде — сейчас docs-only) · TT-3.1 UI-вкладки · TT-4.* учёный.
+**⏳ Дальше (follow-up):** TT-2.1 мета-гейтинг (ждёт `account-level` в коде — сейчас docs-only) · TT-3.1 UI-вкладки · TT-4.* учёный (в т.ч. учёный-«+слот» через `research.slots`).
 
 ## Фаза 0 · Модель данных (расширение схемы) `[data][core]`
 
