@@ -209,13 +209,13 @@ E_NO_DESTINATION, E_NO_ROUTE, E_NOT_A_LANE, E_FLEET_IMMOBILE`.
 завершение планируется как `technology.complete` с учётом `timeScale`. Состояние
 лежит в `Player.technologies` (`completed[]`, `active[]` — по записи на слот).
 
-**Гейтинг данными — `technologyLock(def, state, playerId)`** (чистая, экспортируется
-для сервера/UI): техно доступно, когда все `prerequisites` завершены **И** наступил
-день `dayGate` (мировой клок: `state.time − startedAt ≥ dayGate·MS_PER_DAY`,
-совпадает с «Day N» матч-браузера) **И** выполнены все `conditions`. Условия —
-курируемый каталог (`own_sectors` / `has_building` / `controls_planet_type` /
-`has_unit`, каждое с count-порогом `min`), диспетч по `type`, fail-secure на
-неизвестный тип. Коды: `E_BAD_PAYLOAD, E_FORBIDDEN, E_UNKNOWN_TECHNOLOGY,
+**Гейтинг данными — `technologyLock(def, state, playerId, data)`** (чистая,
+экспортируется для сервера/UI): техно доступно, когда все `prerequisites` завершены
+**И** наступил день `dayGate` (мировой клок: `state.time − startedAt ≥
+dayGate·MS_PER_DAY`, совпадает с «Day N» матч-браузера) **И** выполнены все
+`conditions`. Условия — курируемый каталог (`own_sectors` / `has_building` /
+`controls_planet_type` / `has_unit` с count-порогом `min`; `has_scientist
+{branch?, minLevel?}` — учёный), диспетч по `type`, fail-secure на неизвестный тип. Коды: `E_BAD_PAYLOAD, E_FORBIDDEN, E_UNKNOWN_TECHNOLOGY,
 E_ALREADY_RESEARCHED, E_RESEARCH_SLOTS_FULL, E_PREREQUISITE, E_TOO_EARLY,
 E_CONDITIONS_UNMET, E_INSUFFICIENT`.
 
@@ -226,6 +226,18 @@ E_CONDITIONS_UNMET, E_INSUFFICIENT`.
 `fleet.speed` и `combat.damage` применяют сессионные бонусы; `research.slots`
 поднимает число слотов. Без модуля unlock-гейт мягко деградирует: строительство
 остаётся открытым.
+
+### scientist (`scientist`) — research-лидер (учёный)
+
+Выбирается на старте и снапшотится в `Player.scientist {id, level}` (через
+слот-ассайнмент `buildStateFromMap`; `E_UNKNOWN_SCIENTIST` при неизвестном id;
+приватен в тумане — стрипается у чужих проекций). Каталог `data/scientists.json`
+(`ScientistDef {name, branch?, slotBonus}`) — НЕ юнит, НЕ hero-модуль. Эффекты идут
+через существующие швы: **`+слот`-лидер** добавляет `slotBonus` в хук
+`research.slots` (клампится к 3); **фокус ветки и лейт-капстоун** — data-driven через
+условие `has_scientist` (качественный доступ, **не % скорости**). `+слот`
+INSTEAD-of-фокус — opportunity-cost (лидер-«+слот» branchless). Уровень — мета (из
+аккаунта; пока параметр сборки — `account-level` ещё docs-only).
 
 ### combat (`combat`) — бой, орбиты, ПВО, бомбардировка
 
