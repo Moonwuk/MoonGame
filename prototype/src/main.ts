@@ -36,6 +36,10 @@ import {
   buildUnit,
   aiOrders,
   declareWar,
+  marketLots,
+  marketList,
+  marketTake,
+  marketCancel,
   canTraverse,
   START_CANDIDATES,
   DEFAULT_TEMPLATES,
@@ -4779,6 +4783,103 @@ techWin.addEventListener('click', (e) => {
   }
 });
 
+// --- session market: a two-sided order book, one tab per tradeable good -------
+// Sell lots (asks) and buy lots (bids) per resource; place your own, take a rival's.
+// The whole box is rendered from JS (like #diplo) so each tab re-renders in place.
+type MarketGood = 'metal' | 'food' | 'energy' | 'microelectronics';
+const MARKET_RES: Array<{ key: MarketGood; label: string }> = [
+  { key: 'metal', label: 'Металл' },
+  { key: 'food', label: 'Пища' },
+  { key: 'energy', label: 'Энергия' },
+  { key: 'microelectronics', label: 'Микро' },
+];
+let marketTab: MarketGood = 'metal';
+let marketFormSide: 'sell' | 'buy' = 'sell';
+const marketWin = $('market');
+function renderMarket(): void {
+  const res = (s.players[ME]?.resources ?? {}) as Record<string, number>;
+  const good = marketTab;
+  const glyph = TECH_CUR[good] ?? '';
+  const nameOf = (id: string): string => esc(s.players[id]?.name ?? id);
+  const lots = marketLots(s);
+  const asks = lots.filter((l) => l.side === 'sell' && l.resource === good).sort((a, b) => a.price - b.price);
+  const bids = lots.filter((l) => l.side === 'buy' && l.resource === good).sort((a, b) => b.price - a.price);
+  const lotRow = (l: (typeof lots)[number], bid: boolean): string => {
+    const mine = l.owner === ME;
+    const qp = `<span class="mk-qp"><b>${l.amount}</b> ${TECH_CUR[l.resource] ?? ''} @ ${l.price} ¤</span>`;
+    const who = `<span class="mk-who">${mine ? 'ваш лот' : nameOf(l.owner)}</span>`;
+    let btn: string;
+    if (mine) {
+      btn = `<button class="mk-btn cancel" data-mkcancel="${l.id}">Отменить</button>`;
+    } else {
+      const can = l.side === 'sell' ? (res.credits ?? 0) >= l.price : (res[l.resource] ?? 0) >= 1;
+      btn = `<button class="mk-btn" data-mktake="${l.id}"${can ? '' : ' disabled'}>${l.side === 'sell' ? 'Купить' : 'Продать'}</button>`;
+    }
+    return `<div class="mk-row ${bid ? 'buy' : ''}">${qp}${who}${btn}</div>`;
+  };
+  const seg = (side: 'sell' | 'buy', label: string): string =>
+    `<button class="${marketFormSide === side ? 'on' : ''}" data-mkside="${side}">${label}</button>`;
+  const tabBtn = (k: string, label: string): string =>
+    `<button class="mk-tab${marketTab === k ? ' on' : ''}" data-mtab="${k}">${label}</button>`;
+  const stock =
+    `<div class="mk-lbl" style="margin-bottom:8px">В казне: ${glyph} <b style="color:var(--ink)">${Math.round(res[good] ?? 0)}</b>` +
+    ` · ¤ <b style="color:var(--ink)">${Math.round(res.credits ?? 0)}</b></div>`;
+  const form =
+    `<div class="mk-form"><div class="mk-seg">${seg('sell', 'Продать')}${seg('buy', 'Купить')}</div>` +
+    `<span class="mk-lbl">кол-во</span><input class="mk-in" id="mk-amt" type="number" min="1" value="10">` +
+    `<span class="mk-lbl">цена</span><input class="mk-in" id="mk-price" type="number" min="0" value="3">` +
+    `<button class="mk-go" data-mkgo>Выставить</button></div>`;
+  const askList = asks.length ? asks.map((l) => lotRow(l, false)).join('') : `<div class="mk-empty">Нет лотов на продажу</div>`;
+  const bidList = bids.length ? bids.map((l) => lotRow(l, true)).join('') : `<div class="mk-empty">Нет лотов на покупку</div>`;
+  marketWin.innerHTML =
+    `<div class="mkbox"><div class="lw-head"><b>РЫНОК</b><button class="mk-close" style="margin-left:auto">✕</button></div>` +
+    `<div class="mk-tabs">${MARKET_RES.map((r) => tabBtn(r.key, r.label)).join('')}</div>` +
+    `<div id="marketbody">${stock}${form}` +
+    `<div class="mk-sec">Продажа · ${asks.length}</div>${askList}` +
+    `<div class="mk-sec buy">Покупка · ${bids.length}</div>${bidList}</div></div>`;
+}
+document.getElementById('rail-market')?.addEventListener('click', () => {
+  marketWin.classList.add('show');
+  renderMarket();
+});
+marketWin.addEventListener('click', (e) => {
+  const tg = e.target as HTMLElement;
+  if (tg.id === 'market' || tg.closest('.mk-close')) {
+    marketWin.classList.remove('show');
+    return;
+  }
+  const tab = (tg.closest('.mk-tab') as HTMLElement | null)?.dataset.mtab;
+  if (tab) {
+    marketTab = tab as MarketGood;
+    renderMarket();
+    return;
+  }
+  const side = (tg.closest('.mk-seg button') as HTMLElement | null)?.dataset.mkside;
+  if (side) {
+    marketFormSide = side as 'sell' | 'buy';
+    renderMarket();
+    return;
+  }
+  if (tg.closest('[data-mkgo]')) {
+    const amt = Math.floor(Number(($('mk-amt') as HTMLInputElement).value) || 0);
+    const price = Math.max(0, Number(($('mk-price') as HTMLInputElement).value) || 0);
+    if (amt > 0) playerOrder(marketList(ME, marketFormSide, marketTab, amt, price));
+    renderMarket();
+    return;
+  }
+  const takeId = (tg.closest('[data-mktake]') as HTMLElement | null)?.dataset.mktake;
+  if (takeId) {
+    playerOrder(marketTake(ME, takeId));
+    renderMarket();
+    return;
+  }
+  const cancelId = (tg.closest('[data-mkcancel]') as HTMLElement | null)?.dataset.mkcancel;
+  if (cancelId) {
+    playerOrder(marketCancel(ME, cancelId));
+    renderMarket();
+  }
+});
+
 // --- connect overlay (single-player vs join a live session) ------------------
 // Entry screen: pick a faction, then run a local skirmish or connect to a server
 // (`pnpm dev:proto-server`, or a tunnel URL a friend shared). The last-used URL
@@ -5747,9 +5848,23 @@ const lobbyEl = $('lobby');
 const lrosterEl = $('lroster');
 const lactionsEl = $('lactions');
 let lastLobbyHtml = '';
-// One delegated handler: the host's Start button asks the server to begin.
+// Leave the lobby BEFORE the match starts: your seat isn't committed yet, so this
+// releases the slot (the server frees a pre-start slot on disconnect) and returns to
+// the hub. Once the match has started the lobby is gone and the in-game "⌂ В меню"
+// leave hands your committed seat to the AI instead — you can't free it, only step away.
+function leaveLobby(): void {
+  userClosed = true; // intentional — no auto-reconnect
+  NET = false;
+  if (netSock) netSock.close();
+  lobbyInfo = null;
+  lobbyEl.style.display = 'none';
+  openHub();
+}
+// One delegated handler: the host's Start button begins; either side can leave.
 lactionsEl.addEventListener('click', (e) => {
-  if ((e.target as HTMLElement | null)?.id === 'lstart') netClient?.start();
+  const id = (e.target as HTMLElement | null)?.id;
+  if (id === 'lstart') netClient?.start();
+  else if (id === 'lleave') leaveLobby();
 });
 function renderLobby(): void {
   const info = lobbyInfo;
@@ -5771,9 +5886,10 @@ function renderLobby(): void {
     })
     .join('');
   const actionsHtml =
-    ME === info.host
-      ? '<button id="lstart" class="lbtn">▶ START MATCH</button>'
-      : '<div class="lwait">Waiting for the host to start…</div>';
+    (ME === info.host
+      ? '<button id="lstart" class="lbtn">▶ НАЧАТЬ МАТЧ</button>'
+      : '<div class="lwait">Ждём, пока хост начнёт…</div>') +
+    '<button id="lleave" class="lbtn ghost">Покинуть лобби</button>';
   const html = rosterHtml + '|' + actionsHtml;
   if (html !== lastLobbyHtml) {
     lrosterEl.innerHTML = rosterHtml;
