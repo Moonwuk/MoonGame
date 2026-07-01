@@ -321,6 +321,46 @@ describe('LazyMatchRegistry · load on demand + idle hibernation', () => {
     expect(idle.pending).toBeNull(); // peerCount > 0 → no countdown
   });
 
+  it('contains a failing hibernation persist (no crash) and still evicts the match', async () => {
+    const idle = idleHarness();
+    const room = makeRoom('m');
+    const registry = new LazyMatchRegistry({
+      // dispose rejects (store outage) — must not become an unhandled rejection.
+      load: async () => ({ room, dispose: () => Promise.reject(new Error('store down')) }),
+      schedule: idle.schedule,
+      cancel: idle.cancel,
+    });
+    await registry.resolve('m');
+    const peer = fakePeer();
+    room.addPeer('p1', peer);
+    registry.retain('m');
+    room.removePeer('p1', peer);
+    registry.release('m');
+
+    idle.fire(); // hibernate with a rejecting dispose
+    await flush();
+    // No unhandled rejection (vitest would fail the run); the match is evicted and
+    // reloads from its last durable snapshot on reconnect.
+    expect(registry.get('m')).toBeUndefined();
+  });
+
+  it('shutdown resolves even when a match dispose rejects', async () => {
+    let disposedHealthy = false;
+    const roomA = makeRoom('a');
+    const roomB = makeRoom('b');
+    const registry = new LazyMatchRegistry({
+      load: async (id) =>
+        id === 'a'
+          ? { room: roomA, dispose: () => void (disposedHealthy = true) }
+          : { room: roomB, dispose: () => Promise.reject(new Error('down')) },
+    });
+    await registry.resolve('a');
+    await registry.resolve('b');
+    await expect(registry.shutdown()).resolves.toBeUndefined(); // does not reject or hang
+    expect(disposedHealthy).toBe(true); // the healthy match still persisted
+    expect(registry.ids()).toEqual([]);
+  });
+
   it('shutdown persists + tears down every live match', async () => {
     let disposed = 0;
     const roomA = makeRoom('a');

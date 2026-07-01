@@ -170,8 +170,12 @@ export function createMultiplayerServer(
     sockets.add(ws);
     alive.set(ws, true);
     ws.on('pong', () => alive.set(ws, true));
-    room.addPeer(playerId, ws);
-    registry.retain?.(room.id); // keep the match resident while this socket is connected
+    // Only retain when the peer actually joined — addPeer rejects (and closes the socket)
+    // for an unknown player or a duplicate on a single-seat slot, and a spurious retain
+    // would disarm a legitimate hibernation countdown, starving eviction under reconnects.
+    if (room.addPeer(playerId, ws)) {
+      registry.retain?.(room.id); // keep the match resident while this socket is connected
+    }
     ws.on('message', (data) => {
       const now = Date.now();
       const c = inbound.get(ws) ?? { n: 0, since: now };

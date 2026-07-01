@@ -158,12 +158,17 @@ export class LazyMatchRegistry implements MatchRegistry {
   }
 
   async shutdown(): Promise<void> {
-    const all = [...this.live.values()];
-    for (const id of this.idle.keys()) this.cancel(this.idle.get(id));
+    for (const h of this.idle.values()) this.cancel(h);
     this.idle.clear();
+    const all = [...this.live.values()];
     this.live.clear();
-    // Persist + tear down every live match (best-effort, in parallel).
-    await Promise.all(all.map((l) => Promise.resolve(l.dispose())));
+    // Persist + tear down every live match, plus any hibernation already in flight.
+    // `allSettled` so one failing store write can't abort the rest or reject `shutdown`
+    // (which the transport awaits before closing its sockets — a rejection would leak them).
+    await Promise.allSettled([
+      ...all.map((l) => Promise.resolve().then(() => l.dispose())),
+      ...this.disposing.values(),
+    ]);
   }
 
   private disarmIdle(matchId: string): void {
@@ -179,18 +184,20 @@ export class LazyMatchRegistry implements MatchRegistry {
     const live = this.live.get(matchId);
     if (!live || live.room.peerCount > 0) return; // a socket reconnected during the window
     this.live.delete(matchId);
-    // Publish the in-flight dispose so a reconnect landing during the persist reloads the
-    // freshly-saved state (see `resolve`), and always clear it when done.
-    const p = Promise.resolve(live.dispose());
-    this.disposing.set(
-      matchId,
-      p.then(
+    // `dispose` persists + tears down; it can REJECT on a store error. Contain it: a
+    // failed idle-persist must never crash the process (this runs as `void hibernate`).
+    // The match is still evicted; it reloads from its last durable snapshot on reconnect.
+    // Publishing the (swallowed) promise in `disposing` also lets a reconnect landing
+    // during the persist reload the freshly-saved state (see `resolve`).
+    const persisted = Promise.resolve()
+      .then(() => live.dispose())
+      .then(
         () => {},
         () => {},
-      ),
-    );
+      );
+    this.disposing.set(matchId, persisted);
     try {
-      await p;
+      await persisted;
     } finally {
       this.disposing.delete(matchId);
     }
