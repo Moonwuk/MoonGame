@@ -63,6 +63,9 @@ import {
   type SetupConfig,
   type SeatConfig,
   type StepOut,
+  stepActions,
+  fleetIdle,
+  type QStep,
 } from './game';
 import { OFFICERS } from './groundcombat';
 import {
@@ -344,6 +347,11 @@ let selPlanet: string | null = null;
 let selFleets = new Set<string>();
 let aiming = false; // "Move" command armed → next world tap orders the move
 let barrageAim = false; // "Обстрел" armed → next tap picks the artillery's focus target
+// CC-1 order queue: while `queuing` is armed, world taps APPEND a move step to each
+// selected fleet's chain instead of ordering an immediate move. `fleetQueues` holds the
+// pending steps per fleet (client-side plan); driveQueues() pops the head when idle.
+let queuing = false;
+const fleetQueues = new Map<string, QStep[]>();
 // A staged move that would cross territory of a player you're at PEACE with: held
 // until you confirm in the war-prompt (declaring war opens the route) or cancel.
 let warPrompt: {
@@ -1865,6 +1873,36 @@ function checkFleetClashes() {
   }
 }
 
+/** Append a step to each selected fleet's order chain (client-side plan). */
+function enqueueStep(fleetIds: string[], step: QStep): void {
+  for (const id of fleetIds) {
+    const q = fleetQueues.get(id) ?? [];
+    q.push(step);
+    fleetQueues.set(id, q);
+  }
+}
+
+// CC-1 driver: each frame, any of MY fleets that has a queue and is idle runs its head
+// step and pops it. Issuing a move sets `movement` (so `fleetIdle` is false next frame →
+// we wait); on arrival it goes idle again and the next step fires — chaining hands-off.
+// Same host-side shape as autoEngage(); a rejected order just notes + still pops so the
+// chain never wedges. (Promoting this into a kernel/server module is a later brick so the
+// queue also runs server-side while the player is offline.)
+function driveQueues(): void {
+  for (const [fid, steps] of [...fleetQueues]) {
+    const f = s.fleets[fid];
+    if (!f || f.owner !== ME || steps.length === 0) {
+      fleetQueues.delete(fid);
+      continue;
+    }
+    if (!fleetIdle(f)) continue; // in transit / fighting → hold
+    const step = steps[0]!;
+    for (const a of stepActions(ME, fid, step, f)) playerOrder(a);
+    steps.shift();
+    if (steps.length === 0) fleetQueues.delete(fid);
+  }
+}
+
 /** How the match ended, in plain words (perspective comes from the prefix). */
 function endReasonText(reason: string | undefined): string {
   switch (reason) {
@@ -3325,6 +3363,22 @@ function panelHtml(): string {
         h += `<div class="row"><b>♔ ${esc(heroName)}</b> <span class="dim">— projection · +5% attack/defense to this fleet</span></div>`;
       }
 
+      // CC-1 order queue — chain steps the fleet runs hands-off when it falls idle.
+      if (f.owner === ME) {
+        const q = fleetQueues.get(f.id) ?? [];
+        h += `<div class="sec">Очередь приказов</div><div class="row">`;
+        h += btn('qmode', '', queuing ? '● тапай миры' : '➕ строить', true);
+        h += btn('qassault', '', '⚔ + штурм', true);
+        h += btn('qclear', '', '✕ очистить', q.length > 0);
+        h += `</div>`;
+        if (q.length) {
+          const label = (st: QStep): string =>
+            st.kind === 'move' ? '→ ' + esc(st.to) : st.kind === 'assault' ? '⚔ штурм' : '🛰 орбита';
+          h += `<div class="row dim">${q.map((st, i) => `${i + 1}. ${label(st)}`).join(' · ')}</div>`;
+        }
+        h += `<div class="hint">Включите «строить», тапайте миры на карте (шаги-переходы) и добавляйте «Штурм». Флот выполнит цепочку по очереди, как освободится — даже пока вы вышли.</div>`;
+      }
+
       if (f.movement) {
         // total travel-time estimate to the final destination (next-hop ETA from the
         // authoritative schedule + the remaining route at base speed). The ETA ticks
@@ -4359,6 +4413,17 @@ side.addEventListener('click', (ev) => {
     playerOrder(barrageModeFleet(ME, selFleet!, arg));
   } else if (act === 'assault') {
     playerOrder(assaultFleet(ME, selFleet!));
+  } else if (act === 'qmode') {
+    queuing = !queuing; // arm/disarm queue-append; taps now build the chain
+    if (queuing) {
+      aiming = false;
+      merging = false;
+      barrageAim = false;
+    }
+  } else if (act === 'qassault') {
+    enqueueStep(selectedFleetIds(), { kind: 'assault' });
+  } else if (act === 'qclear') {
+    for (const id of selectedFleetIds()) fleetQueues.delete(id);
   } else if (act === 'load') {
     beginLoad(selFleet!, arg); // ~1h timed load (animated in the marker)
   } else if (act === 'unload') {
@@ -4403,6 +4468,7 @@ cmdbar.addEventListener('click', (ev) => {
   const ids = selectedFleetIds();
   if (cmd !== 'merge') merging = false; // any other command disarms merge-targeting
   if (cmd !== 'barrage') barrageAim = false; // any other command disarms barrage-targeting
+  queuing = false; // a command-bar order is immediate — leave queue-build mode
   if (cmd === 'move') {
     aiming = !aiming; // arm / disarm the move order
   } else if (cmd === 'merge') {
@@ -4509,6 +4575,13 @@ function selectAt(mx: number, my: number) {
   for (const n of MAP) {
     const c = world(n);
     if (Math.hypot(mx - c.x, my - c.y) < 24) {
+      if (queuing) {
+        // Queue-append armed → this world becomes the next step in the fleet's chain,
+        // not an immediate move. Stays armed so you can tap several worlds in a row.
+        enqueueStep(selectedFleetIds(), { kind: 'move', to: n.id });
+        lastPanelHtml = ''; // refresh the queue list in the panel
+        return;
+      }
       if (aiming) {
         // Move armed → send the selected fleet(s) here; they route along the lanes to
         // this world and stop. Keep them selected for follow-up orders. A route through
@@ -5926,6 +5999,7 @@ function frame(nowReal: number) {
     apply(advance(s, target));
     autoEngage();
     checkFleetClashes();
+    driveQueues(); // CC-1: advance each fleet's queued order chain when it falls idle
     runAI();
     pumpBuildQueues();
     closeIdleRallies(); // drop the 'rally' tag once a world's build pipeline empties

@@ -2042,6 +2042,39 @@ export const researchTech = (playerId: string, technology: string) =>
 /** Declare war on (or otherwise re-stance) another commander. */
 export const declareWar = (playerId: string, target: string, stance: DiplomaticStance = 'war') =>
   act(playerId, 'diplomacy.declare', { target, stance });
+
+// --- CC-1: fleet order queue (command chains) -------------------------------
+// A queued step is one intent a fleet runs when it next falls idle. The host driver
+// (main.ts `driveQueues`) pops the head step per fleet each frame, so a chain like
+// [move A, move B, assault] executes hands-off across real hours. The pure, testable
+// pieces live here; the mutable queue + UI live in main.ts. Later bricks add timed and
+// reactive (auto-assault / auto-launch on contact) steps on top of this shape.
+export type QStep =
+  | { kind: 'move'; to: string } // route to a world, then hold for the next step
+  | { kind: 'orbit' } // enter orbit over the fleet's current world
+  | { kind: 'assault' }; // land carried troops (enters orbit first when needed)
+
+/** A fleet may run its next queued step only when idle — not in transit, not locked in
+ *  a battle. (A fleet parked on a lane counts as idle; its next move routes from there.) */
+export function fleetIdle(fleet: Fleet): boolean {
+  return !fleet.movement && !fleet.battleId;
+}
+
+/** The kernel action(s) a queued step issues for `fleet`. An assault enters orbit first
+ *  when the fleet isn't already there (orbit is instant), mirroring the AI auto-capture
+ *  pass. Pure — returns intents; the caller applies them. */
+export function stepActions(me: string, fleetId: string, step: QStep, fleet: Fleet): Action[] {
+  switch (step.kind) {
+    case 'move':
+      return [moveFleet(me, fleetId, step.to)];
+    case 'orbit':
+      return [orbitFleet(me, fleetId)];
+    case 'assault':
+      return fleet.orbit === 'near'
+        ? [assaultFleet(me, fleetId)]
+        : [orbitFleet(me, fleetId), assaultFleet(me, fleetId)];
+  }
+}
 /** Place a market lot: `sell` escrows `amount` of `resource` for `price` credits/unit;
  *  `buy` escrows the credits and offers to buy that much of `resource`. */
 export const marketList = (playerId: string, side: MarketSide, resource: string, amount: number, price: number) =>
