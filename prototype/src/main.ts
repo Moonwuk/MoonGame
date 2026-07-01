@@ -5848,9 +5848,23 @@ const lobbyEl = $('lobby');
 const lrosterEl = $('lroster');
 const lactionsEl = $('lactions');
 let lastLobbyHtml = '';
-// One delegated handler: the host's Start button asks the server to begin.
+// Leave the lobby BEFORE the match starts: your seat isn't committed yet, so this
+// releases the slot (the server frees a pre-start slot on disconnect) and returns to
+// the hub. Once the match has started the lobby is gone and the in-game "⌂ В меню"
+// leave hands your committed seat to the AI instead — you can't free it, only step away.
+function leaveLobby(): void {
+  userClosed = true; // intentional — no auto-reconnect
+  NET = false;
+  if (netSock) netSock.close();
+  lobbyInfo = null;
+  lobbyEl.style.display = 'none';
+  openHub();
+}
+// One delegated handler: the host's Start button begins; either side can leave.
 lactionsEl.addEventListener('click', (e) => {
-  if ((e.target as HTMLElement | null)?.id === 'lstart') netClient?.start();
+  const id = (e.target as HTMLElement | null)?.id;
+  if (id === 'lstart') netClient?.start();
+  else if (id === 'lleave') leaveLobby();
 });
 function renderLobby(): void {
   const info = lobbyInfo;
@@ -5872,9 +5886,10 @@ function renderLobby(): void {
     })
     .join('');
   const actionsHtml =
-    ME === info.host
-      ? '<button id="lstart" class="lbtn">▶ START MATCH</button>'
-      : '<div class="lwait">Waiting for the host to start…</div>';
+    (ME === info.host
+      ? '<button id="lstart" class="lbtn">▶ НАЧАТЬ МАТЧ</button>'
+      : '<div class="lwait">Ждём, пока хост начнёт…</div>') +
+    '<button id="lleave" class="lbtn ghost">Покинуть лобби</button>';
   const html = rosterHtml + '|' + actionsHtml;
   if (html !== lastLobbyHtml) {
     lrosterEl.innerHTML = rosterHtml;
