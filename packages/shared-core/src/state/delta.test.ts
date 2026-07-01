@@ -75,4 +75,16 @@ describe('state delta — diff/apply round-trip', () => {
     applyDelta(prev, diffState(prev, next)); // would throw if it mutated a frozen input
     expect(prev.planets).toHaveProperty('B'); // original still intact
   });
+
+  it('removes a meta key that went defined → undefined (survives the JSON wire)', () => {
+    const prev = base();
+    prev.diplomacy = { 'p1|p2': 'war' };
+    const next = deepClone(prev);
+    delete next.diplomacy; // the server cleared an optional meta key
+    // Round-trip through JSON, exactly as MatchRoom serializes the delta to the client.
+    const wire = JSON.parse(JSON.stringify(diffState(prev, next)));
+    const rebuilt = applyDelta(prev, wire);
+    expect('diplomacy' in rebuilt).toBe(false); // key gone, not left stale as 'war'
+    expect(rebuilt).toEqual(next);
+  });
 });
