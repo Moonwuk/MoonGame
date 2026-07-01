@@ -112,7 +112,7 @@ const data: GameData = parseGameData({
   scientists: {
     void_sci: { name: 'Void Sci', branch: 'space' },
     ground_sci: { name: 'Ground Sci', branch: 'ground' },
-    slot_sci: { name: 'Slot Sci', branch: 'space', slotBonus: 1 },
+    slot_sci: { name: 'Slot Sci', slotBonus: 1 },
   },
 });
 
@@ -380,6 +380,24 @@ describe('technology module — session research tree', () => {
         ),
       ).ok,
     ).toBe(true);
+
+    // A branchless leader (the +slot generalist) satisfies no branch-focus gate —
+    // the opportunity cost of picking +slot instead of a focus.
+    expect(
+      errCode(
+        kernel.applyAction(
+          withScientist({ id: 'slot_sci', level: 9 }),
+          research('void_doctrine'),
+          ctx(0),
+        ),
+      ),
+    ).toBe('E_CONDITIONS_UNMET');
+    // An id absent from the catalog satisfies nothing.
+    expect(
+      errCode(
+        kernel.applyAction(withScientist({ id: 'ghost', level: 9 }), research('void_doctrine'), ctx(0)),
+      ),
+    ).toBe('E_CONDITIONS_UNMET');
   });
 
   it('pays up front, records active research, then completes on the timeline', () => {

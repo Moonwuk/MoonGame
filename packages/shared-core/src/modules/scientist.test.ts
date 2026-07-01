@@ -19,7 +19,7 @@ const data: GameData = parseGameData({
     c: { name: 'C', cost: { metal: 1 }, researchTimeHours: 1 },
   },
   scientists: {
-    polymath: { name: 'Polymath', branch: 'space', slotBonus: 1 },
+    polymath: { name: 'Polymath', slotBonus: 1 },
     admiral: { name: 'Admiral', branch: 'space' },
   },
 });

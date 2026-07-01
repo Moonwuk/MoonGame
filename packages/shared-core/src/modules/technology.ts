@@ -174,7 +174,9 @@ function conditionMet(
       // catalog, so the id lookup is snapshot-safe.
       const chosen = state.players[playerId]?.scientist;
       if (!chosen || chosen.level < cond.minLevel) return false;
-      return cond.branch === undefined || data.scientists[chosen.id]?.branch === cond.branch;
+      const def = data.scientists[chosen.id];
+      if (!def) return false; // a chosen id absent from the catalog satisfies nothing
+      return cond.branch === undefined || def.branch === cond.branch;
     }
     default: {
       const _exhaustive: never = cond;

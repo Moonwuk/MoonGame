@@ -247,7 +247,9 @@ export const TechnologyConditionSchema = z.discriminatedUnion('type', [
   /** Field at least `min` of `unit` across fleets, their cargo, and garrisons. */
   z.object({ type: z.literal('has_unit'), unit: z.string(), min: conditionMin }),
   /** Have a chosen scientist (optionally of `branch`) at level ≥ `minLevel` — the
-   *  seam for branch-focus and late-game capstone content. */
+   *  seam for branch-focus and late-game capstone content. `minLevel` is a meta level;
+   *  a capstone should anchor it to the account/scientist max once account-level lands
+   *  (docs-only today), not a guessed magic number. */
   z.object({
     type: z.literal('has_scientist'),
     branch: BranchSchema.optional(),
@@ -327,7 +329,14 @@ export const SectorKindDefSchema = z.object({
 export const ScientistDefSchema = z.object({
   name: z.string(),
   description: z.string().optional(),
-  branch: BranchSchema,
+  /** The branch this leader focuses (gates `has_scientist { branch }` content). Omit
+   *  for a branchless generalist (e.g. the +slot leader): with no branch it satisfies
+   *  no branch-focus gate, which is what makes "+slot INSTEAD of a focus" a real
+   *  opportunity cost. */
+  branch: BranchSchema.optional(),
+  /** Extra concurrent research slots this leader grants (the "+slot" leader). Flows
+   *  through the `research.slots` hook, which the technology module clamps to the
+   *  design max of 3 — so only 0 or 1 is meaningful under the base rule. Default 0. */
   slotBonus: z.number().int().nonnegative().default(0),
 });
 
