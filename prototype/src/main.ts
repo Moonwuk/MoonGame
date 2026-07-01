@@ -354,6 +354,9 @@ let barrageAim = false; // "Обстрел" armed → next tap picks the artille
 // pending steps per fleet (client-side plan); driveQueues() pops the head when idle.
 let queuing = false;
 const fleetQueues = new Map<string, QStep[]>();
+// CC-2 standing order: fleets whose owner opted into AUTO-STORM — they descend and assault
+// a hostile world on arrival by themselves (the AI's autoEngage capture loop, opted-in).
+const autoAssault = new Set<string>();
 // A staged move that would cross territory of a player you're at PEACE with: held
 // until you confirm in the war-prompt (declaring war opens the route) or cancel.
 let warPrompt: {
@@ -1843,7 +1846,11 @@ function runAI() {
 // assault controls in the fleet panel), so they are skipped here.
 function autoEngage() {
   for (const f of Object.values(s.fleets)) {
-    if (f.owner === ME || f.location == null || f.movement || f.battleId) continue;
+    if (f.location == null || f.movement || f.battleId) continue;
+    const mine = f.owner === ME;
+    // AI fleets always press the capture loop; the player's do so only when opted into
+    // auto-storm (CC-2) — otherwise the player drives assaults by hand.
+    if (mine && !autoAssault.has(f.id)) continue;
     if (!SECTOR_TYPES[SECTOR_OF[f.location]]?.capturable) continue; // empty space can't be taken
     const here = s.planets[f.location];
     if (!here || here.owner === f.owner) continue;
@@ -1851,8 +1858,10 @@ function autoEngage() {
       (g) => g.owner !== f.owner && g.location === f.location && g.units.some((u) => u.count > 0),
     );
     if (enemyHere) continue; // let the auto orbital battle settle first
-    if (f.orbit !== 'near') apply(order(s, orbitFleet(f.owner, f.id, 'near'), s.time));
-    apply(order(s, assaultFleet(f.owner, f.id), s.time));
+    // Player fleets go through playerOrder (server-authoritative in net play); AI applies locally.
+    const issue = (a: Action) => (mine ? playerOrder(a) : apply(order(s, a, s.time)));
+    if (f.orbit !== 'near') issue(orbitFleet(f.owner, f.id, 'near'));
+    issue(assaultFleet(f.owner, f.id));
   }
 }
 
@@ -3405,6 +3414,13 @@ function panelHtml(): string {
           h += `<div class="row dim">${q.map((st, i) => `${i + 1}. ${label(st)}`).join(' · ')}</div>`;
         }
         h += `<div class="hint">Включите «строить», тапайте миры (переходы) и добавляйте «штурм» / «погрузку» / «ждать N ч». «Погрузка» забирает гарнизон захваченного мира обратно в трюм, «ждать» — отложенный приказ (выждать момент). Так одна армия проходит цепочку (переход→штурм→погрузка→ждать→…) сама, пока вы вышли.</div>`;
+
+        // CC-2 standing order — auto-storm stance (independent of the chain above).
+        const auto = autoAssault.has(f.id);
+        h += `<div class="sec">Дежурный режим</div><div class="row">`;
+        h += btn('qauto', '', auto ? '⚔ авто-штурм: ВКЛ' : '⚔ авто-штурм: выкл', true);
+        h += `</div>`;
+        h += `<div class="hint">Во «включено» флот сам входит в орбиту и штурмует вражеский мир, на который прибыл — без ручного приказа.</div>`;
       }
 
       if (f.movement) {
@@ -4454,6 +4470,11 @@ side.addEventListener('click', (ev) => {
     enqueueStep(selectedFleetIds(), { kind: 'load' });
   } else if (act === 'qwait') {
     enqueueStep(selectedFleetIds(), { kind: 'wait', hours: Number(arg) });
+  } else if (act === 'qauto') {
+    for (const id of selectedFleetIds()) {
+      if (autoAssault.has(id)) autoAssault.delete(id);
+      else autoAssault.add(id);
+    }
   } else if (act === 'qclear') {
     for (const id of selectedFleetIds()) fleetQueues.delete(id);
   } else if (act === 'load') {
