@@ -24,6 +24,7 @@ import {
   constructionModule,
   armyModule,
   victoryModule,
+  technologyModule,
   getStance,
   setStance,
   pairKey,
@@ -67,6 +68,58 @@ export const DAY = 24 * HOUR;
 export const data: GameData = parseGameData({
   version: '0.1.0',
   resources: ['credits', 'metal'],
+  // Session tech tree (technologyModule). Effect bonuses only in the prototype — no
+  // `unlocks`, so researching never locks the content you can already build. Branch /
+  // tier / prerequisite / day-gating all apply. Costs use the prototype's 2 resources.
+  technologies: {
+    industrial_automation: {
+      name: 'Industrial Automation',
+      description: 'Апгрейд планетарной логистики: +10% к производству.',
+      branch: 'space',
+      tier: 1,
+      cost: { credits: 120, metal: 80 },
+      researchTimeHours: 4,
+      effects: { productionBonus: 0.1 },
+    },
+    orbital_logistics: {
+      name: 'Orbital Logistics',
+      description: 'Стандартизация перевозок: +12% к скорости флотов.',
+      branch: 'space',
+      tier: 1,
+      cost: { credits: 160, metal: 120 },
+      researchTimeHours: 6,
+      effects: { fleetSpeedBonus: 0.12 },
+    },
+    siege_doctrine: {
+      name: 'Siege Doctrine',
+      description: 'Осадные расчёты дальнего боя: +8% к урону.',
+      branch: 'space',
+      tier: 2,
+      cost: { credits: 260, metal: 220 },
+      researchTimeHours: 10,
+      prerequisites: ['orbital_logistics'],
+      effects: { combatDamageBonus: 0.08 },
+    },
+    fortified_infrastructure: {
+      name: 'Fortified Infrastructure',
+      description: 'Доктрина укреплённых миров — крепости фронтира.',
+      branch: 'ground',
+      tier: 2,
+      cost: { credits: 180, metal: 240 },
+      researchTimeHours: 8,
+      prerequisites: ['industrial_automation'],
+    },
+    microelectronics_fabrication: {
+      name: 'Microelectronics Fabrication',
+      description: 'Орбитальные фабрики: +5% к производству.',
+      branch: 'space',
+      tier: 2,
+      cost: { credits: 220, metal: 180 },
+      researchTimeHours: 10,
+      prerequisites: ['industrial_automation'],
+      effects: { productionBonus: 0.05 },
+    },
+  },
   units: {
     scout: {
       faction: 'blue',
@@ -1671,6 +1724,7 @@ export const MODULES: GameModule[] = [
   combatModule,
   captureOnArrivalModule, // walk-in capture now a kernel rule (was client-side seizeSector)
   constructionModule,
+  technologyModule, // session research: branch/day-gated techs → effect bonuses + content unlocks
   armyModule,
   victoryModule, // terminal match state from authoritative state (domination / elimination / score / timeout)
   fleetLaunchModule,
@@ -1768,6 +1822,9 @@ export const buildUnit = (playerId: string, planetId: string, unit: string, coun
   act(playerId, 'unit.build', { planetId, unit, count });
 export const engageFleet = (playerId: string, fleetId: string, targetId: string) =>
   act(playerId, 'fleet.engage', { fleetId, targetId });
+/** Begin researching a session technology (one active at a time — technologyModule). */
+export const researchTech = (playerId: string, technology: string) =>
+  act(playerId, 'technology.research', { technology });
 /** Declare war on (or otherwise re-stance) another commander. */
 export const declareWar = (playerId: string, target: string, stance: DiplomaticStance = 'war') =>
   act(playerId, 'diplomacy.declare', { target, stance });

@@ -30,6 +30,7 @@ import {
   mergeFleet,
   splitFleet,
   engageFleet,
+  researchTech,
   buildBuilding,
   upgradeBuilding,
   buildUnit,
@@ -1731,6 +1732,11 @@ function handleEvents(events: DomainEvent[]) {
           `battle at ${p.location} ended — ${p.winner ? NAME[p.winner as string] + ' won' : 'stalemate'}`,
         );
         myBattleLocs.delete(p.location as string);
+        break;
+      case 'technology.researched':
+        if (p.playerId === ME)
+          note(`⚛ изучено: ${data.technologies[p.technology as string]?.name ?? (p.technology as string)}`);
+        if (techWin.classList.contains('show')) renderTech();
         break;
       case 'planet.captured':
         note(`🚩 ${NAME[p.owner as string]} captured ${p.planetId}`);
@@ -4664,6 +4670,97 @@ logWin?.addEventListener('click', (e) => {
   if (tg.id === 'logwin' || tg.classList.contains('lw-close')) logWin.classList.remove('show');
 });
 
+// --- technologies window -----------------------------------------------------
+// Session research (technologyModule): pick a tech to research (one at a time). Techs are
+// grouped by branch, show cost + status, and gate on prerequisites / day / affordability.
+const techWin = $('tech');
+const TECH_CUR: Record<string, string> = {
+  credits: '¤', food: '❖', metal: '⬢', energy: '↯', microelectronics: '▦',
+};
+const TECH_BRANCHES: Array<{ key: string; label: string }> = [
+  { key: 'space', label: 'Космос' },
+  { key: 'ground', label: 'Земля' },
+  { key: 'squadron', label: 'Эскадрильи' },
+  { key: 'missile', label: 'Ракеты' },
+];
+const techCost = (c: Record<string, number>): string =>
+  Object.entries(c).map(([k, v]) => `${TECH_CUR[k] ?? k} ${v}`).join(' · ');
+function renderTech(): void {
+  const body = $('techbody');
+  const me = s.players[ME];
+  const techs = data.technologies;
+  const done = new Set(me?.technologies?.completed ?? []);
+  const active = me?.technologies?.active;
+  const res = (me?.resources ?? {}) as Record<string, number>;
+  const started = s.startedAt ?? 0;
+  let html = '';
+  if (active) {
+    const def = techs[active.technology];
+    const total = active.completesAt - active.startedAt;
+    const prog = total > 0 ? clamp((s.time - active.startedAt) / total, 0, 1) : 1;
+    const etaH = Math.max(0, Math.ceil((active.completesAt - s.time) / HOUR));
+    html +=
+      `<div class="tw-active"><div class="tw-an">⚛ Исследуется: ${esc(def?.name ?? active.technology)}</div>` +
+      `<div class="tw-bar"><div class="tw-fill" style="width:${Math.round(prog * 100)}%"></div></div>` +
+      `<div class="tw-eta">≈ ${etaH} ч осталось</div></div>`;
+  }
+  for (const br of TECH_BRANCHES) {
+    const ids = Object.keys(techs)
+      .filter((id) => (techs[id]!.branch ?? 'space') === br.key)
+      .sort((a, b) => techs[a]!.tier - techs[b]!.tier || a.localeCompare(b));
+    if (!ids.length) continue;
+    html += `<div class="tw-branch">${br.label}</div>`;
+    for (const id of ids) {
+      const t = techs[id]!;
+      const isActive = active?.technology === id;
+      const prereqMissing = (t.prerequisites ?? []).filter((p) => !done.has(p));
+      const dayGate = t.dayGate ?? 0;
+      const gatedByDay = dayGate > 0 && s.time - started < dayGate * DAY;
+      const affordable = Object.entries(t.cost).every(([k, v]) => (res[k] ?? 0) >= (v as number));
+      let cls = '';
+      let action = '';
+      if (done.has(id)) {
+        cls = 'done';
+        action = `<span class="tw-badge">✓ изучено</span>`;
+      } else if (isActive) {
+        action = `<span class="tw-badge wait">⏳ идёт…</span>`;
+      } else if (prereqMissing.length) {
+        cls = 'locked';
+        action = `<span class="tw-badge wait">🔒 ${prereqMissing.map((p) => esc(techs[p]?.name ?? p)).join(', ')}</span>`;
+      } else if (gatedByDay) {
+        cls = 'locked';
+        action = `<span class="tw-badge wait">🔒 с дня ${dayGate}</span>`;
+      } else {
+        const dis = !!active || !affordable;
+        action = `<button class="tw-go" data-tech="${id}"${dis ? ' disabled' : ''}>Исследовать</button>`;
+      }
+      html +=
+        `<div class="tw-card ${cls}"><div class="tw-info">` +
+        `<div class="tw-name">${esc(t.name)}<span class="tier">T${t.tier}</span></div>` +
+        `<div class="tw-meta"><span class="tw-cost">${techCost(t.cost)}</span> · ${t.researchTimeHours}ч` +
+        (t.description ? `<br>${esc(t.description)}` : '') +
+        `</div></div>${action}</div>`;
+    }
+  }
+  body.innerHTML = html;
+}
+document.getElementById('rail-tech')?.addEventListener('click', () => {
+  techWin.classList.add('show');
+  renderTech();
+});
+techWin.addEventListener('click', (e) => {
+  const tg = e.target as HTMLElement;
+  if (tg.id === 'tech' || tg.classList.contains('tw-close')) {
+    techWin.classList.remove('show');
+    return;
+  }
+  const id = (tg.closest('.tw-go') as HTMLElement | null)?.dataset.tech;
+  if (id) {
+    playerOrder(researchTech(ME, id));
+    renderTech();
+  }
+});
+
 // --- connect overlay (single-player vs join a live session) ------------------
 // Entry screen: pick a faction, then run a local skirmish or connect to a server
 // (`pnpm dev:proto-server`, or a tunnel URL a friend shared). The last-used URL
@@ -5663,6 +5760,7 @@ function renderLobby(): void {
 const fpsEl = $('fps');
 let fpsEma = 60; // smoothed frames-per-second readout
 let lastFpsText = '';
+let lastTechAt = 0; // throttle for live re-rendering the tech window while it's open
 let lastReal = performance.now();
 // Build tag for the dev overlay so the RUNNING build is always visible in-game (not just
 // on the welcome screen) — makes "am I on the latest APK?" answerable at a glance. Empty
@@ -5782,6 +5880,11 @@ function frame(nowReal: number) {
   const soloNoBots = !NET && AI_PLAYERS.size === 0;
   restartBtn.style.display = soloNoBots ? '' : 'none';
   restartSep.style.display = soloNoBots ? '' : 'none';
+  // Keep the tech window live while open (research progress bar / eta), throttled.
+  if (techWin.classList.contains('show') && nowReal - lastTechAt > 500) {
+    lastTechAt = nowReal;
+    renderTech();
+  }
   requestAnimationFrame(frame);
 }
 

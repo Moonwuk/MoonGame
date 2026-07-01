@@ -404,6 +404,37 @@ button.b:disabled{opacity:.32;cursor:not-allowed;color:var(--dim);border-color:v
   font:11px/1.6 ui-monospace,Menlo,monospace;color:#73b6a2;scrollbar-width:thin;}
 #log div::before{content:"> ";color:var(--grn-dim);}
 
+/* technologies window (modal, mirrors #logwin) */
+#tech{position:fixed;inset:0;z-index:47;display:none;align-items:center;justify-content:center;padding:16px;
+  background:rgba(1,5,9,.55);-webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px);}
+#tech.show{display:flex;}
+#tech .twbox{display:flex;flex-direction:column;width:min(460px,94vw);max-height:82vh;overflow:hidden;
+  background:var(--glass);border:1px solid var(--cyan);border-radius:10px;
+  box-shadow:0 0 40px rgba(0,0,0,.6),inset 0 0 0 1px rgba(53,214,230,.06);}
+.tw-close{width:28px;height:28px;border-radius:6px;border:1px solid var(--line);background:transparent;color:var(--dim);cursor:pointer;}
+#techbody{flex:1;min-height:0;overflow:auto;touch-action:pan-y;padding:12px 14px;}
+.tw-active{margin:0 0 14px;padding:10px 12px;border:1px solid var(--cyan-dim);border-radius:9px;background:rgba(53,214,230,.08);}
+.tw-active .tw-an{font-size:12px;color:var(--cyan);letter-spacing:.5px;}
+.tw-active .tw-bar{margin-top:8px;height:6px;border-radius:4px;background:rgba(53,214,230,.14);overflow:hidden;}
+.tw-active .tw-fill{height:100%;background:var(--cyan);box-shadow:0 0 8px var(--cyan);transition:width .3s;}
+.tw-active .tw-eta{margin-top:5px;font-size:10px;color:var(--dim);}
+.tw-branch{margin:16px 0 8px;font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--cyan-dim);}
+.tw-branch:first-child{margin-top:0;}
+.tw-card{display:flex;align-items:center;gap:10px;padding:10px 12px;margin-bottom:8px;border:1px solid var(--line-hi);
+  border-radius:9px;background:rgba(255,255,255,.02);}
+.tw-card.done{border-color:var(--up,#57e0a0);opacity:.75;}
+.tw-card.locked{opacity:.55;}
+.tw-info{flex:1;min-width:0;}
+.tw-name{font-size:13px;color:var(--ink);}
+.tw-name .tier{font-size:9px;color:var(--dim);margin-left:6px;letter-spacing:1px;}
+.tw-meta{margin-top:3px;font-size:10px;color:var(--dim);line-height:1.4;}
+.tw-cost{color:var(--cyan-dim);}
+.tw-go{flex:none;padding:8px 12px;border-radius:7px;border:1px solid var(--cyan);background:rgba(53,214,230,.14);
+  color:var(--cyan);font:11px ui-monospace,monospace;letter-spacing:.5px;cursor:pointer;white-space:nowrap;}
+.tw-go:disabled{opacity:.4;cursor:not-allowed;border-color:var(--line);color:var(--dim);background:transparent;}
+.tw-badge{flex:none;font-size:11px;letter-spacing:1px;color:var(--up,#57e0a0);}
+.tw-badge.wait{color:var(--amber);}
+
 /* === FLOATING CHAT (desktop) — sized/positioned/opacity inline by renderChat() === */
 .desk-only{} /* shown by default; the media query below hides it on phones */
 @media (max-width:720px){.desk-only{display:none!important;}}
@@ -478,8 +509,10 @@ button.b:disabled{opacity:.32;cursor:not-allowed;color:var(--dim);border-color:v
 
   #side{right:0;left:0;bottom:0;top:auto;width:auto;max-height:50vh;z-index:28;clip-path:none;
     border-left:0;border-right:0;border-top:1px solid var(--cyan);}
-  /* the bottom-sheet covers the full width — lift the corner rail above it so it stays reachable */
-  body.sheet-open #rail{bottom:calc(50vh + 10px);}
+  /* the bottom-sheet (z-index 28) opens OVER the corner rail: the hamburger stays put at
+     the bottom-left and the panel covers it, instead of the rail jumping up into the
+     command bar and overlapping it. Hidden while a panel is open (reopen by closing it). */
+  body.sheet-open #rail{opacity:0;pointer-events:none;}
   /* phones have no hover and no room — drop the dossier pane, content fills width */
   .pdesc{display:none;}
   .pscroll{padding:13px 14px;}
@@ -872,12 +905,15 @@ const html = `<!doctype html>
 <nav id="rail">
   <button id="rail-diplo" title="Дипломатия">⬡</button>
   <button id="rail-msgs" title="Сообщения">✉</button>
+  <button id="rail-tech" title="Технологии">⚛</button>
   <button id="rail-chat" title="Чат" class="desk-only">🗨</button>
   <button id="rail-log" title="Сводки">≡<span class="badge" id="alertbadge" style="display:none">0</span></button>
 </nav>
 <!-- floating chat window (desktop only) — content rendered by renderChat() in main.ts -->
 <div id="chatwin" class="desk-only"></div>
 <div id="logwin"><div class="lwbox"><div class="lw-head"><b>СВОДКИ</b><button class="lw-close">✕</button></div><div id="log"></div></div></div>
+<!-- technologies window — content rendered by renderTech() in main.ts -->
+<div id="tech"><div class="twbox"><div class="lw-head"><b>ТЕХНОЛОГИИ</b><button class="tw-close">✕</button></div><div id="techbody"></div></div></div>
 <aside id="side"></aside>
 <div id="speedbar" class="spd">
   <button id="spd-pause" data-speed="0">‖</button><button id="spd-play" data-speed="1" class="on">▶</button><button id="spd-fast" data-speed="3">▶▶</button>
