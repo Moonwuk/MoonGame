@@ -92,4 +92,16 @@ export class ActionGate {
     this.receipts.put(receipt);
     return receipt;
   }
+
+  /** Release the sequence reservation an `admit` made for `envelope`, so a backoff-retry
+   *  of the same `clientSeq` is admitted again. Call this ONLY when an accepted action
+   *  fails TRANSIENTLY before it commits (e.g. a durable write was unavailable) AND the
+   *  admit→failure was serialized (no newer action reserved past it). No receipt is
+   *  written, so the action stays undeduped and retriable. */
+  rollback(envelope: ActionEnvelope): void {
+    this.sequences.rollback(
+      { matchId: envelope.matchId, playerId: envelope.playerId, sessionId: envelope.sessionId },
+      envelope.clientSeq,
+    );
+  }
 }

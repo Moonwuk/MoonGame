@@ -14,6 +14,11 @@ export interface SequenceCursor extends SequenceKey {
 export interface SequenceGate {
   checkAndReserve(key: SequenceKey, clientSeq: number): ActionLayerResult<SequenceCursor>;
   last(key: SequenceKey): number;
+  /** Undo a reservation of `clientSeq` (only if it is still the latest — no newer action
+   *  advanced past it). Lets a caller release the cursor when the reserved action fails
+   *  TRANSIENTLY (e.g. a durable write was unavailable), so a backoff-retry of the same
+   *  clientSeq is admitted again instead of hitting `E_REPLAY`. */
+  rollback(key: SequenceKey, clientSeq: number): void;
 }
 
 function keyOf(key: SequenceKey): string {
@@ -70,5 +75,13 @@ export class InMemorySequenceGate implements SequenceGate {
 
   last(key: SequenceKey): number {
     return this.cursors.get(keyOf(key)) ?? 0;
+  }
+
+  rollback(key: SequenceKey, clientSeq: number): void {
+    const k = keyOf(key);
+    // Only undo if `clientSeq` is still the cursor — a serialized caller guarantees no
+    // newer action advanced past it, so this restores the pre-reservation state exactly.
+    if (this.cursors.get(k) !== clientSeq) return;
+    this.cursors.set(k, clientSeq - 1); // last() reads 0 for a cursor of 0 → next expects 1
   }
 }

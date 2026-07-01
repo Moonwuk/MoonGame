@@ -237,6 +237,53 @@ describe('MatchRoom · action-layer gate (SV-1.1)', () => {
     expect(room.sequence).toBe(1);
   });
 
+  it('gate + persist: commits the durable gated action before broadcast, dedups a retry', async () => {
+    const room = createDevMatch(data, {
+      gate: new ActionGate(),
+      persist: () => Promise.resolve(),
+      now: () => 1000,
+      time: 1000,
+    });
+    const peer = new MemoryPeer();
+    room.addPeer('green', peer);
+
+    const env = orbitEnvelope(1, 'near');
+    await room.receive('green', peer, wire(env), SESSION.sessionId);
+    expect(room.state.fleets.green_1?.orbit).toBe('near'); // durably committed
+    expect(room.sequence).toBe(1);
+    expect(peer.messages.some((m) => m.type === 'delta')).toBe(true);
+
+    // Retry the same envelope → gate dedups it → a resync, no new seq, no re-apply.
+    await room.receive('green', peer, wire(env), SESSION.sessionId);
+    expect(room.sequence).toBe(1);
+    expect(peer.last()).toMatchObject({ type: 'state' });
+  });
+
+  it('gate + persist: a transient write failure rolls back the seq and stays retriable', async () => {
+    let down = true;
+    const room = createDevMatch(data, {
+      gate: new ActionGate(),
+      persist: () => (down ? Promise.reject(new Error('store down')) : Promise.resolve()),
+      now: () => 1000,
+      time: 1000,
+    });
+    const peer = new MemoryPeer();
+    room.addPeer('green', peer);
+
+    const env = orbitEnvelope(1, 'near');
+    await room.receive('green', peer, wire(env), SESSION.sessionId);
+    // Transient failure: nothing committed, a retriable reject, cursor rolled back.
+    expect(room.state.fleets.green_1?.orbit).toBe('far');
+    expect(room.sequence).toBe(0);
+    expect(peer.last()).toMatchObject({ type: 'rejection', code: 'E_UNAVAILABLE' });
+
+    // Store recovers; the SAME clientSeq re-admits (not E_REPLAY) and lands durably.
+    down = false;
+    await room.receive('green', peer, wire(env), SESSION.sessionId);
+    expect(room.state.fleets.green_1?.orbit).toBe('near');
+    expect(room.sequence).toBe(1);
+  });
+
   it('rate-limits before reserving a sequence, so a throttled action stays retriable', async () => {
     // The ordering guarantee: a throttled action must NOT burn its clientSeq, or a
     // backoff-retry of the same seq would hit E_REPLAY instead of landing.

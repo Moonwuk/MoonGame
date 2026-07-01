@@ -19,6 +19,27 @@ describe('InMemorySequenceGate · ordering (unchanged)', () => {
     expect(gate.checkAndReserve(k, 2)).toMatchObject({ ok: true });
     expect(gate.last(k)).toBe(2);
   });
+
+  it('rollback releases the latest reservation so the same seq re-admits', () => {
+    const gate = new InMemorySequenceGate();
+    const k = key('s');
+    gate.checkAndReserve(k, 1);
+    gate.checkAndReserve(k, 2);
+    expect(gate.checkAndReserve(k, 2)).toEqual({ ok: false, code: 'E_REPLAY' }); // 2 is taken
+
+    gate.rollback(k, 2); // undo the reservation of 2
+    expect(gate.last(k)).toBe(1);
+    expect(gate.checkAndReserve(k, 2)).toMatchObject({ ok: true }); // 2 re-admits
+  });
+
+  it('rollback is a no-op when the seq is not the latest (a newer one reserved past it)', () => {
+    const gate = new InMemorySequenceGate();
+    const k = key('s');
+    gate.checkAndReserve(k, 1);
+    gate.checkAndReserve(k, 2);
+    gate.rollback(k, 1); // 1 is stale — 2 is the cursor now
+    expect(gate.last(k)).toBe(2); // unchanged
+  });
 });
 
 describe('InMemorySequenceGate · bounded (LRU)', () => {

@@ -9,7 +9,7 @@ import type {
   SignatureContact,
 } from '@void/shared-core';
 import { diffState, hashState, identifiedNodes, visibleState } from '@void/shared-core';
-import type { ActionGate } from '@void/action-layer';
+import type { AcceptedAction, ActionGate } from '@void/action-layer';
 import {
   parseClientMessage,
   serializeServerMessage,
@@ -95,14 +95,13 @@ export interface MatchRoomOptions {
    *  yielding stable `E_*` codes with no internal leak. `receive` must be passed the
    *  connection's `sessionId` (the transport binds it at handshake). Omit ⇒ the current
    *  bare-action path (no envelope), which every existing caller keeps using unchanged.
-   *  NOTE: gated actions apply through the SYNC path this brick — combining `gate` with
-   *  `persist` (the durable committed path) is not wired yet (constructor throws), a
-   *  deliberate SV-1.x follow-up. Enabling the gate on the LIVE transport additionally
-   *  requires a server-issued `sessionId` — never a client-chosen value, since it keys the
-   *  sequence cursor and authorizes the envelope (SV-1.1-live-A). The gate's in-memory
-   *  stores are now bounded (SV-1.1-live-B: FIFO receipts + LRU cursors), so a long-running
-   *  or hostile session can't grow them without limit; a cross-restart DURABLE store is a
-   *  further follow-up (needs F2). */
+   *  Combining `gate` with `persist` routes an accepted action through the durable
+   *  commit-before-broadcast path (serialized in the mailbox so the sequence reservation
+   *  and the persist are atomic); without `persist`, the gated apply is synchronous. A
+   *  server-issued `sessionId` (never client-chosen — it keys the sequence cursor and
+   *  authorizes the envelope, SV-1.1-live-A) must reach `receive`. The gate's in-memory
+   *  stores are bounded (SV-1.1-live-B: FIFO receipts + LRU cursors); a cross-restart
+   *  DURABLE store for them is a further follow-up (needs F2). */
   gate?: ActionGate;
   /** Cap on retained idempotency receipts; past it the oldest are evicted (FIFO).
    *  Bounds memory for a long match — a retried action older than the last N is no
@@ -157,6 +156,15 @@ export interface SubmitResult {
   events: DomainEvent[];
   code?: string;
 }
+
+/** The durable verdict of a committed apply (`commitApply`). `durable:false` marks a
+ *  TRANSIENT failure (the store was unreachable) that the gated path must NOT cache in the
+ *  ActionGate — the action stays retriable, exactly like the room's own transient rejects. */
+type CommitVerdict =
+  | { ok: true }
+  | { ok: false; code: string; durable: true }
+  | { ok: false; code: string; durable: false };
+const TRANSIENT_VERDICT: CommitVerdict = { ok: false, code: 'E_UNAVAILABLE', durable: false };
 
 const OPEN = 1;
 /** Backpressure cap: drop a peer whose unflushed outbound buffer exceeds this (it
@@ -286,12 +294,6 @@ export class MatchRoom {
     this.observe = options.observe;
     this.persist = options.persist;
     this.gate = options.gate;
-    if (this.gate && this.persist) {
-      // Gated actions apply through the sync path this brick; routing them through the
-      // durable committed path (so a gated action is persisted before broadcast) is a
-      // deliberate SV-1.x follow-up. Fail fast rather than silently drop durability.
-      throw new Error('MatchRoom: `gate` + `persist` is not supported yet (SV-1.x)');
-    }
     if (options.initialSeq && options.initialSeq > 0) this.seq = options.initialSeq;
     this.maxReceipts = options.maxReceipts ?? RECEIPTS_MAX_DEFAULT;
     this.actionRateMax = options.actionRateMax ?? ACTION_RATE_MAX_DEFAULT;
@@ -532,7 +534,7 @@ export class MatchRoom {
       // sessionId (bound by the transport at handshake) — without both there is nothing
       // to authorize against, so it is an unroutable message.
       if (this.gate && sessionId !== undefined) {
-        this.admitEnvelope(playerId, peer, message.envelope, sessionId);
+        await this.admitEnvelope(playerId, peer, message.envelope, sessionId);
       } else {
         this.send(peer, { type: 'error', matchId: this.id, code: 'E_BAD_MESSAGE' });
       }
@@ -557,23 +559,84 @@ export class MatchRoom {
    * core and record the verdict in the gate for idempotent replay. Every failure is a
    * stable `E_*` code with no internal detail (fail-secure, OWASP A10).
    */
-  private admitEnvelope(
+  private async admitEnvelope(
     playerId: PlayerId,
     peer: RoomPeer,
     envelope: unknown,
     sessionId: string,
-  ): void {
+  ): Promise<void> {
+    // Durable committed path: serialize the WHOLE admit+commit through the actor mailbox,
+    // so the ActionGate's sequence reservation and the async durable apply are one atomic
+    // step. Otherwise a later action's admit could advance the cursor past an earlier one
+    // whose persist is still in flight, making that earlier one's transient failure
+    // un-retriable (E_REPLAY). The sync path can't interleave, so it needs no mailbox.
+    if (this.persist) {
+      await this.enqueue(() =>
+        this.admitCommitted(playerId, peer, envelope, sessionId).catch(() => {
+          try {
+            this.sendGateRejection(peer, envelopeActionId(envelope), 'E_INTERNAL');
+          } catch {
+            /* peer gone */
+          }
+        }),
+      );
+      return;
+    }
+    const accepted = this.admitDecision(playerId, peer, envelope, sessionId);
+    if (!accepted) return;
+    // Apply through the shared SYNC reducer core — no re-dedup / re-rate-limit /
+    // re-ownership (the gate + the rate-limit above already enforced them).
+    const result = this.applyAndBroadcast(playerId, accepted.action, peer);
+    this.gate!.commit(
+      accepted.envelope,
+      result.ok ? { ok: true } : { ok: false, code: result.code ?? 'E_INTERNAL' },
+    );
+  }
+
+  /** Gated committed apply (runs inside the mailbox): admit, then push an accepted action
+   *  through the durable `commitApply`, recording the durable verdict in the ActionGate. A
+   *  transient (non-durable) failure is NOT cached, so the action stays retriable. */
+  private async admitCommitted(
+    playerId: PlayerId,
+    peer: RoomPeer,
+    envelope: unknown,
+    sessionId: string,
+  ): Promise<void> {
+    const accepted = this.admitDecision(playerId, peer, envelope, sessionId);
+    if (!accepted) return;
+    const verdict = await this.commitApply(playerId, accepted.action, peer);
+    if (verdict.ok) {
+      this.gate!.commit(accepted.envelope, { ok: true });
+    } else if (verdict.durable) {
+      this.gate!.commit(accepted.envelope, { ok: false, code: verdict.code });
+    } else {
+      // Transient failure (store down): release the sequence reservation so a backoff-retry
+      // of the same clientSeq is admitted again instead of hitting E_REPLAY. Safe because
+      // this admit→commit ran serialized in the mailbox — nothing reserved past it.
+      this.gate!.rollback(accepted.envelope);
+    }
+  }
+
+  /** The shared front of the gated path (both sync and committed): rate-limit → gate.admit,
+   *  handling a duplicate replay or a rejection inline. Returns the accepted action to apply,
+   *  or null when it was already handled (rejected / replayed). */
+  private admitDecision(
+    playerId: PlayerId,
+    peer: RoomPeer,
+    envelope: unknown,
+    sessionId: string,
+  ): AcceptedAction | null {
     // Rate-limit BEFORE the sequence-reserving admit: a throttled action must not reserve
     // its clientSeq, or a legitimate backoff-retry of the same seq would hit E_REPLAY. This
     // is the fine-grained per-player limit (the connection-level flood guard is in wsServer).
     if (this.rateLimited(playerId)) {
       this.sendGateRejection(peer, envelopeActionId(envelope), 'E_RATE_LIMIT');
-      return;
+      return null;
     }
     const admission = this.gate!.admit(envelope, { matchId: this.id, playerId, sessionId });
     if (!admission.ok) {
       this.sendGateRejection(peer, envelopeActionId(envelope), admission.code);
-      return;
+      return null;
     }
     const value = admission.value;
     if (value.status === 'duplicate') {
@@ -581,15 +644,9 @@ export class MatchRoom {
       // action that succeeded, the cached rejection otherwise. No re-apply.
       if (value.receipt.ok) this.send(peer, this.stateMessageFor(playerId));
       else this.sendGateRejection(peer, value.receipt.actionId, value.receipt.code ?? 'E_INTERNAL');
-      return;
+      return null;
     }
-    // Accepted: apply through the shared reducer core — no re-dedup / re-rate-limit /
-    // re-ownership (the gate already enforced them, and the rate-limit ran above).
-    const result = this.applyAndBroadcast(playerId, value.action, peer);
-    this.gate!.commit(
-      value.envelope,
-      result.ok ? { ok: true } : { ok: false, code: result.code ?? 'E_INTERNAL' },
-    );
+    return value;
   }
 
   submitAction(playerId: PlayerId, action: Action, peer?: RoomPeer): SubmitResult {
@@ -886,13 +943,29 @@ export class MatchRoom {
       if (peer) this.sendTransientReject(peer, action.id, 'E_RATE_LIMIT');
       return;
     }
+    await this.commitApply(playerId, action, peer);
+  }
 
+  /**
+   * The durable commit-before-broadcast CORE (advance → apply → persist → commit →
+   * broadcast), AFTER the front gates (dedup, rate-limit — and, on the gated path, the
+   * ActionGate's authorize/sequence). Runs with `committing` set so a concurrent `tick()`
+   * skips. Returns the durable verdict so the gated path can record it in the ActionGate;
+   * a `durable:false` verdict is a transient failure (persist down) that must NOT be
+   * cached (the action stays retriable). Shared by the bare committed path and the gated
+   * committed path.
+   */
+  private async commitApply(
+    playerId: PlayerId,
+    action: Action,
+    peer?: RoomPeer,
+  ): Promise<CommitVerdict> {
     this.committing = true;
     try {
       // Authorization — a durable failure receipt (no state change).
       if (action.playerId !== playerId || !this.hasPlayer(playerId)) {
-        await this.commitReject(playerId, action, 'E_FORBIDDEN', peer);
-        return;
+        const committed = await this.commitReject(playerId, action, 'E_FORBIDDEN', peer);
+        return committed ? { ok: false, code: 'E_FORBIDDEN', durable: true } : TRANSIENT_VERDICT;
       }
 
       // Catch the world up PURELY — without touching `this.stateValue` — so an external
@@ -901,8 +974,8 @@ export class MatchRoom {
       const serverNow = this.clock();
       const advanced = this.computeAdvance(this.stateValue, serverNow);
       if (!advanced.ok) {
-        await this.commitReject(playerId, action, advanced.code, peer);
-        return;
+        const committed = await this.commitReject(playerId, action, advanced.code, peer);
+        return committed ? { ok: false, code: advanced.code, durable: true } : TRANSIENT_VERDICT;
       }
 
       const context = this.context(Math.max(serverNow, advanced.state.time));
@@ -915,48 +988,51 @@ export class MatchRoom {
         // failed write commits nothing → the retry re-derives and re-broadcasts the advance.
         const receipt: ActionReceipt = { actionId: action.id, playerId, seq, ok: false, code: result.code };
         if (!(await this.persistGuarded(this.snapshot(advanced.state, seq), receipt, action.id, peer))) {
-          return;
+          return TRANSIENT_VERDICT;
         }
         this.stateValue = advanced.state;
         this.seq = seq;
         this.storeReceipt(receipt, action.type);
         if (advanced.events.length > 0) this.broadcastState(advanced.events);
         if (peer) this.sendRejection(peer, receipt);
-        return;
+        return { ok: false, code: result.code, durable: true };
       }
 
       // Success: persist the final state + receipt, and ONLY on a durable ack commit the
       // new state, the receipt and the broadcast. A failed write commits nothing.
       const receipt: ActionReceipt = { actionId: action.id, playerId, seq, ok: true };
       if (!(await this.persistGuarded(this.snapshot(result.state, seq), receipt, action.id, peer))) {
-        return;
+        return TRANSIENT_VERDICT;
       }
       this.stateValue = result.state;
       this.seq = seq;
       this.storeReceipt(receipt, action.type);
       this.broadcastState([...advanced.events, ...result.events]);
       this.observeEndIfNeeded();
+      return { ok: true };
     } finally {
       this.committing = false;
     }
   }
 
   /** Persist a failure receipt (state unchanged) before acking the rejection, so a
-   *  retry after a restart stays deduped. A failed write ⇒ transient reject, no commit. */
+   *  retry after a restart stays deduped. A failed write ⇒ transient reject, no commit.
+   *  Returns whether the durable failure receipt was committed (false = transient). */
   private async commitReject(
     playerId: PlayerId,
     action: Action,
     code: string,
     peer?: RoomPeer,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const seq = this.seq + 1;
     const receipt: ActionReceipt = { actionId: action.id, playerId, seq, ok: false, code };
     if (!(await this.persistGuarded(this.snapshot(this.stateValue, seq), receipt, action.id, peer))) {
-      return;
+      return false;
     }
     this.seq = seq;
     this.storeReceipt(receipt, action.type);
     if (peer) this.sendRejection(peer, receipt);
+    return true;
   }
 
   /** Awaits the durable write. On reject/throw: commit nothing, send a TRANSIENT reject
