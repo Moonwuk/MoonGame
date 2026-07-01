@@ -502,6 +502,56 @@ describe('LazyMatchRegistry · wake scheduler (24/7 offline world)', () => {
     expect(timer.pending?.ms).toBe(50); // re-armed for the NEXT beat (t=200, now=150)
   });
 
+  it('does not re-arm the wake for a stalled runaway match (no spin)', async () => {
+    // A module that reschedules itself at its own instant → the clock can never progress
+    // past it (a same-instant runaway). The registry's wake must NOT spin on it.
+    const runawayModule: GameModule = {
+      id: 'runaway',
+      version: '1.0.0',
+      setup(api) {
+        api.on('inf', (_e, h) => h.schedule(h.state.time, 'inf'));
+      },
+    };
+    const clock = { now: 1 };
+    const timer = idleHarness();
+    const store = new MemoryMatchStore();
+    const runawayState: GameState = {
+      ...createInitialState({ seed: 'r', version: { data: 'test', manifest: 'test' } }),
+      players: { p1: player('p1'), p2: player('p2') },
+      scheduled: [{ id: 'evt:0', at: 0, type: 'inf', payload: null, seq: 0 }],
+      scheduleSeq: 1,
+    };
+    void store.save({ matchId: 'm', dataVersion: 'test', seq: 0, status: 'ongoing', state: runawayState });
+    const kernel = createKernel([runawayModule]);
+    const registry = new LazyMatchRegistry({
+      load: async (id) => {
+        const snap = await store.load(id);
+        if (!snap) return null;
+        const room = new MatchRoom({ id, initialState: snap.state, kernel, data: beatData(), now: () => clock.now });
+        return { room, dispose: () => void store.save(snapshotOf(room)) };
+      },
+      idleMs: 1000,
+      schedule: timer.schedule,
+      cancel: timer.cancel,
+    });
+
+    await registry.resolve('m');
+    const room = registry.get('m')!;
+    const peer = fakePeer();
+    room.addPeer('p1', peer);
+    registry.retain('m');
+    room.removePeer('p1', peer);
+    registry.release('m');
+
+    timer.fire(); // idle → hibernate → wake armed at 0 (event overdue)
+    await flush();
+    expect(timer.pending?.ms).toBe(0);
+
+    timer.fire(); // wake → tick makes no progress (runaway stall) → re-hibernate
+    await flush();
+    expect(timer.pending).toBeNull(); // NOT re-armed — the spin is broken
+  });
+
   it('cancels a pending wake when a player reconnects', async () => {
     const { registry, timer } = beatHarness();
     await registry.resolve('m');

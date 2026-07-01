@@ -190,7 +190,7 @@ export class LazyMatchRegistry implements MatchRegistry {
     }
   }
 
-  private async hibernate(matchId: string): Promise<void> {
+  private async hibernate(matchId: string, wakeProgressed = true): Promise<void> {
     this.idle.delete(matchId);
     const live = this.live.get(matchId);
     if (!live || live.room.peerCount > 0) return; // a socket reconnected during the window
@@ -215,7 +215,12 @@ export class LazyMatchRegistry implements MatchRegistry {
       this.disposing.delete(matchId);
     }
     // Keep the world running while asleep: fire the next scheduled event at its time.
-    this.armWake(matchId, nextEventMs);
+    // BUT don't re-arm when a wake just made no progress while events are still overdue
+    // (ms 0) — that's a stalled clock (a same-instant runaway), and an immediate 0ms
+    // re-arm would spin load→tick→persist forever. Leave it asleep (the room already
+    // alerted via advance_overflow); a real connection reloads it. Mirrors the clock
+    // driver's stall guard.
+    if (wakeProgressed || nextEventMs !== 0) this.armWake(matchId, nextEventMs);
   }
 
   private armWake(matchId: string, ms: number | null): void {
@@ -243,7 +248,9 @@ export class LazyMatchRegistry implements MatchRegistry {
     if (this.live.get(matchId)) return; // already live (someone connected) → driver handles it
     const room = await this.resolve(matchId);
     if (!room) return; // no longer in the store
-    room.tick(); // process events due up to now; the re-hibernation below persists the result
-    if (room.peerCount === 0) await this.hibernate(matchId);
+    // tick() returns whether the clock advanced — a stalled runaway makes no progress, and
+    // the re-hibernation uses that to avoid an infinite 0ms wake spin.
+    const progressed = room.tick(); // process events due up to now; re-hibernation persists it
+    if (room.peerCount === 0) await this.hibernate(matchId, progressed);
   }
 }
