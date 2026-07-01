@@ -89,18 +89,19 @@
   тоже фильтруются по видимости; e2e-тест «враг скрыт + нет утечки `red_1` по проводу».
   Дальше: AOI-оптимизация, JWT (F7).
 - **F7** 🔒(F4) JWT в WS-handshake.
-- **F8** ⏳ Подключить persist + драйвер пробуждения в `main.ts` (dev-харнес переживает
-  рестарт, 24/7-мир тикает сам). **Не** ждёт F1 — швы уже есть: `PostgresMatchStore`/
-  `PostgresReceiptStore` (`store/`, экспортированы в `index.ts`), `MatchRoom.tick()`/
-  `msUntilNextEvent()`, опции `initialState`/`initialReceipts`. Подзадачи: писать
-  `GameState`+receipt атомарно, **commit до broadcast**; на старте — снапшот +
-  `advanceTo(now)`; отложенная задача (pg-boss) на `nextEventAt` → `tick()` — **по
-  `msUntilNextEvent`, не по cron** (иначе поздние события при `timeScale>1`).
-  ⚠️ `E_ADVANCE_OVERFLOW`/`E_EVENT_OVERFLOW` (`kernel.ts:200,327`) не коммитят ничего и
-  заклинивают комнату — драйвер обязан амортизировать `advanceTo`; алертить как
-  невосстановимое. Детали и сайзинг — `infra-sizing-roadmap.md`.
-  **Готово, когда:** рестарт сервера восстанавливает активный матч из БД; события
-  таймлайна срабатывают без действия игрока; повтор действия после рестарта дедуплицируется.
+- **F8** ✅ Persist + драйвер пробуждения в `packages/server/main.ts` (паритет с
+  прото-сервером, который имел их с PA-4.1). `persistence.ts` (`createStores`: Memory по
+  умолчанию, Postgres по `DATABASE_URL` + `migrate`; `snapshotOf`), `clockDriver.ts`
+  (`msUntilNextEvent`→`tick`, cap `MAX_DELAY`), `main.ts` wired (observe→persist+receipt,
+  rehydrate на старте, graceful shutdown). **Побочно — реальный баг-фикс:** `seq`
+  сбрасывался в 0 при рестарте, из-за чего optimistic-by-seq store дропал пост-рестартные
+  сохранения (`WHERE seq <= EXCLUDED.seq`), пока счётчик не догонит — добавлен
+  `MatchRoom.initialSeq`, прокинут в **оба** сервера (`main.ts` и `netserver.ts`).
+  5 тестов (`f8-persistence.test.ts`: persist/resume, seq-restore + guard, драйвер
+  advance/idle). _Оговорка:_ save — после commit (fire-and-forget), не строгий
+  commit-до-broadcast risk14 (тот — F2/SV-1.1). Детали — `infra-sizing-roadmap.md`.
+  ⚠️ Открытый риск: overflow-клин (`E_ADVANCE_OVERFLOW`/`E_EVENT_OVERFLOW`,
+  `kernel.ts:200,327`) — драйвер амортизирует, но не устраняет; алертить.
 
 ## Блок G · Клиент (Этап 4) `[cli]` _(параллелен серверу)_
 

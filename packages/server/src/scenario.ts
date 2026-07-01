@@ -24,7 +24,7 @@ import {
   type Planet,
   type Player,
 } from '@void/shared-core';
-import { MatchRoom } from './matchRoom';
+import { MatchRoom, type ActionReceipt, type RoomObservation } from './matchRoom';
 
 /**
  * A runnable dev match on the *real* simulation core — the smallest faithful
@@ -81,6 +81,17 @@ export interface DevMatchOptions {
    *  one idle fleet, all joined through a neutral `nexus` — lets soak/load tests
    *  seat N players against one room. */
   players?: string[];
+  /** Observation stream (persistence / metrics wiring — see `main.ts` F8). */
+  observe?: (event: RoomObservation) => void;
+  /** Resume from a durable snapshot instead of seeding a fresh match: the passed
+   *  state replaces the freshly-seeded one (the seed still runs, cheaply, and is
+   *  discarded). The clock keeps running from `state.time`. */
+  initialState?: GameState;
+  /** Rehydrate idempotency receipts on resume (see `MatchRoom.initialReceipts`),
+   *  so an action deduped before a restart stays deduped after it. */
+  initialReceipts?: ActionReceipt[];
+  /** Resume the action counter from a persisted snapshot (see `MatchRoom.initialSeq`). */
+  initialSeq?: number;
 }
 
 function player(id: string, name: string, faction: string): Player {
@@ -166,12 +177,15 @@ export function createDevMatch(data: GameData, options: DevMatchOptions = {}): M
     ]);
     heroes[id] = { owner: id, location: `home_${id}`, cooldowns: {} };
   });
-  const state: GameState = { ...base, players, planets, fleets, heroes };
+  const state: GameState = options.initialState ?? { ...base, players, planets, fleets, heroes };
   return new MatchRoom({
     id: 'dev',
     initialState: state,
     kernel: createKernel(DEV_MODULES),
     data,
     now: options.now,
+    observe: options.observe,
+    initialReceipts: options.initialReceipts,
+    initialSeq: options.initialSeq,
   });
 }

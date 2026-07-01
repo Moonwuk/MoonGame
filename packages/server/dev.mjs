@@ -16,9 +16,10 @@ await build({
   format: 'esm',
   platform: 'node',
   target: 'node22',
-  // `ws` ships its own optional native bits; leave it for Node to resolve at
-  // runtime. Everything else (incl. the @void/shared-core TS source) is bundled.
-  external: ['ws'],
+  // `ws` and `pg` ship native/optional bits and dynamic requires; leave them for
+  // Node to resolve at runtime. Everything else (incl. the @void/shared-core TS
+  // source) is bundled. `pg` only actually loads when DATABASE_URL is set.
+  external: ['ws', 'pg'],
 });
 
 await import(pathToFileURL(outfile).href);

@@ -157,6 +157,8 @@ const room = new MatchRoom({
   emitStateHash: true, // attach hashState(view) so the client overlay can flag desync
   observe, // M0: log every room event to JSONL + count for the on-exit summary
   initialReceipts, // rehydrated idempotency (deduped action stays deduped after restart)
+  initialSeq: restored?.seq, // resume the action counter — else the optimistic-by-seq
+  // store drops post-restart saves until seq climbs back past the stored value
   timeScale: TIME_SCALE, // playtest fast-forward (1 = real-time)
 });
 

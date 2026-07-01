@@ -74,6 +74,11 @@ export interface MatchRoomOptions {
   /** Seed the idempotency receipts (e.g. rehydrated from a ReceiptStore on restart),
    *  so an action deduped before a crash stays deduped after it. */
   initialReceipts?: ActionReceipt[];
+  /** Resume the action counter (e.g. from a persisted `MatchSnapshot.seq`). Without
+   *  it a restarted room restarts `seq` at 0, and an optimistic-by-seq store would
+   *  drop its post-restart saves until the counter climbed back past the stored one.
+   *  Default 0 (a fresh match). */
+  initialSeq?: number;
   /** Cap on retained idempotency receipts; past it the oldest are evicted (FIFO).
    *  Bounds memory for a long match — a retried action older than the last N is no
    *  longer deduped (idempotency is needed for minutes, not forever). Default 10000. */
@@ -214,6 +219,7 @@ export class MatchRoom {
     this.emitStateHash = options.emitStateHash ?? false;
     this.singlePeerPerPlayer = options.singlePeerPerPlayer ?? false;
     this.observe = options.observe;
+    if (options.initialSeq && options.initialSeq > 0) this.seq = options.initialSeq;
     this.maxReceipts = options.maxReceipts ?? RECEIPTS_MAX_DEFAULT;
     this.actionRateMax = options.actionRateMax ?? ACTION_RATE_MAX_DEFAULT;
     this.actionRateWindowMs = options.actionRateWindowMs ?? ACTION_RATE_WINDOW_MS_DEFAULT;
