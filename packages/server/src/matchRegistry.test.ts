@@ -101,6 +101,21 @@ describe('createMultiplayerServer · multi-match registry', () => {
     }
   });
 
+  it('rejects a malformed match-id path with a 404, not a 500', async () => {
+    const server = createMultiplayerServer({
+      registry: new InMemoryMatchRegistry([makeRoom('a'), makeRoom('b')]),
+    });
+    const base = await server.listen(); // multi ⇒ base prefix, so we can craft a bad segment
+    try {
+      const ws = new WebSocket(`${base}/%zz?player=p1`); // %zz is a malformed %-escape
+      const [err] = (await once(ws, 'error')) as [Error];
+      expect(String(err)).toContain('404'); // a bad request path, not a server error
+      ws.close();
+    } finally {
+      await server.close();
+    }
+  });
+
   it('rejects a connection to a match this process is not hosting', async () => {
     const server = createMultiplayerServer({
       registry: new InMemoryMatchRegistry([makeRoom('known')]),

@@ -102,7 +102,15 @@ export function createMultiplayerServer(
           rejectUpgrade(socket, 404);
           return;
         }
-        const matchId = decodeURIComponent(url.pathname.slice(prefix.length));
+        let matchId: string;
+        try {
+          matchId = decodeURIComponent(url.pathname.slice(prefix.length));
+        } catch {
+          // A malformed %-escape (e.g. `/matches/%zz`) is a bad request path, not a
+          // server error — a 404 like any other unroutable path, not a 500.
+          rejectUpgrade(socket, 404);
+          return;
+        }
         if (matchId === '' || matchId.includes('/')) {
           rejectUpgrade(socket, 404);
           return;
