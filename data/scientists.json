@@ -1,0 +1,28 @@
+{
+  "void_admiral": {
+    "name": "Void Admiral",
+    "description": "Space-branch focus: unlocks orbital-doctrine research reserved for a chosen space leader.",
+    "branch": "space"
+  },
+  "ground_marshal": {
+    "name": "Ground Marshal",
+    "description": "Ground-branch focus: unlocks planetary-warfare research for a chosen ground leader.",
+    "branch": "ground"
+  },
+  "wing_commander": {
+    "name": "Wing Commander",
+    "description": "Squadron-branch focus: unlocks carrier-doctrine research for a chosen squadron leader.",
+    "branch": "squadron"
+  },
+  "missile_chief": {
+    "name": "Missile Chief",
+    "description": "Missile-branch focus: unlocks strategic-ordnance research for a chosen missile leader.",
+    "branch": "missile"
+  },
+  "polymath": {
+    "name": "Polymath",
+    "description": "Generalist: grants an extra concurrent research slot instead of a branch focus.",
+    "branch": "space",
+    "slotBonus": 1
+  }
+}

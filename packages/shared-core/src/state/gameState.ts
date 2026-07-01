@@ -49,6 +49,11 @@ export interface Player {
   /** The player's treasury — production accrues here, upkeep/costs drain it. */
   resources: ResourceBag;
   technologies?: PlayerTechnologyState;
+  /** Chosen research leader (scientist), snapshotted at match start and immutable
+   *  (GDD §2/§5.2): `id` into `data.scientists`, `level` from the account meta
+   *  (supplied at match creation). Drives the `research.slots` hook and
+   *  `has_scientist` unlock gates. Absent = no leader chosen. */
+  scientist?: { id: string; level: number };
 }
 
 export interface ActiveResearch {

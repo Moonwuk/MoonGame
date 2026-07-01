@@ -224,6 +224,10 @@ export const TechnologyEffectsSchema = z.object({
   combatDamageBonus: z.number().default(0),
 });
 
+/** The four tech-tree branches (UI tabs), shared by technologies, scientists and the
+ *  `has_scientist` gate. */
+const BranchSchema = z.enum(['ground', 'space', 'squadron', 'missile']);
+
 /** Shared "at least N" threshold for a condition (default 1 = mere existence). This
  *  single `min` knob is the main data lever for tuning a gate without touching code. */
 const conditionMin = z.number().int().positive().default(1);
@@ -242,6 +246,13 @@ export const TechnologyConditionSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('controls_planet_type'), planetType: z.string(), min: conditionMin }),
   /** Field at least `min` of `unit` across fleets, their cargo, and garrisons. */
   z.object({ type: z.literal('has_unit'), unit: z.string(), min: conditionMin }),
+  /** Have a chosen scientist (optionally of `branch`) at level ≥ `minLevel` — the
+   *  seam for branch-focus and late-game capstone content. */
+  z.object({
+    type: z.literal('has_scientist'),
+    branch: BranchSchema.optional(),
+    minLevel: z.number().int().positive().default(1),
+  }),
 ]);
 export type TechnologyCondition = z.infer<typeof TechnologyConditionSchema>;
 
@@ -251,7 +262,7 @@ export const TechnologyDefSchema = z.object({
   tier: z.number().int().positive().default(1),
   /** Tech-tree branch (UI tab). Defaults to 'space' so existing nodes that omit
    *  it stay valid (back-compat); squadron/missile branches may have no content yet. */
-  branch: z.enum(['ground', 'space', 'squadron', 'missile']).default('space'),
+  branch: BranchSchema.default('space'),
   /** Session day from which the node becomes researchable (0 = from match start).
    *  A "day" is game-time, timeScale-scaled — mirrors how `researchTimeHours`
    *  compresses (enforced in the technology module). */
@@ -309,6 +320,17 @@ export const SectorKindDefSchema = z.object({
   appearance: SectorKindAppearanceSchema.default({ color: '#46606e', shape: 'city' }),
 });
 
+/** A research leader (scientist) — a per-player entity CHOSEN at match start and
+ *  snapshotted immutably (NOT a unit, NOT a hero). `branch` is its focus; `slotBonus`
+ *  is the "+slot" leader's extra research slots. Effects ride the `research.slots`
+ *  hook and the `has_scientist` unlock gate. */
+export const ScientistDefSchema = z.object({
+  name: z.string(),
+  description: z.string().optional(),
+  branch: BranchSchema,
+  slotBonus: z.number().int().nonnegative().default(0),
+});
+
 export const GameDataSchema = z.object({
   version: z.string(),
   resources: z.array(z.string()).min(1),
@@ -320,6 +342,7 @@ export const GameDataSchema = z.object({
   sectorKinds: z.record(z.string(), SectorKindDefSchema).default({}),
   planetTypes: z.record(z.string(), PlanetTypeDefSchema).default({}),
   technologies: z.record(z.string(), TechnologyDefSchema).default({}),
+  scientists: z.record(z.string(), ScientistDefSchema).default({}),
 });
 
 export type ResourceBag = z.infer<typeof ResourceBagSchema>;
@@ -339,6 +362,7 @@ export type PlanetTypeDef = z.infer<typeof PlanetTypeDefSchema>;
 export type TechnologyUnlocks = z.infer<typeof TechnologyUnlocksSchema>;
 export type TechnologyEffects = z.infer<typeof TechnologyEffectsSchema>;
 export type TechnologyDef = z.infer<typeof TechnologyDefSchema>;
+export type ScientistDef = z.infer<typeof ScientistDefSchema>;
 export type GameData = z.infer<typeof GameDataSchema>;
 
 /** Stats of a building at a given level (1-based). Level 1 = the base fields;

@@ -153,7 +153,12 @@ function countUnit(state: GameState, playerId: string, unit: string): number {
  *  "at least `min`" count. Unknown types fail-secure (never satisfied); the `never`
  *  guard makes adding a schema variant WITHOUT an evaluator case a COMPILE error, so
  *  the catalog stays safe to extend. Composing existing ones to balance is pure data. */
-function conditionMet(cond: TechnologyCondition, state: GameState, playerId: string): boolean {
+function conditionMet(
+  cond: TechnologyCondition,
+  state: GameState,
+  playerId: string,
+  data: GameData,
+): boolean {
   switch (cond.type) {
     case 'own_sectors':
       return ownedPlanets(state, playerId).length >= cond.min;
@@ -163,6 +168,14 @@ function conditionMet(cond: TechnologyCondition, state: GameState, playerId: str
       return countPlanetType(state, playerId, cond.planetType) >= cond.min;
     case 'has_unit':
       return countUnit(state, playerId, cond.unit) >= cond.min;
+    case 'has_scientist': {
+      // Branch-focus / capstone gate: the player's chosen scientist meets the level
+      // and (if specified) the branch. Its branch comes from the per-match-frozen
+      // catalog, so the id lookup is snapshot-safe.
+      const chosen = state.players[playerId]?.scientist;
+      if (!chosen || chosen.level < cond.minLevel) return false;
+      return cond.branch === undefined || data.scientists[chosen.id]?.branch === cond.branch;
+    }
     default: {
       const _exhaustive: never = cond;
       void _exhaustive;
@@ -179,6 +192,7 @@ export function technologyLock(
   def: TechnologyDef,
   state: GameState,
   playerId: string,
+  data: GameData,
 ): string | null {
   const completed = state.players[playerId]?.technologies?.completed ?? [];
   for (const prerequisite of def.prerequisites) {
@@ -192,7 +206,7 @@ export function technologyLock(
     return 'E_TOO_EARLY';
   }
   for (const condition of def.conditions ?? []) {
-    if (!conditionMet(condition, state, playerId)) return 'E_CONDITIONS_UNMET';
+    if (!conditionMet(condition, state, playerId, data)) return 'E_CONDITIONS_UNMET';
   }
   return null;
 }
@@ -227,7 +241,7 @@ function startResearch(action: Action, h: HandlerContext): void {
   if (active.length >= slots) {
     return h.reject('E_RESEARCH_SLOTS_FULL'); // every research slot is occupied
   }
-  const lock = technologyLock(def, h.state, action.playerId);
+  const lock = technologyLock(def, h.state, action.playerId, h.ctx.data);
   if (lock) {
     return h.reject(lock);
   }

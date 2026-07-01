@@ -135,6 +135,7 @@ export {
   PlanetTypeDefSchema,
   TechnologyDefSchema,
   TechnologyConditionSchema,
+  ScientistDefSchema,
   TechnologyEffectsSchema,
   TechnologyUnlocksSchema,
   ResourceBagSchema,
@@ -154,6 +155,7 @@ export {
   type PlanetTypeDef,
   type TechnologyDef,
   type TechnologyCondition,
+  type ScientistDef,
   type TechnologyEffects,
   type TechnologyUnlocks,
   type UnitStats,
@@ -175,6 +177,7 @@ export { planetTypeModule } from './modules/planetType';
 export { constructionModule } from './modules/construction';
 export { stationModule } from './modules/station';
 export { technologyModule, technologyLock } from './modules/technology';
+export { scientistModule } from './modules/scientist';
 export { factionModule } from './modules/faction';
 export { reanimationModule } from './modules/reanimation';
 export { armyModule } from './modules/army';

@@ -116,6 +116,12 @@ export interface SlotAssignment {
   name?: string;
   /** Faction tag — legacy/dormant field on `Player`; defaults to ''. */
   faction?: string;
+  /** Chosen research leader (scientist) id from `data.scientists`, snapshotted onto
+   *  the seated player. Omit for no leader. */
+  scientist?: string;
+  /** The scientist's meta level (from the account meta; supplied at seating).
+   *  Defaults to 1. */
+  scientistLevel?: number;
 }
 
 export interface BuildFromMapOptions {
@@ -196,6 +202,7 @@ export function buildStateFromMap(map: MatchMap, data: GameData, options: BuildF
       faction: a.faction ?? '',
       status: 'active',
       resources: { ...slot.resources },
+      ...(a.scientist ? { scientist: { id: a.scientist, level: a.scientistLevel ?? 1 } } : {}),
     };
   }
 

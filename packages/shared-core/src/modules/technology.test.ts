@@ -96,6 +96,23 @@ const data: GameData = parseGameData({
     },
     mining: { name: 'Mining', cost: { metal: 5 }, researchTimeHours: 1 },
     smelting: { name: 'Smelting', cost: { metal: 5 }, researchTimeHours: 1 },
+    void_doctrine: {
+      name: 'Void Doctrine',
+      cost: { metal: 5 },
+      researchTimeHours: 1,
+      conditions: [{ type: 'has_scientist', branch: 'space' }],
+    },
+    capstone_ship: {
+      name: 'Capstone Ship',
+      cost: { metal: 5 },
+      researchTimeHours: 1,
+      conditions: [{ type: 'has_scientist', branch: 'space', minLevel: 5 }],
+    },
+  },
+  scientists: {
+    void_sci: { name: 'Void Sci', branch: 'space' },
+    ground_sci: { name: 'Ground Sci', branch: 'ground' },
+    slot_sci: { name: 'Slot Sci', branch: 'space', slotBonus: 1 },
   },
 });
 
@@ -309,6 +326,60 @@ describe('technology module — session research tree', () => {
     });
     expect(lockedFor('fusion_plus', refineries(1))).toBe('E_CONDITIONS_UNMET');
     expect(openFor('fusion_plus', refineries(2))).toBe(true);
+  });
+
+  it('has_scientist gates branch-focus and capstone content on the chosen leader', () => {
+    const kernel = createKernel([technologyModule]);
+    const withScientist = (sci?: { id: string; level: number }): GameState => {
+      const s = stateWith({ players: [player('p1', { metal: 30 })] });
+      if (sci) (s.players.p1 as Player).scientist = sci;
+      return s;
+    };
+
+    // No leader → space-focus content is locked; wrong branch stays locked.
+    expect(errCode(kernel.applyAction(withScientist(), research('void_doctrine'), ctx(0)))).toBe(
+      'E_CONDITIONS_UNMET',
+    );
+    expect(
+      errCode(
+        kernel.applyAction(
+          withScientist({ id: 'ground_sci', level: 9 }),
+          research('void_doctrine'),
+          ctx(0),
+        ),
+      ),
+    ).toBe('E_CONDITIONS_UNMET');
+
+    // A space leader unlocks the branch focus.
+    expect(
+      okApply(
+        kernel.applyAction(
+          withScientist({ id: 'void_sci', level: 1 }),
+          research('void_doctrine'),
+          ctx(0),
+        ),
+      ).ok,
+    ).toBe(true);
+
+    // Capstone needs the leader at level ≥ 5: locked at 4, open at 5.
+    expect(
+      errCode(
+        kernel.applyAction(
+          withScientist({ id: 'void_sci', level: 4 }),
+          research('capstone_ship'),
+          ctx(0),
+        ),
+      ),
+    ).toBe('E_CONDITIONS_UNMET');
+    expect(
+      okApply(
+        kernel.applyAction(
+          withScientist({ id: 'void_sci', level: 5 }),
+          research('capstone_ship'),
+          ctx(0),
+        ),
+      ).ok,
+    ).toBe(true);
   });
 
   it('pays up front, records active research, then completes on the timeline', () => {
