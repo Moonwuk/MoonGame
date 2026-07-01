@@ -2127,5 +2127,23 @@ export function aiOrders(state: GameState, ai: string): Action[] {
     const baseHasShip = base.garrison.some((st) => isShipUnit(st.unit));
     if (aiFleets < 2 && baseHasShip) out.push(launchFleet(ai, base.id));
   }
+  // Trade on the session market: a passive bot liquidates the surplus goods it never
+  // uses (food/energy/microelectronics) into the credits it always needs, and — when
+  // flush — bids for the metal it burns fastest. One open lot per resource so it doesn't
+  // spam. Embargo needs no check here: the book is anonymous and market.take rejects a
+  // soured player from filling the bot's lots (botEmbargoes), so the bot simply won't
+  // trade with anyone it has soured on.
+  if (pl) {
+    const lots = marketLots(state);
+    const hasLot = (side: MarketSide, resource: string): boolean =>
+      lots.some((l) => l.owner === ai && l.side === side && l.resource === resource);
+    for (const good of ['food', 'energy', 'microelectronics']) {
+      const have = pl.resources[good] ?? 0;
+      if (have >= 40 && !hasLot('sell', good)) out.push(marketList(ai, 'sell', good, Math.floor(have / 2), 2));
+    }
+    if ((pl.resources.metal ?? 0) < 80 && (pl.resources.credits ?? 0) > 300 && !hasLot('buy', 'metal')) {
+      out.push(marketList(ai, 'buy', 'metal', 30, 3));
+    }
+  }
   return out;
 }

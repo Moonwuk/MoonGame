@@ -7,6 +7,7 @@ import {
   marketCancel,
   marketLots,
   declareWar,
+  aiOrders,
 } from './game';
 import type { GameState } from '../../packages/shared-core/src/index';
 
@@ -96,5 +97,22 @@ describe('session market — two-sided order book', () => {
     expect(order(s, marketList('p1', 'sell', 'metal', 0, 1), 0).error).toBe('E_BAD_PAYLOAD');
     s = ok(order(s, marketList('p1', 'sell', 'metal', 10, 1), 0));
     expect(order(s, marketTake('p1', marketLots(s)[0]!.id), s.time).error).toBe('E_OWN_LOT');
+  });
+
+  it('a bot lists its surplus goods for sale (and the embargo blocks a soured buyer)', () => {
+    let s = newGame(); // p2 = AI, seeded food 120 / energy 90 / microelectronics 40
+    const sells = aiOrders(s, 'p2').filter(
+      (a) => a.type === 'market.list' && (a.payload as { side?: string }).side === 'sell',
+    );
+    const food = sells.find((a) => (a.payload as { resource?: string }).resource === 'food');
+    expect(food).toBeDefined();
+    expect((food!.payload as { amount: number }).amount).toBe(60); // half of 120
+
+    // Apply the bot's sell orders, then a soured player can't fill them.
+    for (const a of sells) s = ok(order(s, a, 0));
+    s = ok(order(s, declareWar('p1', 'p2'), s.time)); // sour p2's favour toward p1
+    const botFoodLot = marketLots(s).find((l) => l.owner === 'p2' && l.resource === 'food');
+    expect(botFoodLot).toBeDefined();
+    expect(order(s, marketTake('p1', botFoodLot!.id), s.time).error).toBe('E_EMBARGO');
   });
 });
