@@ -94,6 +94,31 @@ describe('SE-2.1 · verifyJoinToken', () => {
     expect(await verifyJoinToken(token, verifyCfg)).toEqual({ ok: false, code: 'E_AUTH' });
   });
 
+  it('rejects a well-formed token with the wrong typ (key-reuse guard)', async () => {
+    // Same key/iss/aud/exp/claims, but minted for another purpose (no join+jwt typ).
+    const token = await new SignJWT({ matchId: 'm1', playerId: 'green' })
+      .setProtectedHeader({ alg: 'HS256', typ: 'password-reset+jwt' })
+      .setIssuer('void')
+      .setAudience('match')
+      .setExpirationTime('5m')
+      .sign(secret);
+    expect(await verifyJoinToken(token, verifyCfg)).toEqual({ ok: false, code: 'E_AUTH' });
+  });
+
+  it('rejects a token older than maxTokenAgeSec even if not yet expired', async () => {
+    // iat 2h ago, ttl 3h → exp is still 1h in the FUTURE (not expired), but the token's
+    // age (2h) is over the 60s max, so the age cap rejects it.
+    const nowMs = Date.now();
+    const token = await signJoinToken(claim, signCfg, {
+      ttlSeconds: 3 * 3600,
+      now: () => nowMs - 2 * 3600 * 1000,
+    });
+    expect(await verifyJoinToken(token, { ...verifyCfg, maxTokenAgeSec: 60 })).toEqual({
+      ok: false,
+      code: 'E_AUTH',
+    });
+  });
+
   it('rejects a token with no expiration', async () => {
     const token = await new SignJWT({ matchId: 'm1', playerId: 'green' })
       .setProtectedHeader({ alg: 'HS256' })

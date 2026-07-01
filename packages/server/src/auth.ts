@@ -30,7 +30,16 @@ export interface JoinTokenVerifyConfig {
   audience: string;
   /** Clock skew tolerance in seconds for exp/nbf (default 0). */
   clockToleranceSec?: number;
+  /** Optional hard cap (seconds) on a token's age from `iat`, enforced at the gate
+   *  regardless of the minting side's TTL — a defence-in-depth bound on a leaked token's
+   *  window. Absent ⇒ replay is bounded only by `exp`. */
+  maxTokenAgeSec?: number;
 }
+
+/** JWT `typ` header pinned on every join token: verify rejects any token without it, so a
+ *  token minted for a DIFFERENT purpose under the same key/iss/aud can't be replayed as a
+ *  join token (defence-in-depth against key reuse). */
+const JOIN_TOKEN_TYP = 'join+jwt';
 
 /** What a verified join token grants: a seat (`playerId`) in a match (`matchId`), for an
  *  identity (`accountId`, when the minting side had one). */
@@ -54,8 +63,10 @@ export async function verifyJoinToken(
       algorithms: config.algorithms, // pinned allowlist — rejects `none` / cross-alg
       issuer: config.issuer,
       audience: config.audience,
+      typ: JOIN_TOKEN_TYP, // reject a token minted for another purpose (key-reuse guard)
       clockTolerance: config.clockToleranceSec ?? 0,
       requiredClaims: ['exp'], // a join token without `exp` is not a join token
+      ...(config.maxTokenAgeSec !== undefined ? { maxTokenAge: config.maxTokenAgeSec } : {}),
     });
     const claim = claimFromPayload(payload);
     return claim ? { ok: true, claim } : { ok: false, code: 'E_AUTH' };
@@ -94,7 +105,7 @@ export function signJoinToken(
   const payload: JWTPayload = { matchId: claim.matchId, playerId: claim.playerId };
   if (claim.accountId !== undefined) payload.accountId = claim.accountId;
   return new SignJWT(payload)
-    .setProtectedHeader({ alg: config.algorithm })
+    .setProtectedHeader({ alg: config.algorithm, typ: JOIN_TOKEN_TYP })
     .setIssuer(config.issuer)
     .setAudience(config.audience)
     .setIssuedAt(nowSec)
