@@ -224,6 +224,22 @@ export const TechnologyEffectsSchema = z.object({
   combatDamageBonus: z.number().default(0),
 });
 
+/** One curated tech-unlock condition (a "ready-made block", not a constructor —
+ *  §7.5): evaluated deterministically from state. Balancing a tech = composing these
+ *  in JSON; a genuinely new KIND of gate = a new variant here + one evaluator case in
+ *  the technology module. All of a tech's conditions must hold for it to unlock. */
+export const TechnologyConditionSchema = z.discriminatedUnion('type', [
+  /** Own at least `min` sectors/worlds. */
+  z.object({ type: z.literal('own_sectors'), min: z.number().int().positive() }),
+  /** Own a world that has built `building`. */
+  z.object({ type: z.literal('has_building'), building: z.string() }),
+  /** Own a world of `planetType`. */
+  z.object({ type: z.literal('controls_planet_type'), planetType: z.string() }),
+  /** Field at least one `unit` (in a fleet, its cargo, or a garrison). */
+  z.object({ type: z.literal('has_unit'), unit: z.string() }),
+]);
+export type TechnologyCondition = z.infer<typeof TechnologyConditionSchema>;
+
 export const TechnologyDefSchema = z.object({
   name: z.string(),
   description: z.string().optional(),
@@ -235,6 +251,9 @@ export const TechnologyDefSchema = z.object({
    *  A "day" is game-time, timeScale-scaled — mirrors how `researchTimeHours`
    *  compresses (enforced in the technology module). */
   dayGate: z.number().int().nonnegative().default(0),
+  /** Extra unlock conditions beyond prerequisites/day-gate — a curated, data-driven
+   *  catalog (§7.5). ALL must hold. Default: none. */
+  conditions: z.array(TechnologyConditionSchema).default([]),
   cost: ResourceBagSchema.default({}),
   researchTimeHours: z.number().nonnegative().default(0),
   prerequisites: z.array(z.string()).default([]),

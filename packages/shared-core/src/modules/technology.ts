@@ -1,9 +1,9 @@
 import type { Action } from '../action/types';
 import { hoursToMs } from '../action/types';
 import { MS_PER_DAY } from '../util/time';
-import type { GameData, ResourceBag, TechnologyDef } from '../data/schemas';
+import type { GameData, ResourceBag, TechnologyCondition, TechnologyDef } from '../data/schemas';
 import type { GameModule, HandlerContext } from '../kernel/module';
-import type { Player, PlayerTechnologyState } from '../state/gameState';
+import type { GameState, Planet, Player, PlayerTechnologyState, UnitStack } from '../state/gameState';
 import { canAfford, payCost } from '../util/treasury';
 
 interface ResearchPayload {
@@ -102,6 +102,67 @@ function scheduleCompletion(
   return completesAt;
 }
 
+/** Planets a player currently owns. */
+function ownedPlanets(state: GameState, playerId: string): Planet[] {
+  return Object.values(state.planets).filter((p) => p.owner === playerId);
+}
+
+/** True if the player fields at least one `unit` anywhere — a fleet, its cargo, or a garrison. */
+function controlsUnit(state: GameState, playerId: string, unit: string): boolean {
+  const has = (stacks: UnitStack[] | undefined): boolean =>
+    (stacks ?? []).some((s) => s.unit === unit && s.count > 0);
+  for (const f of Object.values(state.fleets)) {
+    if (f.owner === playerId && (has(f.units) || has(f.landing))) return true;
+  }
+  return ownedPlanets(state, playerId).some((p) => has(p.garrison));
+}
+
+/** Evaluates one curated unlock condition deterministically from state. Unknown
+ *  types fail-secure (never satisfied). Adding a KIND of gate = a new case here + a
+ *  schema variant (§7.5); composing existing ones to balance a tech is pure data. */
+function conditionMet(cond: TechnologyCondition, state: GameState, playerId: string): boolean {
+  switch (cond.type) {
+    case 'own_sectors':
+      return ownedPlanets(state, playerId).length >= cond.min;
+    case 'has_building':
+      return ownedPlanets(state, playerId).some((p) =>
+        p.buildings.some((b) => b.type === cond.building),
+      );
+    case 'controls_planet_type':
+      return ownedPlanets(state, playerId).some((p) => p.planetType === cond.planetType);
+    case 'has_unit':
+      return controlsUnit(state, playerId, cond.unit);
+    default:
+      return false; // fail-secure: an unrecognised condition is never met
+  }
+}
+
+/** The data-driven availability gate of a tech, independent of cost / research-slot
+ *  state: prerequisites → day-gate → conditions. Returns the first unmet gate's stable
+ *  reject code, or null when the node is researchable. Pure — used by the reducer and
+ *  reusable for a read-only "what can I research (and why not)" query. */
+export function technologyLock(
+  def: TechnologyDef,
+  state: GameState,
+  playerId: string,
+): string | null {
+  const completed = state.players[playerId]?.technologies?.completed ?? [];
+  for (const prerequisite of def.prerequisites) {
+    if (!completed.includes(prerequisite)) return 'E_PREREQUISITE';
+  }
+  // Day-gate: "Day N" is the match's world clock, counted exactly as the match browser
+  // shows it (matchRegistry: floor((state.time − startedAt) / MS_PER_DAY)), so the lock
+  // lines up with the displayed day. timeScale already lives in state.time (the room
+  // runs the world clock fast); startedAt defaults to 0 for the 0-based clock.
+  if ((def.dayGate ?? 0) > 0 && state.time - (state.startedAt ?? 0) < def.dayGate * MS_PER_DAY) {
+    return 'E_TOO_EARLY';
+  }
+  for (const condition of def.conditions ?? []) {
+    if (!conditionMet(condition, state, playerId)) return 'E_CONDITIONS_UNMET';
+  }
+  return null;
+}
+
 function startResearch(action: Action, h: HandlerContext): void {
   const payload = action.payload as Partial<ResearchPayload>;
   if (typeof payload?.technology !== 'string') {
@@ -122,20 +183,9 @@ function startResearch(action: Action, h: HandlerContext): void {
   if (tech.active) {
     return h.reject('E_RESEARCH_BUSY');
   }
-  for (const prerequisite of def.prerequisites) {
-    if (!tech.completed.includes(prerequisite)) {
-      return h.reject('E_PREREQUISITE');
-    }
-  }
-  // Day-gate: a node may stay locked until session day N. "Day N" is the match's
-  // world clock counted exactly as the match browser shows it — matchRegistry uses
-  // floor((state.time − startedAt) / MS_PER_DAY) — so the lock lines up with the
-  // displayed day on any config. timeScale already lives in state.time (the room
-  // runs the world clock fast), so there is no extra scaling here; startedAt
-  // defaults to 0 like the browser (correct for the 0-based world clock).
-  const dayGate = def.dayGate ?? 0;
-  if (dayGate > 0 && h.state.time - (h.state.startedAt ?? 0) < dayGate * MS_PER_DAY) {
-    return h.reject('E_TOO_EARLY');
+  const lock = technologyLock(def, h.state, action.playerId);
+  if (lock) {
+    return h.reject(lock);
   }
   if (!canAfford(player.resources, def.cost)) {
     return h.reject('E_INSUFFICIENT');

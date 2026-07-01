@@ -62,6 +62,30 @@ const data: GameData = parseGameData({
       researchTimeHours: 1,
       dayGate: 2,
     },
+    orbital_net: {
+      name: 'Orbital Net',
+      cost: { metal: 10 },
+      researchTimeHours: 1,
+      conditions: [{ type: 'own_sectors', min: 2 }],
+    },
+    fusion: {
+      name: 'Fusion',
+      cost: { metal: 10 },
+      researchTimeHours: 1,
+      conditions: [{ type: 'has_building', building: 'refinery' }],
+    },
+    terraforming: {
+      name: 'Terraforming',
+      cost: { metal: 10 },
+      researchTimeHours: 1,
+      conditions: [{ type: 'controls_planet_type', planetType: 'gas_giant' }],
+    },
+    carriers: {
+      name: 'Carriers',
+      cost: { metal: 10 },
+      researchTimeHours: 1,
+      conditions: [{ type: 'has_unit', unit: 'scout' }],
+    },
   },
 });
 
@@ -204,6 +228,51 @@ describe('technology module — session research tree', () => {
     expect(
       Object.keys(byBranch).every((b) => ['ground', 'space', 'squadron', 'missile'].includes(b)),
     ).toBe(true);
+  });
+
+  it('conditions gate research on curated, data-driven predicates', () => {
+    const kernel = createKernel([technologyModule]);
+    const p1 = () => player('p1', { metal: 30 });
+    const lockedFor = (tech: string, opts: Parameters<typeof stateWith>[0]) =>
+      errCode(kernel.applyAction(stateWith(opts), research(tech), ctx(0)));
+    const openFor = (tech: string, opts: Parameters<typeof stateWith>[0]) =>
+      okApply(kernel.applyAction(stateWith(opts), research(tech), ctx(0))).ok;
+
+    // own_sectors ≥ 2: locked with one world, open with two.
+    expect(lockedFor('orbital_net', { players: [p1()], planets: [planet('A', 'p1')] })).toBe(
+      'E_CONDITIONS_UNMET',
+    );
+    expect(
+      openFor('orbital_net', { players: [p1()], planets: [planet('A', 'p1'), planet('B', 'p1')] }),
+    ).toBe(true);
+
+    // has_building: locked until an owned world has the refinery.
+    expect(lockedFor('fusion', { players: [p1()], planets: [planet('A', 'p1')] })).toBe(
+      'E_CONDITIONS_UNMET',
+    );
+    expect(
+      openFor('fusion', {
+        players: [p1()],
+        planets: [{ ...planet('A', 'p1'), buildings: [{ type: 'refinery', level: 1, hp: 10 }] }],
+      }),
+    ).toBe(true);
+
+    // controls_planet_type: needs an owned world of that type.
+    expect(lockedFor('terraforming', { players: [p1()], planets: [planet('A', 'p1')] })).toBe(
+      'E_CONDITIONS_UNMET',
+    );
+    expect(
+      openFor('terraforming', {
+        players: [p1()],
+        planets: [{ ...planet('A', 'p1'), planetType: 'gas_giant' }],
+      }),
+    ).toBe(true);
+
+    // has_unit: needs the unit in a fleet (or cargo / garrison).
+    expect(lockedFor('carriers', { players: [p1()], planets: [planet('A', 'p1')] })).toBe(
+      'E_CONDITIONS_UNMET',
+    );
+    expect(openFor('carriers', { players: [p1()], fleets: [fleet('f1', 'p1', 'A')] })).toBe(true);
   });
 
   it('pays up front, records active research, then completes on the timeline', () => {
