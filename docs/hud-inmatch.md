@@ -131,6 +131,28 @@ export function resolveHudAction(action: HudTap, model: HudModel): HudIntent | {
 
 Строки — через bundle (i18n-шов, `main-menu.md §5.4`); иконки/цвета — `theme.ts`.
 
+**Реализовано — HUD-1a, зоны A + D** (`packages/client/src/matchHud.ts`, паттерн `welcomeScreen.ts`).
+Объём был «только A и D» (карта B и действия C не трогались), поэтому вместо одного `createHudModel`
+зоны вышли **двумя сфокусированными фабриками**, каждое поле — из реального `visibleState`:
+
+- `createStatusBarModel(state, viewerId, data?)` → зона A. `commander`=`player.name`;
+  `faction`=`player.faction` (контент-id, **не** корп-тег — такого поля в рантайме нет);
+  `rank`/`players` из `match.scores[*].total` (туман не режет `match`; тай-брейк по id —
+  детерминизм); `day`/`dayTimeMs` = `floor((time−startedAt)/MS_PER_DAY)` (та же свёртка, что у
+  match-browser; `elapsed` клампится в ≥0 — оба поля когерентны при обратном skew); `resources` в
+  каноническом порядке `data.resources` (отсутствующий → 0); `defeated`.
+- `createSelectionModel(state, fleetId, viewerId, data?)` → зона D для **флота**: `status`
+  (`transit`/`parked`/`stationed`) + пункт/ETA из `movement`/`edge`/`location`; `ships`=`fleet.units`;
+  `hull`=`Σ count×def.stats.hp` (текущее — из боевого пула `stack.hp`); `commander` = герой флота
+  (`name`+`grade`, **без** числового уровня; страж `hero.owner===viewerId` — чужой командир не течёт
+  даже на не-туманном состоянии); `inCombat`, `mine`, владелец.
+
+Обе фабрики **fail-secure** (`E_NO_PLAYER` / `E_NO_SELECTION`) и мягко деградируют без `data`
+(нет `hull`/`domain`). **Осознанно НЕ эмитим** (нет опоры в ядре — не выдумываем числа): `shield`,
+`power`, `damageReduction`, числовой уровень командира, кошелёк Суверенов, ранг-бар «66/826»,
+`ratePerDay`. Появятся в модели, когда механика ляжет в код (`shields`/`ship-modules`-роадмапы, HUD-2).
+Объединённый `createHudModel`/`resolveHudAction` (зоны B/C + мета) — следующий кирпич.
+
 ## 4. Мобильные ограничения / тема
 
 - **Тач-таргеты ≥ 48dp**, действия — в нижней трети (зона большого пальца); стат-бар/карта —
@@ -157,8 +179,11 @@ export function resolveHudAction(action: HudTap, model: HudModel): HudIntent | {
 - ✅ **Есть данные:** флоты/стеки/HP/скорость (`fleet`/`UnitStack`/`fleetBaseSpeed`), день
   (`state.time`/`startedAt`), ресурсы (5), герои, `fleet.move`/`assault`/`army.load`, туман
   (`visibleState`).
+- ✅ **`HUD-1a` (зоны A + D):** `createStatusBarModel` + `createSelectionModel`
+  (`packages/client/src/matchHud.ts`, +тесты) — стат-бар и панель выделения флота на реальных данных
+  (§3 «Реализовано»).
 - ⏳ **Нужен код (кирпичи):**
-  - `HUD-1` view-model `createHudModel`/`resolveHudAction` (+ тесты) — самодостаточно на текущих данных.
+  - `HUD-1b` объединённый `createHudModel`/`resolveHudAction` + зоны B (карта) / C (действия-намерения).
   - `HUD-2` производные для панели: `fleetPower` / `damageReduction` (сборка из статов+бонусов).
   - `HUD-3` действия `fleet.split` / `fleet.merge` (новые core-действия — референсные SPLIT/ADD).
   - `HUD-4` две HP-полоски (корпус/щит) — по мере `shields-roadmap`; иконки модулей — `ship-modules`.
