@@ -2053,7 +2053,8 @@ export type QStep =
   | { kind: 'move'; to: string } // route to a world, then hold for the next step
   | { kind: 'orbit' } // enter orbit over the fleet's current world
   | { kind: 'assault' } // land carried troops (enters orbit first when needed)
-  | { kind: 'load' }; // re-embark the liftable garrison here (pick your troops back up)
+  | { kind: 'load' } // re-embark the liftable garrison here (pick your troops back up)
+  | { kind: 'wait'; hours: number; until?: number }; // hold N game-hours, then continue (delayed order)
 
 /** A fleet may run its next queued step only when idle — not in transit, not locked in
  *  a battle. (A fleet parked on a lane counts as idle; its next move routes from there.) */
@@ -2078,7 +2079,24 @@ export function stepActions(me: string, fleetId: string, step: QStep, fleet: Fle
       // Loading depends on the world's garrison + the fleet's free cargo, not just the
       // fleet, so the driver computes it via loadHereActions(state, me, fleet) instead.
       return [];
+    case 'wait':
+      // A pure hold — issues no order; the driver counts it down via waitStatus.
+      return [];
   }
+}
+
+/**
+ * Where a `wait` step stands: its absolute resume time (started lazily from `now` the
+ * first time it's reached) and whether the hold has elapsed. Pure — the driver persists
+ * the returned `until` back onto the step so the countdown survives across frames.
+ */
+export function waitStatus(
+  step: { hours: number; until?: number },
+  now: number,
+  hourMs: number,
+): { until: number; done: boolean } {
+  const until = step.until ?? now + step.hours * hourMs;
+  return { until, done: now >= until };
 }
 
 /**

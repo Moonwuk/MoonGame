@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { data, fleetIdle, loadHereActions, stepActions } from './game';
+import { data, fleetIdle, loadHereActions, stepActions, waitStatus } from './game';
 import type { Fleet, GameState } from '../../packages/shared-core/src/index';
 
 // The CC-1 queue helpers only read a fleet's movement / battleId / orbit, so a loose
@@ -87,5 +87,34 @@ describe('loadHereActions (auto-load after capture)', () => {
   it('loads nothing from a world you do not own', () => {
     const { state, fleet } = scene('red', [{ unit: ground, count: 2 }]);
     expect(loadHereActions(state, me, fleet)).toEqual([]);
+  });
+});
+
+describe('waitStatus (delayed-order hold)', () => {
+  const H = 3_600_000; // ms per game-hour
+
+  it('starts the countdown from now on first reach (until unset)', () => {
+    const r = waitStatus({ hours: 12 }, 1000, H);
+    expect(r.until).toBe(1000 + 12 * H);
+    expect(r.done).toBe(false);
+  });
+
+  it('keeps holding while now is before the resume time', () => {
+    const until = 1000 + 12 * H;
+    expect(waitStatus({ hours: 12, until }, until - 1, H)).toEqual({ until, done: false });
+  });
+
+  it('is done once now reaches the resume time (and preserves the fixed until)', () => {
+    const until = 1000 + 12 * H;
+    expect(waitStatus({ hours: 12, until }, until, H)).toEqual({ until, done: true });
+    expect(waitStatus({ hours: 12, until }, until + 5 * H, H).done).toBe(true);
+  });
+
+  it('a zero-hour wait elapses immediately', () => {
+    expect(waitStatus({ hours: 0 }, 500, H)).toEqual({ until: 500, done: true });
+  });
+
+  it('stepActions treats wait as a no-op (the driver counts it down)', () => {
+    expect(stepActions('green', 'f1', { kind: 'wait', hours: 6 }, { orbit: undefined } as never)).toEqual([]);
   });
 });

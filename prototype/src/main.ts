@@ -66,6 +66,7 @@ import {
   stepActions,
   fleetIdle,
   loadHereActions,
+  waitStatus,
   type QStep,
 } from './game';
 import { OFFICERS } from './groundcombat';
@@ -1898,6 +1899,16 @@ function driveQueues(): void {
     }
     if (!fleetIdle(f)) continue; // in transit / fighting → hold
     const step = steps[0]!;
+    // 'wait' is a timed hold — count it down (starting the timer lazily on first reach)
+    // and don't advance until it elapses. A delayed order: "arrive, wait, then strike."
+    if (step.kind === 'wait') {
+      const w = waitStatus(step, s.time, HOUR);
+      step.until = w.until;
+      if (!w.done) continue;
+      steps.shift();
+      if (steps.length === 0) fleetQueues.delete(fid);
+      continue;
+    }
     // 'load' needs the world garrison + cargo (see loadHereActions); the rest are fleet-only.
     const actions = step.kind === 'load' ? loadHereActions(s, ME, f) : stepActions(ME, fid, step, f);
     for (const a of actions) playerOrder(a);
@@ -3374,6 +3385,11 @@ function panelHtml(): string {
         h += btn('qassault', '', '⚔ + штурм', true);
         h += btn('qload', '', '▲ + погрузка', true);
         h += btn('qclear', '', '✕ очистить', q.length > 0);
+        h += `</div><div class="row">`;
+        // Delayed orders: insert a timed hold so the next step fires N game-hours later.
+        h += btn('qwait', '6', '⏸ +6ч', true);
+        h += btn('qwait', '12', '⏸ +12ч', true);
+        h += btn('qwait', '24', '⏸ +24ч', true);
         h += `</div>`;
         if (q.length) {
           const label = (st: QStep): string =>
@@ -3383,10 +3399,12 @@ function panelHtml(): string {
                 ? '⚔ штурм'
                 : st.kind === 'load'
                   ? '▲ погрузка'
-                  : '🛰 орбита';
+                  : st.kind === 'wait'
+                    ? `⏸ ждать ${st.until !== undefined ? Math.max(0, Math.ceil((st.until - s.time) / HOUR)) : st.hours}ч`
+                    : '🛰 орбита';
           h += `<div class="row dim">${q.map((st, i) => `${i + 1}. ${label(st)}`).join(' · ')}</div>`;
         }
-        h += `<div class="hint">Включите «строить», тапайте миры (переходы) и добавляйте «штурм» / «погрузку». «Погрузка» забирает гарнизон захваченного мира обратно в трюм — так одна армия прыгает по цепочке миров (переход→штурм→погрузка→…) сама, пока вы вышли.</div>`;
+        h += `<div class="hint">Включите «строить», тапайте миры (переходы) и добавляйте «штурм» / «погрузку» / «ждать N ч». «Погрузка» забирает гарнизон захваченного мира обратно в трюм, «ждать» — отложенный приказ (выждать момент). Так одна армия проходит цепочку (переход→штурм→погрузка→ждать→…) сама, пока вы вышли.</div>`;
       }
 
       if (f.movement) {
@@ -4434,6 +4452,8 @@ side.addEventListener('click', (ev) => {
     enqueueStep(selectedFleetIds(), { kind: 'assault' });
   } else if (act === 'qload') {
     enqueueStep(selectedFleetIds(), { kind: 'load' });
+  } else if (act === 'qwait') {
+    enqueueStep(selectedFleetIds(), { kind: 'wait', hours: Number(arg) });
   } else if (act === 'qclear') {
     for (const id of selectedFleetIds()) fleetQueues.delete(id);
   } else if (act === 'load') {
