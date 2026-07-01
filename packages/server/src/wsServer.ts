@@ -3,10 +3,15 @@ import type { Duplex } from 'node:stream';
 import type { PlayerId } from '@void/shared-core';
 import { WebSocket, WebSocketServer } from 'ws';
 import type { MatchRoom } from './matchRoom';
+import { InMemoryMatchRegistry, type MatchRegistry } from './matchRegistry';
 import type { AccountStore } from './store';
 
 export interface MultiplayerServerOptions {
-  room: MatchRoom;
+  /** Single-match shortcut. Exactly one of `room` / `registry` must be given; `room`
+   *  is sugar for a one-entry registry (backward-compatible with every existing caller). */
+  room?: MatchRoom;
+  /** Multi-match: host N isolated matches in one process, routed by `${pathPrefix}/:id`. */
+  registry?: MatchRegistry;
   host?: string;
   port?: number;
   pathPrefix?: string;
@@ -49,7 +54,10 @@ export function createMultiplayerServer(
   const host = options.host ?? '127.0.0.1';
   const port = options.port ?? 0;
   const pathPrefix = options.pathPrefix ?? '/matches';
-  const room = options.room;
+  if (!options.room && !options.registry) {
+    throw new Error('createMultiplayerServer: pass either `room` or `registry`');
+  }
+  const registry = options.registry ?? new InMemoryMatchRegistry([options.room as MatchRoom]);
   const wss = new WebSocketServer({ noServer: true, maxPayload: 32_768 });
 
   const indexHtml = options.indexHtml;
@@ -57,7 +65,12 @@ export function createMultiplayerServer(
     const path = (request.url ?? '/').split('?')[0] ?? '/';
     if (path === '/health') {
       response.writeHead(200, { 'content-type': 'application/json' });
-      response.end(JSON.stringify({ ok: true, matchId: room.id, seq: room.sequence }));
+      response.end(
+        JSON.stringify({
+          ok: true,
+          matches: registry.ids().map((id) => ({ id, seq: registry.get(id)?.sequence ?? 0 })),
+        }),
+      );
       return;
     }
     if (indexHtml !== undefined && (path === '/' || path === '/index.html')) {
@@ -81,7 +94,21 @@ export function createMultiplayerServer(
     void (async () => {
       try {
         const url = new URL(request.url ?? '/', baseUrl(request));
-        if (url.pathname !== `${pathPrefix}/${room.id}`) {
+        // Route by match id: the path is `${pathPrefix}/<matchId>` (one segment, no
+        // nesting). Resolve the target match from the registry — an unknown or
+        // not-currently-hosted match is a 404, same as before for the single-room case.
+        const prefix = `${pathPrefix}/`;
+        if (!url.pathname.startsWith(prefix)) {
+          rejectUpgrade(socket, 404);
+          return;
+        }
+        const matchId = decodeURIComponent(url.pathname.slice(prefix.length));
+        if (matchId === '' || matchId.includes('/')) {
+          rejectUpgrade(socket, 404);
+          return;
+        }
+        const room = registry.get(matchId);
+        if (!room) {
           rejectUpgrade(socket, 404);
           return;
         }
@@ -101,7 +128,7 @@ export function createMultiplayerServer(
           return;
         }
         wss.handleUpgrade(request, socket, head, (ws) => {
-          wss.emit('connection', ws, request, playerId);
+          wss.emit('connection', ws, request, playerId, room);
         });
       } catch {
         rejectUpgrade(socket, 500);
@@ -126,7 +153,7 @@ export function createMultiplayerServer(
   const FLOOD_WINDOW_MS = 1_000;
   const FLOOD_MAX = 50; // a legit client sends a few msgs/s (actions + a 2s ping); 50 is slack
   const inbound = new WeakMap<WebSocket, { n: number; since: number }>();
-  wss.on('connection', (ws: WebSocket, _request: IncomingMessage, playerId: string) => {
+  wss.on('connection', (ws: WebSocket, _request: IncomingMessage, playerId: string, room: MatchRoom) => {
     sockets.add(ws);
     alive.set(ws, true);
     ws.on('pong', () => alive.set(ws, true));
@@ -173,11 +200,13 @@ export function createMultiplayerServer(
         httpServer.listen(port, host, () => {
           httpServer.off('error', reject);
           const address = httpServer.address();
-          if (typeof address === 'object' && address !== null) {
-            resolve(`ws://${host}:${address.port}${pathPrefix}/${room.id}`);
-            return;
-          }
-          resolve(`ws://${host}:${port}${pathPrefix}/${room.id}`);
+          const boundPort = typeof address === 'object' && address !== null ? address.port : port;
+          // Hosting exactly one match ⇒ return its full URL (backward-compatible: callers
+          // connect straight to it). Multiple ⇒ return the base prefix; the client appends
+          // `/<matchId>`.
+          const ids = registry.ids();
+          const suffix = ids.length === 1 ? `${pathPrefix}/${ids[0]}` : pathPrefix;
+          resolve(`ws://${host}:${boundPort}${suffix}`);
         });
       }),
     close: () =>
