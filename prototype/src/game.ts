@@ -161,6 +161,27 @@ export const data: GameData = parseGameData({
       buildTimeHours: 4,
       upkeep: { credits: 3 },
     },
+    fighter_squadron: {
+      // Carrier-borne strike wing (squadrons-roadmap SQ-0.1): very fast + hard-hitting
+      // but paper-thin — launch it ahead to strike, orbital AA (orbital_aa) is its counter.
+      faction: 'blue',
+      stats: { attack: 14, defense: 3, speed: 92, hp: 10, strikeRange: 180, fuel: 3, rearmRounds: 2 },
+      traits: ['squadron'],
+      signature: 2,
+      cost: { metal: 90, credits: 40 },
+      buildTimeHours: 2,
+      upkeep: { credits: 4 },
+    },
+    strike_carrier: {
+      // A slow, tanky flat-top with few guns of its own — its punch is the squadrons it carries.
+      faction: 'blue',
+      stats: { attack: 4, defense: 10, speed: 40, hp: 70, cargoCapacity: 6 },
+      traits: ['carrier'],
+      signature: 6,
+      cost: { metal: 320, credits: 160 },
+      buildTimeHours: 6,
+      upkeep: { credits: 12 },
+    },
     marine: {
       faction: 'blue',
       stats: { attack: 12, defense: 12, speed: 52, hp: 24 },
@@ -2097,6 +2118,14 @@ export function waitStatus(
 ): { until: number; done: boolean } {
   const until = step.until ?? now + step.hours * hourMs;
   return { until, done: now >= until };
+}
+
+/** The squadron-trait ship stacks aboard a fleet — what a carrier launches as a strike
+ *  wing (squadrons-roadmap SQ-1.1: launch-as-unit). Pure. */
+export function squadronTake(fleet: Fleet): Array<{ unit: string; count: number }> {
+  return fleet.units
+    .filter((st) => st.count > 0 && (data.units[st.unit]?.traits.includes('squadron') ?? false))
+    .map((st) => ({ unit: st.unit, count: st.count }));
 }
 
 /**

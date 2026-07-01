@@ -67,6 +67,7 @@ import {
   fleetIdle,
   loadHereActions,
   waitStatus,
+  squadronTake,
   type QStep,
 } from './game';
 import { OFFICERS } from './groundcombat';
@@ -163,7 +164,7 @@ const BUILDABLE = ['mine', 'refinery', 'tax_office', 'barracks', 'radar', 'fort'
 // `orbital_aa` (orbital ПВО — anti-ship near-orbit emplacement) is NOT freely
 // buildable: it's a tech unlock (pending the in-session research tree). It still
 // comes pre-installed with a space fortress (installFortressAA).
-const BUILD_UNITS = ['marine', 'cruiser', 'scout', 'siege'];
+const BUILD_UNITS = ['marine', 'cruiser', 'scout', 'siege', 'strike_carrier', 'fighter_squadron'];
 const BUILD_ICON: Record<string, string> = {
   mine: '⬢',
   refinery: '◇',
@@ -179,6 +180,8 @@ const UNIT_ICON: Record<string, string> = {
   cruiser: '▲',
   scout: '◌',
   siege: '✦',
+  strike_carrier: '◈', // a flat-top capital hull — hangar bays for the wing
+  fighter_squadron: '△', // light strike wing (hollow, to read apart from the cruiser ▲)
   hero: '♔', // the player's projection — a crowned flagship
 };
 // A small glyph per province KIND, drawn above each province so its type reads at a
@@ -1043,6 +1046,23 @@ function selectedFleetIds(): string[] {
  *  / standoff-fire mechanic applies)? */
 function fleetHasArtillery(f: Fleet | undefined): boolean {
   return !!f && f.units.some((u) => u.count > 0 && (data.units[u.unit]?.traits.includes('artillery') ?? false));
+}
+
+/** Does this fleet carry a launchable strike wing (squadron-trait ships)? The carrier
+ *  can split them off as a fast, short-range fleet (squadrons-roadmap SQ-1.1). */
+function fleetHasSquadron(f: Fleet | undefined): boolean {
+  return !!f && f.units.some((u) => u.count > 0 && (data.units[u.unit]?.traits.includes('squadron') ?? false));
+}
+
+/** Can the fleet launch its squadrons right now? `fleet.split` refuses to take the whole
+ *  stack (E_SPLIT_ALL) and only works on a stationary fleet (E_IN_TRANSIT / E_IN_BATTLE),
+ *  so the launch is offered only when a non-squadron ship stays behind and the carrier is
+ *  parked and out of combat (squadrons-roadmap SQ-1.1). */
+function fleetCanLaunchSquadron(f: Fleet | undefined): boolean {
+  if (!fleetHasSquadron(f) || f!.movement || !f!.location || f!.battleId) return false;
+  const total = f!.units.reduce((n, u) => n + u.count, 0);
+  const wing = squadronTake(f!).reduce((n, u) => n + u.count, 0);
+  return wing > 0 && total > wing;
 }
 
 /** A fleet's standoff firing radius (map units) — the longest gun among its live
@@ -3379,6 +3399,17 @@ function panelHtml(): string {
         h += `<div class="hint">Пассив — не стреляет. Ответ — только после урона по флоту. Станд — по тем, с кем война. Агрес — по любому, кроме пакта/союза.</div>`;
       }
 
+      // Carrier air wing (squadrons-roadmap SQ-1.1) — launch the squadron ships as a
+      // separate fast strike fleet. Needs a non-squadron ship left behind (fleet.split
+      // refuses to take the whole stack), so an all-fighter fleet just flies itself.
+      if (f.owner === ME && fleetHasSquadron(f)) {
+        const wing = squadronTake(f).reduce((n, u) => n + u.count, 0);
+        h += `<div class="sec">Авиагруппа</div><div class="row">`;
+        h += btn('launchsquad', '', `🛩 Запустить эскадрилью (${wing})`, fleetCanLaunchSquadron(f));
+        h += `</div>`;
+        h += `<div class="hint">Отделяет эскадрильи в отдельный быстрый флот — уводите его на удар, а носитель остаётся в строю. Нужен хотя бы один не-эскадрильный корабль. Контрится орбитальным ПВО.</div>`;
+      }
+
       // The player's projection hero rides here → name it and flag its fleet aura.
       if (f.units.some((u) => u.count > 0 && data.units[u.unit]?.traits.includes('hero'))) {
         const hero = Object.values(s.heroes ?? {}).find((x) => x.owner === f.owner);
@@ -3731,7 +3762,17 @@ function unitDossier(id: string): Dossier | null {
     case 'orbital_aa':
       return {
         name: 'Orbital AA',
-        body: `Стационарная зенитная батарея — неподвижна, но выдаёт ${hl(st.aaDamage ?? 0)} урона по кораблям на низкой орбите. Кошмар для бомбардировщиков, повисших над планетой.`,
+        body: `Стационарная зенитная батарея — неподвижна, но выдаёт ${hl(st.aaDamage ?? 0)} урона по кораблям на низкой орбите. Кошмар для бомбардировщиков, повисших над планетой, и для налетающих эскадрилий.`,
+      };
+    case 'strike_carrier':
+      return {
+        name: 'Strike Carrier',
+        body: `Медленный бронированный носитель (${hl(st.hp)} корпуса, трюм на ${hl(st.cargoCapacity ?? 0)}) — своих пушек почти нет, вся его сила в эскадрильях, что он несёт. Держите его позади и запускайте авиагруппу по цели кнопкой «🛩 Запустить эскадрилью».`,
+      };
+    case 'fighter_squadron':
+      return {
+        name: 'Fighter Squadron',
+        body: `Палубная эскадрилья: стремительная (ход ${hl(st.speed)}) и больно бьёт (${hl(st.attack)} атаки), но брони почти нет (${hl(st.hp)} корпуса). Отделяется от носителя в отдельный быстрый флот и наносит удар с дистанции ${hl(st.strikeRange ?? 0)}. Контрится орбитальным ПВО — не гоните её на прикрытую ПВО планету.`,
       };
     case 'hero':
       return {
@@ -4477,6 +4518,13 @@ side.addEventListener('click', (ev) => {
     }
   } else if (act === 'qclear') {
     for (const id of selectedFleetIds()) fleetQueues.delete(id);
+  } else if (act === 'launchsquad') {
+    // Split the squadron stack off into its own fast strike fleet (SQ-1.1).
+    const f = selFleet ? s.fleets[selFleet] : undefined;
+    if (fleetCanLaunchSquadron(f)) {
+      playerOrder(splitFleet(ME, f!.id, squadronTake(f!)));
+      note('🛩 эскадрилья запущена — ведите её на цель');
+    }
   } else if (act === 'load') {
     beginLoad(selFleet!, arg); // ~1h timed load (animated in the marker)
   } else if (act === 'unload') {
