@@ -669,7 +669,8 @@ button.b:disabled{opacity:.32;cursor:not-allowed;color:var(--dim);border-color:v
 #lobby .lbtn{width:100%;padding:13px 10px;border-radius:8px;border:1px solid var(--cyan);
   background:rgba(53,214,230,.14);color:var(--cyan);font:13px ui-monospace,monospace;letter-spacing:1px;cursor:pointer;}
 #lobby .lbtn:disabled{opacity:.4;cursor:not-allowed;}
-#lobby .lwait{text-align:center;color:var(--dim);font-size:12px;}
+#lobby .lbtn.ghost{margin-top:8px;border-color:var(--line-hi);background:transparent;color:var(--dim);}
+#lobby .lwait{text-align:center;color:var(--dim);font-size:12px;margin-bottom:8px;}
 #setup{position:fixed;inset:0;z-index:58;display:none;align-items:center;justify-content:center;
   background:rgba(2,8,11,.72);}
 #setup .sbox{width:min(560px,95vw);max-height:92vh;overflow:auto;background:var(--glass);
