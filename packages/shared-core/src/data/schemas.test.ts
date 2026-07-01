@@ -52,7 +52,8 @@ describe('game data schema (docs/architecture.md §2)', () => {
     expect(data.units.fighter_squadron?.stats.rearmRounds).toBe(2);
     expect(data.units.strike_carrier?.stats.cargoCapacity).toBe(6); // hangar = shared cargo hold
     expect(data.units.cruiser?.stats.strikeRange).toBe(0); // schema default (not a squadron)
-    expect(data.events.reanimate_on_kill?.trigger).toBe('unit_dies_in_battle');
+    // reanimate_on_kill/Necromancer cut (designer-role) → assert a surviving event instead.
+    expect(data.events.infect_planet?.trigger).toBe('planet_captured');
     expect(data.sectors.asteroid_field?.speedBonus).toBeCloseTo(-0.25);
     expect(data.sectors.asteroid_field?.hpBonus).toBeCloseTo(0.1);
     // planet types: production multiplier + ground-defense edge (data-driven).
@@ -143,8 +144,8 @@ describe('game data schema (docs/architecture.md §2)', () => {
     const data = parseGameData(loadShippedBundle());
     // scout_drone declares no traits in JSON → schema default [].
     expect(data.units.scout_drone?.traits).toEqual([]);
-    // void_anomaly omits no chance, but reanimate uses a custom chance.
-    expect(data.events.reanimate_on_kill?.chance).toBeCloseTo(0.3);
+    // a custom `chance` is preserved, not defaulted to 1.
+    expect(data.events.void_anomaly?.chance).toBeCloseTo(0.5);
   });
 
   it('allows extra numeric unit stats (data-driven, open stat set)', () => {
