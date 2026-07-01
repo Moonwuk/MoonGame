@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   buildLabel,
   checkForUpdate,
+  checkForUpdateDetailed,
   currentBuild,
   isNewer,
   parseRelease,
@@ -126,5 +127,37 @@ describe('buildLabel', () => {
   });
   it('falls back to the versionCode when no sha', () => {
     expect(buildLabel({ versionCode: 42, sha: '' })).toBe('сборка 42');
+  });
+});
+
+describe('checkForUpdateDetailed (diagnosable outcomes)', () => {
+  it('reports "current" with both version numbers when up to date', async () => {
+    setBuild({ versionCode: 442, sha: 'me' });
+    const r = await checkForUpdateDetailed(fetchOk(release(441, 'older')));
+    expect(r).toEqual({ kind: 'current', local: 442, remote: 441 });
+  });
+  it('reports "update" with the info + local version when newer exists', async () => {
+    setBuild({ versionCode: 441, sha: 'me' });
+    const r = await checkForUpdateDetailed(fetchOk(release(442, 'newer')));
+    expect(r.kind).toBe('update');
+    if (r.kind === 'update') expect([r.info.versionCode, r.local]).toEqual([442, 441]);
+  });
+  it('reports "offline" (not a false "current") when the fetch throws', async () => {
+    setBuild({ versionCode: 1, sha: 'me' });
+    const boom = (async () => {
+      throw new Error('net down');
+    }) as unknown as typeof fetch;
+    const r = await checkForUpdateDetailed(boom);
+    expect(r.kind).toBe('offline');
+  });
+  it('reports "http" with the status on a non-ok response', async () => {
+    setBuild({ versionCode: 1, sha: 'me' });
+    const rate = (async () => ({ ok: false, status: 404, json: async () => ({}) })) as unknown as typeof fetch;
+    const r = await checkForUpdateDetailed(rate);
+    expect(r).toEqual({ kind: 'http', status: 404 });
+  });
+  it('reports "dormant" in the browser / dev build', async () => {
+    setBuild(undefined);
+    expect((await checkForUpdateDetailed(fetchOk(release(9, 'x')))).kind).toBe('dormant');
   });
 });

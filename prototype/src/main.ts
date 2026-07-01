@@ -91,7 +91,13 @@ import {
   planRoute,
 } from '../../packages/shared-core/src/index';
 import { MultiplayerClient, type MultiplayerPing } from '../../packages/client/src/index';
-import { buildLabel, checkForUpdate, currentBuild, type UpdateInfo } from './updater';
+import {
+  buildLabel,
+  checkForUpdateDetailed,
+  currentBuild,
+  type UpdateCheck,
+  type UpdateInfo,
+} from './updater';
 // DEV TEST MODE — self-contained dev-only scenarios; remove this import + the
 // initTestMode(...) call below + the #testmode HTML/CSS to cut it cleanly.
 import { initTestMode, openTestMode } from './testmode';
@@ -6558,19 +6564,41 @@ requestAnimationFrame(frame);
       $('updbar').style.display = 'block'; // override the stylesheet's display:none
     };
 
+    // A readable line for every check outcome, so a manual check can be TRACED — it tells
+    // "you're up to date" apart from "the check couldn't reach GitHub".
+    const diagMsg = (r: UpdateCheck): string => {
+      switch (r.kind) {
+        case 'update':
+          return `⬇ есть обновление → сборка ${r.info.versionCode}`;
+        case 'current':
+          return `✓ актуально · локально ${r.local} · сервер ${r.remote}`;
+        case 'offline':
+          return `✗ нет связи с GitHub (сеть / VPN?)`;
+        case 'http':
+          return `✗ GitHub ответил ${r.status}`;
+        case 'unparsable':
+          return `✗ ответ получен, но версия не распознана`;
+        case 'dormant':
+          return `обновления доступны только в APK`;
+      }
+    };
     let checking = false;
     const runCheck = async (manual: boolean): Promise<void> => {
       if (checking) return;
       checking = true;
       try {
-        const u = await checkForUpdate();
-        if (u) showUpdate(u);
-        else if (manual && cupd) {
-          const prev = cupd.textContent;
-          cupd.textContent = 'Установлена последняя версия';
+        const r = await checkForUpdateDetailed();
+        if (r.kind === 'update') showUpdate(r.info);
+        if (manual && cver) {
+          const prev = cver.textContent;
+          cver.textContent = `проверка: ${diagMsg(r)}`;
+          cver.style.color = r.kind === 'offline' || r.kind === 'http' ? 'var(--amber)' : '';
           window.setTimeout(() => {
-            cupd.textContent = prev;
-          }, 2200);
+            if (cver) {
+              cver.textContent = prev;
+              cver.style.color = '';
+            }
+          }, 8000);
         }
       } finally {
         checking = false;

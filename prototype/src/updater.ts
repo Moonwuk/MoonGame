@@ -94,17 +94,43 @@ export function isNewer(local: BuildInfo, remote: UpdateInfo): boolean {
  * boot path, so all errors collapse to "no update".
  */
 export async function checkForUpdate(fetchImpl: typeof fetch = fetch): Promise<UpdateInfo | null> {
+  const r = await checkForUpdateDetailed(fetchImpl);
+  return r.kind === 'update' ? r.info : null;
+}
+
+/**
+ * Every distinct outcome of an update check, so the UI can tell "you're up to date" apart
+ * from "the check failed" (they used to collapse to the same null). Powers the manual
+ * "Проверить обновления" diagnostic.
+ */
+export type UpdateCheck =
+  | { kind: 'dormant' } // no baked build (browser / dev) — nothing to update
+  | { kind: 'offline'; error: string } // fetch threw (no network / VPN / DNS)
+  | { kind: 'http'; status: number } // reached GitHub but it answered non-2xx
+  | { kind: 'unparsable' } // got a response we couldn't read a version out of
+  | { kind: 'current'; local: number; remote: number } // already on the newest build
+  | { kind: 'update'; info: UpdateInfo; local: number }; // a newer build is available
+
+export async function checkForUpdateDetailed(fetchImpl: typeof fetch = fetch): Promise<UpdateCheck> {
   const local = currentBuild();
-  if (!local) return null; // browser / dev build — content is always live
+  if (!local) return { kind: 'dormant' };
+  let res: Response;
   try {
-    const res = await fetchImpl(RELEASE_API, { headers: { Accept: 'application/vnd.github+json' } });
-    if (!res.ok) return null;
-    const remote = parseRelease(await res.json());
-    if (!remote) return null;
-    return isNewer(local, remote) ? remote : null;
-  } catch {
-    return null;
+    res = await fetchImpl(RELEASE_API, { headers: { Accept: 'application/vnd.github+json' } });
+  } catch (e) {
+    return { kind: 'offline', error: e instanceof Error ? e.message : String(e) };
   }
+  if (!res.ok) return { kind: 'http', status: res.status };
+  let remote: UpdateInfo | null;
+  try {
+    remote = parseRelease(await res.json());
+  } catch {
+    remote = null;
+  }
+  if (!remote) return { kind: 'unparsable' };
+  return isNewer(local, remote)
+    ? { kind: 'update', info: remote, local: local.versionCode }
+    : { kind: 'current', local: local.versionCode, remote: remote.versionCode };
 }
 
 /** Human label for a build ("alpha-1a2b3c4", or "сборка N" when no SHA). */
