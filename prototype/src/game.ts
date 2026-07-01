@@ -2217,6 +2217,37 @@ export function squadronReaches(
   return r > 0 && withinRange(fromPos, targetPos, r);
 }
 
+// --- squadron patrol (squadrons-roadmap SQ-4.1) ------------------------------
+// A wing left on patrol auto-strikes an enemy that enters its radius, burning a sortie
+// (SQ-2.1) each time; when it runs dry it rearms and then resumes — no live player in the
+// moment, fully deterministic. The pure decision core lives here; the frame-loop driver
+// (main.ts, mirrors autoEngage/driveQueues) issues the strike order, burns the sortie,
+// and ticks the rearm on a game-hour cadence.
+
+/** A standing patrol: guard `center` out to `radius` with the wing's sortie budget. */
+export interface Patrol {
+  center: { x: number; y: number };
+  radius: number;
+  sortie: SortieState;
+}
+
+/** The contact this patrol strikes this round: the lowest-id enemy inside the radius,
+ *  and only while the wing is flight-ready (fuel left, not rearming). Stable tie-break by
+ *  id — the same rule orbital AA / lane intercept use. Pure; null = hold fire. */
+export function patrolTarget(
+  patrol: Patrol,
+  enemies: Array<{ id: string; pos: { x: number; y: number } }>,
+): string | null {
+  if (!canSortie(patrol.sortie)) return null;
+  let best: string | null = null;
+  for (const e of enemies) {
+    if (withinRange(patrol.center, e.pos, patrol.radius) && (best === null || e.id < best)) {
+      best = e.id;
+    }
+  }
+  return best;
+}
+
 /**
  * Actions to re-embark the liftable garrison of the fleet's CURRENT world back into its
  * cargo — the "auto-load after capture" step. After a defended assault the storming

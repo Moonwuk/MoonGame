@@ -9,7 +9,9 @@ import {
   squadronStrikeRange,
   withinRange,
   squadronReaches,
+  patrolTarget,
   type SortieState,
+  type Patrol,
 } from './game';
 import type { Fleet } from '../../packages/shared-core/src/index';
 
@@ -127,5 +129,50 @@ describe('squadron strike radius (SQ-3.1)', () => {
 
   it('a non-strike fleet never reaches (range 0)', () => {
     expect(squadronReaches(fleet([{ unit: nonSquad, count: 3 }]), { x: 0, y: 0 }, { x: 0, y: 0 })).toBe(false);
+  });
+});
+
+describe('squadron patrol (SQ-4.1)', () => {
+  const center = { x: 500, y: 500 };
+  const patrol = (sortie = freshSortie(3)): Patrol => ({ center, radius: 180, sortie });
+
+  it('strikes the lowest-id enemy inside the radius', () => {
+    const enemies = [
+      { id: 'foe-b', pos: { x: 560, y: 500 } }, // in range
+      { id: 'foe-a', pos: { x: 500, y: 560 } }, // in range, lower id → wins the tie-break
+      { id: 'foe-c', pos: { x: 900, y: 900 } }, // out of range
+    ];
+    expect(patrolTarget(patrol(), enemies)).toBe('foe-a');
+  });
+
+  it('holds fire when no enemy is inside the radius', () => {
+    expect(patrolTarget(patrol(), [{ id: 'far', pos: { x: 5000, y: 5000 } }])).toBeNull();
+  });
+
+  it('holds fire while rearming even with an enemy in the zone', () => {
+    const grounded = patrol({ fuel: 0, rearming: 2 });
+    expect(patrolTarget(grounded, [{ id: 'foe', pos: center }])).toBeNull();
+  });
+
+  it('full loop: enemy in zone → strike each round until dry → rearm → active again', () => {
+    const max = 3, rearm = 2;
+    let p = patrol(freshSortie(max));
+    const enemy = [{ id: 'raider', pos: { x: 540, y: 500 } }]; // parked inside the zone
+    // Burns exactly maxFuel sorties while the raider loiters.
+    let strikes = 0;
+    while (patrolTarget(p, enemy) !== null) {
+      p = { ...p, sortie: spendSortie(p.sortie, rearm) };
+      strikes++;
+    }
+    expect(strikes).toBe(max);
+    expect(p.sortie.rearming).toBe(rearm); // now grounded, rearming
+    // Rearm to completion — patrol still holds fire.
+    for (let i = 0; i < rearm; i++) {
+      expect(patrolTarget(p, enemy)).toBeNull();
+      p = { ...p, sortie: tickRearm(p.sortie, max) };
+    }
+    // Refuelled → the patrol re-engages the same loitering raider.
+    expect(patrolTarget(p, enemy)).toBe('raider');
+    expect(canSortie(p.sortie)).toBe(true);
   });
 });
