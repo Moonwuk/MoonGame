@@ -3,6 +3,7 @@ import { createMultiplayerServer } from './wsServer';
 import { startClockDriver, type ClockDriverHandle } from './clockDriver';
 import { createStores, snapshotOf } from './persistence';
 import type { RoomObservation } from './matchRoom';
+import type { MatchSnapshot, StoredReceipt } from './store';
 
 /**
  * Runnable dev server: boots the real-core 2-player dev match and serves it over
@@ -32,26 +33,24 @@ let driver: ClockDriverHandle | null = null;
 const persistSnapshot = (): void => {
   void stores.store.save(snapshotOf(room));
 };
-// Persist after every committed action (the `observe` action event fires post-commit
-// with the receipt fields) and re-arm the clock driver, since the action may have
+// The committed path persists each action (snapshot + receipt) BEFORE it broadcasts,
+// so `observe` is only used here to re-arm the clock driver — an action may have
 // scheduled a new event the sleeping timer can't see.
 const observe = (event: RoomObservation): void => {
-  if (event.kind !== 'action') return;
-  void stores.receiptStore.save(matchId, {
-    actionId: event.actionId,
-    playerId: event.playerId,
-    seq: event.seq,
-    ok: event.ok,
-    ...(event.code ? { code: event.code } : {}),
-  });
-  persistSnapshot();
-  driver?.reschedule();
+  if (event.kind === 'action') driver?.reschedule();
+};
+// Strict commit-before-broadcast: the room awaits this durable write of the new
+// snapshot + receipt before committing state / broadcasting the delta to peers.
+const persist = async (snapshot: MatchSnapshot, receipt: StoredReceipt): Promise<void> => {
+  await stores.store.save(snapshot);
+  await stores.receiptStore.save(matchId, receipt);
 };
 
 const room = createDevMatch(loadShippedData(), {
   now: () => Date.now(),
   time: bootTime,
   observe,
+  persist,
   initialState: resumed?.state,
   initialReceipts,
   initialSeq: resumed?.seq,

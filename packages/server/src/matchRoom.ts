@@ -18,6 +18,7 @@ import {
   type ServerMessage,
   type ServerRejectionMessage,
 } from './protocol';
+import type { MatchSnapshot, StoredReceipt } from './store';
 import { InMemoryEphemeralStore, type EphemeralStore } from './ephemeral';
 
 export interface RoomPeer {
@@ -79,6 +80,14 @@ export interface MatchRoomOptions {
    *  drop its post-restart saves until the counter climbed back past the stored one.
    *  Default 0 (a fresh match). */
   initialSeq?: number;
+  /** STRICT commit-before-broadcast (risk14). When set, a player action is routed
+   *  through an async, per-room-serialized path that AWAITS this durable write of the
+   *  new snapshot + receipt BEFORE committing state or broadcasting the delta — so a
+   *  peer never sees state the store hasn't accepted, and a crash can't lose an acked
+   *  action. A rejecting/throwing write commits nothing and the action is retriable.
+   *  Omit ⇒ the current synchronous path (broadcast then persist-after via `observe`),
+   *  which every existing test and the tick/driver path keep using unchanged. */
+  persist?: (snapshot: MatchSnapshot, receipt: StoredReceipt) => Promise<void>;
   /** Cap on retained idempotency receipts; past it the oldest are evicted (FIFO).
    *  Bounds memory for a long match — a retried action older than the last N is no
    *  longer deduped (idempotency is needed for minutes, not forever). Default 10000. */
@@ -182,6 +191,16 @@ export class MatchRoom {
   private readonly emitStateHash: boolean;
   private readonly singlePeerPerPlayer: boolean;
   private readonly observe?: (event: RoomObservation) => void;
+  /** Durable write for strict commit-before-broadcast (see options.persist). */
+  private readonly persist?: (snapshot: MatchSnapshot, receipt: StoredReceipt) => Promise<void>;
+  /** Serializes committed submits (one at a time) so an async persist can't let a
+   *  second action race the reducer. */
+  private commitChain: Promise<void> = Promise.resolve();
+  /** True during a committed submit's critical section (incl. its persist await) so a
+   *  concurrent `tick()` skips instead of mutating the world under the submit. Because
+   *  the submit's `advance()` runs to `now` synchronously before any await, the clock is
+   *  already current when a skipped tick fires — so the skip is not seen as a stall. */
+  private committing = false;
   private endObserved = false; // 'end' is reported once
   private readonly peers = new Map<PlayerId, Set<RoomPeer>>();
   private readonly receipts = new Map<string, ActionReceipt>();
@@ -232,6 +251,7 @@ export class MatchRoom {
     this.emitStateHash = options.emitStateHash ?? false;
     this.singlePeerPerPlayer = options.singlePeerPerPlayer ?? false;
     this.observe = options.observe;
+    this.persist = options.persist;
     if (options.initialSeq && options.initialSeq > 0) this.seq = options.initialSeq;
     this.maxReceipts = options.maxReceipts ?? RECEIPTS_MAX_DEFAULT;
     this.actionRateMax = options.actionRateMax ?? ACTION_RATE_MAX_DEFAULT;
@@ -449,7 +469,11 @@ export class MatchRoom {
       await this.handlePingClear(playerId, message.pingId);
       return;
     }
-    this.submitAction(playerId, message.action, peer);
+    if (this.persist) {
+      await this.submitActionCommitted(playerId, message.action, peer);
+    } else {
+      this.submitAction(playerId, message.action, peer);
+    }
   }
 
   submitAction(playerId: PlayerId, action: Action, peer?: RoomPeer): SubmitResult {
@@ -525,7 +549,10 @@ export class MatchRoom {
    *  everyone is away. A wakeup driver calls this when `msUntilNextEvent` elapses.
    *  No-op while the clock is frozen (lobby) or when nothing is due yet. */
   tick(): boolean {
-    if (this.waiting) return false;
+    // Skip while a committed submit holds the world: it already advanced to `now`
+    // synchronously before its persist await, so there is nothing due to fire and
+    // mutating `stateValue` here would race the submit's pending commit.
+    if (this.waiting || this.committing) return false;
     const before = this.stateValue.time;
     const advanced = this.advance(this.clock());
     if (advanced.ok && advanced.events.length > 0) {
@@ -625,7 +652,15 @@ export class MatchRoom {
       code === undefined
         ? { actionId: action.id, playerId, seq: this.seq, ok }
         : { actionId: action.id, playerId, seq: this.seq, ok, code };
-    this.receipts.set(action.id, receipt);
+    this.storeReceipt(receipt, action.type);
+    return receipt;
+  }
+
+  /** Records a receipt in the in-memory idempotency map (FIFO-capped) and emits the
+   *  `action` observation. Split from `recordReceipt` so the committed path can build
+   *  the receipt with a prospective `seq`, persist it, and only THEN commit it here. */
+  private storeReceipt(receipt: ActionReceipt, actionType: string): void {
+    this.receipts.set(receipt.actionId, receipt);
     // Bound memory (F-04): idempotency is needed for the retry window (minutes), not
     // forever — evict the oldest receipts past the cap (Map preserves insertion order).
     while (this.receipts.size > this.maxReceipts) {
@@ -635,14 +670,158 @@ export class MatchRoom {
     }
     this.observe?.({
       kind: 'action',
-      actionId: action.id,
-      playerId,
-      type: action.type,
-      ok,
-      seq: this.seq,
-      ...(code ? { code } : {}),
+      actionId: receipt.actionId,
+      playerId: receipt.playerId,
+      type: actionType,
+      ok: receipt.ok,
+      seq: receipt.seq,
+      ...(receipt.code ? { code: receipt.code } : {}),
     });
-    return receipt;
+  }
+
+  /** Builds a durable snapshot of a specific `(state, seq)` — used by the committed
+   *  path to persist a prospective result BEFORE committing it. */
+  private snapshot(state: GameState, seq: number): MatchSnapshot {
+    return {
+      matchId: this.id,
+      dataVersion: state.version.data,
+      seq,
+      status: state.match.status === 'ended' ? 'ended' : 'ongoing',
+      state,
+    };
+  }
+
+  /**
+   * Strict commit-before-broadcast action path (options.persist). Serialized per room
+   * via `commitChain`, so the async persist await can never let a second action race
+   * the reducer. The tail (advance → apply → persist → commit → broadcast) runs with
+   * `committing` set so a concurrent `tick()` skips. An unexpected throw is contained
+   * (transient reject) and never wedges the queue.
+   */
+  private submitActionCommitted(playerId: PlayerId, action: Action, peer?: RoomPeer): Promise<void> {
+    const run = this.commitChain.then(() =>
+      this.doCommittedSubmit(playerId, action, peer).catch(() => {
+        if (peer) this.sendTransientReject(peer, action.id, 'E_INTERNAL');
+      }),
+    );
+    this.commitChain = run;
+    return run;
+  }
+
+  private async doCommittedSubmit(
+    playerId: PlayerId,
+    action: Action,
+    peer?: RoomPeer,
+  ): Promise<void> {
+    // Idempotent replay of a prior result (dedup) — mirrors submitAction, sync/no-await.
+    const cached = this.receipts.get(action.id);
+    if (cached) {
+      if (peer) {
+        if (cached.ok) this.send(peer, this.stateMessageFor(playerId));
+        else this.sendRejection(peer, cached);
+      }
+      return;
+    }
+    // Rate limit — transient reject, NO receipt (a genuine retry after backoff lands).
+    const rateNow = this.now();
+    const recent = (this.actionTimes.get(playerId) ?? []).filter(
+      (t) => rateNow - t < this.actionRateWindowMs,
+    );
+    if (recent.length >= this.actionRateMax) {
+      if (peer) this.sendTransientReject(peer, action.id, 'E_RATE_LIMIT');
+      return;
+    }
+    recent.push(rateNow);
+    this.actionTimes.set(playerId, recent);
+
+    this.committing = true;
+    try {
+      // Authorization — a durable failure receipt (no state change).
+      if (action.playerId !== playerId || !this.hasPlayer(playerId)) {
+        await this.commitReject(playerId, action, 'E_FORBIDDEN', peer);
+        return;
+      }
+
+      const serverNow = this.clock();
+      const advanced = this.advance(serverNow); // world catch-up (recomputable) committed in memory
+      if (!advanced.ok) {
+        await this.commitReject(playerId, action, advanced.code, peer);
+        return;
+      }
+
+      const context = this.context(Math.max(serverNow, this.stateValue.time));
+      const result = this.kernel.applyAction(this.stateValue, action, context);
+      const seq = this.seq + 1;
+
+      if (!result.ok) {
+        // Reject-but-advanced: the advance already moved the world. Persist that advanced
+        // state + the failure receipt BEFORE broadcasting the advance events.
+        const receipt: ActionReceipt = { actionId: action.id, playerId, seq, ok: false, code: result.code };
+        if (!(await this.persistGuarded(this.snapshot(this.stateValue, seq), receipt, action.id, peer))) {
+          return;
+        }
+        this.seq = seq;
+        this.storeReceipt(receipt, action.type);
+        if (advanced.events.length > 0) this.broadcastState(advanced.events);
+        if (peer) this.sendRejection(peer, receipt);
+        return;
+      }
+
+      // Success: persist the final state + receipt, and ONLY on a durable ack commit the
+      // new state, the receipt and the broadcast. A failed write commits nothing.
+      const receipt: ActionReceipt = { actionId: action.id, playerId, seq, ok: true };
+      if (!(await this.persistGuarded(this.snapshot(result.state, seq), receipt, action.id, peer))) {
+        return;
+      }
+      this.stateValue = result.state;
+      this.seq = seq;
+      this.storeReceipt(receipt, action.type);
+      this.broadcastState([...advanced.events, ...result.events]);
+      this.observeEndIfNeeded();
+    } finally {
+      this.committing = false;
+    }
+  }
+
+  /** Persist a failure receipt (state unchanged) before acking the rejection, so a
+   *  retry after a restart stays deduped. A failed write ⇒ transient reject, no commit. */
+  private async commitReject(
+    playerId: PlayerId,
+    action: Action,
+    code: string,
+    peer?: RoomPeer,
+  ): Promise<void> {
+    const seq = this.seq + 1;
+    const receipt: ActionReceipt = { actionId: action.id, playerId, seq, ok: false, code };
+    if (!(await this.persistGuarded(this.snapshot(this.stateValue, seq), receipt, action.id, peer))) {
+      return;
+    }
+    this.seq = seq;
+    this.storeReceipt(receipt, action.type);
+    if (peer) this.sendRejection(peer, receipt);
+  }
+
+  /** Awaits the durable write. On reject/throw: commit nothing, send a TRANSIENT reject
+   *  (no receipt) so the client's retry lands once the store recovers. Returns success. */
+  private async persistGuarded(
+    snapshot: MatchSnapshot,
+    receipt: StoredReceipt,
+    actionId: string,
+    peer?: RoomPeer,
+  ): Promise<boolean> {
+    try {
+      await this.persist!(snapshot, receipt);
+      return true;
+    } catch {
+      if (peer) this.sendTransientReject(peer, actionId, 'E_UNAVAILABLE');
+      return false;
+    }
+  }
+
+  /** A rejection that records NO receipt — the action is retriable (rate-limit / a
+   *  durable-write failure / an unexpected error), not a permanent verdict. */
+  private sendTransientReject(peer: RoomPeer, actionId: string, code: string): void {
+    this.send(peer, { type: 'rejection', matchId: this.id, seq: this.seq, actionId, code });
   }
 
   private broadcastState(events: DomainEvent[]): void {

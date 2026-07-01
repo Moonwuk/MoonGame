@@ -161,6 +161,14 @@ const room = new MatchRoom({
   initialReceipts, // rehydrated idempotency (deduped action stays deduped after restart)
   initialSeq: restored?.seq, // resume the action counter — else the optimistic-by-seq
   // store drops post-restart saves until seq climbs back past the stored value
+  // Strict commit-before-broadcast: await the durable write of the new snapshot +
+  // receipt before the room commits state / broadcasts. The debounced scheduleSave in
+  // `observe` above becomes a harmless coalesced extra for actions (still needed for
+  // tick-driven advances, which are recomputable and persist after the fact).
+  persist: async (snapshot, receipt) => {
+    await matchStore.save(snapshot);
+    await receiptStore.save('proto', receipt);
+  },
   timeScale: TIME_SCALE, // playtest fast-forward (1 = real-time)
 });
 

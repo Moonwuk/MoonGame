@@ -25,6 +25,7 @@ import {
   type Player,
 } from '@void/shared-core';
 import { MatchRoom, type ActionReceipt, type RoomObservation } from './matchRoom';
+import type { MatchSnapshot, StoredReceipt } from './store';
 
 /**
  * A runnable dev match on the *real* simulation core — the smallest faithful
@@ -92,6 +93,8 @@ export interface DevMatchOptions {
   initialReceipts?: ActionReceipt[];
   /** Resume the action counter from a persisted snapshot (see `MatchRoom.initialSeq`). */
   initialSeq?: number;
+  /** Strict commit-before-broadcast durable write (see `MatchRoom.persist`). */
+  persist?: (snapshot: MatchSnapshot, receipt: StoredReceipt) => Promise<void>;
 }
 
 function player(id: string, name: string, faction: string): Player {
@@ -187,5 +190,6 @@ export function createDevMatch(data: GameData, options: DevMatchOptions = {}): M
     observe: options.observe,
     initialReceipts: options.initialReceipts,
     initialSeq: options.initialSeq,
+    persist: options.persist,
   });
 }
