@@ -1,4 +1,5 @@
 import type { IncomingMessage, Server as HttpServer } from 'node:http';
+import { randomUUID } from 'node:crypto';
 import type { Duplex } from 'node:stream';
 import type { PlayerId } from '@void/shared-core';
 import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
@@ -199,8 +200,12 @@ export function createMultiplayerServer(
           rejectUpgrade(socket, 403);
           return;
         }
+        // Mint a SERVER-owned session id, bound to this connection — never taken from the
+        // client (a client-chosen value could reset its own sequence cursor / forge the
+        // envelope's session binding, SV-1.1-live-A). A reconnect mints a fresh one.
+        const sessionId = randomUUID();
         wss.handleUpgrade(request, socket, head, (ws) => {
-          wss.emit('connection', ws, request, playerId, room);
+          wss.emit('connection', ws, request, playerId, room, sessionId);
         });
       } catch {
         rejectUpgrade(socket, 500);
@@ -225,35 +230,46 @@ export function createMultiplayerServer(
   const FLOOD_WINDOW_MS = 1_000;
   const FLOOD_MAX = 50; // a legit client sends a few msgs/s (actions + a 2s ping); 50 is slack
   const inbound = new WeakMap<WebSocket, { n: number; since: number }>();
-  wss.on('connection', (ws: WebSocket, _request: IncomingMessage, playerId: string, room: MatchRoom) => {
-    sockets.add(ws);
-    alive.set(ws, true);
-    ws.on('pong', () => alive.set(ws, true));
-    // Only retain when the peer actually joined — addPeer rejects (and closes the socket)
-    // for an unknown player or a duplicate on a single-seat slot, and a spurious retain
-    // would disarm a legitimate hibernation countdown, starving eviction under reconnects.
-    if (room.addPeer(playerId, ws)) {
-      registry.retain?.(room.id); // keep the match resident while this socket is connected
-    }
-    ws.on('message', (data) => {
-      const now = Date.now();
-      const c = inbound.get(ws) ?? { n: 0, since: now };
-      if (now - c.since >= FLOOD_WINDOW_MS) {
-        c.n = 0;
-        c.since = now;
+  wss.on(
+    'connection',
+    (
+      ws: WebSocket,
+      _request: IncomingMessage,
+      playerId: string,
+      room: MatchRoom,
+      sessionId: string,
+    ) => {
+      sockets.add(ws);
+      alive.set(ws, true);
+      ws.on('pong', () => alive.set(ws, true));
+      // Only retain when the peer actually joined — addPeer rejects (and closes the socket)
+      // for an unknown player or a duplicate on a single-seat slot, and a spurious retain
+      // would disarm a legitimate hibernation countdown, starving eviction under reconnects.
+      if (room.addPeer(playerId, ws, sessionId)) {
+        registry.retain?.(room.id); // keep the match resident while this socket is connected
       }
-      c.n += 1;
-      inbound.set(ws, c);
-      if (c.n > FLOOD_MAX) return; // drop a raw flood before the parse (cheap)
-      const raw = typeof data === 'string' ? data : data.toString('utf8');
-      void room.receive(playerId, ws, raw); // fire-and-forget; ping handling may be async
-    });
-    ws.on('close', () => {
-      sockets.delete(ws);
-      room.removePeer(playerId, ws);
-      registry.release?.(room.id); // may start the idle→hibernate countdown if unwatched
-    });
-  });
+      ws.on('message', (data) => {
+        const now = Date.now();
+        const c = inbound.get(ws) ?? { n: 0, since: now };
+        if (now - c.since >= FLOOD_WINDOW_MS) {
+          c.n = 0;
+          c.since = now;
+        }
+        c.n += 1;
+        inbound.set(ws, c);
+        if (c.n > FLOOD_MAX) return; // drop a raw flood before the parse (cheap)
+        const raw = typeof data === 'string' ? data : data.toString('utf8');
+        // Pass the server-minted sessionId so a gated room can authorize the envelope's
+        // session binding against it (SV-1.1-live-A). Ignored by an un-gated room.
+        void room.receive(playerId, ws, raw, sessionId); // fire-and-forget; ping may be async
+      });
+      ws.on('close', () => {
+        sockets.delete(ws);
+        room.removePeer(playerId, ws);
+        registry.release?.(room.id); // may start the idle→hibernate countdown if unwatched
+      });
+    },
+  );
 
   // Each round: reap any socket that didn't answer last round's ping, then ping
   // the rest. Reap window is one interval, so a slot frees within ~2×HEARTBEAT.

@@ -143,6 +143,10 @@ export interface ServerWelcomeMessage extends VisibilityFields, LobbyField, Hash
   seq: number;
   serverTime: number;
   state: GameState;
+  /** The server-minted session id for this connection (SV-1.1-live-A). The client echoes
+   *  it in every `action.v1` envelope so a gated room can authorize the session binding.
+   *  Present only when the transport bound one; absent for a bare in-process room. */
+  sessionId?: string;
 }
 
 export interface ServerStateMessage extends VisibilityFields, LobbyField, HashField {

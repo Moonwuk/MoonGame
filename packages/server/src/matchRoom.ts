@@ -412,7 +412,7 @@ export class MatchRoom {
     return this.stateValue.players[playerId] !== undefined;
   }
 
-  addPeer(playerId: PlayerId, peer: RoomPeer): boolean {
+  addPeer(playerId: PlayerId, peer: RoomPeer, sessionId?: string): boolean {
     if (!this.hasPlayer(playerId)) {
       this.send(peer, { type: 'error', matchId: this.id, code: 'E_UNKNOWN_PLAYER' });
       peer.close?.(1008, 'unknown player');
@@ -442,6 +442,7 @@ export class MatchRoom {
       state: view.base,
       signatures: view.signatures,
       remembered: view.remembered,
+      ...(sessionId !== undefined ? { sessionId } : {}),
       ...this.hashField(view.base),
       ...this.lobbyField(),
     });
