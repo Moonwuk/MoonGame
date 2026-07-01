@@ -107,33 +107,50 @@ function ownedPlanets(state: GameState, playerId: string): Planet[] {
   return Object.values(state.planets).filter((p) => p.owner === playerId);
 }
 
-/** True if the player fields at least one `unit` anywhere — a fleet, its cargo, or a garrison. */
-function controlsUnit(state: GameState, playerId: string, unit: string): boolean {
-  const has = (stacks: UnitStack[] | undefined): boolean =>
-    (stacks ?? []).some((s) => s.unit === unit && s.count > 0);
-  for (const f of Object.values(state.fleets)) {
-    if (f.owner === playerId && (has(f.units) || has(f.landing))) return true;
-  }
-  return ownedPlanets(state, playerId).some((p) => has(p.garrison));
+/** Built copies of `building` across the player's worlds. */
+function countBuilding(state: GameState, playerId: string, building: string): number {
+  return ownedPlanets(state, playerId).reduce(
+    (n, p) => n + p.buildings.filter((b) => b.type === building).length,
+    0,
+  );
 }
 
-/** Evaluates one curated unlock condition deterministically from state. Unknown
- *  types fail-secure (never satisfied). Adding a KIND of gate = a new case here + a
- *  schema variant (§7.5); composing existing ones to balance a tech is pure data. */
+/** Worlds of `planetType` the player owns. */
+function countPlanetType(state: GameState, playerId: string, planetType: string): number {
+  return ownedPlanets(state, playerId).filter((p) => p.planetType === planetType).length;
+}
+
+/** Copies of `unit` the player fields across fleets, their cargo, and garrisons. */
+function countUnit(state: GameState, playerId: string, unit: string): number {
+  const inStacks = (stacks: UnitStack[] | undefined): number =>
+    (stacks ?? []).reduce((n, s) => n + (s.unit === unit ? s.count : 0), 0);
+  let total = 0;
+  for (const f of Object.values(state.fleets)) {
+    if (f.owner === playerId) total += inStacks(f.units) + inStacks(f.landing);
+  }
+  for (const p of ownedPlanets(state, playerId)) total += inStacks(p.garrison);
+  return total;
+}
+
+/** Evaluates one curated unlock condition deterministically from state — each is an
+ *  "at least `min`" count. Unknown types fail-secure (never satisfied); the `never`
+ *  guard makes adding a schema variant WITHOUT an evaluator case a COMPILE error, so
+ *  the catalog stays safe to extend. Composing existing ones to balance is pure data. */
 function conditionMet(cond: TechnologyCondition, state: GameState, playerId: string): boolean {
   switch (cond.type) {
     case 'own_sectors':
       return ownedPlanets(state, playerId).length >= cond.min;
     case 'has_building':
-      return ownedPlanets(state, playerId).some((p) =>
-        p.buildings.some((b) => b.type === cond.building),
-      );
+      return countBuilding(state, playerId, cond.building) >= cond.min;
     case 'controls_planet_type':
-      return ownedPlanets(state, playerId).some((p) => p.planetType === cond.planetType);
+      return countPlanetType(state, playerId, cond.planetType) >= cond.min;
     case 'has_unit':
-      return controlsUnit(state, playerId, cond.unit);
-    default:
-      return false; // fail-secure: an unrecognised condition is never met
+      return countUnit(state, playerId, cond.unit) >= cond.min;
+    default: {
+      const _exhaustive: never = cond;
+      void _exhaustive;
+      return false; // fail-secure for hand-built / unvalidated data
+    }
   }
 }
 

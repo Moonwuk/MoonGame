@@ -224,19 +224,24 @@ export const TechnologyEffectsSchema = z.object({
   combatDamageBonus: z.number().default(0),
 });
 
+/** Shared "at least N" threshold for a condition (default 1 = mere existence). This
+ *  single `min` knob is the main data lever for tuning a gate without touching code. */
+const conditionMin = z.number().int().positive().default(1);
+
 /** One curated tech-unlock condition (a "ready-made block", not a constructor —
- *  §7.5): evaluated deterministically from state. Balancing a tech = composing these
- *  in JSON; a genuinely new KIND of gate = a new variant here + one evaluator case in
- *  the technology module. All of a tech's conditions must hold for it to unlock. */
+ *  §7.5): evaluated deterministically from state, each an "at least `min`" count.
+ *  Balancing a tech = composing these in JSON (adjust `min`); a genuinely new KIND of
+ *  gate = a new variant here + one evaluator case in the technology module. ALL of a
+ *  tech's conditions must hold for it to unlock. */
 export const TechnologyConditionSchema = z.discriminatedUnion('type', [
-  /** Own at least `min` sectors/worlds. */
-  z.object({ type: z.literal('own_sectors'), min: z.number().int().positive() }),
-  /** Own a world that has built `building`. */
-  z.object({ type: z.literal('has_building'), building: z.string() }),
-  /** Own a world of `planetType`. */
-  z.object({ type: z.literal('controls_planet_type'), planetType: z.string() }),
-  /** Field at least one `unit` (in a fleet, its cargo, or a garrison). */
-  z.object({ type: z.literal('has_unit'), unit: z.string() }),
+  /** Own at least `min` sectors (owned map nodes / planets). */
+  z.object({ type: z.literal('own_sectors'), min: conditionMin }),
+  /** Own at least `min` built copies of `building` across your worlds. */
+  z.object({ type: z.literal('has_building'), building: z.string(), min: conditionMin }),
+  /** Own at least `min` worlds of `planetType`. */
+  z.object({ type: z.literal('controls_planet_type'), planetType: z.string(), min: conditionMin }),
+  /** Field at least `min` of `unit` across fleets, their cargo, and garrisons. */
+  z.object({ type: z.literal('has_unit'), unit: z.string(), min: conditionMin }),
 ]);
 export type TechnologyCondition = z.infer<typeof TechnologyConditionSchema>;
 

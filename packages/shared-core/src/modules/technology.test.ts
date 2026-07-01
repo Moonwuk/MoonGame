@@ -86,6 +86,12 @@ const data: GameData = parseGameData({
       researchTimeHours: 1,
       conditions: [{ type: 'has_unit', unit: 'scout' }],
     },
+    fusion_plus: {
+      name: 'Fusion+',
+      cost: { metal: 10 },
+      researchTimeHours: 1,
+      conditions: [{ type: 'has_building', building: 'refinery', min: 2 }],
+    },
   },
 });
 
@@ -268,11 +274,37 @@ describe('technology module — session research tree', () => {
       }),
     ).toBe(true);
 
-    // has_unit: needs the unit in a fleet (or cargo / garrison).
+    // has_unit: fleet, garrison, and cargo all count toward the total.
     expect(lockedFor('carriers', { players: [p1()], planets: [planet('A', 'p1')] })).toBe(
       'E_CONDITIONS_UNMET',
     );
     expect(openFor('carriers', { players: [p1()], fleets: [fleet('f1', 'p1', 'A')] })).toBe(true);
+    expect(
+      openFor('carriers', {
+        players: [p1()],
+        planets: [{ ...planet('A', 'p1'), garrison: [{ unit: 'scout', count: 1 }] }],
+      }),
+    ).toBe(true);
+    expect(
+      openFor('carriers', {
+        players: [p1()],
+        fleets: [{ ...fleet('f1', 'p1', 'A'), units: [], landing: [{ unit: 'scout', count: 1 }] }],
+      }),
+    ).toBe(true);
+
+    // count-based (min > 1): the data `min` is the balancing lever — two refineries
+    // open the "+" tier, one does not.
+    const refineries = (n: number) => ({
+      players: [p1()],
+      planets: [
+        {
+          ...planet('A', 'p1'),
+          buildings: Array.from({ length: n }, () => ({ type: 'refinery', level: 1, hp: 10 })),
+        },
+      ],
+    });
+    expect(lockedFor('fusion_plus', refineries(1))).toBe('E_CONDITIONS_UNMET');
+    expect(openFor('fusion_plus', refineries(2))).toBe(true);
   });
 
   it('pays up front, records active research, then completes on the timeline', () => {
