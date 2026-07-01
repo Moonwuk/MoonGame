@@ -39,6 +39,15 @@ export const UnitStatsSchema = z
     /** Orbital-AA damage per hour a (ground) unit deals to a hostile fleet on the
      *  NEAR orbit while the planet is not under a ground assault. 0 = no AA. */
     aaDamage: z.number().nonnegative().default(0),
+    /** Squadron reach (squadrons-roadmap SQ-3.1): the Euclidean distance in MAP
+     *  UNITS a launched `squadron` may strike from its carrier. 0 = no reach. */
+    strikeRange: z.number().nonnegative().default(0),
+    /** Squadron sorties before it must rearm (SQ-2.1). 0 = not a squadron / no
+     *  sortie limit. Decrements per sortie; at 0 the squadron goes to `rearmRounds`. */
+    fuel: z.number().nonnegative().default(0),
+    /** Combat rounds a spent squadron sits rearming on its carrier before it can
+     *  sortie again (SQ-2.1). Deterministic cooldown, like a hero ability. */
+    rearmRounds: z.number().nonnegative().default(0),
   })
   .catchall(z.number());
 

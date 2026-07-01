@@ -45,6 +45,13 @@ describe('game data schema (docs/architecture.md §2)', () => {
     expect(data.units.scout_drone?.stats.cargoCapacity).toBe(0); // default, carries nothing
     expect(data.units.orbital_aa?.stats.aaDamage).toBe(14); // anti-ship orbital AA
     expect(data.units.cruiser?.stats.aaDamage).toBe(0); // default, no AA
+    // squadrons-roadmap SQ-0.1: a carrier-borne fighter squadron + the new squadron stats.
+    expect(data.units.fighter_squadron?.traits).toContain('squadron');
+    expect(data.units.fighter_squadron?.stats.strikeRange).toBe(180); // Euclidean reach
+    expect(data.units.fighter_squadron?.stats.fuel).toBe(3); // sorties before rearm
+    expect(data.units.fighter_squadron?.stats.rearmRounds).toBe(2);
+    expect(data.units.strike_carrier?.stats.cargoCapacity).toBe(6); // hangar = shared cargo hold
+    expect(data.units.cruiser?.stats.strikeRange).toBe(0); // schema default (not a squadron)
     expect(data.events.reanimate_on_kill?.trigger).toBe('unit_dies_in_battle');
     expect(data.sectors.asteroid_field?.speedBonus).toBeCloseTo(-0.25);
     expect(data.sectors.asteroid_field?.hpBonus).toBeCloseTo(0.1);
