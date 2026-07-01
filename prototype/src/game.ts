@@ -2179,6 +2179,44 @@ export function tickRearm(s: SortieState, maxFuel: number): SortieState {
   return rearming <= 0 ? { fuel: Math.max(0, Math.floor(maxFuel)), rearming: 0 } : { fuel: s.fuel, rearming };
 }
 
+// --- squadron strike radius (squadrons-roadmap SQ-3.1) -----------------------
+// A launched wing reaches only nodes inside `strikeRange` (Euclidean map units) of its
+// launch / carrier node — the same distance model as radarRange. A carrier outside the
+// target's radius can't strike it. Pure.
+
+/** The wing's strike radius (map units) — the longest `strikeRange` among its live
+ *  squadron ships. 0 = carries no strike wing. */
+export function squadronStrikeRange(fleet: Fleet): number {
+  let r = 0;
+  for (const st of fleet.units) {
+    if (st.count > 0 && (data.units[st.unit]?.traits.includes('squadron') ?? false)) {
+      r = Math.max(r, data.units[st.unit]?.stats.strikeRange ?? 0);
+    }
+  }
+  return r;
+}
+
+/** Is `target` within `range` (Euclidean map units) of `from`? Boundary inclusive — a
+ *  target sitting exactly on the radius edge is reachable. */
+export function withinRange(
+  from: { x: number; y: number },
+  target: { x: number; y: number },
+  range: number,
+): boolean {
+  return Math.hypot(target.x - from.x, target.y - from.y) <= range;
+}
+
+/** Can the wing strike `targetPos` from its launch node at `fromPos`? Only a real strike
+ *  wing (range > 0) whose target lies inside the radius (SQ-3.1). */
+export function squadronReaches(
+  fleet: Fleet,
+  fromPos: { x: number; y: number },
+  targetPos: { x: number; y: number },
+): boolean {
+  const r = squadronStrikeRange(fleet);
+  return r > 0 && withinRange(fromPos, targetPos, r);
+}
+
 /**
  * Actions to re-embark the liftable garrison of the fleet's CURRENT world back into its
  * cargo — the "auto-load after capture" step. After a defended assault the storming

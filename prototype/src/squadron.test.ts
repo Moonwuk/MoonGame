@@ -6,6 +6,9 @@ import {
   canSortie,
   spendSortie,
   tickRearm,
+  squadronStrikeRange,
+  withinRange,
+  squadronReaches,
   type SortieState,
 } from './game';
 import type { Fleet } from '../../packages/shared-core/src/index';
@@ -92,5 +95,37 @@ describe('sortie / rearm counter (SQ-2.1)', () => {
     expect(s.rearming).toBe(1);
     s = tickRearm(s, 2);
     expect(canSortie(s)).toBe(true);
+  });
+});
+
+describe('squadron strike radius (SQ-3.1)', () => {
+  const squad = Object.keys(data.units).find((u) => data.units[u]!.traits.includes('squadron'))!;
+  const nonSquad = Object.keys(data.units).find((u) => !data.units[u]!.traits.includes('squadron'))!;
+  const range = data.units[squad]!.stats.strikeRange;
+
+  it('reads the longest strikeRange among live squadron ships', () => {
+    expect(squadronStrikeRange(fleet([{ unit: squad, count: 2 }]))).toBe(range);
+    expect(range).toBeGreaterThan(0);
+  });
+
+  it('a fleet without a squadron has no strike radius', () => {
+    expect(squadronStrikeRange(fleet([{ unit: nonSquad, count: 3 }]))).toBe(0);
+  });
+
+  it('withinRange is boundary-inclusive (exactly on the edge reaches)', () => {
+    expect(withinRange({ x: 0, y: 0 }, { x: 180, y: 0 }, 180)).toBe(true); // on the edge
+    expect(withinRange({ x: 0, y: 0 }, { x: 181, y: 0 }, 180)).toBe(false); // just beyond
+    expect(withinRange({ x: 0, y: 0 }, { x: 100, y: 100 }, 180)).toBe(true); // hypot ≈ 141 < 180
+  });
+
+  it('the wing strikes inside its radius and not beyond it (boundary)', () => {
+    const wing = fleet([{ unit: squad, count: 2 }]);
+    const from = { x: 500, y: 500 };
+    expect(squadronReaches(wing, from, { x: 500 + range, y: 500 })).toBe(true); // edge
+    expect(squadronReaches(wing, from, { x: 500 + range + 1, y: 500 })).toBe(false); // out of range
+  });
+
+  it('a non-strike fleet never reaches (range 0)', () => {
+    expect(squadronReaches(fleet([{ unit: nonSquad, count: 3 }]), { x: 0, y: 0 }, { x: 0, y: 0 })).toBe(false);
   });
 });
