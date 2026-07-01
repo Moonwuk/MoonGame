@@ -6,6 +6,7 @@ import { WebSocket, WebSocketServer } from 'ws';
 import type { MatchRoom } from './matchRoom';
 import { InMemoryMatchRegistry, type MatchRegistry } from './matchRegistry';
 import type { AccountStore } from './store';
+import { verifyJoinToken, type JoinTokenVerifyConfig } from './auth';
 
 export interface MultiplayerServerOptions {
   /** Single-match shortcut. Exactly one of `room` / `registry` must be given; `room`
@@ -31,6 +32,17 @@ export interface MultiplayerServerOptions {
    *  durable store) is unreachable, so a load balancer stops routing new traffic without
    *  failing liveness. Absent ⇒ always ready. `/ready` also reports 503 while draining. */
   ready?: () => boolean | Promise<boolean>;
+  /** Require a verified join token at the WS handshake (SE-0.1, closes F-01). When set,
+   *  the insecure `?player=` / `?nick=` dev handshakes are REFUSED: the token (carried in
+   *  `?token=`) is the sole identity, and its claim's `matchId` must match the routed
+   *  match and its `playerId` must be a seat in it. Absent ⇒ the dev `?player=`/`?nick=`
+   *  handshake (the default for local dev, LAN playtests, and tests). */
+  auth?: JoinTokenVerifyConfig;
+  /** Origin allowlist (CSWSH defense, F-06). When set, an upgrade whose `Origin` header is
+   *  not in the list is rejected (403) before any work. Absent ⇒ no Origin check (dev).
+   *  Should ship WITH `auth`: a token gates identity, the Origin check gates which sites
+   *  may drive an already-authenticated browser session. */
+  allowedOrigins?: readonly string[];
 }
 
 export interface MultiplayerServerHandle {
@@ -105,11 +117,19 @@ export function createMultiplayerServer(
   }
 
   const accountStore = options.accountStore;
+  const auth = options.auth;
+  const allowedOrigins = options.allowedOrigins;
   app.server.on('upgrade', (request, socket, head) => {
-    // Async because nick-login resolves a seat through the (possibly DB-backed)
-    // account store before we accept the upgrade.
+    // Async because auth/nick-login resolve identity through the join-token verifier or
+    // the (possibly DB-backed) account store before we accept the upgrade.
     void (async () => {
       try {
+        // Origin allowlist (F-06): reject a cross-site upgrade up front. A missing Origin
+        // (a non-browser client) is not on any allowlist, so it is refused when configured.
+        if (allowedOrigins && !allowedOrigins.includes(request.headers.origin ?? '')) {
+          rejectUpgrade(socket, 403);
+          return;
+        }
         const url = new URL(request.url ?? '/', baseUrl(request));
         // Route by match id: the path is `${pathPrefix}/<matchId>` (one segment, no
         // nesting). Resolve the target match from the registry — an unknown or
@@ -141,16 +161,39 @@ export function createMultiplayerServer(
           rejectUpgrade(socket, 404);
           return;
         }
-        let playerId = url.searchParams.get('player') ?? '';
-        const nick = url.searchParams.get('nick');
-        if (!playerId && nick && accountStore) {
-          const seats = Object.keys(room.state.players) as PlayerId[];
-          const seat = await accountStore.resolveSeat(room.id, nick, seats);
-          if (!seat) {
-            rejectUpgrade(socket, 409); // every side already taken by another nick
+        let playerId: string;
+        if (auth) {
+          // Authenticated handshake (SE-0.1): the join token is the SOLE identity —
+          // `?player=`/`?nick=` are ignored so they can't bypass it. The token rides in
+          // `?token=` (fully browser-settable on the WS URL, unlike request headers).
+          const token = url.searchParams.get('token');
+          if (!token) {
+            rejectUpgrade(socket, 401);
             return;
           }
-          playerId = seat.playerId;
+          const verified = await verifyJoinToken(token, auth);
+          if (!verified.ok) {
+            rejectUpgrade(socket, 401); // bad/expired/forged — no reason leaked
+            return;
+          }
+          if (verified.claim.matchId !== matchId) {
+            rejectUpgrade(socket, 403); // a token for a different match
+            return;
+          }
+          playerId = verified.claim.playerId;
+        } else {
+          // Insecure dev handshake: `?player=` directly, or `?nick=` via the account store.
+          playerId = url.searchParams.get('player') ?? '';
+          const nick = url.searchParams.get('nick');
+          if (!playerId && nick && accountStore) {
+            const seats = Object.keys(room.state.players) as PlayerId[];
+            const seat = await accountStore.resolveSeat(room.id, nick, seats);
+            if (!seat) {
+              rejectUpgrade(socket, 409); // every side already taken by another nick
+              return;
+            }
+            playerId = seat.playerId;
+          }
         }
         if (!room.hasPlayer(playerId)) {
           rejectUpgrade(socket, 403);
