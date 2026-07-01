@@ -58,13 +58,15 @@ function baseUrl(request: IncomingMessage): string {
 
 function rejectUpgrade(socket: Duplex, status: number): void {
   const reason =
-    status === 403
-      ? 'Forbidden'
-      : status === 409
-        ? 'Conflict'
-        : status === 500
-          ? 'Internal Server Error'
-          : 'Not Found';
+    status === 401
+      ? 'Unauthorized'
+      : status === 403
+        ? 'Forbidden'
+        : status === 409
+          ? 'Conflict'
+          : status === 500
+            ? 'Internal Server Error'
+            : 'Not Found';
   socket.write(`HTTP/1.1 ${status} ${reason}\r\n\r\n`);
   socket.destroy();
 }

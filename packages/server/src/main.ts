@@ -1,7 +1,10 @@
+import { ActionGate } from '@void/action-layer';
+import { isValidActionPayload } from '@void/shared-core';
 import { createDevMatch, loadShippedData } from './scenario';
 import { createMultiplayerServer } from './wsServer';
 import { startClockDriver, type ClockDriverHandle } from './clockDriver';
 import { createStores, snapshotOf } from './persistence';
+import { hmacSecret, type JoinTokenVerifyConfig } from './auth';
 import type { RoomObservation } from './matchRoom';
 import type { MatchSnapshot, StoredReceipt } from './store';
 
@@ -22,6 +25,30 @@ const host = process.env.HOST ?? '127.0.0.1';
 const port = Number(process.env.PORT ?? 8787);
 const bootTime = Date.now();
 const matchId = 'dev';
+
+// Optional authenticated handshake (SE-0.1): set AUTH_JWT_SECRET to require a verified
+// join token (?token=) instead of the insecure ?player=/?nick= dev handshake.
+const authSecret = process.env.AUTH_JWT_SECRET;
+const auth: JoinTokenVerifyConfig | undefined = authSecret
+  ? {
+      key: hmacSecret(authSecret),
+      algorithms: ['HS256'],
+      issuer: process.env.AUTH_ISSUER ?? 'void-dominion',
+      audience: process.env.AUTH_AUDIENCE ?? 'match',
+    }
+  : undefined;
+const allowedOrigins = process.env.ALLOWED_ORIGINS
+  ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim()).filter(Boolean)
+  : undefined;
+
+// Optional action-layer gate (SV-1.1-live-C): set GATE=1 to require validated `action.v1`
+// envelopes (validate → payload-schema → authorize(session) → dedup → sequence) instead of
+// bare actions. Default OFF — the current ?player= dev clients send bare actions, so enable
+// this only once the connecting client emits envelopes + echoes the welcome's sessionId.
+const gateEnabled = process.env.GATE === '1' || process.env.GATE === 'true';
+const gate = gateEnabled
+  ? new ActionGate({ payloadValidator: isValidActionPayload })
+  : undefined;
 
 const stores = await createStores();
 
@@ -54,6 +81,7 @@ const room = createDevMatch(loadShippedData(), {
   initialState: resumed?.state,
   initialReceipts,
   initialSeq: resumed?.seq,
+  gate,
 });
 
 // Make a fresh match durable from t0 (a no-op re-save on resume — optimistic by seq).
@@ -76,6 +104,8 @@ const server = createMultiplayerServer({
   // /ready is red while the durable store is unreachable, so a load balancer stops
   // routing new traffic without failing liveness (/health).
   ready: () => stores.store.ping?.() ?? Promise.resolve(true),
+  auth,
+  allowedOrigins,
 });
 
 const wsUrl = await server.listen();
@@ -86,9 +116,10 @@ process.stdout.write(
     'Void Dominion — dev server (real core)',
     `  state  : ${stores.kind}${stores.kind === 'memory' ? ' (restart loses the match — set DATABASE_URL for durability)' : ' (durable — resumes on restart)'}`,
     `  clock  : driver on (world advances 24/7)${resumed ? ' · resumed a persisted match' : ''}`,
+    `  auth   : ${auth ? 'on (join token required — connect with ?token=<jwt>)' : 'off (insecure dev ?player=/?nick=)'}`,
+    `  gate   : ${gate ? 'ON (clients MUST send action.v1 envelopes echoing welcome.sessionId)' : 'off (bare actions)'}`,
     `  health : ${httpUrl}/health`,
-    `  green  : ${wsUrl}?player=green`,
-    `  red    : ${wsUrl}?player=red`,
+    ...(auth ? [] : [`  green  : ${wsUrl}?player=green`, `  red    : ${wsUrl}?player=red`]),
     host === '0.0.0.0'
       ? '  (bound to 0.0.0.0 — connect other devices via this machine’s LAN IP)'
       : '  (set HOST=0.0.0.0 to reach this from another device on the LAN)',
