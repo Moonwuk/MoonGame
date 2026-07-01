@@ -97,7 +97,12 @@ export interface MatchRoomOptions {
    *  bare-action path (no envelope), which every existing caller keeps using unchanged.
    *  NOTE: gated actions apply through the SYNC path this brick — combining `gate` with
    *  `persist` (the durable committed path) is not wired yet (constructor throws), a
-   *  deliberate SV-1.x follow-up (durable sequence cursors + committed-path verdicts). */
+   *  deliberate SV-1.x follow-up. Enabling the gate on the LIVE transport additionally
+   *  requires: (a) a server-issued `sessionId` — never a client-chosen value, since it
+   *  keys the sequence cursor and authorizes the envelope; and (b) BOUNDED/durable gate
+   *  stores — the ActionGate's in-memory receipt & cursor maps are currently unbounded
+   *  (unlike the room's FIFO-capped `receipts`), so a long-running or hostile session
+   *  could grow them without limit. Both are prerequisites, not optional. */
   gate?: ActionGate;
   /** Cap on retained idempotency receipts; past it the oldest are evicted (FIFO).
    *  Bounds memory for a long match — a retried action older than the last N is no
