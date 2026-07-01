@@ -435,6 +435,44 @@ button.b:disabled{opacity:.32;cursor:not-allowed;color:var(--dim);border-color:v
 .tw-badge{flex:none;font-size:11px;letter-spacing:1px;color:var(--up,#57e0a0);}
 .tw-badge.wait{color:var(--amber);}
 
+/* session market (modal, mirrors #tech; tabs mirror .dp-tab) */
+#market{position:fixed;inset:0;z-index:47;display:none;align-items:center;justify-content:center;padding:16px;
+  background:rgba(1,5,9,.55);-webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px);}
+#market.show{display:flex;}
+#market .mkbox{display:flex;flex-direction:column;width:min(460px,94vw);max-height:82vh;overflow:hidden;
+  background:var(--glass);border:1px solid var(--cyan);border-radius:10px;
+  box-shadow:0 0 40px rgba(0,0,0,.6),inset 0 0 0 1px rgba(53,214,230,.06);}
+.mk-close{width:28px;height:28px;border-radius:6px;border:1px solid var(--line);background:transparent;color:var(--dim);cursor:pointer;}
+.mk-tabs{display:flex;gap:6px;padding:9px 12px;border-bottom:1px solid var(--line);flex-wrap:wrap;}
+.mk-tab{padding:6px 11px;border-radius:6px;border:1px solid var(--line);background:transparent;color:var(--dim);
+  font:700 11px ui-monospace,monospace;letter-spacing:.5px;cursor:pointer;}
+.mk-tab.on{color:var(--cyan);border-color:var(--cyan-dim);background:rgba(53,214,230,.1);}
+#marketbody{flex:1;min-height:0;overflow:auto;touch-action:pan-y;padding:12px 14px;}
+.mk-form{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:12px;
+  padding:10px;border:1px solid var(--line-hi);border-radius:9px;background:rgba(255,255,255,.02);}
+.mk-seg{display:flex;border:1px solid var(--line);border-radius:6px;overflow:hidden;}
+.mk-seg button{padding:6px 10px;border:0;background:transparent;color:var(--dim);font:700 11px ui-monospace,monospace;cursor:pointer;}
+.mk-seg button.on{color:var(--cyan);background:rgba(53,214,230,.12);}
+.mk-in{width:64px;padding:6px 7px;border:1px solid var(--line-hi);border-radius:6px;background:rgba(0,0,0,.25);
+  color:var(--ink);font:12px ui-monospace,monospace;}
+.mk-lbl{font-size:10px;color:var(--dim);}
+.mk-go{margin-left:auto;padding:7px 12px;border-radius:7px;border:1px solid var(--cyan);background:rgba(53,214,230,.14);
+  color:var(--cyan);font:11px ui-monospace,monospace;letter-spacing:.5px;cursor:pointer;}
+.mk-go:disabled{opacity:.4;cursor:not-allowed;border-color:var(--line);color:var(--dim);background:transparent;}
+.mk-sec{margin:12px 0 6px;font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--cyan-dim);}
+.mk-sec.buy{color:var(--amber);}
+.mk-row{display:flex;align-items:center;gap:9px;padding:8px 10px;margin-bottom:6px;border:1px solid var(--line-hi);
+  border-radius:8px;background:rgba(255,255,255,.02);}
+.mk-row .mk-qp{font-size:13px;color:var(--ink);}
+.mk-row .mk-qp b{color:var(--cyan);}
+.mk-row.buy .mk-qp b{color:var(--amber);}
+.mk-row .mk-who{flex:1;min-width:0;font-size:10px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.mk-btn{flex:none;padding:6px 11px;border-radius:7px;border:1px solid var(--cyan);background:rgba(53,214,230,.14);
+  color:var(--cyan);font:11px ui-monospace,monospace;cursor:pointer;white-space:nowrap;}
+.mk-btn.cancel{border-color:var(--line-hi);color:var(--dim);background:transparent;}
+.mk-btn:disabled{opacity:.4;cursor:not-allowed;border-color:var(--line);color:var(--dim);background:transparent;}
+.mk-empty{padding:10px 2px;font-size:11px;color:var(--dim);opacity:.8;}
+
 /* === FLOATING CHAT (desktop) — sized/positioned/opacity inline by renderChat() === */
 .desk-only{} /* shown by default; the media query below hides it on phones */
 @media (max-width:720px){.desk-only{display:none!important;}}
@@ -906,6 +944,7 @@ const html = `<!doctype html>
   <button id="rail-diplo" title="Дипломатия">⬡</button>
   <button id="rail-msgs" title="Сообщения">✉</button>
   <button id="rail-tech" title="Технологии">⚛</button>
+  <button id="rail-market" title="Рынок">⇄</button>
   <button id="rail-chat" title="Чат" class="desk-only">🗨</button>
   <button id="rail-log" title="Сводки">≡<span class="badge" id="alertbadge" style="display:none">0</span></button>
 </nav>
@@ -914,6 +953,8 @@ const html = `<!doctype html>
 <div id="logwin"><div class="lwbox"><div class="lw-head"><b>СВОДКИ</b><button class="lw-close">✕</button></div><div id="log"></div></div></div>
 <!-- technologies window — content rendered by renderTech() in main.ts -->
 <div id="tech"><div class="twbox"><div class="lw-head"><b>ТЕХНОЛОГИИ</b><button class="tw-close">✕</button></div><div id="techbody"></div></div></div>
+<!-- session market — whole box rendered by renderMarket() in main.ts -->
+<div id="market"></div>
 <aside id="side"></aside>
 <div id="speedbar" class="spd">
   <button id="spd-pause" data-speed="0">‖</button><button id="spd-play" data-speed="1" class="on">▶</button><button id="spd-fast" data-speed="3">▶▶</button>
