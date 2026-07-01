@@ -1,0 +1,108 @@
+import type { PlayerId } from '@void/shared-core';
+import { jwtVerify, SignJWT, type CryptoKey, type JWTPayload, type KeyObject } from 'jose';
+
+/**
+ * SE-2.1 — the trust anchor. A join token is a short-lived, match-scoped CAPABILITY
+ * granted after identity + matchmaking: it authorizes ONE identity to take ONE seat in
+ * ONE match. `verifyJoinToken` is the single gate the WS handshake (SE-0.1) leans on; it
+ * is pure (no transport) and returns a typed claim or a stable `E_AUTH` — never the reason
+ * (alg/exp/signature), which stays in server logs, not on the wire (OWASP A10).
+ *
+ * The classic JWT footgun is algorithm confusion (an attacker downgrading to `none`, or
+ * signing HS256 with a public key the server expected to verify as RS256). We defend by
+ * PINNING an explicit `algorithms` allowlist on every verify — jose rejects any token
+ * whose header alg is not in the list, so `none` and cross-alg forgeries never validate.
+ */
+
+/** The verification key: a symmetric secret (HS256, dev) or an asymmetric public key
+ *  (RS256 / ES256, prod / a JWKS-resolved key). */
+export type VerifyKey = Uint8Array | CryptoKey | KeyObject;
+
+export interface JoinTokenVerifyConfig {
+  /** Key material to verify the signature against. */
+  key: VerifyKey;
+  /** Pinned algorithm allowlist — MUST be explicit and MUST NOT include `none`.
+   *  A token whose header alg is outside this set is rejected (anti alg-confusion). */
+  algorithms: string[];
+  /** Required `iss` — a token from another issuer is rejected. */
+  issuer: string;
+  /** Required `aud` — a token minted for another audience is rejected. */
+  audience: string;
+  /** Clock skew tolerance in seconds for exp/nbf (default 0). */
+  clockToleranceSec?: number;
+}
+
+/** What a verified join token grants: a seat (`playerId`) in a match (`matchId`), for an
+ *  identity (`accountId`, when the minting side had one). */
+export interface JoinClaim {
+  matchId: string;
+  playerId: PlayerId;
+  accountId?: string;
+}
+
+export type JoinTokenResult = { ok: true; claim: JoinClaim } | { ok: false; code: 'E_AUTH' };
+
+/** Verify + decode a join token. Returns the claim on success, `{ ok:false, code:'E_AUTH' }`
+ *  for ANY failure (bad alg, expired, wrong iss/aud, bad signature, missing claim) — the
+ *  caller learns only that it was rejected, never why. */
+export async function verifyJoinToken(
+  token: string,
+  config: JoinTokenVerifyConfig,
+): Promise<JoinTokenResult> {
+  try {
+    const { payload } = await jwtVerify(token, config.key, {
+      algorithms: config.algorithms, // pinned allowlist — rejects `none` / cross-alg
+      issuer: config.issuer,
+      audience: config.audience,
+      clockTolerance: config.clockToleranceSec ?? 0,
+      requiredClaims: ['exp'], // a join token without `exp` is not a join token
+    });
+    const claim = claimFromPayload(payload);
+    return claim ? { ok: true, claim } : { ok: false, code: 'E_AUTH' };
+  } catch {
+    return { ok: false, code: 'E_AUTH' };
+  }
+}
+
+function claimFromPayload(payload: JWTPayload): JoinClaim | null {
+  const matchId = payload.matchId;
+  const playerId = payload.playerId;
+  if (typeof matchId !== 'string' || matchId === '') return null;
+  if (typeof playerId !== 'string' || playerId === '') return null;
+  const accountId = typeof payload.accountId === 'string' ? payload.accountId : undefined;
+  return accountId ? { matchId, playerId, accountId } : { matchId, playerId };
+}
+
+export interface JoinTokenSignConfig {
+  /** Signing key: the shared secret for HS256 (dev), or a private key for RS256 / ES256. */
+  key: VerifyKey;
+  /** The one algorithm to sign with (e.g. `HS256`). */
+  algorithm: string;
+  issuer: string;
+  audience: string;
+}
+
+/** Mint a join token (the `/join` endpoint's job — SV-2.4 — and the tests'). Stamps
+ *  `iat`/`exp` from `ttlSeconds`; short TTLs keep a leaked token's window tiny. `now`
+ *  is injectable for deterministic tests. */
+export function signJoinToken(
+  claim: JoinClaim,
+  config: JoinTokenSignConfig,
+  opts: { ttlSeconds: number; now?: () => number },
+): Promise<string> {
+  const nowSec = Math.floor((opts.now?.() ?? Date.now()) / 1000);
+  const payload: JWTPayload = { matchId: claim.matchId, playerId: claim.playerId };
+  if (claim.accountId !== undefined) payload.accountId = claim.accountId;
+  return new SignJWT(payload)
+    .setProtectedHeader({ alg: config.algorithm })
+    .setIssuer(config.issuer)
+    .setAudience(config.audience)
+    .setIssuedAt(nowSec)
+    .setExpirationTime(nowSec + opts.ttlSeconds)
+    .sign(config.key);
+}
+
+/** Derive an HS256 secret key from a string (dev / env `AUTH_JWT_SECRET`). */
+export function hmacSecret(secret: string): Uint8Array {
+  return new TextEncoder().encode(secret);
+}

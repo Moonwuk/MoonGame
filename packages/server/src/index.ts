@@ -19,6 +19,16 @@ export {
   type MatchRegistry,
 } from './matchRegistry';
 export { InMemoryEphemeralStore, type EphemeralStore } from './ephemeral';
+export {
+  hmacSecret,
+  signJoinToken,
+  verifyJoinToken,
+  type JoinClaim,
+  type JoinTokenResult,
+  type JoinTokenSignConfig,
+  type JoinTokenVerifyConfig,
+  type VerifyKey,
+} from './auth';
 export type {
   ClientActionMessage,
   ClientActionEnvelopeMessage,
