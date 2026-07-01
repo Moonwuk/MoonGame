@@ -74,6 +74,8 @@ export const DEV_MODULES: GameModule[] = [
 ];
 
 export interface DevMatchOptions {
+  /** Match id (default `'dev'`). Set it when hosting several matches from one process. */
+  id?: string;
   /** Server clock. Defaults (in `MatchRoom`) to wall time; pinned in tests. */
   now?: () => number;
   /** World time the scenario starts at. Match it to the first `now` so the
@@ -189,7 +191,7 @@ export function createDevMatch(data: GameData, options: DevMatchOptions = {}): M
   });
   const state: GameState = options.initialState ?? { ...base, players, planets, fleets, heroes };
   return new MatchRoom({
-    id: 'dev',
+    id: options.id ?? 'dev',
     initialState: state,
     kernel: createKernel(DEV_MODULES),
     data,
