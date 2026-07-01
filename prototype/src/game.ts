@@ -1063,6 +1063,28 @@ export function formationStats(tpl: FormationTemplate): FormationStats {
   };
 }
 
+// --- bot favour (approval) scale ---------------------------------------------
+// A bot's opinion of each other seat on a 0..100 meter, seeded neutral-friendly. It
+// only falls when a player sours it (declares war on the bot, or a sustained war), and
+// slowly heals while at peace. A bot NEVER starts a war for expansion (see aiOrders);
+// it escalates by tier: normal → embargo (won't trade with you, wired once a session
+// market exists) → and only at rock bottom does it declare war back. All tunable.
+export const FAVOUR_BASE = 60; // starting favour toward every seat
+export const FAVOUR_EMBARGO = 35; // below → the bot embargoes you on the market (future)
+export const FAVOUR_WAR = 15; // below → the bot itself declares war (the extreme case)
+export const FAVOUR_WAR_DECLARED_HIT = 30; // drop when a seat declares WAR on the bot
+export const FAVOUR_WAR_DECAY_PER_DAY = 5; // sustained war keeps eroding favour
+export const FAVOUR_HEAL_PER_DAY = 6; // peace slowly mends it back toward FAVOUR_BASE
+
+/** A bot's favour toward `player` (FAVOUR_BASE if untracked / not a bot). */
+export function botFavour(state: GameState, bot: string, player: string): number {
+  return (state as DivState).approval?.[bot]?.[player] ?? FAVOUR_BASE;
+}
+/** Does `bot` embargo `player` on the market (favour below the embargo line)? */
+export function botEmbargoes(state: GameState, bot: string, player: string): boolean {
+  return (state as DivState).approval?.[bot] !== undefined && botFavour(state, bot, player) < FAVOUR_EMBARGO;
+}
+
 /** Default solo skirmish: you (p1) vs one AI (p2), at two of the start candidates. */
 export const DEFAULT_SETUP: SetupConfig = {
   seats: [
@@ -1150,6 +1172,14 @@ export function newGame(setup: SetupConfig = DEFAULT_SETUP): GameState {
   const ids = setup.seats.map((seat) => seat.id);
   for (let i = 0; i < ids.length; i++)
     for (let j = i + 1; j < ids.length; j++) diplomacy[pairKey(ids[i]!, ids[j]!)] = 'peace';
+  // Bots track a favour meter toward every other seat (seeded neutral-friendly). Only a
+  // player's aggression lowers it; a bot never wars for expansion (see botDiplomacyModule).
+  const approval: Record<string, Record<string, number>> = {};
+  for (const seat of setup.seats) {
+    if (!seat.ai) continue;
+    approval[seat.id] = {};
+    for (const other of ids) if (other !== seat.id) approval[seat.id]![other] = FAVOUR_BASE;
+  }
   // The player's locked division templates ride into the match; the AI uses the defaults.
   const templates: Record<string, FormationTemplate[]> = {};
   const heroRoster: Record<string, HeroLoadout[]> = {};
@@ -1170,6 +1200,9 @@ export function newGame(setup: SetupConfig = DEFAULT_SETUP): GameState {
     fleets,
     heroes,
     diplomacy,
+    approval,
+    sessionMarket: [],
+    sessionMarketSeq: 0,
     divisions: {},
     divisionSeq: 0,
     templates,
@@ -1253,6 +1286,154 @@ export const diplomacyModule: GameModule = {
   },
 };
 
+// --- bot diplomacy: the favour meter reacts to a player's aggression ----------
+// Bots are passive-friendly — they never start a war to expand (see aiOrders). This
+// module lowers a bot's favour when a seat wrongs it and, only once the meter bottoms
+// out, has the bot declare war back (venting to the embargo line so it won't re-war
+// every tick). Peace slowly mends favour. The embargo tier (refuse to trade below
+// FAVOUR_EMBARGO, reported by botEmbargoes) activates once a session market exists.
+export const botDiplomacyModule: GameModule = {
+  id: 'bot-diplomacy',
+  version: '0.1.0',
+  setup(api) {
+    // A seat declaring WAR on a bot sours that bot's favour toward the declarer.
+    api.on('diplomacy.changed', (event, h) => {
+      const { a, b, stance } = event.payload as { a: string; b: string; stance: DiplomaticStance };
+      if (stance !== 'war') return;
+      const meter = (h.state as DivState).approval?.[b];
+      if (!meter || meter[a] === undefined) return; // b isn't a tracked bot vs a
+      meter[a] = Math.max(0, meter[a]! - FAVOUR_WAR_DECLARED_HIT);
+    });
+    // Per span: sustained war erodes favour, peace mends it; a bottomed-out meter makes
+    // the bot commit to war (once), then vents so it won't thrash war/peace every tick.
+    api.on('time.advanced', (event, h) => {
+      const { from, to } = event.payload as { from: number; to: number };
+      const span = to - from;
+      if (span <= 0) return;
+      const days = (span * timeScaleOf(h.ctx)) / DAY;
+      const approval = (h.state as DivState).approval;
+      if (!approval) return;
+      for (const bot of Object.keys(approval)) {
+        if (!h.state.players[bot]) continue; // eliminated seat
+        const meter = approval[bot]!;
+        for (const player of Object.keys(meter)) {
+          const atWar = getStance(h.state, bot, player) === 'war';
+          meter[player] = atWar
+            ? Math.max(0, meter[player]! - FAVOUR_WAR_DECAY_PER_DAY * days)
+            : Math.min(FAVOUR_BASE, meter[player]! + FAVOUR_HEAL_PER_DAY * days);
+          if (meter[player]! < FAVOUR_WAR && !atWar) {
+            setStance(h.state, bot, player, 'war');
+            meter[player] = FAVOUR_EMBARGO; // vent: hostile now, but above the war line
+            h.emit('diplomacy.changed', { a: bot, b: player, stance: 'war' });
+          }
+        }
+      }
+    });
+  },
+};
+
+// --- session market: a two-sided resource order book -------------------------
+// A public per-match book of lots. A SELL lot (ask) escrows goods and offers them
+// for credits; a BUY lot (bid) escrows credits and offers them for goods. `market.take`
+// fills a lot from the other side; `market.cancel` refunds the owner's escrow. Every
+// trade is a pure transfer — credits and goods are conserved, nothing minted. A bot
+// that embargoes you (soured favour, botEmbargoes) refuses to let you take its lots —
+// this is the diplomacy embargo tier finally biting.
+export const MARKET_GOODS = ['metal', 'food', 'energy', 'microelectronics']; // credits = currency
+export type MarketSide = 'sell' | 'buy';
+export interface MarketLot {
+  id: string;
+  side: MarketSide;
+  owner: string;
+  resource: string;
+  amount: number; // units remaining on offer (escrowed)
+  price: number; // credits per unit
+}
+
+/** The live order book (a prototype-only own-key field, preserved by deepClone). */
+export function marketLots(state: GameState): MarketLot[] {
+  const s = state as DivState;
+  return (s.sessionMarket ??= []);
+}
+/** Add `n` of `res` to a player's treasury (mirrors payCost's subtract form). */
+function creditTreasury(state: GameState, playerId: string, res: string, n: number): void {
+  const t = state.players[playerId]?.resources;
+  if (t) t[res] = (t[res] ?? 0) + n;
+}
+
+export const marketModule: GameModule = {
+  id: 'market',
+  version: '0.1.0',
+  setup(api) {
+    // Place a lot: a sell (ask) escrows goods; a buy (bid) escrows credits.
+    api.onAction('market.list', (action, h) => {
+      const p = action.payload as { side?: string; resource?: string; amount?: number; price?: number };
+      if (p?.side !== 'sell' && p?.side !== 'buy') return h.reject('E_BAD_PAYLOAD');
+      if (typeof p.resource !== 'string' || !MARKET_GOODS.includes(p.resource)) return h.reject('E_BAD_RESOURCE');
+      const amount = Math.floor(p.amount ?? 0);
+      const price = p.price ?? 0;
+      if (!(amount > 0) || !(price >= 0)) return h.reject('E_BAD_PAYLOAD');
+      const player = h.state.players[action.playerId];
+      if (!player) return h.reject('E_NO_PLAYER');
+      const escrow = p.side === 'sell' ? { [p.resource]: amount } : { credits: amount * price };
+      if (!canAfford(player.resources, escrow)) return h.reject('E_NO_FUNDS');
+      payCost(player.resources, escrow);
+      const s = h.state as DivState;
+      const id = `mk:${action.playerId}:${(s.sessionMarketSeq = (s.sessionMarketSeq ?? 0) + 1)}`;
+      marketLots(h.state).push({ id, side: p.side, owner: action.playerId, resource: p.resource, amount, price });
+      h.emit('market.listed', { id, side: p.side, owner: action.playerId, resource: p.resource, amount, price });
+    });
+
+    // Fill (partially) a lot from the other side. Buying from a sell lot pays credits
+    // for the escrowed goods; selling into a buy lot gives goods for the escrowed credits.
+    api.onAction('market.take', (action, h) => {
+      const p = action.payload as { id?: string; amount?: number };
+      if (typeof p?.id !== 'string') return h.reject('E_BAD_PAYLOAD');
+      const lots = marketLots(h.state);
+      const lot = lots.find((l) => l.id === p.id);
+      if (!lot) return h.reject('E_NO_LOT');
+      if (lot.owner === action.playerId) return h.reject('E_OWN_LOT');
+      if (botEmbargoes(h.state, lot.owner, action.playerId)) return h.reject('E_EMBARGO');
+      const taker = h.state.players[action.playerId];
+      if (!taker || !h.state.players[lot.owner]) return h.reject('E_NO_PLAYER');
+      const qty = Math.min(lot.amount, Math.floor(p.amount ?? lot.amount));
+      if (!(qty > 0)) return h.reject('E_BAD_PAYLOAD');
+      const credits = qty * lot.price;
+      if (lot.side === 'sell') {
+        if (!canAfford(taker.resources, { credits })) return h.reject('E_NO_FUNDS');
+        payCost(taker.resources, { credits }); // taker buys the goods
+        creditTreasury(h.state, action.playerId, lot.resource, qty);
+        creditTreasury(h.state, lot.owner, 'credits', credits);
+      } else {
+        if (!canAfford(taker.resources, { [lot.resource]: qty })) return h.reject('E_NO_FUNDS');
+        payCost(taker.resources, { [lot.resource]: qty }); // taker sells the goods
+        creditTreasury(h.state, action.playerId, 'credits', credits); // from the escrow
+        creditTreasury(h.state, lot.owner, lot.resource, qty);
+      }
+      lot.amount -= qty;
+      if (lot.amount <= 0) lots.splice(lots.indexOf(lot), 1);
+      h.emit('market.traded', {
+        id: lot.id, taker: action.playerId, owner: lot.owner, side: lot.side,
+        resource: lot.resource, amount: qty, price: lot.price,
+      });
+    });
+
+    // The owner reclaims a lot, refunding its remaining escrow.
+    api.onAction('market.cancel', (action, h) => {
+      const p = action.payload as { id?: string };
+      if (typeof p?.id !== 'string') return h.reject('E_BAD_PAYLOAD');
+      const lots = marketLots(h.state);
+      const lot = lots.find((l) => l.id === p.id);
+      if (!lot) return h.reject('E_NO_LOT');
+      if (lot.owner !== action.playerId) return h.reject('E_FORBIDDEN');
+      if (lot.side === 'sell') creditTreasury(h.state, lot.owner, lot.resource, lot.amount);
+      else creditTreasury(h.state, lot.owner, 'credits', lot.amount * lot.price);
+      lots.splice(lots.indexOf(lot), 1);
+      h.emit('market.cancelled', { id: lot.id, owner: lot.owner });
+    });
+  },
+};
+
 // --- ground divisions: mobilisation + daily restoration ----------------------
 // A division is a cohesive ground formation built from a LOCKED template. It lives in
 // `state.divisions` (a prototype-only field, preserved through deepClone), garrisons a
@@ -1287,6 +1468,11 @@ type DivState = GameState & {
   heroRoster?: Record<string, HeroLoadout[]>;
   shipLoadouts?: Record<string, ShipLoadout[]>;
   capital?: Record<string, string>;
+  /** Bot favour toward each other seat: approval[bot][player] on a 0..100 meter. */
+  approval?: Record<string, Record<string, number>>;
+  /** Session market: a two-sided order book of open lots (sell/buy) + its id counter. */
+  sessionMarket?: MarketLot[];
+  sessionMarketSeq?: number;
 };
 export function divisionsOf(state: GameState): Record<string, Division> {
   const s = state as DivState;
@@ -1753,6 +1939,8 @@ export const MODULES: GameModule[] = [
   victoryModule, // terminal match state from authoritative state (domination / elimination / score / timeout)
   fleetLaunchModule,
   diplomacyModule, // peace-by-default + declare-war action (combat reads state.diplomacy)
+  botDiplomacyModule, // bots: friendly-by-default favour meter → embargo/war only when provoked
+  marketModule, // session resource market: two-sided order book (sell/buy lots), embargo-gated
   divisionModule, // ground divisions: mobilise from a template + daily restoration
   capitalModule, // designatable capital (hero respawn / module re-fit anchor)
 ];
@@ -1854,6 +2042,16 @@ export const researchTech = (playerId: string, technology: string) =>
 /** Declare war on (or otherwise re-stance) another commander. */
 export const declareWar = (playerId: string, target: string, stance: DiplomaticStance = 'war') =>
   act(playerId, 'diplomacy.declare', { target, stance });
+/** Place a market lot: `sell` escrows `amount` of `resource` for `price` credits/unit;
+ *  `buy` escrows the credits and offers to buy that much of `resource`. */
+export const marketList = (playerId: string, side: MarketSide, resource: string, amount: number, price: number) =>
+  act(playerId, 'market.list', { side, resource, amount, price });
+/** Take (fill) up to `amount` from an open lot — buy from a sell lot / sell into a buy lot. */
+export const marketTake = (playerId: string, id: string, amount?: number) =>
+  act(playerId, 'market.take', amount === undefined ? { id } : { id, amount });
+/** Reclaim your own lot, refunding its remaining escrow. */
+export const marketCancel = (playerId: string, id: string) =>
+  act(playerId, 'market.cancel', { id });
 /** Mobilise division template `template` (0-based) on your world `planetId`. */
 export const mobilizeDivision = (playerId: string, planetId: string, template: number) =>
   act(playerId, 'division.mobilize', { planetId, template });
@@ -1893,7 +2091,6 @@ export function aiOrders(state: GameState, ai: string): Action[] {
     Math.hypot(a.x - b.x, a.y - b.y);
   // Send each idle AI fleet toward the nearest capturable world it can reach — only
   // neutral worlds or territory of someone it's at WAR with (peace = off-limits).
-  let blockedByPeace = false;
   for (const f of Object.values(state.fleets)) {
     if (f.owner !== ai || f.location == null || f.movement || f.battleId) continue;
     const here = state.planets[f.location];
@@ -1902,10 +2099,7 @@ export function aiOrders(state: GameState, ai: string): Action[] {
     let bestD = Infinity;
     for (const p of Object.values(state.planets)) {
       if (p.owner === ai || !capturable(p)) continue;
-      if (!canTraverse(state, ai, p.owner)) {
-        blockedByPeace = true; // a target it could only take by declaring war
-        continue;
-      }
+      if (!canTraverse(state, ai, p.owner)) continue; // a peace-locked target — leave it be
       const dd = d(here.position, p.position);
       if (dd < bestD) {
         bestD = dd;
@@ -1914,23 +2108,10 @@ export function aiOrders(state: GameState, ai: string): Action[] {
     }
     if (best) out.push(moveFleet(ai, f.id, best.id));
   }
-  // Peaceful expansion exhausted (only peace-locked targets left) → commit to a war on
-  // the nearest such rival, so the match doesn't stall. Next tick it advances on them.
-  if (out.length === 0 && blockedByPeace) {
-    const base0 = Object.values(state.planets).find((p) => p.owner === ai);
-    let foe: string | null = null;
-    let foeD = Infinity;
-    for (const p of Object.values(state.planets)) {
-      if (!capturable(p) || p.owner == null || p.owner === ai) continue;
-      if (getStance(state, ai, p.owner) !== 'peace') continue;
-      const dd = base0 ? d(base0.position, p.position) : 0;
-      if (dd < foeD) {
-        foeD = dd;
-        foe = p.owner;
-      }
-    }
-    if (foe) out.push(declareWar(ai, foe));
-  }
+  // NB: a passive bot never declares war just to keep expanding. Once neutral worlds run
+  // out it simply builds (below) — "тихо копит армию". It only turns hostile when a player
+  // sours its favour to rock bottom (botDiplomacyModule), then fights whoever it's at war
+  // with via the same expansion loop above (war territory is traversable/capturable).
   // Build + launch from this AI's home base (its first developed owned world).
   const base =
     Object.values(state.planets).find((p) => p.owner === ai && p.buildings.length > 0) ??
