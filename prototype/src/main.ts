@@ -29,6 +29,8 @@ import {
   unloadArmy,
   mergeFleet,
   splitFleet,
+  orderEnqueue,
+  orderClear,
   engageFleet,
   researchTech,
   buildBuilding,
@@ -1916,13 +1918,24 @@ function checkFleetClashes() {
   }
 }
 
-/** Append a step to each selected fleet's order chain (client-side plan). */
+/** Append a step to each selected fleet's order chain. Single-player keeps a local client
+ *  plan (driveQueues issues it); NET sends order.enqueue so the chain is AUTHORITATIVE
+ *  server state (CC-server) — the server drives it, and it runs while you're offline. */
 function enqueueStep(fleetIds: string[], step: QStep): void {
   for (const id of fleetIds) {
+    if (NET) {
+      playerOrder(orderEnqueue(ME, id, step));
+      continue;
+    }
     const q = fleetQueues.get(id) ?? [];
     q.push(step);
     fleetQueues.set(id, q);
   }
+}
+/** A fleet's pending order chain, from whichever side owns it (server state in NET,
+ *  the local plan in single-player). Read-only view for the panel + node-tap guard. */
+function fleetQueueOf(fleetId: string): QStep[] {
+  return NET ? ((s as { orders?: Record<string, QStep[]> }).orders?.[fleetId] ?? []) : (fleetQueues.get(fleetId) ?? []);
 }
 
 // CC-1 driver: each frame, any of MY fleets that has a queue and is idle runs its head
@@ -3477,7 +3490,7 @@ function panelHtml(): string {
 
       // CC-1 order queue — chain steps the fleet runs hands-off when it falls idle.
       if (f.owner === ME) {
-        const q = fleetQueues.get(f.id) ?? [];
+        const q = fleetQueueOf(f.id); // server chain in NET, local plan in single-player
         h += `<div class="sec">Очередь приказов</div><div class="row">`;
         h += btn('qmode', '', queuing ? '● тапай миры' : '➕ строить', true);
         h += btn('qassault', '', '⚔ + штурм', true);
@@ -4575,7 +4588,10 @@ side.addEventListener('click', (ev) => {
       else autoAssault.add(id);
     }
   } else if (act === 'qclear') {
-    for (const id of selectedFleetIds()) fleetQueues.delete(id);
+    for (const id of selectedFleetIds()) {
+      if (NET) playerOrder(orderClear(ME, id)); // drop the authoritative server chain
+      else fleetQueues.delete(id);
+    }
   } else if (act === 'launchsquad') {
     // Split the squadron stack off into its own fast strike fleet (SQ-1.1).
     const f = selFleet ? s.fleets[selFleet] : undefined;

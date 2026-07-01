@@ -1494,6 +1494,9 @@ type DivState = GameState & {
   /** Session market: a two-sided order book of open lots (sell/buy) + its id counter. */
   sessionMarket?: MarketLot[];
   sessionMarketSeq?: number;
+  /** CC-server: per-fleet command-chain, now AUTHORITATIVE STATE (was a client-only plan)
+   *  so the server drives it and it runs offline in multiplayer. fleetId → queued steps. */
+  orders?: Record<string, QStep[]>;
 };
 export function divisionsOf(state: GameState): Record<string, Division> {
   const s = state as DivState;
@@ -1945,6 +1948,82 @@ export const capitalModule: GameModule = {
   },
 };
 
+/** Validate an order-chain step arriving as an action payload (fail-secure, A05/A08). */
+function isQStep(x: unknown): x is QStep {
+  if (typeof x !== 'object' || x === null) return false;
+  const s = x as { kind?: unknown; to?: unknown; hours?: unknown };
+  switch (s.kind) {
+    case 'move':
+      return typeof s.to === 'string';
+    case 'orbit':
+    case 'assault':
+    case 'load':
+      return true;
+    case 'wait':
+      return typeof s.hours === 'number' && s.hours >= 0;
+    default:
+      return false;
+  }
+}
+
+// CC-server: the fleet order-chain (CC-1..CC-4) promoted from a CLIENT-ONLY plan to
+// AUTHORITATIVE, durable state so the server drives it — the chain runs offline in
+// multiplayer ("sleep and it plays"). This module only STORES the queue; a host driver
+// (netserver's runServerQueues, mirroring runServerAI) pops the head step for an idle fleet
+// and issues its actions through the same reducer. Fail-secure: any bad input → rejection,
+// and the queue stays JSON-serializable (persisted through deepClone, like `divisions`).
+export const orderQueueModule: GameModule = {
+  id: 'order-queue',
+  version: '0.1.0',
+  setup(api) {
+    // Resolve the payload's fleet to one this player owns, or an error code (fail-secure).
+    const ownedFleet = (h: HandlerContext, playerId: string, fleetId: unknown): Fleet | string => {
+      if (typeof fleetId !== 'string') return 'E_BAD_PAYLOAD';
+      const f = h.state.fleets[fleetId];
+      if (!f) return 'E_NO_FLEET';
+      if (f.owner !== playerId) return 'E_FORBIDDEN';
+      return f;
+    };
+    api.onAction('order.enqueue', (action, h) => {
+      const p = action.payload as { fleetId?: unknown; step?: unknown };
+      const f = ownedFleet(h, action.playerId, p?.fleetId);
+      if (typeof f === 'string') return h.reject(f);
+      if (!isQStep(p.step)) return h.reject('E_BAD_PAYLOAD');
+      const orders = ((h.state as DivState).orders ??= {});
+      (orders[f.id] ??= []).push(p.step);
+    });
+    api.onAction('order.clear', (action, h) => {
+      const p = action.payload as { fleetId?: unknown };
+      const f = ownedFleet(h, action.playerId, p?.fleetId);
+      if (typeof f === 'string') return h.reject(f);
+      const orders = (h.state as DivState).orders;
+      if (orders) delete orders[f.id];
+    });
+    api.onAction('order.pop', (action, h) => {
+      const p = action.payload as { fleetId?: unknown };
+      const f = ownedFleet(h, action.playerId, p?.fleetId);
+      if (typeof f === 'string') return h.reject(f);
+      const orders = (h.state as DivState).orders;
+      const q = orders?.[f.id];
+      if (q && q.length) {
+        q.shift();
+        if (q.length === 0) delete orders![f.id];
+      }
+    });
+    api.onAction('order.hold', (action, h) => {
+      // Stamp the head 'wait' step's resume time — set once, when it reaches the head, so
+      // the delayed order counts down from that moment (mirrors the client's waitStatus).
+      const p = action.payload as { fleetId?: unknown; until?: unknown };
+      const f = ownedFleet(h, action.playerId, p?.fleetId);
+      if (typeof f === 'string') return h.reject(f);
+      if (typeof p.until !== 'number') return h.reject('E_BAD_PAYLOAD');
+      const head = (h.state as DivState).orders?.[f.id]?.[0];
+      if (!head || head.kind !== 'wait') return h.reject('E_NO_WAIT');
+      head.until = p.until;
+    });
+  },
+};
+
 export const MODULES: GameModule[] = [
   sectorModule,
   planetTypeModule,
@@ -1964,6 +2043,7 @@ export const MODULES: GameModule[] = [
   marketModule, // session resource market: two-sided order book (sell/buy lots), embargo-gated
   divisionModule, // ground divisions: mobilise from a template + daily restoration
   capitalModule, // designatable capital (hero respawn / module re-fit anchor)
+  orderQueueModule, // CC-server: authoritative per-fleet command-chain (server-driven, offline-safe)
 ];
 
 export const kernel = createKernel(MODULES);
@@ -2294,6 +2374,50 @@ export function loadHereActions(state: GameState, me: string, fleet: Fleet): Act
     if (fit <= 0) continue; // no room left
     out.push(loadArmy(me, fleet.id, st.unit, fit));
     free -= fit * size;
+  }
+  return out;
+}
+
+// --- CC-server: authoritative order-chain — actions + the server-side driver core -------
+
+/** Append one step to a fleet's authoritative order chain (CC-server). */
+export const orderEnqueue = (playerId: string, fleetId: string, step: QStep) =>
+  act(playerId, 'order.enqueue', { fleetId, step });
+/** Drop a fleet's whole order chain. */
+export const orderClear = (playerId: string, fleetId: string) =>
+  act(playerId, 'order.clear', { fleetId });
+/** Drop the head step (the driver pops after issuing it / after a wait elapses). */
+export const orderPop = (playerId: string, fleetId: string) =>
+  act(playerId, 'order.pop', { fleetId });
+/** Stamp the head 'wait' step's resume time (set once when the step reaches the head). */
+export const orderHold = (playerId: string, fleetId: string, until: number) =>
+  act(playerId, 'order.hold', { fleetId, until });
+
+/** One tick of the SERVER-SIDE order-chain driver (CC-server): for every fleet whose
+ *  authoritative chain is at the head and the fleet is IDLE, the actions to issue plus how
+ *  to advance the queue. Pure — the host (netserver.runServerQueues) applies the actions
+ *  and issues the pop / hold through the same authoritative room, so the chain runs even
+ *  with nobody connected. Mirrors the client driveQueues() but reads `state.orders` and
+ *  reuses the identical tested step helpers (stepActions / loadHereActions / waitStatus). */
+export function serverQueueActions(
+  state: GameState,
+  now: number,
+): Array<{ fleetId: string; owner: string; actions: Action[]; pop: boolean; holdUntil?: number }> {
+  const orders = (state as DivState).orders ?? {};
+  const out: Array<{ fleetId: string; owner: string; actions: Action[]; pop: boolean; holdUntil?: number }> = [];
+  for (const [fid, steps] of Object.entries(orders)) {
+    const f = state.fleets[fid];
+    if (!f || steps.length === 0) continue; // stale entry — the host clears it
+    if (!fleetIdle(f)) continue; // in transit / battle → hold the chain
+    const step = steps[0]!;
+    if (step.kind === 'wait') {
+      const w = waitStatus(step, now, HOUR);
+      if (step.until === undefined) out.push({ fleetId: fid, owner: f.owner, actions: [], pop: false, holdUntil: w.until });
+      else if (w.done) out.push({ fleetId: fid, owner: f.owner, actions: [], pop: true });
+      continue; // still counting down → do nothing this tick
+    }
+    const actions = step.kind === 'load' ? loadHereActions(state, f.owner, f) : stepActions(f.owner, fid, step, f);
+    out.push({ fleetId: fid, owner: f.owner, actions, pop: true });
   }
   return out;
 }
