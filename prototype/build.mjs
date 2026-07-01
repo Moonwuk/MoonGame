@@ -1113,6 +1113,7 @@ const html = `<!doctype html>
         <button class="spdchip" type="button" data-spd="2">×2</button>
         <button class="spdchip" type="button" data-spd="5">×5</button>
         <button class="spdchip" type="button" data-spd="10">×10</button>
+        <button class="spdchip" type="button" data-spd="50">×50</button>
       </div>
     </div>
     <div id="setup-div" class="spane" style="display:none"></div>
