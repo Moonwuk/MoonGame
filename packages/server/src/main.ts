@@ -1,11 +1,14 @@
+import { randomUUID } from 'node:crypto';
 import { ActionGate } from '@void/action-layer';
 import { isValidActionPayload } from '@void/shared-core';
 import { createDevMatch, loadShippedData } from './scenario';
 import { createMultiplayerServer } from './wsServer';
 import { startClockDriver, type ClockDriverHandle } from './clockDriver';
 import { createStores, snapshotOf } from './persistence';
-import { hmacSecret, type JoinTokenVerifyConfig } from './auth';
+import { hmacSecret, signJoinToken, type JoinTokenVerifyConfig } from './auth';
+import { registerMatchApi, type MatchApiDeps } from './matchApi';
 import { LazyMatchRegistry, type LoadedMatch } from './matchRegistry';
+import { MemoryAccountStore } from './store';
 import type { RoomObservation } from './matchRoom';
 import type { MatchSnapshot, StoredReceipt } from './store';
 
@@ -32,16 +35,23 @@ const bootTime = Date.now();
 // Optional authenticated handshake (SE-0.1): set AUTH_JWT_SECRET to require a verified
 // join token (?token=) instead of the insecure ?player=/?nick= dev handshake.
 const authSecret = process.env.AUTH_JWT_SECRET;
+const issuer = process.env.AUTH_ISSUER ?? 'void-dominion';
+const audience = process.env.AUTH_AUDIENCE ?? 'match';
 const auth: JoinTokenVerifyConfig | undefined = authSecret
-  ? {
-      key: hmacSecret(authSecret),
-      algorithms: ['HS256'],
-      issuer: process.env.AUTH_ISSUER ?? 'void-dominion',
-      audience: process.env.AUTH_AUDIENCE ?? 'match',
-    }
+  ? { key: hmacSecret(authSecret), algorithms: ['HS256'], issuer, audience }
   : undefined;
 const allowedOrigins = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim()).filter(Boolean)
+  : undefined;
+// Token signer for the /matches/:id/join API — present only when auth is configured
+// (the same HS256 secret the handshake verifies with). Absent ⇒ /join returns 501.
+const signToken = authSecret
+  ? (matchId: string, playerId: string): Promise<string> =>
+      signJoinToken(
+        { matchId, playerId },
+        { key: hmacSecret(authSecret), algorithm: 'HS256', issuer, audience },
+        { ttlSeconds: 3600 },
+      )
   : undefined;
 
 // Optional action-layer gate (SV-1.1-live-C): set GATE=1 to require validated `action.v1`
@@ -119,6 +129,27 @@ if (!(await stores.store.load('dev'))) {
 
 const registry = new LazyMatchRegistry({ load: loadMatch });
 
+// The dev-grade match create/join API (SV-2.4): a nick claims a seat first-come (shared
+// with the ?nick= WS login) and gets a short-lived join token for the authenticated
+// handshake. NOT an authorization boundary — see matchApi.ts.
+const accountStore = new MemoryAccountStore();
+const matchApi: MatchApiDeps = {
+  createMatch: async () => {
+    const matchId = `m-${randomUUID()}`;
+    const seed = createDevMatch(data, { id: matchId, time: Date.now() });
+    await stores.store.save(snapshotOf(seed));
+    return { matchId, seats: Object.keys(seed.state.players) };
+  },
+  join: async (matchId, nick) => {
+    const snap = await stores.store.load(matchId);
+    if (!snap) return { error: 'E_NO_MATCH' };
+    if (!signToken) return { error: 'E_AUTH_DISABLED' }; // no token auth configured
+    const seat = await accountStore.resolveSeat(matchId, nick, Object.keys(snap.state.players));
+    if (!seat) return { error: 'E_MATCH_FULL' };
+    return { playerId: seat.playerId, token: await signToken(matchId, seat.playerId) };
+  },
+};
+
 const server = createMultiplayerServer({
   registry,
   host,
@@ -129,6 +160,8 @@ const server = createMultiplayerServer({
   ready: () => stores.store.ping?.() ?? Promise.resolve(true),
   auth,
   allowedOrigins,
+  accountStore, // dev ?nick= WS login (when auth is off)
+  httpRoutes: (app) => registerMatchApi(app, matchApi),
 });
 
 const wsBase = await server.listen(); // ws://host:port/matches (multi-match → the base prefix)
@@ -142,7 +175,9 @@ process.stdout.write(
     `  auth   : ${auth ? 'on (join token required — connect with ?token=<jwt>)' : 'off (insecure dev ?player=/?nick=)'}`,
     `  gate   : ${gateFactory ? 'ON (clients MUST send action.v1 envelopes echoing welcome.sessionId)' : 'off (bare actions)'}`,
     `  health : ${httpUrl}/health`,
-    ...(auth ? [] : [`  dev    : ${wsBase}/dev?player=green  ·  ${wsBase}/dev?player=red`]),
+    ...(auth
+      ? [`  join   : POST ${httpUrl}/matches  ·  GET ${httpUrl}/matches/dev/join?nick=<you>`]
+      : [`  dev    : ${wsBase}/dev?player=green  ·  ${wsBase}/dev?player=red`]),
     host === '0.0.0.0'
       ? '  (bound to 0.0.0.0 — connect other devices via this machine’s LAN IP)'
       : '  (set HOST=0.0.0.0 to reach this from another device on the LAN)',

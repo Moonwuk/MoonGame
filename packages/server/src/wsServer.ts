@@ -2,7 +2,7 @@ import type { IncomingMessage, Server as HttpServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import type { Duplex } from 'node:stream';
 import type { PlayerId } from '@void/shared-core';
-import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
+import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import { WebSocket, WebSocketServer } from 'ws';
 import type { MatchRoom } from './matchRoom';
 import { InMemoryMatchRegistry, type MatchRegistry } from './matchRegistry';
@@ -44,6 +44,10 @@ export interface MultiplayerServerOptions {
    *  Should ship WITH `auth`: a token gates identity, the Origin check gates which sites
    *  may drive an already-authenticated browser session. */
   allowedOrigins?: readonly string[];
+  /** Register extra HTTP routes on the Fastify app (e.g. the match create/join API,
+   *  SV-2.4), after `/health` and `/ready`. Keeps this transport module generic — the
+   *  routes and their dependencies live with the caller. */
+  httpRoutes?: (app: FastifyInstance) => void;
 }
 
 export interface MultiplayerServerHandle {
@@ -107,6 +111,15 @@ export function createMultiplayerServer(
     void reply.code(ok ? 200 : 503);
     return { ready: ok };
   });
+  // Minimal ops metrics (OPS-0.1): AGGREGATE gauges only — live match count and total
+  // connected sockets. No match ids (F-13). Richer per-match metrics / a Prometheus
+  // exposition are a later ops brick.
+  app.get('/metrics', async () => {
+    const ids = registry.ids();
+    let connections = 0;
+    for (const id of ids) connections += registry.get(id)?.peerCount ?? 0;
+    return { matches: ids.length, connections };
+  });
   if (indexHtml !== undefined) {
     // The single-file client changes every rebuild; never let a browser serve a stale
     // cached copy (else client fixes silently don't reach the player).
@@ -118,6 +131,10 @@ export function createMultiplayerServer(
     app.get('/', serveIndex);
     app.get('/index.html', serveIndex);
   }
+
+  // Caller-supplied routes (the match create/join API, SV-2.4) — registered after the
+  // built-in health/ready so this module stays generic.
+  options.httpRoutes?.(app);
 
   const accountStore = options.accountStore;
   const auth = options.auth;

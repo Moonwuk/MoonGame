@@ -49,6 +49,20 @@ describe('SV-0.1 · HTTP app', () => {
     }
   });
 
+  it('/metrics reports aggregate gauges without leaking match ids', async () => {
+    const server = createMultiplayerServer({ room: createDevMatch(data) });
+    const url = await server.listen();
+    try {
+      const res = await fetch(`${httpBase(url)}/metrics`);
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { matches: number; connections: number };
+      expect(body).toEqual({ matches: 1, connections: 0 }); // one live match, nobody connected
+      expect(JSON.stringify(body)).not.toContain('dev'); // aggregate only, no ids
+    } finally {
+      await server.close();
+    }
+  });
+
   it('/ready flips to 503 while the server is draining', async () => {
     // A registry whose shutdown hangs until released — close() sets `draining` and then
     // awaits it, holding the HTTP server up (still listening) so we can probe mid-drain.
