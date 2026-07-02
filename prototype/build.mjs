@@ -277,6 +277,29 @@ body.sheet-open #cmdbar{bottom:calc(34vh + 12px);}
 .pp-act button{flex:1;padding:5px 6px;border-radius:5px;border:1px solid var(--cyan-dim);
   background:rgba(53,214,230,.1);color:var(--cyan);font:700 10px ui-monospace,monospace;cursor:pointer;}
 .pp-act .pp-del{border-color:#7a221c;background:rgba(255,90,77,.12);color:var(--red);}
+/* province ping composer: pick a destination (coalition chat / a player's DM) for a
+   map ping on the selected province. Centered modal, like #splitdlg. */
+#pingmenu{position:fixed;inset:0;z-index:47;display:none;align-items:center;justify-content:center;
+  padding:18px;background:rgba(2,8,11,.62);backdrop-filter:blur(2px);}
+#pingmenu.show{display:flex;}
+#pingmenu .pm-box{width:min(360px,92vw);background:var(--glass);border:1px solid var(--amber);
+  border-radius:12px;padding:16px 16px 14px;box-shadow:0 0 30px rgba(0,0,0,.6);}
+#pingmenu .pm-head{font-size:13px;letter-spacing:1px;color:var(--amber);font-variant-emoji:text;margin-bottom:3px;}
+#pingmenu .pm-head b{color:#eafffb;}
+#pingmenu .pm-sub{color:var(--dim);font-size:11px;line-height:1.5;margin-bottom:11px;}
+#pingmenu .pm-text{width:100%;box-sizing:border-box;margin-bottom:12px;padding:8px 10px;border-radius:6px;
+  border:1px solid var(--cyan-dim);background:rgba(4,14,18,.7);color:#eafffb;font:inherit;font-size:12px;}
+#pingmenu .pm-lbl{color:var(--cyan-dim);font-size:10px;letter-spacing:1px;text-transform:uppercase;margin:2px 0 6px;}
+#pingmenu .pm-dst{display:flex;align-items:center;gap:8px;width:100%;box-sizing:border-box;margin-bottom:6px;
+  padding:9px 11px;border-radius:7px;border:1px solid var(--line-hi);background:rgba(53,214,230,.06);
+  color:var(--ink);font:inherit;font-size:12px;font-weight:700;text-align:left;cursor:pointer;font-variant-emoji:text;}
+#pingmenu .pm-dst:hover{background:rgba(53,214,230,.14);border-color:var(--cyan);}
+#pingmenu .pm-dst.coal{border-color:var(--amber);background:rgba(255,196,90,.08);}
+#pingmenu .pm-dst .pm-ic{flex:0 0 auto;}
+#pingmenu .pm-dst em{margin-left:auto;color:var(--dim);font-weight:400;font-style:normal;font-size:10px;}
+#pingmenu .pm-cancel{display:block;width:100%;margin-top:8px;padding:9px;border-radius:7px;
+  border:1px solid var(--line-hi);background:transparent;color:var(--dim);font:inherit;font-size:12px;cursor:pointer;}
+#pingmenu .pm-cancel:hover{color:var(--ink);border-color:var(--cyan-dim);}
 
 /* status strip below the top bar: day/time + victory progress */
 #devline{position:fixed;top:46px;left:0;right:0;height:28px;z-index:24;display:flex;align-items:center;gap:14px;
@@ -858,7 +881,7 @@ button.b:disabled{opacity:.32;cursor:not-allowed;color:var(--dim);border-color:v
 /* --- short viewports (landscape phones, split-screen): overlays scroll instead of
    clipping off-screen; the welcome card compacts and stacks its chip/footer in-flow --- */
 @media (max-height:680px){
-  #connect,#setup,#codex,#playercard,#warprompt,#diplo,#splitdlg{
+  #connect,#setup,#codex,#playercard,#warprompt,#diplo,#splitdlg,#pingmenu{
     align-items:flex-start;overflow-y:auto;-webkit-overflow-scrolling:touch;}
   #connect{padding:14px 18px;}
   #connect .cwrap{display:flex;flex-direction:column;margin:auto;}
@@ -979,6 +1002,7 @@ const html = `<!doctype html>
 <div id="diplo"></div>
 <div id="pingpop"></div>
 <div id="splitdlg"></div>
+<div id="pingmenu"></div>
 <div id="fps"></div>
 <div id="banner"></div>
 <div id="connect">

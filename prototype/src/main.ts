@@ -454,6 +454,7 @@ let diploExpanded: string | null = null; // participant row showing its action b
 const diploStanceFilter = new Set<DiplomaticStance>();
 const diploTypeFilter = new Set<'human' | 'ai'>();
 let convoOpen = COALITION; // the open conversation in the messages tab (seat id or COALITION)
+let pingMenuLoc: string | null = null; // province whose ping composer is open (null = closed)
 // Screen hit-boxes for the on-map ping markers, rebuilt every frame by drawPings().
 let pingHits: Array<{ loc: string; x: number; y: number }> = [];
 
@@ -3658,6 +3659,9 @@ function panelHtml(): string {
     }
   }
 
+  // Tactical ping — mark this province and share it (coalition chat, or a player's DM).
+  h += `<div class="row">${btn('ping', '', '📍 Пинг — отметить и отправить…', true)}</div>`;
+
   h += `<div class="ptabs">${tabButton('ground', 'Ground', ground.length)}${tabButton(
     'ships',
     'Ships',
@@ -4558,6 +4562,8 @@ side.addEventListener('click', (ev) => {
     playerOrder(mobilizeDivision(ME, selPlanet!, Number(arg)));
   } else if (act === 'capital') {
     playerOrder(designateCapital(ME, selPlanet!));
+  } else if (act === 'ping') {
+    openPingMenu();
   } else if (act === 'bombard') {
     playerOrder(bombardFleet(ME, selFleet!, arg === 'on'));
   } else if (act === 'barragemode') {
@@ -6762,6 +6768,70 @@ function pingSelected(): void {
     input.focus();
   }
 }
+
+// --- province ping composer (tap a province → choose where the ping goes) --------
+// A ping marks a province and shares it. Destination is either the coalition channel
+// (a shared on-map marker every ally sees) or a single player's DM (a private jump-to
+// pointer in that thread). Opened from the province panel's 📍 button.
+function openPingMenu(): void {
+  if (!selPlanet || !s.planets[selPlanet]) {
+    note('Сначала выберите провинцию');
+    return;
+  }
+  pingMenuLoc = selPlanet;
+  renderPingMenu();
+  document.getElementById('pingmenu')?.classList.add('show');
+  (document.getElementById('pm-text') as HTMLInputElement | null)?.focus();
+}
+function closePingMenu(): void {
+  pingMenuLoc = null;
+  document.getElementById('pingmenu')?.classList.remove('show');
+}
+function renderPingMenu(): void {
+  const el = document.getElementById('pingmenu');
+  if (!el || !pingMenuLoc) return;
+  const loc = pingMenuLoc;
+  const dstBtn = (dest: string, color: string, ic: string, name: string, tag: string, cls = ''): string =>
+    `<button class="pm-dst${cls}" data-pmdest="${esc(dest)}">` +
+    `<span class="pm-ic" style="color:${color}">${ic}</span>${esc(name)}` +
+    (tag ? `<em>${esc(tag)}</em>` : '') +
+    `</button>`;
+  const coal = dstBtn(COALITION, 'var(--amber)', '⚡', 'Коалиция', `${coalitionMembers().length} уч.`, ' coal');
+  const dms = diploSeats()
+    .filter((id) => id !== ME)
+    .map((id) => dstBtn(id, ownerColor(id), seatBadge(id).icon, NAME[id] ?? id, seatBadge(id).tag))
+    .join('');
+  el.innerHTML =
+    `<div class="pm-box">` +
+    `<div class="pm-head">📍 Пинг · <b>${esc(loc)}</b></div>` +
+    `<div class="pm-sub">Отметьте провинцию и отправьте — метка станет кликабельной (↪ камера).</div>` +
+    `<input id="pm-text" class="pm-text" maxlength="80" placeholder="Описание метки (необязательно)…" autocomplete="off">` +
+    `<div class="pm-lbl">В чат коалиции</div>${coal}` +
+    (dms ? `<div class="pm-lbl">В ЛС игроку</div>${dms}` : '') +
+    `<button class="pm-cancel" data-pmcancel>Отмена</button>` +
+    `</div>`;
+}
+/** Place the pending province ping toward `dest`: the coalition channel (shared on-map
+ *  marker) or a player's DM (private jump-to pointer). Composer text = the description. */
+function createPingTo(dest: string): void {
+  const loc = pingMenuLoc;
+  if (!loc || !s.planets[loc]) {
+    closePingMenu();
+    return;
+  }
+  const input = document.getElementById('pm-text') as HTMLInputElement | null;
+  const desc = (input?.value.trim() ?? '').slice(0, 80);
+  if (dest === COALITION) {
+    // Same path as the coalition composer's 📍: net → server-stamped marker; solo → local line.
+    if (NET && netClient) netClient.placePing({ kind: 'mark', target: { node: loc }, label: desc });
+    else pushMsg(COALITION, desc || `метка ${loc}`, false, ME, loc);
+    note('📍 Пинг → Коалиция');
+  } else {
+    pushMsg(dest, desc || `метка ${loc}`, false, ME, loc);
+    note(`📍 Пинг → ${NAME[dest] ?? dest}`);
+  }
+  closePingMenu();
+}
 /** Active coalition pings, one marker per province (the latest ping there wins). The
  *  coalition chat log and the map markers share this single source. */
 function activePings(): SessionMsg[] {
@@ -6922,6 +6992,27 @@ if (diploEl) {
     if (ke.key === 'Enter' && (ke.target as HTMLElement).id === 'dp-text') {
       e.preventDefault();
       sendDiploMsg();
+    }
+  });
+}
+
+// Province ping composer: a destination button places the ping; the backdrop or Отмена
+// closes it; Enter in the note field defaults to the coalition channel.
+const pingMenuEl = document.getElementById('pingmenu');
+if (pingMenuEl) {
+  pingMenuEl.addEventListener('click', (e) => {
+    const tg = e.target as HTMLElement;
+    const dest = (tg.closest('.pm-dst') as HTMLElement | null)?.dataset.pmdest;
+    if (dest) return createPingTo(dest);
+    if (tg.closest('[data-pmcancel]') || tg === pingMenuEl) closePingMenu();
+  });
+  pingMenuEl.addEventListener('keydown', (e) => {
+    const ke = e as KeyboardEvent;
+    if (ke.key === 'Enter' && (ke.target as HTMLElement).id === 'pm-text') {
+      e.preventDefault();
+      createPingTo(COALITION);
+    } else if (ke.key === 'Escape') {
+      closePingMenu();
     }
   });
 }
