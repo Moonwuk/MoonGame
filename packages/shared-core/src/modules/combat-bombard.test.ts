@@ -171,7 +171,7 @@ describe('combat — fleet.bombard action', () => {
       [fleet('F', 'p2', 'P', [['fighter', 2]], { orbit: 'near' })],
       [planet('P', 'p1')],
     );
-    expect(rej(kernel.applyAction(st, bombard('F', true, 'p1'), ctx(0)))).toBe('E_FORBIDDEN');
+    expect(rej(kernel.applyAction(st, bombard('F', true, 'p1'), ctx(0)))).toBe('E_NO_FLEET'); // not-yours == not-found (no id probing)
   });
 
   it('rejects bombardment for a fleet that is in transit', () => {
