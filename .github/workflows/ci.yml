@@ -1,0 +1,60 @@
+name: CI
+
+# The gate for every push to main and every PR: lint + typecheck + test + audit.
+# A Postgres service is attached and DATABASE_URL is set, so the durable-path adapter
+# tests (store.test.ts, gated behind DATABASE_URL) actually run in CI instead of being
+# skipped — the production persistence path is exercised, not just the in-memory one.
+# NOTE: action versions are tag-pinned for now — SHA-pin with SD-6.1 (secure-sdlc-roadmap.md).
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: lint · typecheck · test · audit
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: void_test
+        ports:
+          - 5432:5432
+        # Wait until the DB accepts connections before the job's steps run.
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # store.test.ts runs its Postgres adapter contracts only when this is set; every
+      # other test either uses in-memory stores or passes an explicit empty env.
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/void_test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4 # version comes from package.json "packageManager"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Gate (lint + typecheck + test, incl. Postgres adapters)
+        run: pnpm run check
+
+      - name: Dependency audit
+        run: pnpm audit --audit-level=high

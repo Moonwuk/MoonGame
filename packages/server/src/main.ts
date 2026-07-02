@@ -1,11 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import { ActionGate } from '@void/action-layer';
-import { isValidActionPayload } from '@void/shared-core';
 import { createDevMatch, loadShippedData } from './scenario';
 import { createMultiplayerServer } from './wsServer';
 import { startClockDriver, type ClockDriverHandle } from './clockDriver';
 import { createStores, snapshotOf } from './persistence';
-import { hmacSecret, signJoinToken, type JoinTokenVerifyConfig } from './auth';
+import { configFromEnv } from './serverConfig';
 import { registerMatchApi, type MatchApiDeps } from './matchApi';
 import { LazyMatchRegistry, type LoadedMatch } from './matchRegistry';
 import type { RoomObservation } from './matchRoom';
@@ -31,40 +29,10 @@ const host = process.env.HOST ?? '127.0.0.1';
 const port = Number(process.env.PORT ?? 8787);
 const bootTime = Date.now();
 
-// Optional authenticated handshake (SE-0.1): set AUTH_JWT_SECRET to require a verified
-// join token (?token=) instead of the insecure ?player=/?nick= dev handshake.
-const authSecret = process.env.AUTH_JWT_SECRET;
-const issuer = process.env.AUTH_ISSUER ?? 'void-dominion';
-const audience = process.env.AUTH_AUDIENCE ?? 'match';
-// Short TTL: the token rides in the WS URL (?token=), so keep a leaked one's window small;
-// the verify side also caps age from `iat` as defence-in-depth.
-const JOIN_TOKEN_TTL_SEC = 15 * 60;
-const auth: JoinTokenVerifyConfig | undefined = authSecret
-  ? { key: hmacSecret(authSecret), algorithms: ['HS256'], issuer, audience, maxTokenAgeSec: JOIN_TOKEN_TTL_SEC }
-  : undefined;
-const allowedOrigins = process.env.ALLOWED_ORIGINS
-  ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim()).filter(Boolean)
-  : undefined;
-// Token signer for the /matches/:id/join API — present only when auth is configured
-// (the same HS256 secret the handshake verifies with). Absent ⇒ /join returns 501.
-const signToken = authSecret
-  ? (matchId: string, playerId: string): Promise<string> =>
-      signJoinToken(
-        { matchId, playerId },
-        { key: hmacSecret(authSecret), algorithm: 'HS256', issuer, audience },
-        { ttlSeconds: JOIN_TOKEN_TTL_SEC },
-      )
-  : undefined;
-
-// Optional action-layer gate (SV-1.1-live-C): set GATE=1 to require validated `action.v1`
-// envelopes (validate → payload-schema → authorize(session) → dedup → sequence) instead of
-// bare actions. Default OFF — the current ?player= dev clients send bare actions, so enable
-// this only once the connecting client emits envelopes + echoes the welcome's sessionId.
-// A FACTORY, not one instance: each match needs its own gate (per-match sequence + receipts).
-const gateEnabled = process.env.GATE === '1' || process.env.GATE === 'true';
-const gateFactory = gateEnabled
-  ? (): ActionGate => new ActionGate({ payloadValidator: isValidActionPayload })
-  : undefined;
+// Security composition from the environment (all switches OFF by default → dev harness):
+// AUTH_JWT_SECRET (authenticated handshake + token minting), ALLOWED_ORIGINS (CSWSH),
+// GATE=1 (validated action.v1 envelopes). See serverConfig.ts.
+const { auth, allowedOrigins, signToken, gateFactory } = configFromEnv(process.env);
 
 const data = loadShippedData();
 const stores = await createStores();
