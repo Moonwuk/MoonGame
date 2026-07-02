@@ -38,6 +38,7 @@ import {
   buildUnit,
   aiOrders,
   declareWar,
+  netIncome,
   STANCE_RANK,
   marketLots,
   marketList,
@@ -507,7 +508,8 @@ let setupSlots: Array<'human' | 'ai' | 'off'> = ['human', 'ai', 'off', 'off'];
 let setupStart: string = START_CANDIDATES[0] ?? MAP[0]!.id;
 // Chosen time-flow multiplier for the launched match (×1/×2/×5/×10). ×1 = today's
 // normal play pace; the launch maps it onto the speedbar (applyTimeSpeed).
-let setupSpeed = 1;
+const SETUP_SPEEDS = [1, 2, 5, 10, 50];
+let setupSpeed = 10;
 let lastPanelHtml = '';
 let lastCmdHtml = '';
 let lastSplitHtml = '';
@@ -719,7 +721,9 @@ function updateRadarContacts(now: number): void {
         return dx * dx + dy * dy <= a.r * a.r && sweptThisFrame(Math.atan2(dy, dx));
       });
       if (painted) {
-        radarMemory.set(f.id, { node: fn, size: sigClass(fleetSignature(f)), at: now });
+        const size = sigClass(fleetSignature(f));
+        if (!radarMemory.has(f.id)) note(`◆ новый радарный контакт (${size}) у ${fn}`, fn);
+        radarMemory.set(f.id, { node: fn, size, at: now });
       }
     }
   }
@@ -908,7 +912,7 @@ function kfmt(n: number): string {
 
 function cost(bag: Record<string, number> | undefined): string {
   if (!bag) return 'free';
-  const parts = Object.entries(bag).map(([r, n]) => `${n}${r === 'metal' ? 'm' : 'c'}`);
+  const parts = Object.entries(bag).map(([r, n]) => `${n}${TECH_CUR[r] ?? r[0]}`);
   return parts.length ? parts.join(' ') : 'free';
 }
 function afford(bag: Record<string, number> | undefined): boolean {
@@ -1181,7 +1185,7 @@ function divisionsHtml(planetId: string): string {
   for (let i = 0; i < tpls.length; i++) {
     const t = tpls[i]!;
     const f = formationStats(t);
-    const cost = Object.entries(f.cost).map(([r, a]) => `${a}${r[0]}`).join(' ') || '—';
+    const cost = Object.entries(f.cost).map(([r, a]) => `${a}${TECH_CUR[r] ?? r[0]}`).join(' ') || '—';
     const afford = Object.entries(f.cost).every(([r, a]) => (res[r] ?? 0) >= a);
     h += btn('mobilize', String(i), `${esc(t.name)} (${f.count}) · ${cost}`, afford && f.count > 0);
   }
@@ -1302,11 +1306,33 @@ function fleetAnchor(f: Fleet): { x: number; y: number; ang: number } | null {
   const ang = orbitsLive() ? a0 + Math.PI / 2 : a0;
   return { x: pc.x + Math.cos(a0) * r, y: pc.y + Math.sin(a0) * r, ang };
 }
-function note(msg: string) {
+function note(msg: string, at?: string) {
   const d = floor(s.time / DAY) + 1;
   const h = floor((s.time % DAY) / HOUR);
   logLines.push(`D${d} ${String(h).padStart(2, '0')}h · ${msg}`);
   while (logLines.length > 9) logLines.shift();
+  toast(msg, at);
+}
+
+/** Transient event toast over the map — feedback must not live only in a hidden
+ *  log window. Tap dismisses; with a map anchor the tap also flies the camera
+ *  there (the jumpToPing path). At most 3 stacked, ~5s life each. */
+function toast(msg: string, at?: string): void {
+  const host = document.getElementById('toasts');
+  if (!host) return;
+  const el = document.createElement('div');
+  el.className = at ? 'toast jump' : 'toast';
+  el.textContent = at ? `${msg} ↪` : msg;
+  el.addEventListener('click', () => {
+    if (at) jumpToPing(at);
+    el.remove();
+  });
+  host.appendChild(el);
+  while (host.children.length > 3) host.firstElementChild?.remove();
+  window.setTimeout(() => {
+    el.classList.add('out');
+    window.setTimeout(() => el.remove(), 450);
+  }, 5200);
 }
 
 /** The map node a fleet occupies / is travelling over / is parked nearest to. */
@@ -1840,13 +1866,17 @@ function handleEvents(events: DomainEvent[]) {
     const p = e.payload as Record<string, unknown>;
     switch (e.type) {
       case 'battle.started':
-        note(`⚔️ battle at ${p.location} (${p.phase})`);
+        // Fogged: a bots' brawl behind the fog is not our intel (NET already fogs
+        // events server-side; this matches it for the local sim).
+        if (p.attacker === ME || p.defender === ME || known(p.location as string))
+          note(`⚔️ battle at ${p.location} (${p.phase})`, p.location as string);
         if (p.attacker === ME || p.defender === ME) myBattleLocs.add(p.location as string);
         break;
       case 'battle.resolved':
-        note(
-          `battle at ${p.location} ended — ${p.winner ? NAME[p.winner as string] + ' won' : 'stalemate'}`,
-        );
+        if (myBattleLocs.has(p.location as string) || known(p.location as string))
+          note(
+            `battle at ${p.location} ended — ${p.winner ? NAME[p.winner as string] + ' won' : 'stalemate'}`,
+          );
         myBattleLocs.delete(p.location as string);
         break;
       case 'technology.researched':
@@ -1855,7 +1885,8 @@ function handleEvents(events: DomainEvent[]) {
         if (techWin.classList.contains('show')) renderTech();
         break;
       case 'planet.captured':
-        note(`🚩 ${NAME[p.owner as string]} captured ${p.planetId}`);
+        if (p.owner === ME || known(p.planetId as string))
+          note(`🚩 ${NAME[p.owner as string]} captured ${p.planetId}`, p.planetId as string);
         if (diploOpen && diploTab === 'diplo') renderDiplo(); // province counts shifted
         break;
       case 'diplomacy.changed': {
@@ -1886,13 +1917,19 @@ function handleEvents(events: DomainEvent[]) {
         note(`⬆️ ${p.building} → L${p.level} at ${p.planetId}`);
         break;
       case 'building.destroyed':
-        note(`💥 ${p.building} destroyed at ${p.planetId}`);
+        note(`💥 ${p.building} destroyed at ${p.planetId}`, p.planetId as string);
         break;
       case 'unit.built':
         note(`🛠️ ${p.count}× ${p.unit} at ${p.planetId}`);
         break;
       case 'fleet.launched':
         note(`🚀 ${NAME[p.owner as string]} launched a fleet from ${p.planetId}`);
+        break;
+      case 'market.bought':
+        if (p.seller === ME || p.buyer === ME)
+          note(
+            `⇄ биржа: ${p.amount} ${TECH_CUR[p.resource as string] ?? p.resource} за ${p.paid ?? '?'} ¤ (${p.buyer === ME ? 'покупка' : 'продажа'})`,
+          );
         break;
       case 'fleet.merged':
         if (p.owner === ME) note(`⛬ fleets merged at ${p.at}`);
@@ -2469,9 +2506,17 @@ const bgx = bg.getContext('2d') as CanvasRenderingContext2D;
 let bgContent = ''; // viewport + ownership signature (camera-independent)
 let bgCam = { x: 0, y: 0, scale: 1 }; // camera the static layer was last baked at
 
+/** The owner of node `id` AS THE VIEWER MAY KNOW IT: live when identified (or fog
+ *  off), last-known from memory when only remembered, unknown otherwise. The
+ *  political fill and its cache signature both read THIS, never the raw truth —
+ *  the map must not repaint a hidden capture (an intel leak the fog exists to stop). */
+function knownOwner(id: string): string | null {
+  if (known(id)) return s.planets[id]?.owner ?? null;
+  return memory.get(id)?.owner ?? null;
+}
 function ownersSig(): string {
   let out = '';
-  for (const n of MAP) out += (s.planets[n.id]?.owner ?? '·') + ',';
+  for (const n of MAP) out += (knownOwner(n.id) ?? '·') + ',';
   return out;
 }
 
@@ -2611,7 +2656,7 @@ function buildStaticLayer(): void {
     const p = s.planets[n.id];
     if (!p) continue;
     const c = world(n);
-    seeds.push({ x: c.x, y: c.y, w: (p.size ?? 1) * W, owner: p.owner ?? null, kind: n.sector });
+    seeds.push({ x: c.x, y: c.y, w: (p.size ?? 1) * W, owner: knownOwner(n.id), kind: n.sector });
   }
   // Keep the power diagram valid: clamp the weight spread so a heavier neighbour can
   // never swallow a close smaller node's cell (which left it with no province border).
@@ -5025,6 +5070,11 @@ for (const b of Array.from(document.querySelectorAll('[data-speed]'))) {
       x.classList.toggle('on', Number((x as HTMLElement).dataset.speed) === speed);
   });
 }
+// Pace chips (×1/×10/×50): retune the play/fast pair mid-match and start running at
+// the new multiplier — the same mapping the setup screen launches with.
+for (const b of Array.from(document.querySelectorAll('[data-mult]'))) {
+  b.addEventListener('click', () => applyTimeSpeed(Number((b as HTMLElement).dataset.mult)));
+}
 
 // Map a setup time-flow multiplier (×1/×2/×5/×10) onto the speedbar and start running at
 // it. ×1 is true wall-clock — 1 game-hour per real hour — matching the real-time MMO
@@ -5041,6 +5091,8 @@ function applyTimeSpeed(mult: number): void {
   speed = play;
   for (const x of Array.from(document.querySelectorAll('[data-speed]')))
     x.classList.toggle('on', Number((x as HTMLElement).dataset.speed) === speed);
+  for (const x of Array.from(document.querySelectorAll('[data-mult]')))
+    x.classList.toggle('on', Number((x as HTMLElement).dataset.mult) === mult);
 }
 
 // Restart → back to the skirmish setup (bot selection). The speedbar button serves the
@@ -5470,7 +5522,7 @@ function renderTemplates(): void {
     ? f.synergies.map((x) => `<span class="syn">◈ ${esc(x.name)} — ${esc(x.desc)}</span>`).join('')
     : `<span class="syn none">◇ Нет бонусов состава — смешай рода войск.</span>`;
   const cost = Object.entries(f.cost)
-    .map(([r, a]) => `${a} ${r}`)
+    .map(([r, a]) => `${a}${TECH_CUR[r] ?? r[0]}`)
     .join(' · ');
   setupDivEl.innerHTML =
     `<p class="ssub">Собери 3 шаблона дивизий из 6 слотов. Состав даёт суммарные статы и бонусы; во время боя шаблоны не меняются. Тапни слот, чтобы сменить юнит.</p>` +
@@ -5798,7 +5850,11 @@ function openSetup(from: 'welcome' | 'hub' = 'welcome'): void {
   setupReturn = from;
   setupSlots = ['human', 'ai', 'off', 'off'];
   setupStart = START_CANDIDATES[0] ?? MAP[0]!.id;
-  setupSpeed = 1; // default to normal time flow each time the setup opens
+  // A lively default: ×1 wall-clock reads as a FROZEN screen to a newcomer, so the
+  // setup opens on the last chosen multiplier (first launch: ×10). True real time
+  // stays one tap away — the ×1 chip.
+  const savedSpeed = Number(localStorage.getItem('void.setupSpeed'));
+  setupSpeed = SETUP_SPEEDS.includes(savedSpeed) ? savedSpeed : 10;
   showConnect(false);
   setupEl.style.display = 'flex';
   // Always open on the Старт tab (the division designer keeps its own state).
@@ -5837,6 +5893,30 @@ function buildSetupConfig(): SetupConfig {
 // Install a ready GameState as the live match: reset all interaction state, queues,
 // camera and log, then hide the setup overlay. `aiPlayers` are the seats the local
 // sim drives. Shared by the normal skirmish and (via a hook) the dev test mode.
+// Tap a resource chip → what the number means: stock and hourly net flow.
+purse.addEventListener('click', (ev) => {
+  const el = (ev.target as Element).closest('[data-res]') as HTMLElement | null;
+  if (!el) return;
+  const key = el.dataset.res!;
+  const stock = Math.round(s.players[ME]?.resources?.[key] ?? 0);
+  const flow = Math.round(netIncome(s, ME)[key] ?? 0);
+  note(
+    `${TECH_CUR[key] ?? ''} ${el.title}: ${kfmt(stock)} в казне · ${flow >= 0 ? '+' : ''}${kfmt(flow)}/ч (производство минус содержание войск)`,
+  );
+});
+
+// Tap the ✦ score chip → a plain-words breakdown of how the score is built and how
+// the match ends (the victory rule is otherwise invisible mid-match).
+devlineEl.addEventListener('click', (ev) => {
+  if (!(ev.target as Element).closest('.dstat')) return;
+  const mine = Object.values(s.planets).filter((p) => p.owner === ME);
+  const worlds = mine.filter((p) => (p.kind ?? 'planet') === 'planet').length;
+  const score = Math.round(s.match?.scores?.[ME]?.total ?? 0);
+  note(
+    `✦ ${score}/${SCORE_LIMIT}: мир — 50, прочий сектор — 10, здания добавляют по уровню (у вас ${worlds} миров, ${mine.length - worlds} секторов). Победа: ✦ ${SCORE_LIMIT}, уничтожение соперников или доминирование.`,
+  );
+});
+
 function installMatch(state: GameState, aiPlayers: Set<string>): void {
   s = state;
   ME = 'p1';
@@ -5854,8 +5934,14 @@ function installMatch(state: GameState, aiPlayers: Set<string>): void {
   splitState = null;
   killStats = { destroyed: 0, lost: 0 };
   myBattleLocs.clear();
+  memory.clear(); // fog memory belongs to the OLD match — stale intel must not carry over
+  radarMemory.clear();
   logLines.length = 0; // fresh log — drop notes from the menu-background match
   banner = null; // clear any end-banner left by the menu-background match (else it sticks)
+  // The match goal, written AFTER the wipe so it is the first line a player can read.
+  // Kept honest against the kernel: victoryModule ends on score (SCORE_LIMIT), on
+  // elimination, or on domination — no "capital capture" victory exists.
+  note(`Задача: ✦ ${SCORE_LIMIT} (мир — 50, сектор — 10) или уничтожение соперников.`);
   for (const k of Object.keys(buildQueues)) delete buildQueues[k];
   defaultView(); // phone: zoom onto home; desktop: whole-map fit
   setupEl.style.display = 'none';
@@ -5882,6 +5968,7 @@ setupSpeedEl.addEventListener('click', (ev) => {
   const t = (ev.target as Element).closest('[data-spd]');
   if (!t) return;
   setupSpeed = Number(t.getAttribute('data-spd'));
+  localStorage.setItem('void.setupSpeed', String(setupSpeed));
   renderSetup();
 });
 setupGoEl.addEventListener('click', () => startMatch(buildSetupConfig()));
@@ -6147,13 +6234,22 @@ async function toggleArchive(id: string, restore: boolean): Promise<void> {
 
 function renderMatches(): void {
   const el = $('mlist');
+  // Never a dead end: whatever the server says (unreachable / empty list), the
+  // browser always offers the path that ALWAYS works — a solo skirmish offline.
+  const soloCard = (msg: string): void => {
+    el.innerHTML =
+      `<div class="mempty">${msg}</div>` +
+      '<div class="msolo"><button class="mbtn" id="msolo-go">▶ Начать одиночный скирмиш</button>' +
+      '<div class="msolo-sub">Сервер не нужен — свободные места займут боты.</div></div>';
+    document.getElementById('msolo-go')?.addEventListener('click', () => openSetup('hub'));
+  };
   if (!matchLists) {
-    el.innerHTML = '<div class="mempty">нажмите «Обновить список»</div>';
+    soloCard(statusEl.textContent === 'сервер недоступен' ? 'сервер недоступен' : 'нажмите «Обновить список»');
     return;
   }
   const rows = matchLists[activeTab] ?? [];
   if (rows.length === 0) {
-    el.innerHTML = '<div class="mempty">пусто</div>';
+    soloCard('здесь пусто');
     return;
   }
   el.textContent = '';
@@ -6346,6 +6442,7 @@ function frame(nowReal: number) {
     devlineEl.innerHTML = statusHtml;
     lastClockText = statusHtml;
   }
+
   // Dev net overlay (M0): FPS always; when connected, append round-trip latency and
   // a desync flag (✓ in sync with the server, ✗ + running mismatch count if not).
   let fpsText = `${Math.round(fpsEma)} FPS`;
@@ -6365,19 +6462,31 @@ function frame(nowReal: number) {
   const r = s.players[ME]?.resources ?? {};
   // Monochrome line glyphs from the console's own icon family (no emoji variants, so
   // they render as text, not colour emoji). Name in `title` for hover/long-press.
-  const chip = (icon: string, val: string, name: string) =>
-    `<span class="res" title="${name}"><i>${icon}</i><b>${val}</b></span>`;
+  // Flow under the stock: the tested netIncome() (production − upkeep, per hour)
+  // finally shown to the player. A resource with no stock AND no flow is dimmed —
+  // it plays no part in the current match yet.
+  const inc = netIncome(s, ME);
+  const chip = (icon: string, key: string, name: string) => {
+    const stock = r[key] ?? 0;
+    const flow = Math.round(inc[key] ?? 0);
+    const flowTxt =
+      flow !== 0 ? `<em class="${flow > 0 ? 'up' : 'dn'}">${flow > 0 ? '+' : ''}${kfmt(flow)}/ч</em>` : '';
+    const dead = stock === 0 && flow === 0 ? ' dead' : '';
+    return `<span class="res${dead}" title="${name}" data-res="${key}"><i>${icon}</i><b>${kfmt(stock)}</b>${flowTxt}</span>`;
+  };
   const hudHtml =
-    chip('¤', kfmt(r.credits ?? 0), 'Credits') +
-    chip('❖', kfmt(r.food ?? 0), 'Food') +
-    chip('⬢', kfmt(r.metal ?? 0), 'Metal') +
-    chip('↯', kfmt(r.energy ?? 0), 'Energy') +
-    chip('▦', kfmt(r.microelectronics ?? 0), 'Microelectronics');
+    chip('¤', 'credits', 'Credits') +
+    chip('❖', 'food', 'Food') +
+    chip('⬢', 'metal', 'Metal') +
+    chip('↯', 'energy', 'Energy') +
+    chip('▦', 'microelectronics', 'Microelectronics');
   if (hudHtml !== lastHudHtml) {
     purse.innerHTML = hudHtml;
     lastHudHtml = hudHtml;
   }
-  const battles = Object.keys(s.battles).length;
+  const battles = Object.values(s.battles).filter(
+    (b) => b.attacker.owner === ME || b.defender.owner === ME || known(b.location),
+  ).length;
   const alertText = String(battles);
   if (alertText !== lastAlertText) {
     alertBadge.style.display = battles > 0 ? 'grid' : 'none';
@@ -7123,9 +7232,6 @@ if (pingMenuEl) {
   });
 }
 
-note(
-  'Welcome, Commander. A wide frontier of provinces separates you from CRIMSON — the worlds among them score 50, every other sector 10. Reach 600 points or take the enemy capital.',
-);
 requestAnimationFrame(frame);
 
 // --- in-app APK auto-update -------------------------------------------------

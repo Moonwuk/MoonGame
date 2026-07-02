@@ -68,6 +68,10 @@ body::before{content:"";position:fixed;inset:0;z-index:1;pointer-events:none;mix
 #purse{display:flex;align-items:center;flex:1 1 auto;min-width:0;overflow:hidden;height:100%;margin:0 4px;
   border-left:1px solid var(--line);border-right:1px solid var(--line);}
 .res{display:flex;align-items:center;justify-content:center;gap:4px;padding:0 4px;height:100%;flex:1 1 0;min-width:0;}
+.res em{font:9px ui-monospace,monospace;font-style:normal;margin-left:3px;}
+.res em.up{color:var(--grn,#5ff0a8);}
+.res em.dn{color:var(--red,#ff5a4d);}
+.res.dead{opacity:.38;}
 .res i{flex:0 0 auto;text-align:center;font-style:normal;font-size:13px;line-height:1;
   color:var(--cyan);font-variant-emoji:text;text-shadow:0 0 6px rgba(53,214,230,.4);}
 .res b{color:#eafffb;font-weight:700;font-size:12px;font-variant-numeric:tabular-nums;
@@ -86,6 +90,15 @@ body::before{content:"";position:fixed;inset:0;z-index:1;pointer-events:none;mix
 @keyframes donatePulse{
   0%,100%{box-shadow:0 0 10px rgba(255,198,72,.30),inset 0 0 7px rgba(255,214,120,.16);}
   50%{box-shadow:0 0 22px rgba(255,205,90,.7),inset 0 0 9px rgba(255,220,130,.30);}}
+#toasts{position:fixed;left:50%;top:96px;transform:translateX(-50%);z-index:40;display:flex;
+  flex-direction:column;align-items:center;gap:6px;pointer-events:none;max-width:min(92vw,520px);}
+#toasts .toast{pointer-events:auto;cursor:pointer;background:rgba(3,14,18,.88);border:1px solid var(--line-hi);
+  border-radius:3px;padding:7px 12px;font:12px ui-monospace,Menlo,monospace;color:var(--fg);
+  box-shadow:0 0 14px rgba(40,200,210,.14);animation:toast-in .18s ease-out;max-width:100%;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+#toasts .toast.jump{border-color:var(--cyan);}
+#toasts .toast.out{opacity:0;transform:translateY(-6px);transition:opacity .4s ease,transform .4s ease;}
+@keyframes toast-in{from{opacity:0;transform:translateY(-8px);}to{opacity:1;transform:none;}}
 #speedbar{position:fixed;right:14px;bottom:14px;z-index:24;display:flex;align-items:center;gap:4px;
   padding:5px 7px;background:rgba(3,12,16,.78);border:1px solid var(--line-hi);border-radius:3px;
   box-shadow:0 0 16px rgba(40,200,210,.10);transition:bottom .2s ease;}
@@ -97,6 +110,8 @@ body.sheet-open #speedbar{bottom:calc(34vh + 12px);}
 .spd button{min-width:30px;height:26px;padding:0 5px;border-radius:2px;cursor:pointer;font:11px ui-monospace,monospace;
   background:transparent;color:var(--cyan-dim);border:1px solid var(--line-hi);}
 .spd button.on{background:rgba(53,214,230,.16);color:var(--cyan);border-color:var(--cyan);box-shadow:0 0 10px rgba(53,214,230,.4);}
+.spd .spddiv{width:1px;height:18px;background:var(--line-hi);margin:0 2px;}
+.spd .spdmini{min-width:26px;font-size:10px;opacity:.9;}
 .spd .sep{width:1px;height:18px;background:var(--line-hi);margin:0 4px;flex:0 0 auto;}
 #cmdbar{position:fixed;left:50%;transform:translateX(-50%);bottom:14px;z-index:26;display:none;align-items:center;
   gap:6px;padding:6px 8px;background:rgba(3,12,16,.88);border:1px solid var(--line-hi);border-radius:3px;
@@ -651,7 +666,10 @@ button.b:disabled{opacity:.32;cursor:not-allowed;color:var(--dim);border-color:v
   color:var(--dim);font-size:11px;letter-spacing:1px;text-transform:uppercase;cursor:pointer;}
 #connect .mtab.active{border-color:var(--cyan);color:var(--cyan);background:rgba(53,214,230,.10);}
 #connect .mlist{margin-top:10px;max-height:46vh;overflow-y:auto;display:flex;flex-direction:column;gap:8px;}
-#connect .mempty{padding:18px 8px;text-align:center;color:var(--dim);font-size:12px;}
+#connect .mempty{padding:18px 8px 8px;text-align:center;color:var(--dim);font-size:12px;}
+#connect .msolo{padding:6px 8px 16px;text-align:center;}
+#connect .msolo .mbtn{font-size:13px;padding:10px 18px;}
+#connect .msolo-sub{margin-top:6px;color:var(--dim);font-size:11px;}
 #connect .mrow{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--line-hi);
   border-radius:8px;background:rgba(255,255,255,.02);}
 #connect .minfo{flex:1;min-width:0;}
@@ -740,7 +758,8 @@ button.b:disabled{opacity:.32;cursor:not-allowed;color:var(--dim);border-color:v
 #setup .srow .stog{font:11px ui-monospace,monospace;letter-spacing:1px;border:1px solid var(--line-hi);
   border-radius:6px;padding:6px 12px;min-width:64px;cursor:pointer;background:transparent;color:var(--dim);}
 #setup .srow .stog.ai{border-color:var(--cyan);color:var(--cyan);background:rgba(53,214,230,.12);}
-#setup .sspeedlabel{font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--cyan-dim);margin:0 0 8px;}
+#setup .sspeedlabel{font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--cyan-dim);margin:0 0 4px;}
+#setup .sspeedhint{font-size:11px;color:var(--dim);margin:0 0 8px;line-height:1.45;}
 #setup .sspeed{display:flex;gap:8px;margin-bottom:16px;}
 #setup .sspeed .spdchip{flex:1;padding:10px 6px;border-radius:8px;border:1px solid var(--line-hi);background:transparent;
   color:var(--dim);font:13px ui-monospace,monospace;letter-spacing:1px;cursor:pointer;}
@@ -1089,8 +1108,9 @@ const html = `<!doctype html>
 <!-- session market — whole box rendered by renderMarket() in main.ts -->
 <div id="market"></div>
 <aside id="side"></aside>
+<div id="toasts"></div>
 <div id="speedbar" class="spd">
-  <button id="spd-pause" data-speed="0">‖</button><button id="spd-play" data-speed="1" class="on">▶</button><button id="spd-fast" data-speed="3">▶▶</button>
+  <button id="spd-pause" data-speed="0">‖</button><button id="spd-play" data-speed="1" class="on">▶</button><button id="spd-fast" data-speed="3">▶▶</button><span class="spddiv"></span><button class="spdmini" data-mult="1" title="реальное время">×1</button><button class="spdmini" data-mult="10">×10</button><button class="spdmini" data-mult="50">×50</button>
   <span class="sep" id="restart-sep" style="display:none"></span><button id="restart" title="Перезапуск — к выбору ботов" style="display:none">⟳</button>
   <span class="sep"></span><button id="tomenu" title="Выход в меню">⌂</button>
 </div>
@@ -1249,8 +1269,9 @@ const html = `<!doctype html>
       <p class="smaphint" id="setuphint">Tap a glowing world to choose your start</p>
       <div id="setupslots" class="sslots"></div>
       <div class="sspeedlabel">Скорость времени</div>
+      <p class="sspeedhint">×1 — реальное время (час пути = час жизни, мир живёт и офлайн). Для быстрой партии выбери ×10–×50.</p>
       <div id="setupspeed" class="sspeed">
-        <button class="spdchip on" type="button" data-spd="1">×1</button>
+        <button class="spdchip" type="button" data-spd="1">×1</button>
         <button class="spdchip" type="button" data-spd="2">×2</button>
         <button class="spdchip" type="button" data-spd="5">×5</button>
         <button class="spdchip" type="button" data-spd="10">×10</button>
