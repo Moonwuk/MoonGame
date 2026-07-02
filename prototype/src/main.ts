@@ -3145,14 +3145,15 @@ function render(now: number) {
     const yBase = A.y; // baseline of the bottom (widest) row
     const apexTop = yBase - rows.length * TH;
     cx.save();
-    // While in transit, point the ship pyramid along its heading ("нос по курсу"): the
-    // apex (drawn toward -y / up) rotates onto A.ang. Only the triangles turn — the cargo
-    // pips and the ship-count text below stay upright and readable.
-    if (f.movement) {
-      cx.translate(A.x, A.y);
-      cx.rotate(A.ang + Math.PI / 2);
-      cx.translate(-A.x, -A.y);
-    }
+    // Point the ship pyramid along its heading ("нос по курсу"): the apex (drawn toward
+    // -y / up) rotates onto A.ang — the travel lane while in transit, or the orbital
+    // tangent while stationed on the ring (both supplied by fleetAnchor). Previously this
+    // was gated on `f.movement`, so an orbiting fleet kept its default apex-up pose and
+    // appeared frozen pointing straight up. Only the triangles turn — the cargo pips and
+    // ship-count text below stay upright and readable.
+    cx.translate(A.x, A.y);
+    cx.rotate(A.ang + Math.PI / 2);
+    cx.translate(-A.x, -A.y);
     cx.shadowColor = col;
     cx.shadowBlur = 6 + 6 * engine;
     cx.fillStyle = rgba(col, 0.16 + 0.12 * engine);
