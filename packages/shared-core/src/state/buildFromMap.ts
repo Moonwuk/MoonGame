@@ -122,6 +122,11 @@ export interface SlotAssignment {
   /** The scientist's meta level (from the account meta; supplied at seating).
    *  Defaults to 1. */
   scientistLevel?: number;
+  /** Pre-match technology picks (C3): ids from `data.technologies` granted as already
+   *  COMPLETED at match start — their hook bonuses and unlocks apply from second one.
+   *  A start kit may grant a mid-tree node directly (prerequisites are not enforced
+   *  here — the kit designer's choice); unknown ids fail the boot (fail-secure). */
+  technologies?: string[];
 }
 
 export interface BuildFromMapOptions {
@@ -199,6 +204,9 @@ export function buildStateFromMap(map: MatchMap, data: GameData, options: BuildF
     if (a.scientist && !data.scientists[a.scientist]) {
       throw new Error(`E_UNKNOWN_SCIENTIST: ${a.scientist}`); // fail-secure at boot
     }
+    for (const t of a.technologies ?? []) {
+      if (!data.technologies[t]) throw new Error(`E_UNKNOWN_TECHNOLOGY: ${t}`); // fail-secure at boot
+    }
     players[a.playerId] = {
       id: a.playerId,
       name: a.name ?? a.playerId,
@@ -206,6 +214,7 @@ export function buildStateFromMap(map: MatchMap, data: GameData, options: BuildF
       status: 'active',
       resources: { ...slot.resources },
       ...(a.scientist ? { scientist: { id: a.scientist, level: a.scientistLevel ?? 1 } } : {}),
+      ...(a.technologies?.length ? { technologies: { completed: [...new Set(a.technologies)] } } : {}),
     };
   }
 

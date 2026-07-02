@@ -26,6 +26,13 @@ export function pairKey(a: PlayerId, b: PlayerId): string {
   return a <= b ? `${a}${PAIR_SEP}${b}` : `${b}${PAIR_SEP}${a}`;
 }
 
+/** Whether `id` is one of the two parties a pair key names. The projection uses
+ *  this to keep a diplomatic offer visible only to its participants. */
+export function pairHas(key: string, id: PlayerId): boolean {
+  const sep = key.indexOf(PAIR_SEP);
+  return key.slice(0, sep) === id || key.slice(sep + 1) === id;
+}
+
 /** The diplomatic stance between two players. A player is always `alliance` with
  *  themselves (self is maximally friendly); an unrecorded pair — or an absent
  *  `diplomacy` map — falls back to {@link DEFAULT_STANCE}. Pure query. */

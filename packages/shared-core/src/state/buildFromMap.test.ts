@@ -143,6 +143,26 @@ describe('slot-based maps — team-aware start slots (corporation-wars.md §4)',
     ).toThrow(/E_UNKNOWN_SCIENTIST/);
   });
 
+  it('grants pre-match technology picks as completed research (C3)', () => {
+    const state = buildStateFromMap(avaMap(), data, {
+      slots: {
+        // duplicates collapse — the pick lands once
+        slot_a: { playerId: 'p1', technologies: ['orbital_logistics', 'orbital_logistics'] },
+        slot_b: { playerId: 'p2' },
+      },
+    });
+    expect(state.players.p1!.technologies).toEqual({ completed: ['orbital_logistics'] });
+    expect(state.players.p2!.technologies).toBeUndefined(); // no picks → untouched
+  });
+
+  it('rejects a slot granting an unknown technology (fail-secure at boot)', () => {
+    expect(() =>
+      buildStateFromMap(avaMap(), data, {
+        slots: { slot_a: { playerId: 'p1', technologies: ['ghost_tech'] }, slot_b: { playerId: 'p2' } },
+      }),
+    ).toThrow(/E_UNKNOWN_TECHNOLOGY/);
+  });
+
   it('accepts slot ids as sector/fleet owners (validation clean)', () => {
     expect(validateMatchMap(avaMap(), data)).toEqual([]);
   });
