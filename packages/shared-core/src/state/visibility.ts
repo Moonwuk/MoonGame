@@ -9,6 +9,9 @@ import type { Fleet, GameState, PlanetId, PlayerId, ScheduledEvent } from './gam
 function scheduledOwnedBy(event: ScheduledEvent, viewerId: PlayerId, state: GameState): boolean {
   const p = (event.payload ?? {}) as Record<string, unknown>;
   if (p.owner === viewerId) return true;
+  // Per-player events tagged by `playerId` (e.g. `technology.complete`) — the
+  // viewer's own research/economy timers, which they should keep in view.
+  if (p.playerId === viewerId) return true;
   if (typeof p.planetId === 'string' && state.planets[p.planetId]?.owner === viewerId) return true;
   if (typeof p.fleetId === 'string' && state.fleets[p.fleetId]?.owner === viewerId) return true;
   return false;
@@ -104,9 +107,12 @@ function flood(state: GameState, start: PlanetId, hops: number, out: Set<PlanetI
  *  physical signal, not graph hops: a node that is close in space still shows up
  *  even if it is many jumps away (or unreachable) by the lane graph. Uses squared
  *  distance — exact and deterministic, no sqrt. */
-function withinRadius(state: GameState, originId: PlanetId, radius: number, out: Set<PlanetId>): void {
-  const origin = state.planets[originId]?.position;
-  if (!origin) return;
+function withinRadiusAt(
+  state: GameState,
+  origin: { x: number; y: number },
+  radius: number,
+  out: Set<PlanetId>,
+): void {
   const r2 = radius * radius;
   for (const planet of Object.values(state.planets)) {
     const dx = planet.position.x - origin.x;
@@ -114,11 +120,50 @@ function withinRadius(state: GameState, originId: PlanetId, radius: number, out:
     if (dx * dx + dy * dy <= r2) out.add(planet.id);
   }
 }
+function withinRadius(state: GameState, originId: PlanetId, radius: number, out: Set<PlanetId>): void {
+  const origin = state.planets[originId]?.position;
+  if (origin) withinRadiusAt(state, origin, radius, out);
+}
 
-/** The node a fleet occupies, is travelling over, or is parked nearest to. */
-function fleetNode(fleet: Fleet): PlanetId | null {
+/** A fleet's CONTINUOUS map position right now: the interpolated point along its
+ *  current leg (a moving fleet), the parked point on its lane, or its node — so a
+ *  fleet's sensor reach tracks the SHIP, not its destination. Uses `state.time`. */
+function fleetPosition(state: GameState, fleet: Fleet): { x: number; y: number } | null {
+  if (fleet.location) return state.planets[fleet.location]?.position ?? null;
+  const mv = fleet.movement;
+  if (mv) {
+    const a = state.planets[mv.from]?.position;
+    const b = state.planets[mv.to]?.position;
+    if (!a || !b) return null;
+    const span = mv.arrivesAt - mv.departedAt;
+    const progress = span > 0 ? Math.min(1, Math.max(0, (state.time - mv.departedAt) / span)) : 1;
+    const s0 = mv.startT ?? 0;
+    const t = s0 + ((mv.endT ?? 1) - s0) * progress;
+    return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+  }
+  const e = fleet.edge;
+  if (e) {
+    const a = state.planets[e.from]?.position;
+    const b = state.planets[e.to]?.position;
+    if (!a || !b) return null;
+    return { x: a.x + (b.x - a.x) * e.t, y: a.y + (b.y - a.y) * e.t };
+  }
+  return null;
+}
+
+/** The node a fleet is NEAREST to right now — its anchor for graph-hop identify and
+ *  for where its radar contact blips. Tracks the ship along its leg, not pinned to
+ *  the destination. */
+function fleetNode(state: GameState, fleet: Fleet): PlanetId | null {
   if (fleet.location) return fleet.location;
-  if (fleet.movement) return fleet.movement.to ?? fleet.movement.from;
+  const mv = fleet.movement;
+  if (mv) {
+    const span = mv.arrivesAt - mv.departedAt;
+    const progress = span > 0 ? Math.min(1, Math.max(0, (state.time - mv.departedAt) / span)) : 1;
+    const s0 = mv.startT ?? 0;
+    const t = s0 + ((mv.endT ?? 1) - s0) * progress;
+    return t <= 0.5 ? mv.from : mv.to;
+  }
   if (fleet.edge) return fleet.edge.t <= 0.5 ? fleet.edge.from : fleet.edge.to;
   return null;
 }
@@ -147,13 +192,18 @@ function coverageFor(state: GameState, viewerId: PlayerId, data: GameData): Cove
   }
   for (const fleet of Object.values(state.fleets)) {
     if (fleet.owner !== viewerId) continue;
-    const node = fleetNode(fleet);
+    const node = fleetNode(state, fleet);
     if (node === null) continue;
     flood(state, node, FLEET_IDENTIFY_HOPS, identify); // own node only — ships are near-blind
     const reach = fleetRadar(fleet, data);
     if (reach > 0) {
-      withinRadius(state, node, reach, radar); // signatures (outer)
-      withinRadius(state, node, reach * IDENTIFY_REACH_FRACTION, identify); // full reveal (inner)
+      // Radar is a physical signal from the SHIP — centre it on the fleet's actual
+      // continuous position, not the node it is heading to.
+      const pos = fleetPosition(state, fleet);
+      if (pos) {
+        withinRadiusAt(state, pos, reach, radar); // signatures (outer)
+        withinRadiusAt(state, pos, reach * IDENTIFY_REACH_FRACTION, identify); // full reveal (inner)
+      }
     }
   }
   for (const id of identify) radar.add(id); // identify implies radar
@@ -176,17 +226,28 @@ export function visibleState(state: GameState, viewerId: PlayerId, data: GameDat
   const view = deepClone(state) as VisibleState;
   const { identify, radar } = coverageFor(state, viewerId, data);
 
-  // Other players' private data: keep identity, drop treasury and research.
+  // Other players' private data: keep identity, drop treasury and research (incl. the
+  // chosen research leader — its branch focus / +slot is strategic, not public).
   for (const player of Object.values(view.players)) {
     if (player.id === viewerId) continue;
     player.resources = {};
     delete player.technologies;
+    delete player.scientist;
+  }
+  // Scoreboard: each player's live planet/fleet/unit totals aggregate territory
+  // the viewer can't see, so an enemy's `scores` line is fog-sensitive intel
+  // (its `total`/`fleets` tick reveals a build-up or a capture behind the fog).
+  // Keep only the viewer's own line — the client renders just `scores[ME]`.
+  // `status`/`winner` stay: the match's end result is public to everyone.
+  if (view.match?.scores) {
+    const own = view.match.scores[viewerId];
+    view.match.scores = own ? { [viewerId]: own } : {};
   }
   // Heroes are private: a viewer sees only their own (position + cooldowns). Temp
   // lanes stay — they are public map topology (real `links`), visible to everyone.
   if (view.heroes) {
-    for (const pid of Object.keys(view.heroes)) {
-      if (pid !== viewerId) delete view.heroes[pid];
+    for (const id of Object.keys(view.heroes)) {
+      if (view.heroes[id]?.owner !== viewerId) delete view.heroes[id];
     }
   }
 
@@ -230,7 +291,7 @@ export function visibleState(state: GameState, viewerId: PlayerId, data: GameDat
   for (const id of Object.keys(view.fleets).sort()) {
     const fleet = view.fleets[id];
     if (!fleet || fleet.owner === viewerId) continue;
-    const node = fleetNode(fleet);
+    const node = fleetNode(view, fleet);
     if (node !== null && identify.has(node)) continue; // fully identified
     if (node !== null && radar.has(node)) {
       signatures.push({ location: node, size: bucket(fleetSignature(fleet, data)) });

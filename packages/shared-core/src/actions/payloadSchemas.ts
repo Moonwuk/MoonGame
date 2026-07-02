@@ -30,7 +30,7 @@ export const actionPayloadSchemas: Record<string, z.ZodType> = {
     }),
   'fleet.stop': z.object({ fleetId: id }),
   // combat.ts
-  'fleet.orbit': z.object({ fleetId: id, orbit: z.enum(['near', 'far']) }),
+  'fleet.orbit': z.object({ fleetId: id, orbit: z.literal('near') }), // a single orbit (GDD §7.4)
   'fleet.assault': z.object({ fleetId: id }),
   'fleet.bombard': z.object({ fleetId: id, on: z.boolean() }),
   // army.ts

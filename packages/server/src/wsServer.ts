@@ -5,7 +5,7 @@ import type { PlayerId } from '@void/shared-core';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import { WebSocket, WebSocketServer } from 'ws';
 import type { MatchRoom } from './matchRoom';
-import { InMemoryMatchRegistry, type MatchRegistry } from './matchRegistry';
+import { InMemoryRoomRegistry, type RoomRegistry } from './roomRegistry';
 import type { AccountStore } from './store';
 import { verifyJoinToken, type JoinTokenVerifyConfig } from './auth';
 
@@ -13,8 +13,9 @@ export interface MultiplayerServerOptions {
   /** Single-match shortcut. Exactly one of `room` / `registry` must be given; `room`
    *  is sugar for a one-entry registry (backward-compatible with every existing caller). */
   room?: MatchRoom;
-  /** Multi-match: host N isolated matches in one process, routed by `${pathPrefix}/:id`. */
-  registry?: MatchRegistry;
+  /** Multi-match: host N isolated matches in one process, routed by `${pathPrefix}/:id`.
+   *  Any room source fits — the browser `MatchRegistry` implements this structurally. */
+  registry?: RoomRegistry;
   host?: string;
   port?: number;
   pathPrefix?: string;
@@ -81,8 +82,8 @@ export function createMultiplayerServer(
   if (!options.room && !options.registry) {
     throw new Error('createMultiplayerServer: pass either `room` or `registry`');
   }
-  const registry: MatchRegistry =
-    options.registry ?? new InMemoryMatchRegistry([options.room as MatchRoom]);
+  const registry: RoomRegistry =
+    options.registry ?? new InMemoryRoomRegistry([options.room as MatchRoom]);
   const wss = new WebSocketServer({ noServer: true, maxPayload: 32_768 });
 
   const indexHtml = options.indexHtml;

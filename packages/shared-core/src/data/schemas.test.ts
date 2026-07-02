@@ -25,6 +25,7 @@ function loadShippedBundle(): Record<string, unknown> {
     sectorKinds: readJson('sectorKinds.json'),
     planetTypes: readJson('planetTypes.json'),
     technologies: readJson('technologies.json'),
+    scientists: readJson('scientists.json'),
   };
 }
 
@@ -32,9 +33,9 @@ describe('game data schema (docs/architecture.md §2)', () => {
   it('validates the shipped data bundle', () => {
     const data = parseGameData(loadShippedBundle());
     expect(data.version).toBe('0.1.0');
-    expect(data.resources).toContain('dark_matter');
+    expect(data.resources).toContain('microelectronics');
     expect(data.units.infected_cruiser?.stats.attack).toBe(12);
-    expect(data.units.siege_lance?.stats.range).toBe(3); // artillery firing range
+    expect(data.units.siege_lance?.stats.range).toBe(300); // artillery firing radius (map units)
     expect(data.units.cruiser?.upkeep.credits).toBe(8); // daily upkeep
     // fleet ⊕ ground-army separation: domains + transport capacity.
     expect(data.units.cruiser?.domain).toBe('space'); // schema default
@@ -44,7 +45,15 @@ describe('game data schema (docs/architecture.md §2)', () => {
     expect(data.units.scout_drone?.stats.cargoCapacity).toBe(0); // default, carries nothing
     expect(data.units.orbital_aa?.stats.aaDamage).toBe(14); // anti-ship orbital AA
     expect(data.units.cruiser?.stats.aaDamage).toBe(0); // default, no AA
-    expect(data.events.reanimate_on_kill?.trigger).toBe('unit_dies_in_battle');
+    // squadrons-roadmap SQ-0.1: a carrier-borne fighter squadron + the new squadron stats.
+    expect(data.units.fighter_squadron?.traits).toContain('squadron');
+    expect(data.units.fighter_squadron?.stats.strikeRange).toBe(180); // Euclidean reach
+    expect(data.units.fighter_squadron?.stats.fuel).toBe(3); // sorties before rearm
+    expect(data.units.fighter_squadron?.stats.rearmRounds).toBe(2);
+    expect(data.units.strike_carrier?.stats.cargoCapacity).toBe(6); // hangar = shared cargo hold
+    expect(data.units.cruiser?.stats.strikeRange).toBe(0); // schema default (not a squadron)
+    // reanimate_on_kill/Necromancer cut (designer-role) → assert a surviving event instead.
+    expect(data.events.infect_planet?.trigger).toBe('planet_captured');
     expect(data.sectors.asteroid_field?.speedBonus).toBeCloseTo(-0.25);
     expect(data.sectors.asteroid_field?.hpBonus).toBeCloseTo(0.1);
     // planet types: production multiplier + ground-defense edge (data-driven).
@@ -54,6 +63,57 @@ describe('game data schema (docs/architecture.md §2)', () => {
     expect(data.technologies.orbital_logistics?.unlocks.units).toContain('dropship');
     expect(data.technologies.siege_doctrine?.prerequisites).toEqual(['orbital_logistics']);
     expect(data.technologies.industrial_automation?.effects.productionBonus).toBeCloseTo(0.1);
+  });
+
+  it('ships producers for every economy resource (ECON-3: energy + microelectronics)', () => {
+    const data = parseGameData(loadShippedBundle());
+    // Fusion reactor feeds energy, scaling across its 3 levels.
+    const power = data.buildings.power_plant;
+    expect(power).toBeDefined();
+    expect(buildingMaxLevel(power!)).toBe(3);
+    expect(buildingLevel(power!, 1).produces.energy).toBe(25);
+    expect(buildingLevel(power!, 3).produces.energy).toBe(110);
+    // The fab turns energy+metal into microelectronics (premium, gated by tech).
+    const fab = data.buildings.fabricator;
+    expect(fab).toBeDefined();
+    expect(buildingLevel(fab!, 1).produces.microelectronics).toBe(8);
+    expect(buildingLevel(fab!, 1).cost.energy).toBe(60); // consumes energy to build
+    expect(data.technologies.microelectronics_fabrication?.unlocks.buildings).toContain('fabricator');
+    // Every economy resource now has at least one building that produces it.
+    const produced = new Set<string>();
+    for (const def of Object.values(data.buildings)) {
+      for (let lvl = 1; lvl <= buildingMaxLevel(def); lvl++) {
+        for (const res of Object.keys(buildingLevel(def, lvl).produces)) produced.add(res);
+      }
+    }
+    for (const res of data.resources) {
+      if (res === 'credits') continue; // credits are a sink/trade currency, not building-produced
+      expect(produced.has(res)).toBe(true);
+    }
+  });
+
+  it('every resource referenced by content exists in the resource list (referential integrity)', () => {
+    const data = parseGameData(loadShippedBundle());
+    const known = new Set(data.resources);
+    const check = (bag: Record<string, number>, where: string) => {
+      for (const res of Object.keys(bag)) {
+        expect(known.has(res), `${where} references unknown resource "${res}"`).toBe(true);
+      }
+    };
+    for (const [id, def] of Object.entries(data.buildings)) {
+      for (let lvl = 1; lvl <= buildingMaxLevel(def); lvl++) {
+        const level = buildingLevel(def, lvl);
+        check(level.cost, `building ${id} L${lvl} cost`);
+        check(level.produces, `building ${id} L${lvl} produces`);
+      }
+    }
+    for (const [id, def] of Object.entries(data.units)) {
+      check(def.cost, `unit ${id} cost`);
+      check(def.upkeep, `unit ${id} upkeep`);
+    }
+    for (const [id, def] of Object.entries(data.technologies)) {
+      check(def.cost, `technology ${id} cost`);
+    }
   });
 
   it('builds the fortress up to level 3 (HP and defense both grow)', () => {
@@ -84,8 +144,8 @@ describe('game data schema (docs/architecture.md §2)', () => {
     const data = parseGameData(loadShippedBundle());
     // scout_drone declares no traits in JSON → schema default [].
     expect(data.units.scout_drone?.traits).toEqual([]);
-    // void_anomaly omits no chance, but reanimate uses a custom chance.
-    expect(data.events.reanimate_on_kill?.chance).toBeCloseTo(0.3);
+    // a custom `chance` is preserved, not defaulted to 1.
+    expect(data.events.void_anomaly?.chance).toBeCloseTo(0.5);
   });
 
   it('allows extra numeric unit stats (data-driven, open stat set)', () => {

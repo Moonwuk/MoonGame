@@ -11,6 +11,7 @@ import {
   type UnitStack,
 } from '../state/gameState';
 import { parseGameData, type GameData } from '../data/schemas';
+import { setStance } from '../state/diplomacy';
 import type { Action, AdvanceResult, ApplyResult, Context } from '../action/types';
 
 const data: GameData = parseGameData({
@@ -19,10 +20,24 @@ const data: GameData = parseGameData({
   units: {
     fighter: { faction: 'x', stats: { attack: 10, defense: 0, speed: 10, hp: 20 }, line: 'front' },
     shield: { faction: 'x', stats: { attack: 0, defense: 0, speed: 5, hp: 50 }, line: 'front' },
+    // Shielded hull: 50 hull + 15 ablative shield. Inert (attack/defense 0) so a
+    // scenario deals it a known, un-returned amount of damage.
+    aegis: {
+      faction: 'x',
+      stats: { attack: 0, defense: 0, speed: 5, hp: 50, shield: 15 },
+      line: 'front',
+    },
     backliner: { faction: 'x', stats: { attack: 5, defense: 0, speed: 5, hp: 10 }, line: 'rear' },
     artil: {
       faction: 'x',
       stats: { attack: 15, defense: 0, speed: 5, hp: 8 },
+      line: 'rear',
+      traits: ['artillery'],
+    },
+    // Artillery WITH a firing radius — drives the standoff-fire tests.
+    siege: {
+      faction: 'x',
+      stats: { attack: 12, defense: 0, speed: 5, hp: 20, range: 250 },
       line: 'rear',
       traits: ['artillery'],
     },
@@ -116,15 +131,6 @@ function move(fleetId: string, to: string, playerId = 'p1'): Action {
 function stop(fleetId: string, playerId = 'p1'): Action {
   return { id: `s:${playerId}:9`, type: 'fleet.stop', playerId, payload: { fleetId }, issuedAt: 0 };
 }
-function orbit(fleetId: string, o: 'near' | 'far', playerId = 'p1'): Action {
-  return {
-    id: `s:${playerId}:2`,
-    type: 'fleet.orbit',
-    playerId,
-    payload: { fleetId, orbit: o },
-    issuedAt: 0,
-  };
-}
 function assault(fleetId: string, playerId = 'p1'): Action {
   return {
     id: `s:${playerId}:3`,
@@ -133,6 +139,27 @@ function assault(fleetId: string, playerId = 'p1'): Action {
     payload: { fleetId },
     issuedAt: 0,
   };
+}
+function barrage(fleetId: string, targetId: string | null, playerId = 'p1'): Action {
+  return {
+    id: `s:${playerId}:4`,
+    type: 'fleet.barrage',
+    playerId,
+    payload: { fleetId, targetId },
+    issuedAt: 0,
+  };
+}
+function barrageMode(fleetId: string, mode: string, playerId = 'p1'): Action {
+  return {
+    id: `s:${playerId}:5`,
+    type: 'fleet.barrageMode',
+    playerId,
+    payload: { fleetId, mode },
+    issuedAt: 0,
+  };
+}
+function retreat(fleetId: string, playerId = 'p1'): Action {
+  return { id: `s:${playerId}:6`, type: 'fleet.retreat', playerId, payload: { fleetId }, issuedAt: 0 };
 }
 
 function okApply(r: ApplyResult) {
@@ -177,6 +204,32 @@ describe('combat — engagement (GDD §7)', () => {
     const r = okApply(kernel.applyAction(st, arrive('A'), ctx(0)));
     expect(Object.keys(r.state.battles)).toHaveLength(0);
     expect(types(r.events)).not.toContain('battle.started');
+  });
+
+  it('does not start a battle when the two owners are at peace (diplomacy)', () => {
+    const kernel = createKernel([combatModule, arrivalModule]);
+    const st = baseState(
+      [fleet('A', 'p1', 'P', [['fighter', 2]]), fleet('D', 'p2', 'P', [['fighter', 1]])],
+      [planet('P', null)],
+    );
+    setStance(st, 'p1', 'p2', 'peace'); // hold fire until war is declared
+    const r = okApply(kernel.applyAction(st, arrive('A'), ctx(0)));
+    expect(Object.keys(r.state.battles)).toHaveLength(0);
+    expect(r.state.fleets.A?.battleId).toBeFalsy();
+    expect(types(r.events)).not.toContain('battle.started');
+  });
+
+  it('starts the battle once that peace turns to war', () => {
+    const kernel = createKernel([combatModule, arrivalModule]);
+    const st = baseState(
+      [fleet('A', 'p1', 'P', [['fighter', 2]]), fleet('D', 'p2', 'P', [['fighter', 1]])],
+      [planet('P', null)],
+    );
+    setStance(st, 'p1', 'p2', 'peace');
+    setStance(st, 'p1', 'p2', 'war'); // declaration overrides the peace
+    const r = okApply(kernel.applyAction(st, arrive('A'), ctx(0)));
+    expect(Object.keys(r.state.battles)).toHaveLength(1);
+    expect(types(r.events)).toContain('battle.started');
   });
 });
 
@@ -256,6 +309,43 @@ describe('combat — damage lines (GDD §7.2)', () => {
   });
 });
 
+describe('shields (ablative)', () => {
+  const kernel = createKernel([combatModule, arrivalModule]);
+  // Fleet A (attacker) strikes with `attack`; fleet D (inert aegis) can't return fire,
+  // so D takes exactly the attackers' Σ count×attack. One round at HOUR.
+  function oneRound(attacker: Array<[string, number]>): GameState {
+    const st = baseState(
+      [fleet('A', 'p1', 'P', attacker), fleet('D', 'p2', 'P', [['aegis', 1]])],
+      [planet('P', null)],
+    );
+    const started = okApply(kernel.applyAction(st, arrive('A'), ctx(0)));
+    return okAdvance(kernel.advanceTo(started.state, ctx(HOUR))).state;
+  }
+
+  it('absorbs damage into the shield before the hull', () => {
+    const d = stackOf(oneRound([['fighter', 1]]).fleets.D, 'aegis'); // 10 dmg < 15 shield
+    expect(d?.shieldHp).toBe(5); // 15 − 10
+    expect(d?.hp).toBeUndefined(); // hull untouched = full
+    expect(d?.count).toBe(1);
+  });
+
+  it('spills the overflow past a depleted shield into the hull', () => {
+    const d = stackOf(oneRound([['fighter', 2]]).fleets.D, 'aegis'); // 20 dmg > 15 shield
+    expect(d?.shieldHp).toBe(0); // shield gone
+    expect(d?.hp).toBe(45); // 50 − (20 − 15)
+    expect(d?.count).toBe(1); // still alive — hull remains
+  });
+
+  it('kills a ship only when its HULL is exhausted, not its shield', () => {
+    // 60 dmg = 15 shield + 45 hull → 5 hull left, survives.
+    const lives = stackOf(oneRound([['fighter', 6]]).fleets.D, 'aegis');
+    expect(lives?.count).toBe(1);
+    expect(lives?.hp).toBe(5);
+    // 70 dmg = 15 shield + 50 hull (=65) → hull gone, destroyed (wiped fleet removed).
+    expect(stackOf(oneRound([['fighter', 7]]).fleets.D, 'aegis')).toBeUndefined();
+  });
+});
+
 describe('combat — hooks & graceful degradation', () => {
   it('lets an admiral scale damage through the combat.damage hook', () => {
     const admiral: GameModule = {
@@ -280,18 +370,18 @@ describe('combat — hooks & graceful degradation', () => {
     expect((round?.payload as { dmgToDefender: number }).dmgToDefender).toBe(20); // 10 × 2
   });
 
-  it('publishes unit.died that a necromancer-style module can react to', () => {
-    const necromancer: GameModule = {
-      id: 'necromancer',
+  it('publishes unit.died that a reactive module can respond to', () => {
+    const salvager: GameModule = {
+      id: 'salvager',
       version: '1.0.0',
       setup(api) {
         api.on('unit.died', (event, h) => {
           const { count } = event.payload as { count: number };
-          h.state.planets.P?.garrison.push({ unit: 'reanimated_drone', count });
+          h.state.planets.P?.garrison.push({ unit: 'salvage', count });
         });
       },
     };
-    const kernel = createKernel([combatModule, necromancer, arrivalModule]);
+    const kernel = createKernel([combatModule, salvager, arrivalModule]);
     const st = baseState(
       [fleet('A', 'p1', 'P', [['fighter', 3]]), fleet('D', 'p2', 'P', [['fighter', 1]])],
       [planet('P', 'p2')],
@@ -299,12 +389,10 @@ describe('combat — hooks & graceful degradation', () => {
     const started = okApply(kernel.applyAction(st, arrive('A'), ctx(0)));
     const r = okAdvance(kernel.advanceTo(started.state, ctx(2 * HOUR)));
 
-    // Combat ran to completion AND the dead unit was reanimated onto the planet.
+    // Combat ran to completion AND the reactive module spawned from the dead unit.
     expect(r.events.some((e) => e.type === 'battle.resolved')).toBe(true);
-    const reanimated = (r.state.planets.P?.garrison ?? []).find(
-      (s) => s.unit === 'reanimated_drone',
-    );
-    expect(reanimated?.count).toBe(1);
+    const salvaged = (r.state.planets.P?.garrison ?? []).find((s) => s.unit === 'salvage');
+    expect(salvaged?.count).toBe(1);
   });
 });
 
@@ -322,18 +410,19 @@ describe('combat — integration with movement', () => {
     const ordered = okApply(kernel.applyAction(st, move('A', 'P'), ctx(0)));
     const arrived = okAdvance(kernel.advanceTo(ordered.state, ctx(3 * HOUR)));
 
-    // Auto orbital battle on arrival; the victor then holds the far orbit and
+    // Auto orbital battle on arrival; the victor then holds the (single) orbit and
     // the world is NOT taken just by arriving.
     expect(arrived.state.fleets.A?.location).toBe('P');
-    expect(arrived.state.fleets.A?.orbit).toBe('far');
+    expect(arrived.state.fleets.A?.orbit).toBe('near');
     expect(arrived.state.fleets.D).toBeUndefined();
     expect(arrived.state.planets.P?.owner).toBe('p2');
     expect(types(arrived.events)).toEqual(
       expect.arrayContaining(['fleet.arrived', 'battle.started', 'battle.resolved']),
     );
 
-    // Descend and land: the world is undefended now → occupied.
-    const near = okApply(kernel.applyAction(arrived.state, orbit('A', 'near'), ctx(3 * HOUR)));
+    // Land: the world is undefended now → occupied. Arrival already parked the
+    // fleet in the single orbit, so no orbit step is needed.
+    const near = arrived;
     const taken = okApply(kernel.applyAction(near.state, assault('A'), ctx(3 * HOUR)));
     expect(taken.state.planets.P?.owner).toBe('p1');
     expect(types(taken.events)).toContain('planet.captured');
@@ -347,7 +436,7 @@ describe('combat — two-phase planet capture (GDD §7.4)', () => {
     const arrived = okApply(kernel.applyAction(st, arrive('A'), ctx(0)));
     expect(arrived.state.planets.P?.owner).toBe('p2'); // arriving alone does not capture
 
-    const near = okApply(kernel.applyAction(arrived.state, orbit('A', 'near'), ctx(0)));
+    const near = arrived; // arrival already parks the fleet in the single orbit
     const r = okApply(kernel.applyAction(near.state, assault('A'), ctx(0)));
     expect(r.state.planets.P?.owner).toBe('p1');
     expect(types(r.events)).toContain('planet.captured');
@@ -362,7 +451,7 @@ describe('combat — two-phase planet capture (GDD §7.4)', () => {
       [planet('P', 'p2', 0, 0, [['militia', 1]])], // 1 militia garrison
     );
     const arrived = okApply(kernel.applyAction(st, arrive('A'), ctx(0)));
-    const near = okApply(kernel.applyAction(arrived.state, orbit('A', 'near'), ctx(0)));
+    const near = arrived; // arrival already parks the fleet in the single orbit
     const started = okApply(kernel.applyAction(near.state, assault('A'), ctx(0)));
     const r = okAdvance(kernel.advanceTo(started.state, ctx(2 * HOUR)));
 
@@ -382,7 +471,7 @@ describe('combat — two-phase planet capture (GDD §7.4)', () => {
       [planet('P', 'p2', 0, 0, [['militia', 1]])],
     );
     const arrived = okApply(kernel.applyAction(st, arrive('A'), ctx(0)));
-    const near = okApply(kernel.applyAction(arrived.state, orbit('A', 'near'), ctx(0)));
+    const near = arrived; // arrival already parks the fleet in the single orbit
     expect(rej(kernel.applyAction(near.state, assault('A'), ctx(0)))).toBe('E_NO_TROOPS');
     expect(near.state.planets.P?.owner).toBe('p2'); // holds
   });
@@ -401,7 +490,7 @@ describe('combat — two-phase planet capture (GDD §7.4)', () => {
     expect(afterOrbital.state.fleets.D).toBeUndefined(); // orbital phase cleared the defender
     expect(afterOrbital.state.planets.P?.owner).toBe('p2'); // not captured yet
 
-    const near = okApply(kernel.applyAction(afterOrbital.state, orbit('A', 'near'), ctx(3 * HOUR)));
+    const near = afterOrbital; // the victor already holds the single orbit
     const land = okApply(kernel.applyAction(near.state, assault('A'), ctx(3 * HOUR))); // ground battle
     const final = okAdvance(kernel.advanceTo(land.state, ctx(8 * HOUR)));
 
@@ -414,20 +503,16 @@ describe('combat — two-phase planet capture (GDD §7.4)', () => {
     expect(types(allEvents)).toContain('planet.captured');
   });
 
-  it('arrives into the far orbit; assault needs the near orbit and an idle, owned fleet', () => {
+  it('arrives into the single orbit; a fleet not in orbit cannot assault', () => {
     const kernel = createKernel([combatModule, arrivalModule]);
     const st = baseState([fleet('A', 'p1', 'P', [['fighter', 1]])], [planet('P', 'p2')]);
     const arrived = okApply(kernel.applyAction(st, arrive('A'), ctx(0)));
-    expect(arrived.state.fleets.A?.orbit).toBe('far');
-    expect(rej(kernel.applyAction(arrived.state, assault('A'), ctx(0)))).toBe('E_WRONG_ORBIT');
+    expect(arrived.state.fleets.A?.orbit).toBe('near'); // the single orbit, set on arrival
 
-    const moving = fleet('B', 'p1', null, [['fighter', 1]]);
-    moving.movement = { from: 'Q', to: 'P', departedAt: 0, arrivesAt: 10 * HOUR };
-    const st2 = baseState([moving], [planet('P', 'p2')]);
-    expect(rej(kernel.applyAction(st2, orbit('B', 'near'), ctx(0)))).toBe('E_FLEET_BUSY');
-    expect(rej(kernel.applyAction(arrived.state, orbit('A', 'near', 'p2'), ctx(0)))).toBe(
-      'E_FORBIDDEN',
-    );
+    // an idle fleet that never entered orbit (orbit undefined) can't assault
+    const grounded = fleet('C', 'p1', 'P', [['fighter', 1]]); // orbit undefined
+    const st3 = baseState([grounded], [planet('P', 'p2')]);
+    expect(rej(kernel.applyAction(st3, assault('C'), ctx(0)))).toBe('E_WRONG_ORBIT');
   });
 });
 
@@ -558,5 +643,458 @@ describe('combat — lane intercept (crossing ON a lane, GDD §7.4)', () => {
     expect(Object.keys(r.state.battles)).toHaveLength(0);
     expect(r.state.fleets.F1).toBeDefined();
     expect(r.state.fleets.F2).toBeDefined();
+  });
+});
+
+describe('combat — ships keep hull damage; ground rests at full (persistent hull)', () => {
+  it('leaves a surviving fleet at its battle-end hull, so damage carries forward', () => {
+    const kernel = createKernel([combatModule, arrivalModule]);
+    // A (aggressor, attack 30) beats D (guardian) but takes return-fire (guardian defense 20).
+    const st = baseState(
+      [fleet('A', 'p1', 'P', [['aggressor', 1]]), fleet('D', 'p2', 'P', [['guardian', 1]])],
+      [planet('P', null)],
+    );
+    const started = okApply(kernel.applyAction(st, arrive('A'), ctx(0)));
+    // Mid-battle the survivor carries a partial HP pool...
+    const mid = okAdvance(kernel.advanceTo(started.state, ctx(HOUR)));
+    expect(stackOf(mid.state.fleets.A, 'aggressor')?.hp).toBe(80);
+    // ...and once the battle resolves the SHIP keeps its reduced hull — no auto-heal,
+    // so a battered fleet limps off and only mends at a repair base (construction.ts).
+    const r = okAdvance(kernel.advanceTo(started.state, ctx(6 * HOUR)));
+    expect(r.state.fleets.A?.battleId).toBe(null);
+    expect(r.state.fleets.D).toBeUndefined(); // loser destroyed
+    expect(stackOf(r.state.fleets.A, 'aggressor')?.count).toBe(1);
+    const hp = stackOf(r.state.fleets.A, 'aggressor')?.hp;
+    expect(hp).toBeDefined();
+    expect(hp!).toBeLessThan(100); // hull damage persists out of combat (was reset to full before)
+  });
+
+  it('deposits a won ground assault as a full-health garrison (clears the landing battle HP)', () => {
+    const kernel = createKernel([combatModule, arrivalModule]);
+    // Shipless lander carries aggressors; the world is defended by a guardian (defense 20),
+    // so the landing takes return-fire, wins, and is deposited as the new garrison.
+    const lander = fleet('A', 'p1', 'P', [], [['aggressor', 2]]);
+    lander.orbit = 'near';
+    const st = baseState([lander], [planet('P', 'p2', 0, 0, [['guardian', 1]])]);
+    const started = okApply(kernel.applyAction(st, assault('A'), ctx(0)));
+    const r = okAdvance(kernel.advanceTo(started.state, ctx(6 * HOUR)));
+
+    expect(r.state.planets.P?.owner).toBe('p1');
+    const g = (r.state.planets.P?.garrison ?? []).find((s) => s.unit === 'aggressor');
+    expect(g?.count).toBe(2);
+    // The resting garrison must be at full health — not the partial battle pool it ended with.
+    expect(g?.hp).toBeUndefined();
+  });
+});
+
+describe('combat — defender-win re-engages a leftover hostile fleet (bug fix)', () => {
+  it('the surviving DEFENDER auto-engages a fleet that was idling at the node', () => {
+    const kernel = createKernel([combatModule, arrivalModule]);
+    const st = baseState(
+      [
+        fleet('D', 'p2', 'P', [['aggressor', 2]]), // strong defender — wins both fights
+        fleet('A1', 'p1', 'P', [['fighter', 1]]), // arrives first, loses to D
+        fleet('A2', 'p1', 'P', [['fighter', 1]]), // can't engage while D is busy → idles
+      ],
+      [planet('P', null)],
+    );
+    const s1 = okApply(kernel.applyAction(st, arrive('A1'), ctx(0))); // A1 vs D starts
+    expect(s1.state.fleets.A1?.battleId).toBeTruthy();
+    expect(s1.state.fleets.D?.battleId).toBeTruthy();
+    const s2 = okApply(kernel.applyAction(s1.state, arrive('A2'), ctx(0)));
+    expect(s2.state.fleets.A2?.battleId).toBeFalsy(); // no free enemy → A2 idles at P
+
+    const r = okAdvance(kernel.advanceTo(s2.state, ctx(12 * HOUR)));
+    expect(r.state.fleets.A1).toBeUndefined(); // first loser gone
+    // A2 was beaten too — which can ONLY happen if the defender re-scanned the node after winning.
+    expect(r.state.fleets.A2).toBeUndefined();
+    expect(r.state.fleets.D?.battleId).toBe(null); // D won both, now free
+  });
+});
+
+describe('combat — artillery standoff fire (GDD §7.2)', () => {
+  it('shells a hostile fleet within range over a span, with no return fire or battle', () => {
+    const kernel = createKernel([combatModule]);
+    const st = baseState(
+      [fleet('ART', 'p1', 'PA', [['siege', 1]]), fleet('E', 'p2', 'PB', [['fighter', 2]])],
+      [planet('PA', null, 0, 0), planet('PB', null, 200, 0)], // 200 apart ≤ range 250
+    );
+    const r = okAdvance(kernel.advanceTo(st, ctx(HOUR))); // one hour of fire
+
+    expect(stackOf(r.state.fleets.E, 'fighter')?.hp).toBe(28); // 40 pool − 12 (attack×1h)
+    expect(stackOf(r.state.fleets.ART, 'siege')?.hp).toBeUndefined(); // pure standoff — unscathed
+    expect(Object.keys(r.state.battles)).toHaveLength(0); // never enters a battle
+    expect(types(r.events)).toContain('artillery.fired');
+  });
+
+  it('does not fire at a target beyond its radius', () => {
+    const kernel = createKernel([combatModule]);
+    const st = baseState(
+      [fleet('ART', 'p1', 'PA', [['siege', 1]]), fleet('E', 'p2', 'PB', [['fighter', 2]])],
+      [planet('PA', null, 0, 0), planet('PB', null, 300, 0)], // 300 > range 250
+    );
+    const r = okAdvance(kernel.advanceTo(st, ctx(HOUR)));
+
+    expect(stackOf(r.state.fleets.E, 'fighter')?.hp).toBeUndefined(); // untouched
+    expect(types(r.events)).not.toContain('artillery.fired');
+  });
+
+  it('holds fire on a non-hostile fleet in range (peace)', () => {
+    const kernel = createKernel([combatModule]);
+    const st = baseState(
+      [fleet('ART', 'p1', 'PA', [['siege', 1]]), fleet('E', 'p2', 'PB', [['fighter', 2]])],
+      [planet('PA', null, 0, 0), planet('PB', null, 100, 0)],
+    );
+    setStance(st, 'p1', 'p2', 'peace');
+    const r = okAdvance(kernel.advanceTo(st, ctx(HOUR)));
+
+    expect(stackOf(r.state.fleets.E, 'fighter')?.hp).toBeUndefined();
+    expect(types(r.events)).not.toContain('artillery.fired');
+  });
+
+  it('auto-targets the NEAREST hostile fleet in range', () => {
+    const kernel = createKernel([combatModule]);
+    const st = baseState(
+      [
+        fleet('ART', 'p1', 'PA', [['siege', 1]]),
+        fleet('E1', 'p2', 'P1', [['fighter', 2]]), // 100 out — nearer
+        fleet('E2', 'p3', 'P2', [['fighter', 2]]), // 200 out — farther
+      ],
+      [planet('PA', null, 0, 0), planet('P1', null, 100, 0), planet('P2', null, 200, 0)],
+    );
+    const r = okAdvance(kernel.advanceTo(st, ctx(HOUR)));
+
+    expect(stackOf(r.state.fleets.E1, 'fighter')?.hp).toBe(28); // nearest took the shot
+    expect(stackOf(r.state.fleets.E2, 'fighter')?.hp).toBeUndefined(); // farther one spared
+  });
+
+  it('fleet.barrage focuses fire on a chosen target, and clearing reverts to auto', () => {
+    const kernel = createKernel([combatModule]);
+    const make = (): GameState =>
+      baseState(
+        [
+          fleet('ART', 'p1', 'PA', [['siege', 1]]),
+          fleet('E1', 'p2', 'P1', [['fighter', 2]]),
+          fleet('E2', 'p3', 'P2', [['fighter', 2]]),
+        ],
+        [planet('PA', null, 0, 0), planet('P1', null, 100, 0), planet('P2', null, 200, 0)],
+      );
+
+    // Focus the farther E2 — it should be shelled instead of the nearer E1.
+    const aimed = okApply(kernel.applyAction(make(), barrage('ART', 'E2'), ctx(0)));
+    expect(aimed.state.fleets.ART?.barrageTarget).toBe('E2');
+    const fired = okAdvance(kernel.advanceTo(aimed.state, ctx(HOUR)));
+    expect(stackOf(fired.state.fleets.E2, 'fighter')?.hp).toBe(28);
+    expect(stackOf(fired.state.fleets.E1, 'fighter')?.hp).toBeUndefined();
+
+    // Clearing the target falls back to auto-targeting the nearest (E1).
+    const cleared = okApply(kernel.applyAction(aimed.state, barrage('ART', null), ctx(0)));
+    expect(cleared.state.fleets.ART?.barrageTarget).toBe(null);
+    const reverted = okAdvance(kernel.advanceTo(cleared.state, ctx(HOUR)));
+    expect(stackOf(reverted.state.fleets.E1, 'fighter')?.hp).toBe(28);
+    expect(stackOf(reverted.state.fleets.E2, 'fighter')?.hp).toBeUndefined();
+  });
+
+  it('drops a stale chosen target (gone / out of range) and auto-targets instead', () => {
+    const kernel = createKernel([combatModule]);
+    const st = baseState(
+      [
+        fleet('ART', 'p1', 'PA', [['siege', 1]]),
+        fleet('E1', 'p2', 'P1', [['fighter', 2]]), // in range, nearest
+        fleet('E2', 'p3', 'P2', [['fighter', 2]]), // chosen, but out of range
+      ],
+      [planet('PA', null, 0, 0), planet('P1', null, 100, 0), planet('P2', null, 400, 0)],
+    );
+    const aimed = okApply(kernel.applyAction(st, barrage('ART', 'E2'), ctx(0)));
+    const r = okAdvance(kernel.advanceTo(aimed.state, ctx(HOUR)));
+
+    expect(r.state.fleets.ART?.barrageTarget).toBe(null); // stale target cleared
+    expect(stackOf(r.state.fleets.E1, 'fighter')?.hp).toBe(28); // auto fell back to nearest
+  });
+
+  it('a fleet pinned in a melee battle does not also fire at range', () => {
+    const kernel = createKernel([combatModule]);
+    const st = baseState(
+      [fleet('ART', 'p1', 'PA', [['siege', 1]]), fleet('E', 'p2', 'PB', [['fighter', 2]])],
+      [planet('PA', null, 0, 0), planet('PB', null, 100, 0)],
+    );
+    st.fleets.ART!.battleId = 'battle:busy'; // engaged elsewhere — guns occupied
+    const r = okAdvance(kernel.advanceTo(st, ctx(HOUR)));
+
+    expect(stackOf(r.state.fleets.E, 'fighter')?.hp).toBeUndefined(); // no standoff shot
+    expect(types(r.events)).not.toContain('artillery.fired');
+  });
+
+  it('destroys a target it wipes out from range', () => {
+    const kernel = createKernel([combatModule]);
+    const st = baseState(
+      [fleet('ART', 'p1', 'PA', [['siege', 1]]), fleet('E', 'p2', 'PB', [['fighter', 1]])],
+      [planet('PA', null, 0, 0), planet('PB', null, 100, 0)],
+    );
+    const r = okAdvance(kernel.advanceTo(st, ctx(2 * HOUR))); // 24 dmg ≥ 20 hp
+
+    expect(r.state.fleets.E).toBeUndefined(); // gone
+    expect(types(r.events)).toContain('fleet.destroyed');
+  });
+
+  it('rejects bad barrage orders (fail-secure)', () => {
+    const kernel = createKernel([combatModule]);
+    const base = (): GameState =>
+      baseState(
+        [
+          fleet('ART', 'p1', 'PA', [['siege', 1]]),
+          fleet('PLAIN', 'p1', 'PA', [['fighter', 1]]), // no artillery aboard
+          fleet('E', 'p2', 'PB', [['fighter', 1]]),
+        ],
+        [planet('PA', null, 0, 0), planet('PB', null, 100, 0)],
+      );
+    expect(rej(kernel.applyAction(base(), barrage('ZZ', 'E'), ctx(0)))).toBe('E_NO_FLEET');
+    expect(rej(kernel.applyAction(base(), barrage('ART', 'E', 'p2'), ctx(0)))).toBe('E_FORBIDDEN');
+    expect(rej(kernel.applyAction(base(), barrage('PLAIN', 'E'), ctx(0)))).toBe('E_NO_ARTILLERY');
+    expect(rej(kernel.applyAction(base(), barrage('ART', 'ART'), ctx(0)))).toBe('E_BAD_PAYLOAD');
+    expect(rej(kernel.applyAction(base(), barrage('ART', 'GONE'), ctx(0)))).toBe('E_NO_TARGET');
+    // prototype-chain ids must not resolve to Object.prototype (own-key lookup)
+    expect(rej(kernel.applyAction(base(), barrage('ART', '__proto__'), ctx(0)))).toBe('E_NO_TARGET');
+    expect(rej(kernel.applyAction(base(), barrage('ART', 'constructor'), ctx(0)))).toBe('E_NO_TARGET');
+    expect(rej(kernel.applyAction(base(), barrage('__proto__', 'E'), ctx(0)))).toBe('E_NO_FLEET');
+    const peaceful = base();
+    setStance(peaceful, 'p1', 'p2', 'peace');
+    expect(rej(kernel.applyAction(peaceful, barrage('ART', 'E'), ctx(0)))).toBe('E_NOT_HOSTILE');
+  });
+
+  it('self-heals a poisoned barrageTarget instead of crashing the span (DoS guard)', () => {
+    const kernel = createKernel([combatModule]);
+    const st = baseState(
+      [fleet('ART', 'p1', 'PA', [['siege', 1]]), fleet('E', 'p2', 'PB', [['fighter', 2]])],
+      [planet('PA', null, 0, 0), planet('PB', null, 100, 0)],
+    );
+    st.fleets.ART!.barrageTarget = '__proto__'; // a value that resolves to Object.prototype
+    const r = okAdvance(kernel.advanceTo(st, ctx(HOUR))); // must NOT throw / discard the span
+
+    expect(r.state.fleets.ART?.barrageTarget).toBe(null); // poisoned target cleared
+    expect(stackOf(r.state.fleets.E, 'fighter')?.hp).toBe(28); // span ran: auto-targeted the enemy
+  });
+
+  it('does not shell a target already pinned in a melee battle', () => {
+    const kernel = createKernel([combatModule]);
+    const st = baseState(
+      [fleet('ART', 'p1', 'PA', [['siege', 1]]), fleet('E', 'p2', 'PB', [['fighter', 2]])],
+      [planet('PA', null, 0, 0), planet('PB', null, 100, 0)],
+    );
+    st.fleets.E!.battleId = 'battle:elsewhere'; // engaged — not a standoff target
+    const r = okAdvance(kernel.advanceTo(st, ctx(HOUR)));
+
+    expect(stackOf(r.state.fleets.E, 'fighter')?.hp).toBeUndefined(); // spared
+    expect(types(r.events)).not.toContain('artillery.fired');
+  });
+
+  it('a moving shooter holds fire (only stationary artillery shells)', () => {
+    const kernel = createKernel([combatModule]);
+    const st = baseState(
+      [fleet('ART', 'p1', 'PA', [['siege', 1]]), fleet('E', 'p2', 'PB', [['fighter', 2]])],
+      [planet('PA', null, 0, 0), planet('PB', null, 100, 0)],
+    );
+    st.fleets.ART!.location = null; // in transit — its position drifts across the span
+    st.fleets.ART!.movement = { from: 'PA', to: 'PB', departedAt: 0, arrivesAt: 100 * HOUR };
+    const r = okAdvance(kernel.advanceTo(st, ctx(HOUR)));
+
+    expect(stackOf(r.state.fleets.E, 'fighter')?.hp).toBeUndefined(); // not shelled
+    expect(types(r.events)).not.toContain('artillery.fired');
+  });
+
+  it('does not shell a moving target (only a stationary fleet can be hit)', () => {
+    const kernel = createKernel([combatModule]);
+    const st = baseState(
+      [fleet('ART', 'p1', 'PA', [['siege', 1]]), fleet('E', 'p2', 'PB', [['fighter', 2]])],
+      [planet('PA', null, 0, 0), planet('PB', null, 100, 0)], // PB in range
+    );
+    st.fleets.E!.location = null; // in transit through the radius — geometry not constant
+    st.fleets.E!.movement = { from: 'PB', to: 'PA', departedAt: 0, arrivesAt: 100 * HOUR };
+    const r = okAdvance(kernel.advanceTo(st, ctx(HOUR)));
+
+    expect(stackOf(r.state.fleets.E, 'fighter')?.hp).toBeUndefined(); // moving → spared
+    expect(types(r.events)).not.toContain('artillery.fired');
+  });
+
+  it('resolves mutual standoff simultaneously — both artillery fleets get their shot off', () => {
+    const kernel = createKernel([combatModule]);
+    const st = baseState(
+      // Each siege (12/h) over 2h deals 24 ≥ the other's 20 hp pool. Sequential
+      // (lower id first) would let A2 wipe B2 before B2 fires; the pre-span snapshot
+      // makes both shots land, so BOTH die.
+      [fleet('A2', 'p1', 'PA', [['siege', 1]]), fleet('B2', 'p2', 'PB', [['siege', 1]])],
+      [planet('PA', null, 0, 0), planet('PB', null, 100, 0)],
+    );
+    const r = okAdvance(kernel.advanceTo(st, ctx(2 * HOUR)));
+
+    expect(r.state.fleets.A2).toBeUndefined();
+    expect(r.state.fleets.B2).toBeUndefined();
+    expect(types(r.events).filter((t) => t === 'fleet.destroyed')).toHaveLength(2);
+  });
+});
+
+describe('combat — artillery fire modes (rules of engagement)', () => {
+  type Mode = 'passive' | 'return' | 'standard' | 'aggressive';
+  type Stance = 'war' | 'peace' | 'pact' | 'alliance';
+  function pair(mode?: Mode, stance?: Stance): GameState {
+    const st = baseState(
+      [fleet('ART', 'p1', 'PA', [['siege', 1]]), fleet('E', 'p2', 'PB', [['fighter', 2]])],
+      [planet('PA', null, 0, 0), planet('PB', null, 100, 0)],
+    );
+    if (mode) st.fleets.ART!.barrageMode = mode;
+    if (stance) setStance(st, 'p1', 'p2', stance);
+    return st;
+  }
+  const fired = (st: GameState, hours = 1): boolean => {
+    const r = okAdvance(createKernel([combatModule]).advanceTo(st, ctx(hours * HOUR)));
+    return types(r.events).includes('artillery.fired');
+  };
+
+  it('passive holds fire even with a hostile in range', () => {
+    expect(fired(pair('passive'))).toBe(false);
+  });
+
+  it('standard (default) fires at a WAR target but not a PEACE one', () => {
+    expect(fired(pair(undefined))).toBe(true); // war is the default stance
+    expect(fired(pair('standard', 'peace'))).toBe(false);
+  });
+
+  it('aggressive fires on a PEACE neighbour, but spares pact / alliance', () => {
+    expect(fired(pair('aggressive', 'peace'))).toBe(true);
+    expect(fired(pair('aggressive', 'pact'))).toBe(false);
+    expect(fired(pair('aggressive', 'alliance'))).toBe(false);
+  });
+
+  it('return holds fire until the fleet has been provoked by damage', () => {
+    expect(fired(pair('return'))).toBe(false); // not yet hit → silent
+    const provoked = pair('return');
+    provoked.fleets.ART!.barrageProvoked = true;
+    expect(fired(provoked)).toBe(true);
+  });
+
+  it('taking damage sets barrageProvoked (the return trigger)', () => {
+    // B (standard) shells A (return → holds fire this span). A is hit ⇒ provoked.
+    const st = baseState(
+      [fleet('A', 'p1', 'PA', [['siege', 1]]), fleet('B', 'p2', 'PB', [['siege', 1]])],
+      [planet('PA', null, 0, 0), planet('PB', null, 100, 0)],
+    );
+    st.fleets.A!.barrageMode = 'return';
+    const r = okAdvance(createKernel([combatModule]).advanceTo(st, ctx(HOUR)));
+    expect(r.state.fleets.A?.barrageProvoked).toBe(true); // B's shot provoked A
+    expect(r.state.fleets.B?.barrageProvoked).toBeFalsy(); // A held fire → B unhit
+  });
+
+  it('fleet.barrageMode sets the mode and rejects bad input', () => {
+    const kernel = createKernel([combatModule]);
+    const base = (): GameState =>
+      baseState(
+        [fleet('ART', 'p1', 'PA', [['siege', 1]]), fleet('PLAIN', 'p1', 'PA', [['fighter', 1]])],
+        [planet('PA', null, 0, 0)],
+      );
+    const set = okApply(kernel.applyAction(base(), barrageMode('ART', 'aggressive'), ctx(0)));
+    expect(set.state.fleets.ART?.barrageMode).toBe('aggressive');
+    expect(rej(kernel.applyAction(base(), barrageMode('ART', 'berserk'), ctx(0)))).toBe('E_BAD_PAYLOAD');
+    expect(rej(kernel.applyAction(base(), barrageMode('ZZ', 'passive'), ctx(0)))).toBe('E_NO_FLEET');
+    expect(rej(kernel.applyAction(base(), barrageMode('ART', 'passive', 'p2'), ctx(0)))).toBe('E_FORBIDDEN');
+    expect(rej(kernel.applyAction(base(), barrageMode('PLAIN', 'passive'), ctx(0)))).toBe('E_NO_ARTILLERY');
+  });
+});
+
+describe('fleet retreat', () => {
+  const kernel = createKernel([combatModule, arrivalModule]);
+  // A (p1) arrives onto D (p2) at P → an orbital battle. Returns the state + battle id.
+  function engaged(aUnits: Array<[string, number]>) {
+    const st = baseState(
+      [fleet('A', 'p1', 'P', aUnits), fleet('D', 'p2', 'P', [['fighter', 3]])],
+      [planet('P', null)],
+    );
+    const started = okApply(kernel.applyAction(st, arrive('A'), ctx(0)));
+    return { state: started.state, battleId: started.state.fleets.A?.battleId ?? undefined };
+  }
+
+  it('disengages: leaves the battle, dissolves it, frees the opponent', () => {
+    const { state, battleId } = engaged([['fighter', 2]]);
+    expect(battleId).toBeTruthy();
+    const r = okApply(kernel.applyAction(state, retreat('A'), ctx(0)));
+    expect(r.state.fleets.A?.battleId).toBe(null); // disengaged, still present
+    expect(r.state.battles[battleId!]).toBeUndefined(); // battle gone
+    expect(r.state.fleets.D?.battleId).toBe(null); // opponent freed to pursue
+    expect(r.events.map((e) => e.type)).toContain('fleet.retreated');
+  });
+
+  it('costs 40% of MAX hull and shield', () => {
+    const { state } = engaged([['aegis', 2]]); // 2×(hull 50 + shield 15) → max 100 hull, 30 shield
+    const r = okApply(kernel.applyAction(state, retreat('A'), ctx(0)));
+    const a = stackOf(r.state.fleets.A, 'aegis');
+    expect(a?.count).toBe(2);
+    expect(a?.hp).toBeCloseTo(60); // 100 − 0.4×100
+    expect(a?.shieldHp).toBeCloseTo(18); // 30 − 0.4×30
+  });
+
+  it('opens a temporary speed-boost window on the fleeing fleet', () => {
+    const { state } = engaged([['fighter', 2]]);
+    const r = okApply(kernel.applyAction(state, retreat('A'), ctx(0)));
+    expect(r.state.fleets.A?.retreatHasteUntil).toBeGreaterThan(0);
+  });
+
+  it('the boost actually speeds the next move (via the fleet.speed hook)', () => {
+    const kernelM = createKernel([combatModule, movementModule]);
+    const scene = (haste: boolean) => {
+      const P = planet('P', 'p1', 0, 0);
+      const Q = planet('Q', 'p1', 240, 0);
+      P.links = ['Q'];
+      Q.links = ['P'];
+      const f = fleet('F', 'p1', 'P', [['fighter', 1]]);
+      if (haste) f.retreatHasteUntil = 999 * HOUR;
+      return baseState([f], [P, Q]);
+    };
+    const hasted = okApply(kernelM.applyAction(scene(true), move('F', 'Q'), ctx(0)));
+    const normal = okApply(kernelM.applyAction(scene(false), move('F', 'Q'), ctx(0)));
+    const tH = hasted.state.fleets.F?.movement?.arrivesAt ?? 0;
+    const tN = normal.state.fleets.F?.movement?.arrivesAt ?? 0;
+    expect(tH).toBeGreaterThan(0);
+    expect(tN / tH).toBeCloseTo(1.5); // ×1.5 speed → travel time ÷1.5
+  });
+
+  it('a withdrawal can finish off an already-crippled fleet', () => {
+    const { state } = engaged([['fighter', 1]]);
+    const a = stackOf(state.fleets.A, 'fighter');
+    if (a) a.hp = 6; // fighter max hull 20; 6 < 0.4×20=8 → the toll wipes it
+    const r = okApply(kernel.applyAction(state, retreat('A'), ctx(0)));
+    expect(r.state.fleets.A).toBeUndefined(); // destroyed, no escape
+    expect(r.events.map((e) => e.type)).toContain('fleet.destroyed');
+  });
+
+  it('fail-secure: rejects a fleet not in a battle, a foreign fleet, and bad input', () => {
+    const { state } = engaged([['fighter', 2]]);
+    const withIdle = {
+      ...state,
+      fleets: { ...state.fleets, IDLE: fleet('IDLE', 'p1', 'P', [['fighter', 1]]) },
+    };
+    expect(rej(kernel.applyAction(withIdle, retreat('IDLE'), ctx(0)))).toBe('E_NOT_IN_BATTLE');
+    expect(rej(kernel.applyAction(state, retreat('A', 'p2'), ctx(0)))).toBe('E_FORBIDDEN');
+    expect(rej(kernel.applyAction(state, retreat('NOPE'), ctx(0)))).toBe('E_NO_FLEET');
+    expect(rej(kernel.applyAction(state, { ...retreat('A'), payload: {} }, ctx(0)))).toBe(
+      'E_BAD_PAYLOAD',
+    );
+  });
+
+  it('rejects retreat by the landing force (only the orbital ship can pull out)', () => {
+    const f = fleet('F', 'p1', 'P', [['fighter', 1]]);
+    f.battleId = 'b1';
+    const st = {
+      ...baseState([f], [planet('P', 'p2')]),
+      battles: {
+        b1: {
+          id: 'b1',
+          location: 'P',
+          phase: 'ground' as const,
+          attacker: { ref: { kind: 'landing' as const, fleetId: 'F' }, owner: 'p1' },
+          defender: { ref: { kind: 'garrison' as const, planetId: 'P' }, owner: 'p2' },
+          round: 0,
+        },
+      },
+    };
+    expect(rej(kernel.applyAction(st, retreat('F'), ctx(0)))).toBe('E_CANNOT_RETREAT');
   });
 });

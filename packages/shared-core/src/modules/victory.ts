@@ -1,14 +1,13 @@
 import type { MatchEndReason, MatchScore, PlayerId, UnitStack } from '../state/gameState';
 import type { HandlerContext, GameModule } from '../kernel/module';
 import { MS_PER_DAY } from '../util/time';
-import { isCapturable } from '../state/sectorKind';
+import { isCapturable, provinceScore } from '../state/sectorKind';
 
 const DEFAULT_DOMINATION_PERCENT = 0.6;
-/** Score for merely controlling a node — even a planetless system is worth holding. */
-const CONTROL_BASE = 10;
 /** Solo score threshold — the genre's core win race (GDD §3.2). Config may override
- *  it (e.g. a higher coalition threshold). */
-const DEFAULT_SCORE_LIMIT = 500;
+ *  it (e.g. a higher coalition threshold). Tuned so a board of ~1000 base points
+ *  (12 planets × 50 + the rest × 10) needs a clear majority to win. */
+const DEFAULT_SCORE_LIMIT = 600;
 /** Session-length cap (game days) by speed — the time-crisis backstop that forces a
  *  finale ranked by score (GDD §3.1/§3.2). Any other speed falls back to the ×1 cap. */
 const SESSION_MAX_DAYS: Record<number, number> = { 1: 100, 2: 60, 4: 30 };
@@ -42,17 +41,11 @@ function computeScores(h: HandlerContext): Record<PlayerId, MatchScore> {
       continue;
     }
     score.controlledPlanets += 1;
-    // Territory worth: base control + planet nature + sector terrain + structures
-    // (a building scales with its level, so investment — and its loss — shows).
-    let planetScore = CONTROL_BASE;
-    const planetType = planet.planetType ? data.planetTypes[planet.planetType] : undefined;
-    if (planetType) {
-      planetScore += planetType.scoreValue;
-    }
-    const sector = planet.terrain ? data.sectors[planet.terrain] : undefined;
-    if (sector) {
-      planetScore += sector.scoreValue;
-    }
+    // Territory worth = the province's kind base (a `planet` is the prize, every
+    // other kind a flat lower worth — GDD §8.1) plus its structures. A building
+    // scales with its level, so investment — and its loss — shows. Planet *type*
+    // (terran/oceanic) and terrain drive economy/defense, not score.
+    let planetScore = provinceScore(data, planet);
     for (const building of planet.buildings) {
       const def = data.buildings[building.type];
       if (def) {
@@ -176,7 +169,7 @@ function evaluateVictory(h: HandlerContext): void {
     }
   }
 
-  // Score win — the genre's core race. 500 is the solo threshold (GDD §3.2); on by
+  // Score win — the genre's core race. 600 is the solo threshold (GDD §3.2); on by
   // default so a match without explicit config still has a points victory.
   const scoreLimit = h.ctx.config?.victory?.scoreLimit ?? DEFAULT_SCORE_LIMIT;
   const scoreWinner = highestScore(

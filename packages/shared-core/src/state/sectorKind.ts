@@ -14,6 +14,7 @@ import type { Planet } from './gameState';
  *  "ANY building" signal the construction gate reads (NOT `[]`, which means "none"). */
 const DEFAULT_APPEARANCE: SectorKindAppearance = { color: '#46606e', shape: 'city' };
 const DEFAULT_KIND: SectorKindDef = {
+  scoreValue: 10,
   capturable: true,
   buildable: true,
   orbit: true,
@@ -27,6 +28,12 @@ export function sectorKindDef(data: GameData, planet: Pick<Planet, 'kind'>): Sec
   return (k !== undefined ? data.sectorKinds[k] : undefined) ?? DEFAULT_KIND;
 }
 
+/** Victory-score base for controlling this province, by its kind (a `planet` is the
+ *  prize, every other kind a flat lower worth). The territory term of `computeScore`. */
+export function provinceScore(data: GameData, planet: Pick<Planet, 'kind'>): number {
+  return sectorKindDef(data, planet).scoreValue;
+}
+
 /** Can this sector be owned (captured)? Empty space cannot. */
 export function isCapturable(data: GameData, planet: Pick<Planet, 'kind'>): boolean {
   return sectorKindDef(data, planet).capturable;
@@ -37,7 +44,7 @@ export function isBuildable(data: GameData, planet: Pick<Planet, 'kind'>): boole
   return sectorKindDef(data, planet).buildable;
 }
 
-/** Does this sector have the near/far orbital layer? */
+/** Does this sector have the orbital layer (fleets can station in orbit)? */
 export function hasOrbit(data: GameData, planet: Pick<Planet, 'kind'>): boolean {
   return sectorKindDef(data, planet).orbit;
 }

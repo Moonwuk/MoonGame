@@ -17,7 +17,9 @@ import { networkInterfaces } from 'node:os';
 import pgPkg from 'pg';
 import {
   MatchRoom,
+  MatchRegistry,
   createMultiplayerServer,
+  registerBrowserApi,
   MemoryAccountStore,
   MemoryMatchStore,
   MemoryReceiptStore,
@@ -30,7 +32,7 @@ import {
   type ReceiptStore,
   type RoomObservation,
 } from '../packages/server/src/index';
-import { newGame, kernel, data } from './src/game';
+import { newGame, kernel, data, aiOrders, HOUR, serverQueueActions, orderPop, orderHold } from './src/game';
 const { Pool } = pgPkg;
 
 // --- M0 playtest log: append every room event (join/leave/lobby/action/end) to a
@@ -48,14 +50,19 @@ const stats = {
   end: null as RoomObservation | null,
 };
 let connected = 0; // live players currently connected (drives the running-match heartbeat)
+// Seats with a live human peer. Any seat in the match NOT in here is "empty" and is
+// driven by the server-side AI (mirrors single-player: empty slots are taken by the AI).
+const humans = new Set<string>();
 const observe = (ev: RoomObservation): void => {
   appendFileSync(logFile, JSON.stringify({ t: Date.now(), ...ev }) + '\n');
   if (ev.kind === 'join') {
     stats.joins++;
     connected++;
+    humans.add(ev.playerId);
   } else if (ev.kind === 'leave') {
     stats.leaves++;
     connected = Math.max(0, connected - 1);
+    humans.delete(ev.playerId);
   } else if (ev.kind === 'end') stats.end = ev;
   else if (ev.kind === 'action') {
     stats.actions++;
@@ -234,9 +241,43 @@ function armWakeup(): void {
   const ms = ev === null ? beat : beat === null ? ev : Math.min(ev, beat);
   wakeTimer = setTimeout(onWake, Math.min(ms ?? MAX_TIMER_MS, MAX_TIMER_MS));
 }
+// Server-side AI for empty seats: every ~2 game-hours, any match seat with no live
+// human peer issues the same orders the single-player AI would (shared `aiOrders`),
+// submitted through the authoritative room. Runs only while the match is started and
+// someone is connected — otherwise the board just idles on its schedule. This is what
+// makes "empty multiplayer slots are taken by the AI" true: an unjoined seat plays.
+let aiLastAt = 0; // game-time of the last AI decision tick
+function runServerAI(): void {
+  if (!room.isStarted || connected === 0) return;
+  const now = room.state.time;
+  if (now - aiLastAt < 2 * HOUR) return;
+  aiLastAt = now;
+  for (const seat of Object.keys(room.state.players)) {
+    if (humans.has(seat)) continue; // a human commands this seat
+    for (const action of aiOrders(room.state, seat)) room.submitAction(seat, action);
+  }
+}
+
+// CC-server: drive the authoritative per-fleet command-chains server-side, so a queued
+// chain (move → assault → load → wait → …) advances even with NOBODY connected — the
+// player "sleeps and it plays". The pure decision is `serverQueueActions` (tested); this
+// just issues its orders + pop/hold through the same authoritative room, mirroring
+// runServerAI. Runs on every wake (heartbeat while connected, event wakeup while offline).
+function runServerQueues(): void {
+  if (!room.isStarted) return;
+  const now = room.state.time;
+  for (const step of serverQueueActions(room.state, now)) {
+    for (const a of step.actions) room.submitAction(step.owner, a);
+    if (step.holdUntil !== undefined) room.submitAction(step.owner, orderHold(step.owner, step.fleetId, step.holdUntil));
+    if (step.pop) room.submitAction(step.owner, orderPop(step.owner, step.fleetId));
+  }
+}
+
 function onWake(): void {
   wakeTimer = null;
   const progressed = room.tick(); // fire whatever is now due (no-op if a capped timer fired early)
+  runServerAI(); // drive any empty seat once the clock has moved
+  runServerQueues(); // CC-server: advance each fleet's authoritative order chain
   scheduleSave(); // persist the advanced world
   // Stall guard: work is due (ms 0) but the clock didn't move ⇒ a same-instant runaway.
   // Back off after a few tries instead of busy-looping the wakeup at 0ms (the room has
@@ -256,7 +297,24 @@ function onWake(): void {
   armWakeup(); // re-arm for the next event (or the remainder of a long sleep)
 }
 
-const server = createMultiplayerServer({ room, host, port, indexHtml, accountStore });
+// One match for now, exposed through the registry so the client's match browser
+// (GET /matches) lists it with its real status (map / rules / day / players).
+const registry = new MatchRegistry(accountStore);
+registry.register(room, {
+  mapId: 'nexus',
+  rules: { timeScale: TIME_SCALE },
+  createdAt: Date.now(),
+  startedAt: initialState.time,
+});
+const server = createMultiplayerServer({
+  registry,
+  host,
+  port,
+  indexHtml,
+  accountStore, // `?nick=` WS login resolves its seat here
+  // The match-browser read-model + archive intents (GET /matches, POST …/archive).
+  httpRoutes: (app) => registerBrowserApi(app, registry),
+});
 let wsUrl: string;
 try {
   wsUrl = await server.listen();

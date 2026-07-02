@@ -32,12 +32,17 @@ export const planetTypeModule: GameModule = {
       const planetId = (args as ProductionArgs).planetId;
       const type = planetId ? h.state.planets[planetId]?.planetType : undefined;
       const def = type ? h.ctx.data.planetTypes[type] : undefined;
-      if (!def || def.productionBonus === 0) {
+      if (!def) {
         return bag;
+      }
+      const flat = def.productionBonus; // applies to every resource
+      const byRes = def.productionByResource; // extra, per-resource (e.g. dead world: +30% metal)
+      if (flat === 0 && Object.keys(byRes).length === 0) {
+        return bag; // nothing to scale — pass through unchanged
       }
       const out: Record<string, number> = {};
       for (const res of Object.keys(bag)) {
-        out[res] = (bag[res] ?? 0) * (1 + def.productionBonus);
+        out[res] = (bag[res] ?? 0) * (1 + flat) * (1 + (byRes[res] ?? 0));
       }
       return out;
     });

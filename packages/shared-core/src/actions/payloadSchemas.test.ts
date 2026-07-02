@@ -32,7 +32,6 @@ describe('SV-1.2 · action payload schemas', () => {
       ['fleet.move', { fleetId: 'f1', toEdge: { from: 'a', to: 'b', t: 0.5 } }],
       ['fleet.stop', { fleetId: 'f1' }],
       ['fleet.orbit', { fleetId: 'f1', orbit: 'near' }],
-      ['fleet.orbit', { fleetId: 'f1', orbit: 'far' }],
       ['fleet.assault', { fleetId: 'f1' }],
       ['fleet.bombard', { fleetId: 'f1', on: true }],
       ['army.load', { fleetId: 'f1', unit: 'marine' }],
@@ -57,7 +56,8 @@ describe('SV-1.2 · action payload schemas', () => {
       ['fleet.move', { fleetId: 'f1' }], // neither to nor toEdge
       ['fleet.move', { fleetId: 123, to: 'p1' }], // fleetId not a string
       ['fleet.move', { fleetId: 'f1', toEdge: { from: 'a', to: 'b' } }], // toEdge missing t
-      ['fleet.orbit', { fleetId: 'f1', orbit: 'sideways' }], // bad enum
+      ['fleet.orbit', { fleetId: 'f1', orbit: 'sideways' }], // not the single 'near' orbit
+      ['fleet.orbit', { fleetId: 'f1', orbit: 'far' }], // the old far/near switch is gone
       ['fleet.orbit', { fleetId: 'f1' }], // missing orbit
       ['fleet.bombard', { fleetId: 'f1', on: 'yes' }], // on not a boolean
       ['unit.build', { planetId: 'p1', unit: 'c', count: 0 }], // count not positive

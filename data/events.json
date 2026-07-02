@@ -1,10 +1,4 @@
 {
-  "reanimate_on_kill": {
-    "trigger": "unit_dies_in_battle",
-    "effect": "spawn_unit",
-    "params": { "unit": "reanimated_drone" },
-    "chance": 0.3
-  },
   "infect_planet": {
     "trigger": "planet_captured",
     "effect": "add_trait",
@@ -14,7 +8,7 @@
   "void_anomaly": {
     "trigger": "schedule",
     "effect": "modify_resource",
-    "params": { "resource": "dark_matter", "amount": 50, "cadenceHours": 8 },
+    "params": { "resource": "energy", "amount": 50, "cadenceHours": 8 },
     "chance": 0.5
   }
 }

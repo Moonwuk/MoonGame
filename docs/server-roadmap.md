@@ -11,8 +11,23 @@
 Есть in-memory slice: `MatchRoom` (advance → authorize → applyAction → broadcast), `wsServer`
 (`createMultiplayerServer`, `/health`, upgrade-handshake `?player=`), дельта-broadcast
 (`diffState`), идемпотентные квитанции, **запускаемый `pnpm dev:server`** + headless e2e-тест
-двух игроков. **Нет:** Fastify-скелета, интеграции `@void/action-layer`, per-player очереди,
-фильтра видимости на отправке, JWT, масштаба на >1 инстанс.
+двух игроков. Также уже в коде:
+
+- **Фильтр видимости на отправке (SV-3.1):** `broadcastState` диффит каждого peer против
+  `visibleState(playerId)`, а `eventVisibleTo` фильтрует события — скрытые миры/флоты физически
+  не уходят (`matchRoom.ts`).
+- **Per-player rate-limit действий** (`E_RATE_LIMIT`, транзиентно, без квитанции — `matchRoom.ts:449-466`)
+  + **connection flood-guard** (грубый per-socket cap до парсинга — `wsServer.ts:200-220`).
+- **Мульти-матч реестр** (`matchRegistry.ts`) + браузер матчей `GET /matches` и роутинг
+  `/<prefix>/<id>` (`wsServer.ts`).
+- **v1 offline-планировщик:** `tick()` / `msUntilNextEvent()` на `MatchRoom` — драйвер пробуждения
+  двигает мир по расписанию без действия игрока.
+- **Ограниченные квитанции** (FIFO-вытеснение старейших сверх `maxReceipts`, `matchRoom.ts`).
+- **`?nick=`→seat-login** через `AccountStore` — вернувшийся ник получает свою сторону
+  (`wsServer.ts:163-172`).
+
+**Нет:** Fastify-скелета, интеграции `@void/action-layer`, per-player очереди (concurrency=1),
+JWT, масштаба на >1 инстанс.
 
 ## Зависимости
 
@@ -77,7 +92,7 @@
 **Цель:** туман как граница безопасности + экономия трафика. **Бирка F6** (= SE-6.4).
 **Подзадачи:** диффить per-peer против `visibleState(playerId)`, не полного состояния; кэш проекции на матч; тест anti-leak по байтам.
 **Готово, когда:** игрок физически не получает невидимые данные; трафик снизился.
-**Сделано:** `broadcastState` диффит per-player против `visibleState(playerId)` (скрытые миры/флоты физически не уходят), события фильтруются тем же туманом; per-player изоляция broadcast. (Кэш проекции per-match — при нужде по нагрузке, SV-3.2.)
+**Сделано:** `matchRoom.ts` — `broadcastState` диффит каждого peer против `visibleState(playerId)` (per-player baseline `lastVisible`; скрытые миры/флоты физически не уходят), `eventVisibleTo` режет невидимые события; per-player изоляция broadcast. (Кэш проекции per-match — при нужде по нагрузке, SV-3.2.)
 
 ### SV-3.2 · Interest management при масштабе `[srv]` 🔒(SV-3.1) — L
 **Подзадачи:** подписка клиента только на видимые/близкие сектора; согласовать с шардингом (`operations-roadmap.md`).

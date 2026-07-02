@@ -16,12 +16,15 @@ const data: GameData = parseGameData({
     mine: { name: 'Mine' },
     shipyard: { name: 'Shipyard' },
     radar: { name: 'Radar', radarRange: 300 },
+    metal_station: { name: 'Metal Station' },
   },
   events: {},
   sectorKinds: {
     planet: { allowedBuildings: ['mine', 'shipyard', 'radar'] },
     asteroid: { allowedBuildings: ['mine', 'radar'] },
     void_station: { allowedBuildings: ['shipyard', 'radar'] },
+    // A depleted planet only hosts the salvage metal rig — nothing else.
+    dead_world: { allowedBuildings: ['metal_station'] },
     // (no `unzoned` entry — a kind-less node hits the permissive default below)
   },
 });
@@ -48,6 +51,7 @@ function world(): GameState {
       P: node('P', 'planet'),
       A: node('A', 'asteroid'),
       V: node('V', 'void_station'),
+      D: node('D', 'dead_world'),
       legacy: node('legacy'), // no kind → permissive
     },
   };
@@ -75,5 +79,11 @@ describe('construction — per-province building roster (sectorKinds.allowedBuil
   it('a kind-less node degrades permissively (any building — legacy scenarios unaffected)', () => {
     expect(code(kernel.applyAction(st, build('legacy', 'mine'), ctx))).toBe(true);
     expect(code(kernel.applyAction(st, build('legacy', 'shipyard'), ctx))).toBe(true);
+  });
+
+  it('a dead world hosts only the salvage metal rig — and no other province type can', () => {
+    expect(code(kernel.applyAction(st, build('D', 'metal_station'), ctx))).toBe(true); // dead-world roster ✓
+    expect(code(kernel.applyAction(st, build('D', 'mine'), ctx))).toBe('E_WRONG_SECTOR'); // not on its roster
+    expect(code(kernel.applyAction(st, build('P', 'metal_station'), ctx))).toBe('E_WRONG_SECTOR'); // a planet can't
   });
 });

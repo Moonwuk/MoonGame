@@ -34,8 +34,8 @@ class MemoryPeer implements RoomPeer {
   }
 }
 
-function orbit(fleetId: string, to: 'near' | 'far', n: number): Action {
-  return { id: `t:green:${n}`, type: 'fleet.orbit', playerId: 'green', payload: { fleetId, orbit: to }, issuedAt: 0 };
+function orbit(fleetId: string, n: number): Action {
+  return { id: `t:green:${n}`, type: 'fleet.orbit', playerId: 'green', payload: { fleetId, orbit: 'near' }, issuedAt: 0 };
 }
 function raw(action: Action): string {
   return JSON.stringify({ type: 'action', action });
@@ -60,14 +60,14 @@ describe('MatchRoom · strict commit-before-broadcast', () => {
     const peer = new MemoryPeer();
     room.addPeer('green', peer);
 
-    const done = room.receive('green', peer, raw(orbit('green_1', 'near', 1)));
+    const done = room.receive('green', peer, raw(orbit('green_1', 1)));
     await flush(); // run the submit up to its persist await
 
     // The write is in flight; nothing is committed or broadcast yet.
     expect(captured).not.toBeNull();
     expect(captured!.snapshot.state.fleets.green_1?.orbit).toBe('near'); // NEW state is what we persist
     expect(captured!.receipt.seq).toBe(1);
-    expect(room.state.fleets.green_1?.orbit).toBe('far'); // still the old committed state
+    expect(room.state.fleets.green_1?.orbit).toBeUndefined(); // still the old committed state
     expect(peer.deltas()).toHaveLength(0); // NOT broadcast
     expect(room.sequence).toBe(0);
 
@@ -87,17 +87,17 @@ describe('MatchRoom · strict commit-before-broadcast', () => {
     const peer = new MemoryPeer();
     room.addPeer('green', peer);
 
-    await room.receive('green', peer, raw(orbit('green_1', 'near', 1)));
+    await room.receive('green', peer, raw(orbit('green_1', 1)));
 
     // Failed write → no commit, no broadcast, a TRANSIENT reject (no receipt).
-    expect(room.state.fleets.green_1?.orbit).toBe('far');
+    expect(room.state.fleets.green_1?.orbit).toBeUndefined();
     expect(room.sequence).toBe(0);
     expect(peer.deltas()).toHaveLength(0);
     expect(peer.rejections().some((r) => r.code === 'E_UNAVAILABLE')).toBe(true);
 
     // The store recovers; retrying the SAME action id now lands (it was never receipted).
     fail = false;
-    await room.receive('green', peer, raw(orbit('green_1', 'near', 1)));
+    await room.receive('green', peer, raw(orbit('green_1', 1)));
     expect(room.state.fleets.green_1?.orbit).toBe('near');
     expect(room.sequence).toBe(1);
   });
@@ -108,13 +108,17 @@ describe('MatchRoom · strict commit-before-broadcast', () => {
     const peer = new MemoryPeer();
     room.addPeer('green', peer);
 
-    // Fire two without awaiting between them: they must run strictly one-at-a-time.
-    const p1 = room.receive('green', peer, raw(orbit('green_1', 'near', 1)));
-    const p2 = room.receive('green', peer, raw(orbit('green_1', 'far', 2)));
+    // Fire two without awaiting between them: they must run strictly one-at-a-time,
+    // in order — `stop` only admits AFTER `move` has applied (E_FLEET_BUSY otherwise).
+    const move: Action = { id: 't:green:1', type: 'fleet.move', playerId: 'green', payload: { fleetId: 'green_1', to: 'nexus' }, issuedAt: 0 };
+    const stop: Action = { id: 't:green:2', type: 'fleet.stop', playerId: 'green', payload: { fleetId: 'green_1' }, issuedAt: 0 };
+    const p1 = room.receive('green', peer, raw(move));
+    const p2 = room.receive('green', peer, raw(stop));
     await Promise.all([p1, p2]);
 
     expect(room.sequence).toBe(2); // both applied, in order
-    expect(room.state.fleets.green_1?.orbit).toBe('far'); // action 2 (last) wins
+    expect(peer.rejections()).toHaveLength(0); // stop admitted only because move ran first
+    expect(room.state.fleets.green_1?.movement).toBeNull(); // action 2 (stop) wins: parked
   });
 
   it('replays a committed action idempotently (dedup, no re-apply)', async () => {
@@ -123,7 +127,7 @@ describe('MatchRoom · strict commit-before-broadcast', () => {
     const peer = new MemoryPeer();
     room.addPeer('green', peer);
 
-    const act = orbit('green_1', 'near', 1);
+    const act = orbit('green_1', 1);
     await room.receive('green', peer, raw(act));
     expect(room.sequence).toBe(1);
 
@@ -147,13 +151,13 @@ describe('MatchRoom · strict commit-before-broadcast', () => {
     dead = true;
 
     // Action 1: persist fails → the failure report hits the dead socket. Must not wedge.
-    await room.receive('green', badPeer, raw(orbit('green_1', 'near', 1)));
+    await room.receive('green', badPeer, raw(orbit('green_1', 1)));
 
     // The store recovers and a healthy peer connects: a later action must still land.
     fail = false;
     const peer = new MemoryPeer();
     room.addPeer('green', peer);
-    await room.receive('green', peer, raw(orbit('green_1', 'near', 2)));
+    await room.receive('green', peer, raw(orbit('green_1', 2)));
 
     expect(room.state.fleets.green_1?.orbit).toBe('near'); // queue alive
     expect(room.sequence).toBe(1); // action 1 failed (no receipt), action 2 applied
@@ -186,7 +190,7 @@ describe('MatchRoom · strict commit-before-broadcast', () => {
 
     // 2) Jump the clock far past the arrival and hold a second committed submit mid-persist.
     clock = 10_000_000;
-    const p2 = room.receive('green', green, raw(orbit('green_1', 'near', 2)));
+    const p2 = room.receive('green', green, raw(orbit('green_1', 2)));
     await flush(); // computeAdvance (arrival fires on a COPY) + applyAction, now awaiting persist
 
     // The committed frontier is UNCHANGED: the arrival isn't durable yet, so it isn't exposed.
@@ -206,7 +210,7 @@ describe('MatchRoom · strict commit-before-broadcast', () => {
     // No persist ⇒ receive routes to the sync submitAction (the current behavior every
     // existing test relies on). submitAction stays fully synchronous.
     const room: MatchRoom = createDevMatch(data, { now: () => 1000, time: 1000 });
-    const res = room.submitAction('green', orbit('green_1', 'near', 1));
+    const res = room.submitAction('green', orbit('green_1', 1));
     expect(res.ok).toBe(true);
     expect(room.state.fleets.green_1?.orbit).toBe('near'); // committed synchronously
     expect(room.sequence).toBe(1);

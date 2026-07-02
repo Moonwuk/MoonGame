@@ -1,9 +1,8 @@
-import { timeScaleOf } from '../action/types';
+import { hoursToMs } from '../action/types';
 import type { GameModule, HandlerContext } from '../kernel/module';
 import type { Fleet, GameState, Hero, PlanetId, PlayerId, TempLane } from '../state/gameState';
 import { distance } from '../state/route';
 import { isCapturable } from '../state/sectorKind';
-import { MS_PER_HOUR } from '../util/time';
 
 /**
  * Hero — a per-player entity (one hero each) with a position on the map and ability
@@ -42,7 +41,9 @@ const HERO_COMBAT_BONUS = 0.05;
 const HERO_RESPAWN_HOURS = 24;
 
 function heroOf(state: GameState, playerId: PlayerId): Hero | undefined {
-  return state.heroes?.[playerId];
+  // Instance-keyed roster: find the player's hero by owner. (One per player today;
+  // the find is order-stable on insertion order, deterministic.)
+  return Object.values(state.heroes ?? {}).find((hero) => hero.owner === playerId);
 }
 
 /** Does this fleet currently carry a living hero unit? (drives the fleet aura). */
@@ -56,7 +57,7 @@ function fleetHasHero(h: HandlerContext, fleetId: string): boolean {
 
 /** ms from now after `hours`, compressed by the match timeScale like every duration. */
 function after(h: HandlerContext, hours: number): number {
-  return h.ctx.now + (hours * MS_PER_HOUR) / timeScaleOf(h.ctx);
+  return h.ctx.now + hoursToMs(h.ctx, hours);
 }
 
 function onCooldown(hero: Hero, ability: string, now: number): boolean {
@@ -157,7 +158,11 @@ export const heroModule: GameModule = {
       if (!hero) return h.reject('E_NO_HERO');
       const planet = h.state.planets[planetId];
       if (!planet) return h.reject('E_NO_PLANET');
-      if (!isCapturable(h.ctx.data, planet)) return h.reject('E_NOT_DESTRUCTIBLE'); // empty space / already dead
+      // Destructible = a real, ownable world that isn't already a dead world. Empty
+      // space (uncapturable) and a previously-annihilated dead world are both rejected.
+      if (!isCapturable(h.ctx.data, planet) || planet.kind === DEAD_KIND) {
+        return h.reject('E_NOT_DESTRUCTIBLE');
+      }
       const origin = h.state.planets[hero.location];
       if (!origin) return h.reject('E_NO_PLANET');
       if (distance(origin.position, planet.position) > ANNIHILATE_RANGE) {
@@ -166,11 +171,11 @@ export const heroModule: GameModule = {
       if (onCooldown(hero, 'annihilate', h.ctx.now)) return h.reject('E_COOLDOWN');
 
       const previousOwner = planet.owner;
-      planet.owner = null;
+      planet.owner = null; // neutral again — a depleted world anyone can re-claim
       planet.buildings = [];
       planet.garrison = [];
-      planet.kind = DEAD_KIND; // uncapturable / unbuildable
-      planet.planetType = DEAD_PLANET_TYPE; // no production / defense / score
+      planet.kind = DEAD_KIND; // capturable + buildable, but worth only the flat 10
+      planet.planetType = DEAD_PLANET_TYPE; // no defense edge, but rich in metal (+30%)
       hero.cooldowns = hero.cooldowns ?? {};
       hero.cooldowns.annihilate = after(h, ANNIHILATE_COOLDOWN_HOURS);
       h.emit('planet.destroyed', { planetId, by: action.playerId, from: previousOwner });
@@ -209,31 +214,48 @@ export const heroModule: GameModule = {
     });
 
     // The hero went down (its ship was destroyed) → start the respawn timer once.
-    // `unit.died` carries the owner (the fleet may already be gone by drain time).
+    // `unit.died` carries the dead stack's `fleetId` and `owner` (the fleet may already
+    // be gone by drain time). Attribute the death to the hero commanding THAT ship, so
+    // it's right when several heroes share an owner; fall back to the owner's hero when
+    // the ship link isn't recorded (older saves / a hero set up without a fleetId).
     api.on('unit.died', (event, h) => {
-      const { unit, owner } = (event.payload ?? {}) as { unit?: string; owner?: string };
-      if (unit !== HERO_UNIT || typeof owner !== 'string') return;
-      const hero = heroOf(h.state, owner);
+      const { unit, fleetId, owner } = (event.payload ?? {}) as {
+        unit?: string;
+        fleetId?: string;
+        owner?: string;
+      };
+      if (unit !== HERO_UNIT) return;
+      const hero =
+        (typeof fleetId === 'string'
+          ? Object.values(h.state.heroes ?? {}).find((x) => x.fleetId === fleetId)
+          : undefined) ?? (typeof owner === 'string' ? heroOf(h.state, owner) : undefined);
       if (!hero || hero.alive === false) return; // no hero entity, or already respawning
       hero.alive = false;
+      delete hero.fleetId; // its ship is gone
       const respawnAt = after(h, HERO_RESPAWN_HOURS);
       hero.cooldowns = hero.cooldowns ?? {};
       hero.cooldowns.respawn = respawnAt;
-      h.schedule(respawnAt, 'hero.respawn', { owner });
-      h.emit('hero.died', { owner, at: h.ctx.now });
+      h.schedule(respawnAt, 'hero.respawn', { heroId: hero.id });
+      h.emit('hero.died', { owner: hero.owner, heroId: hero.id, at: h.ctx.now });
     });
 
-    // Respawn: the hero re-forms as a fresh one-ship fleet at its home world (or any
-    // world the player still holds). With no territory left it stays dead.
+    // Respawn: the hero re-forms as a fresh one-ship fleet at its capital (`home`) if
+    // still held, else its last node, else any world the player holds. Homeless ⇒ stays
+    // dead (likely being eliminated).
     api.on('hero.respawn', (event, h) => {
-      const { owner } = (event.payload ?? {}) as { owner?: string };
-      if (typeof owner !== 'string') return;
-      const hero = heroOf(h.state, owner);
+      const { heroId } = (event.payload ?? {}) as { heroId?: string };
+      if (typeof heroId !== 'string') return;
+      const hero = h.state.heroes?.[heroId];
       if (!hero || hero.alive) return;
-      const home = h.state.planets[hero.location]?.owner === owner ? hero.location : undefined;
+      const owner = hero.owner;
+      const owned = (id: PlanetId | undefined): id is PlanetId =>
+        id !== undefined && h.state.planets[id]?.owner === owner;
       const at =
-        home ?? Object.keys(h.state.planets).sort().find((id) => h.state.planets[id]?.owner === owner);
-      if (at === undefined) return; // homeless → remains dead (likely being eliminated)
+        [hero.home, hero.location].find(owned) ??
+        Object.keys(h.state.planets)
+          .sort()
+          .find((id) => h.state.planets[id]?.owner === owner);
+      if (at === undefined) return;
       const seq = (h.state.heroSeq ?? 0) + 1;
       h.state.heroSeq = seq;
       const fleetId = `hero:${owner}:${seq}`;
@@ -244,12 +266,13 @@ export const heroModule: GameModule = {
         movement: null,
         units: [{ unit: HERO_UNIT, count: 1 }],
         traits: [],
-        orbit: 'far',
+        orbit: 'near',
       };
       h.state.fleets[fleetId] = newFleet;
       hero.alive = true;
       hero.location = at;
-      h.emit('hero.respawned', { owner, fleetId, at });
+      hero.fleetId = fleetId;
+      h.emit('hero.respawned', { owner, heroId, fleetId, at });
     });
   },
 };

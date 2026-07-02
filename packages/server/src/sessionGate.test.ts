@@ -77,7 +77,7 @@ describe('SV-1.1-live-A · server-minted sessionId gates the wire', () => {
       const msg = await next;
 
       expect(msg).toMatchObject({ type: 'rejection', code: 'E_FORBIDDEN' });
-      expect(room.state.fleets.green_1?.orbit).toBe('far'); // unchanged
+      expect(room.state.fleets.green_1?.orbit).toBeUndefined(); // unchanged (not yet in orbit)
     } finally {
       ws.close();
       await server.close();

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createDevMatch, loadShippedData } from './scenario';
 import { createMultiplayerServer } from './wsServer';
-import type { MatchRegistry } from './matchRegistry';
+import type { RoomRegistry } from './roomRegistry';
 
 // SV-0.1 — the Fastify HTTP app. /health is a contentless liveness probe (must not leak
 // match ids/seq — audit F-13, which the old node:http /health did). /ready is a separate
@@ -71,7 +71,7 @@ describe('SV-0.1 · HTTP app', () => {
     const held = new Promise<void>((r) => {
       release = r;
     });
-    const registry: MatchRegistry = {
+    const registry: RoomRegistry = {
       get: (id) => (id === room.id ? room : undefined),
       ids: () => [room.id],
       shutdown: () => held,

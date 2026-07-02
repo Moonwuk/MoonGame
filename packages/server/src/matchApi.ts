@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import type { MatchRegistry } from './matchRegistry';
 
 /**
  * SV-2.4 — the minimal match create/join HTTP API, so players can actually enter a match
@@ -56,4 +57,29 @@ export function registerMatchApi(app: FastifyInstance, deps: MatchApiDeps): void
     if ('error' in result) void reply.code(STATUS[result.error]);
     return result;
   });
+}
+
+/**
+ * The match-browser read-model + archive intents (docs/main-menu.md §2), served beside
+ * the create/join API. A server projection — the client only reads it (A10/fog rule);
+ * archive is fail-secure per-player (participants only, stable codes).
+ */
+export function registerBrowserApi(app: FastifyInstance, registry: MatchRegistry): void {
+  // The three tabs (available/active/archived) for one viewer (`?nick=`).
+  app.get('/matches', (request: FastifyRequest) => {
+    const nick = (request.query as { nick?: string }).nick ?? null;
+    return registry.list(nick);
+  });
+
+  const archive = async (request: FastifyRequest, reply: FastifyReply): Promise<unknown> => {
+    const { id, intent } = request.params as { id: string; intent: string };
+    const nick = (request.query as { nick?: string }).nick ?? '';
+    const result =
+      intent === 'archive'
+        ? await registry.archive(id, nick)
+        : await registry.unarchive(id, nick);
+    if (!result.ok) void reply.code(result.code === 'E_NO_MATCH' ? 404 : 403);
+    return result;
+  };
+  app.post('/matches/:id/:intent(archive|unarchive)', archive);
 }

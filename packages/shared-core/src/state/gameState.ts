@@ -30,6 +30,10 @@ export interface UnitStack {
   /** Remaining HP pool of this stack during a battle (≤ count × def.hp).
    *  Undefined outside combat = full health. */
   hp?: number;
+  /** Remaining ablative shield pool of this stack (≤ count × def.shield). Absorbs
+   *  damage before `hp`; a ship still dies only when its HULL (`hp`) hits 0.
+   *  Undefined = full shield (shields-roadmap SH-0.1). */
+  shieldHp?: number;
 }
 
 /** A constructed building on a planet. Buildings are leveled (1..maxLevel) and
@@ -49,6 +53,11 @@ export interface Player {
   /** The player's treasury — production accrues here, upkeep/costs drain it. */
   resources: ResourceBag;
   technologies?: PlayerTechnologyState;
+  /** Chosen research leader (scientist), snapshotted at match start and immutable
+   *  (GDD §2/§5.2): `id` into `data.scientists`, `level` from the account meta
+   *  (supplied at match creation). Drives the `research.slots` hook and
+   *  `has_scientist` unlock gates. Absent = no leader chosen. */
+  scientist?: { id: string; level: number };
 }
 
 export interface ActiveResearch {
@@ -59,8 +68,20 @@ export interface ActiveResearch {
 
 export interface PlayerTechnologyState {
   completed: TechnologyId[];
-  active?: ActiveResearch;
+  /** Research currently in progress — one entry per occupied slot (base 2,
+   *  raisable to a max of 3 via the `research.slots` hook). Absent/empty = idle labs. */
+  active?: ActiveResearch[];
 }
+
+/** Diplomatic stance between two players (symmetric). Richer than the combat
+ *  `hostile|ally|neutral` relation the `diplomacy` capability projects (D2):
+ *  - `war`      → hostile (fleets engage, worlds can be assaulted)
+ *  - `peace`    → neutral (no auto-combat; the plain "we are not fighting" state)
+ *  - `pact`     → neutral (a non-aggression pact — like peace, but a declared,
+ *                 breakable agreement rather than mere absence of war)
+ *  - `alliance` → ally (shared side; an ally's world can't be attacked)
+ *  The stance→relation mapping itself lives in the future `diplomacyModule`. */
+export type DiplomaticStance = 'war' | 'peace' | 'pact' | 'alliance';
 
 export type MatchStatus = 'ongoing' | 'ended';
 export type MatchEndReason = 'domination' | 'elimination' | 'score' | 'timeout';
@@ -161,17 +182,46 @@ export interface Fleet {
   /** Ground army carried as cargo (the landing force of a ground assault),
    *  bounded by the ships' transport capacity — see the `army` module. */
   landing?: UnitStack[];
-  /** Which orbit the fleet holds while stationed at a planet (GDD §7.4):
-   *  `far` is a safe standoff (set on arrival); `near` lets it bombard / land
-   *  but exposes it to the planet's orbital AA. Undefined while in transit. */
-  orbit?: 'near' | 'far';
-  /** Whether the fleet is actively bombarding the planet below (near orbit,
-   *  hostile). Damages structures and freezes the owner's production. */
+  /** Set (`'near'`) while the fleet is stationed in orbit at a planet; undefined while
+   *  in transit. There is a SINGLE orbit (GDD §7.4): a stationed fleet can bombard /
+   *  land and is exposed to the planet's orbital AA — no separate "far" safe standoff.
+   *  (The value stays `'near'` for back-compat; the old near/far split was collapsed.) */
+  orbit?: 'near';
+  /** Whether the fleet is actively bombarding the planet below (in orbit over a
+   *  hostile world). Damages structures and freezes the owner's production. */
   bombarding?: boolean;
   traits: TraitId[];
   /** Id of the battle this fleet is engaged in; absent/null when free to move. */
   battleId?: BattleId | null;
+  /** Player-chosen focus-fire target for this fleet's artillery standoff fire
+   *  (`fleet.barrage`). Absent/null = auto-target the nearest hostile in range.
+   *  Cleared automatically once the target dies or drifts out of range. */
+  barrageTarget?: FleetId | null;
+  /** Rules of engagement for this fleet's artillery standoff fire. Absent = the
+   *  `standard` default. See `BarrageMode`. */
+  barrageMode?: BarrageMode;
+  /** Set true once this fleet has taken combat damage — the trigger for the
+   *  `return` ("ответный") fire mode, which holds fire until first hit. */
+  barrageProvoked?: boolean;
+  /** World-time (ms) this fleet last took damage. Gates shield regen: shields stay
+   *  down for a delay after the last hit (shields-roadmap SH-1.1). Absent = never hit. */
+  lastDamagedAt?: number;
+  /** World-time (ms) until which this fleet's travel speed is boosted after a
+   *  `fleet.retreat` — the disengaging fleet flees faster while `now < it`. Absent =
+   *  no boost. Read by the `fleet.speed` hook. */
+  retreatHasteUntil?: number;
 }
+
+/**
+ * Rules of engagement for a fleet's artillery standoff fire (an aggression
+ * ladder):
+ *  - `passive`    — never auto-fire (hold fire).
+ *  - `return`     — fire only after the fleet has taken damage (`barrageProvoked`).
+ *  - `standard`   — fire at the nearest enemy at WAR (the default).
+ *  - `aggressive` — fire at the nearest fleet that is NOT a pact/alliance partner
+ *                   (i.e. `war` OR `peace`), opening fire on non-allied neighbours.
+ */
+export type BarrageMode = 'passive' | 'return' | 'standard' | 'aggressive';
 
 /**
  * A combatant in a battle — the ship units of a fleet (orbital), the landing
@@ -248,6 +298,13 @@ export interface GameState {
   version: GameVersion;
   /** Current simulation time (ms), server-authoritative. */
   time: number;
+  /** World time (ms) at which the match began — the anchor for "session day N"
+   *  gates (e.g. a technology's `dayGate`). Set to the initial `time` at creation;
+   *  the match's elapsed day count is `(time − startedAt) / MS_PER_DAY`, the same
+   *  formula the match browser shows (matchRegistry). Optional: matches persisted
+   *  before this field existed read as 0 — correct for the 0-based world clock, and
+   *  all such nodes are ungated (dayGate 0) anyway. */
+  startedAt?: number;
   /** Terminal match state and the latest scoreboard. */
   match: MatchState;
   rng: RngState;
@@ -265,8 +322,10 @@ export interface GameState {
    *  each seen world. Maintained by `visibilityModule`; read by `visibleState`
    *  to show greyed "last known" worlds. Internal — stripped from projections. */
   fog?: Record<PlayerId, FogMemory>;
-  /** Per-player hero entity (one per player), maintained by `heroModule`. */
-  heroes?: Record<PlayerId, Hero>;
+  /** Hero instances, keyed by instance id (`Hero.id`), maintained by `heroModule`.
+   *  A player may field several — filter by `owner`. (Key was the `PlayerId` in the
+   *  one-hero-per-player skeleton; instance-keyed since the roster migration.) */
+  heroes?: Record<string, Hero>;
   /** Active temporary lanes opened by hero abilities — real graph edges for their
    *  duration (added to `Planet.links`), with a per-owner speed bonus. */
   tempLanes?: TempLane[];
@@ -275,11 +334,39 @@ export interface GameState {
   topology?: number;
   /** Monotonic counter handing each temp lane its id. */
   heroSeq?: number;
+  /** Pairwise diplomatic stances between players, keyed by a canonical unordered
+   *  pair key (`pairKey`). Symmetric and PUBLIC (not fog-gated — who is at war /
+   *  allied is open knowledge). A pair with no entry defaults to `DEFAULT_STANCE`
+   *  (war), so absence = the engine's no-diplomacy FFA. Read/written through
+   *  `state/diplomacy.ts`; the future `diplomacyModule` (D2) owns the actions and
+   *  exposes it as the `diplomacy` capability that drives combat's `isHostile`. */
+  diplomacy?: Record<string, DiplomaticStance>;
+  /** Session resource market: a public per-match order book maintained by
+   *  `marketModule`. Sellers escrow a resource at a price; buyers pay money. */
+  market?: MarketOrder[];
+  /** Monotonic counter handing each market order its id. */
+  marketSeq?: number;
+}
+
+/** A standing sell order on the session market: the `seller` has escrowed `amount`
+ *  of `resource` (deducted from their treasury) and offers it at `price` money per
+ *  unit. Filled (partially) by `market.buy`; the remainder is refunded on cancel. */
+export interface MarketOrder {
+  id: string;
+  seller: PlayerId;
+  resource: ResourceId;
+  /** Remaining units on offer (escrowed). */
+  amount: number;
+  /** Price per unit, in money (`credits`). */
+  price: number;
 }
 
 /** A player's hero — a per-player entity with a position on the map and ability
  *  cooldowns. Acts from its current node (`location`); relocates with `hero.move`. */
 export interface Hero {
+  /** Instance id — the key under which this hero lives in `GameState.heroes`.
+   *  Identifies the hero across events (death/respawn) independently of `owner`. */
+  id: string;
   owner: PlayerId;
   /** Display name — the player's projection of themselves (their nick). Cosmetic;
    *  set at match seed. Absent ⇒ the client falls back to the owner's name. */
@@ -292,6 +379,18 @@ export interface Hero {
   cooldowns: Record<string, number>;
   /** False while the hero is dead and awaiting respawn; absent/true ⇒ alive. */
   alive?: boolean;
+  /** Rarity tier (e.g. `common` | `rare` | `legendary` | `main`). Drives the client
+   *  roster's module-slot count; the core carries it but does not enforce slots. */
+  grade?: string;
+  /** Equipped ability "modules", one per grade slot (`null` = empty). Carried with the
+   *  hero; per-module gating/effects are a later brick. */
+  abilities?: (string | null)[];
+  /** Respawn anchor — the owner's capital. A slain hero re-forms here if still held;
+   *  absent ⇒ the core falls back to the hero's last node, then any owned world. */
+  home?: PlanetId;
+  /** The fleet this hero commands (its ship) while deployed; cleared on death. Lets a
+   *  death be attributed to the right hero when several share an owner. */
+  fleetId?: FleetId;
 }
 
 /** A temporary lane a hero opened: a real, routable graph edge between two nodes for
@@ -335,6 +434,7 @@ export function createInitialState(params: {
   return {
     version: params.version,
     time: params.time ?? 0,
+    startedAt: params.time ?? 0,
     match: { status: 'ongoing', winner: null, scores: {} },
     rng: seedRng(params.seed),
     players: {},

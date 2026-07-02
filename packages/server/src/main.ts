@@ -5,13 +5,13 @@ import { startClockDriver, type ClockDriverHandle } from './clockDriver';
 import { createStores, snapshotOf } from './persistence';
 import { configFromEnv } from './serverConfig';
 import { registerMatchApi, type MatchApiDeps } from './matchApi';
-import { LazyMatchRegistry, type LoadedMatch } from './matchRegistry';
+import { LazyRoomRegistry, type LoadedMatch } from './roomRegistry';
 import type { RoomObservation } from './matchRoom';
 import type { MatchSnapshot, StoredReceipt } from './store';
 
 /**
  * Runnable server entrypoint on the real simulation core. Hosts MANY matches from one
- * process via a LazyMatchRegistry (SV-4.0): each match is loaded from the store on the
+ * process via a LazyRoomRegistry (SV-4.0): each match is loaded from the store on the
  * first connection and hibernated (persisted + evicted) when idle, so live memory scales
  * with concurrently-active matches, not the total ever created. A per-match clock driver
  * advances the world 24/7 while live; the registry wakes a hibernated match for its due
@@ -97,7 +97,7 @@ if (!(await stores.store.load('dev'))) {
   await stores.store.save(snapshotOf(seed));
 }
 
-const registry = new LazyMatchRegistry({ load: loadMatch });
+const registry = new LazyRoomRegistry({ load: loadMatch });
 
 // The dev-grade match create/join API (SV-2.4): a nick claims a seat first-come (shared
 // with the ?nick= WS login) and gets a short-lived join token for the authenticated

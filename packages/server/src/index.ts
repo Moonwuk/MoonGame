@@ -12,12 +12,27 @@ export {
   type MultiplayerServerOptions,
 } from './wsServer';
 export {
-  InMemoryMatchRegistry,
-  LazyMatchRegistry,
-  type LazyMatchRegistryOptions,
-  type LoadedMatch,
-  type MatchRegistry,
+  MatchRegistry,
+  type MatchMeta,
+  type MatchSummary,
+  type MatchLists,
+  type ArchiveResult,
 } from './matchRegistry';
+export {
+  InMemoryRoomRegistry,
+  LazyRoomRegistry,
+  type LazyRoomRegistryOptions,
+  type LoadedMatch,
+  type RoomRegistry,
+} from './roomRegistry';
+export {
+  registerBrowserApi,
+  registerMatchApi,
+  type CreatedMatch,
+  type JoinFailure,
+  type JoinResult,
+  type MatchApiDeps,
+} from './matchApi';
 export { InMemoryEphemeralStore, type EphemeralStore } from './ephemeral';
 export {
   hmacSecret,

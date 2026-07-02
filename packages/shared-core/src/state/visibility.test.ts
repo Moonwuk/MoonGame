@@ -37,7 +37,14 @@ function scenario(): GameState {
   const at = (x: number): Partial<Planet> => ({ position: { x, y: 0 } });
   return {
     ...base,
-    players: { p1: player('p1'), p2: { ...player('p2'), technologies: { completed: ['warp'] } } },
+    players: {
+      p1: player('p1'),
+      p2: {
+        ...player('p2'),
+        technologies: { completed: ['warp'] },
+        scientist: { id: 'void_admiral', level: 3 },
+      },
+    },
     planets: {
       A: planet('A', 'p1', ['B'], { ...at(0), buildings: [{ type: 'radar', level: 1, hp: 10 }] }),
       B: planet('B', null, ['A', 'C'], { ...at(100), garrison: [{ unit: 'cruiser', count: 1 }] }),
@@ -108,7 +115,22 @@ describe('visibleState (fog of war as a security boundary)', () => {
     expect(view.players.p1?.resources).toEqual({ metal: 99 }); // own treasury intact
     expect(view.players.p2?.resources).toEqual({}); // enemy treasury hidden
     expect(view.players.p2?.technologies).toBeUndefined();
+    expect(view.players.p2?.scientist).toBeUndefined(); // enemy research leader hidden
     expect(view.players.p2?.name).toBe('p2'); // identity kept (scoreboard)
+  });
+
+  it('fogs the scoreboard: viewer keeps only their own score line, enemy totals hidden', () => {
+    const state = scenario();
+    state.match.scores = {
+      p1: { controlledPlanets: 1, fleets: 1, units: 1, total: 60 },
+      p2: { controlledPlanets: 4, fleets: 3, units: 9, total: 240 }, // fogged intel
+    };
+    const view = visibleState(state, 'p1', data);
+    expect(view.match.scores.p1).toEqual({ controlledPlanets: 1, fleets: 1, units: 1, total: 60 });
+    expect(view.match.scores.p2).toBeUndefined(); // enemy's planet/fleet/unit tally not leaked
+    // status/winner stay public; the source state is untouched (purity)
+    expect(view.match.status).toBe('ongoing');
+    expect(state.match.scores.p2?.total).toBe(240);
   });
 
   it('keeps the viewer own pending schedule, drops enemy timers (no future-intent leak)', () => {
@@ -121,6 +143,17 @@ describe('visibleState (fog of war as a security boundary)', () => {
       { id: 'none', at: 5, type: 'fleet.arrived', payload: {}, seq: 2 },
     ];
     expect(visibleState(state, 'p1', data).scheduled.map((e) => e.id)).toEqual(['own']);
+  });
+
+  it('keeps the viewer own playerId-tagged timers (e.g. research), drops the foe’s', () => {
+    const state = scenario();
+    // `technology.complete` is tagged by playerId, not owner/planetId/fleetId — the
+    // viewer must still see their OWN research ETA, and never the enemy's.
+    state.scheduled = [
+      { id: 'my-research', at: 30, type: 'technology.complete', payload: { playerId: 'p1', technology: 't' }, seq: 0 },
+      { id: 'foe-research', at: 40, type: 'technology.complete', payload: { playerId: 'p2', technology: 't' }, seq: 1 },
+    ];
+    expect(visibleState(state, 'p1', data).scheduled.map((e) => e.id)).toEqual(['my-research']);
   });
 
   it('serialized view never contains hidden data (the real anti-leak test)', () => {
@@ -211,5 +244,44 @@ describe('visibleState — province kind is fog-gated (no appearance leak)', () 
     );
     expect(view.planets.E?.kind).toBe('empty'); // remembered, not the live void_station
     expect(view.remembered).toContain('E');
+  });
+});
+
+describe('radar tracks the moving ship, not its destination', () => {
+  const at = (x: number): Partial<Planet> => ({ position: { x, y: 0 } });
+
+  it('a moving fleet projects radar from its current position', () => {
+    const base = createInitialState({ seed: 'radar-move', version: { data: '0.1.0', manifest: '1' } });
+    const state: GameState = {
+      ...base,
+      time: 100, // 10% along a 0→1000 leg ⇒ the ship is at x=100
+      players: { p1: player('p1'), p2: player('p2') },
+      planets: {
+        ST: planet('ST', 'p1', ['EN'], at(0)),
+        EN: planet('EN', null, ['ST'], at(1000)),
+        P1: planet('P1', null, [], at(300)), // 200 from the ship (x=100) — in radar (350)
+        P2: planet('P2', null, [], at(900)), // 800 from the ship — only near the DESTINATION
+      },
+      fleets: {
+        mover: {
+          id: 'mover',
+          owner: 'p1',
+          location: null,
+          movement: { from: 'ST', to: 'EN', departedAt: 0, arrivesAt: 1000 },
+          units: [{ unit: 'scout', count: 1 }], // scout: radarRange 350
+          traits: [],
+        },
+        'foe-near': fleet('foe-near', 'p2', 'P1', [['cruiser', 1]]),
+        'foe-far': fleet('foe-far', 'p2', 'P2', [['cruiser', 1]]),
+      },
+    };
+
+    const view = visibleState(state, 'p1', data);
+    // Centred on the SHIP (x=100): the enemy near the start (P1) is sensed; the one
+    // near the destination (P2) is not. The old bug anchored radar at `movement.to`
+    // and would have reversed this.
+    expect(view.signatures.some((s) => s.location === 'P1')).toBe(true);
+    expect(view.signatures.some((s) => s.location === 'P2')).toBe(false);
+    expect(view.fleets['foe-far']).toBeUndefined(); // out of the ship's radar → removed
   });
 });

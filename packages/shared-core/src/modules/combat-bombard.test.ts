@@ -23,6 +23,14 @@ const data: GameData = parseGameData({
       line: 'front',
     },
     drone: { faction: 'x', stats: { attack: 2, defense: 1, speed: 5, hp: 5 }, line: 'front' },
+    // A launched carrier wing (squadrons-roadmap SQ-1.2) — a real space fleet with the
+    // `squadron` trait; orbital AA is its designed counter, same as any near-orbit hull.
+    strike_wing: {
+      faction: 'x',
+      stats: { attack: 14, defense: 3, speed: 14, hp: 10 },
+      traits: ['squadron'],
+      line: 'front',
+    },
   },
   factions: {},
   buildings: {},
@@ -41,7 +49,7 @@ function fleet(
   owner: string,
   location: string | null,
   list: Array<[string, number]>,
-  opts: { orbit?: 'near' | 'far'; bombarding?: boolean } = {},
+  opts: { orbit?: 'near'; bombarding?: boolean } = {},
 ): Fleet {
   return {
     id,
@@ -98,16 +106,6 @@ function bombard(fleetId: string, on: boolean, playerId = 'p1'): Action {
     issuedAt: 0,
   };
 }
-function orbitAction(fleetId: string, o: 'near' | 'far', playerId = 'p1'): Action {
-  return {
-    id: `s:${playerId}:2`,
-    type: 'fleet.orbit',
-    playerId,
-    payload: { fleetId, orbit: o },
-    issuedAt: 0,
-  };
-}
-
 const arrivalModule: GameModule = {
   id: 'test-arrival',
   version: '1.0.0',
@@ -142,10 +140,10 @@ describe('combat — fleet.bombard action', () => {
     expect(r.state.fleets.F?.bombarding).toBe(false);
   });
 
-  it('rejects bombardment from the far orbit', () => {
+  it('rejects bombardment when the fleet is not stationed in orbit', () => {
     const kernel = createKernel([combatModule]);
     const st = baseState(
-      [fleet('F', 'p1', 'P', [['fighter', 2]], { orbit: 'far' })],
+      [fleet('F', 'p1', 'P', [['fighter', 2]], { orbit: undefined })],
       [planet('P', 'p2')],
     );
     expect(rej(kernel.applyAction(st, bombard('F', true), ctx(0)))).toBe('E_WRONG_ORBIT');
@@ -209,14 +207,6 @@ describe('combat — fleet.bombard action', () => {
     expect(rej(kernel.applyAction(st, bad, ctx(0)))).toBe('E_BAD_PAYLOAD');
   });
 
-  it('moving to far orbit auto-disables bombardment', () => {
-    const kernel = createKernel([combatModule]);
-    const f = fleet('F', 'p1', 'P', [['fighter', 2]], { orbit: 'near', bombarding: true });
-    const st = baseState([f], [planet('P', 'p2')]);
-    const r = okApply(kernel.applyAction(st, orbitAction('F', 'far'), ctx(0)));
-    expect(r.state.fleets.F?.bombarding).toBe(false);
-    expect(r.state.fleets.F?.orbit).toBe('far');
-  });
 });
 
 describe('combat — orbital AA (time.advanced)', () => {
@@ -227,6 +217,17 @@ describe('combat — orbital AA (time.advanced)', () => {
     // aa_gun has aaDamage: 30 per hour; fighter has 20 hp → killed in 1h.
     const r = okAdvance(kernel.advanceTo(st, ctx(HOUR)));
     expect(r.state.fleets.F).toBeUndefined(); // destroyed by AA
+    expect(r.events.some((e) => e.type === 'fleet.destroyed')).toBe(true);
+  });
+
+  it('counters a launched squadron on the near orbit with AA (SQ-1.2)', () => {
+    const kernel = createKernel([combatModule]);
+    // A `squadron`-trait wing is just a fleet at the near orbit → AA hits it like any
+    // hull. 2× strike_wing (10 hp each) under aa_gun's 30/h is wiped inside 1h.
+    const f = fleet('W', 'p1', 'P', [['strike_wing', 2]], { orbit: 'near' });
+    const st = baseState([f], [planet('P', 'p2', [['aa_gun', 1]])]);
+    const r = okAdvance(kernel.advanceTo(st, ctx(HOUR)));
+    expect(r.state.fleets.W).toBeUndefined(); // the wing is destroyed by orbital AA
     expect(r.events.some((e) => e.type === 'fleet.destroyed')).toBe(true);
   });
 
@@ -248,6 +249,15 @@ describe('combat — orbital AA (time.advanced)', () => {
     expect(ev).toBeDefined();
     // bombard power = 2 fighters × attack 10 × 0.5 fraction × 1h = 10
     expect((ev?.payload as { power: number }).power).toBe(10);
+  });
+
+  it('does NOT bombard once at peace (stance gate, not just an owner mismatch)', () => {
+    const kernel = createKernel([combatModule]);
+    // A fleet mid-bombardment (flag set) over p2's world, but the pair is now at peace.
+    const f = fleet('F', 'p1', 'P', [['fighter', 2]], { orbit: 'near', bombarding: true });
+    const st: GameState = { ...baseState([f], [planet('P', 'p2')]), diplomacy: { 'p1|p2': 'peace' } };
+    const r = okAdvance(kernel.advanceTo(st, ctx(HOUR)));
+    expect(r.events.some((e) => e.type === 'planet.bombarded')).toBe(false);
   });
 
   it('AA scales with time span', () => {
@@ -294,30 +304,6 @@ describe('combat — stalemate safety valve', () => {
     expect((resolved?.payload as { winner: string | null }).winner).toBeNull();
     // After the stalemate resolves, the attacker re-engages (both survived) so a
     // new battle starts — we only assert the stalemate resolution event fired.
-  });
-});
-
-describe('combat — fleet.orbit action validations', () => {
-  it('rejects with E_BAD_PAYLOAD for invalid orbit value', () => {
-    const kernel = createKernel([combatModule]);
-    const st = baseState(
-      [fleet('F', 'p1', 'P', [['fighter', 1]], { orbit: 'far' })],
-      [planet('P', 'p2')],
-    );
-    const bad: Action = {
-      id: 's:p1:1',
-      type: 'fleet.orbit',
-      playerId: 'p1',
-      payload: { fleetId: 'F', orbit: 'low' },
-      issuedAt: 0,
-    };
-    expect(rej(kernel.applyAction(st, bad, ctx(0)))).toBe('E_BAD_PAYLOAD');
-  });
-
-  it('rejects with E_NO_FLEET for a non-existent fleet', () => {
-    const kernel = createKernel([combatModule]);
-    const st = baseState([], [planet('P', 'p2')]);
-    expect(rej(kernel.applyAction(st, orbitAction('ZZZ', 'near'), ctx(0)))).toBe('E_NO_FLEET');
   });
 });
 

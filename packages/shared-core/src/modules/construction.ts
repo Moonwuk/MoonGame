@@ -5,9 +5,9 @@ import { buildingLevel, buildingMaxLevel } from '../data/schemas';
 import { isBombarded } from '../state/orbit';
 import { allowedBuildings } from '../state/sectorKind';
 import type { Action } from '../action/types';
-import { timeScaleOf } from '../action/types';
-import { canAfford, payCost } from '../util/treasury';
+import { hoursToMs, timeScaleOf } from '../action/types';
 import { MS_PER_HOUR } from '../util/time';
+import { canAfford, payCost } from '../util/treasury';
 import { addUnits } from '../util/stacks';
 
 /** Share of the ground assault's round damage that also wears down the planet's
@@ -51,8 +51,22 @@ function scaleCost(cost: ResourceBag, count: number): ResourceBag {
 /** Schedules a build to finish after `hours`, scaled by the match timeScale
  *  exactly like every other real-time duration (GDD §3.1). */
 function scheduleCompletion(h: HandlerContext, hours: number, payload: CompletePayload): void {
-  const ms = (hours * MS_PER_HOUR) / timeScaleOf(h.ctx);
-  h.schedule(h.ctx.now + ms, 'construction.complete', payload);
+  h.schedule(h.ctx.now + hoursToMs(h.ctx, hours), 'construction.complete', payload);
+}
+
+/** True if a `construction.complete` of this `kind` for this planet+building is already
+ *  in flight — the "already queued?" guard shared verbatim by build and upgrade. */
+function isQueued(
+  h: HandlerContext,
+  kind: CompletePayload['kind'],
+  planetId: string,
+  building: string,
+): boolean {
+  return h.state.scheduled.some((e) => {
+    if (e.type !== 'construction.complete') return false;
+    const p = e.payload as CompletePayload;
+    return p.kind === kind && p.planetId === planetId && p.building === building;
+  });
 }
 
 function requireUnlocked(
@@ -184,15 +198,7 @@ export const constructionModule: GameModule = {
       if (planet.buildings.some((b) => b.type === payload.building)) {
         return h.reject('E_ALREADY_BUILT'); // one of each type; grow it with building.upgrade
       }
-      if (
-        h.state.scheduled.some(
-          (e) =>
-            e.type === 'construction.complete' &&
-            (e.payload as CompletePayload).kind === 'building' &&
-            (e.payload as CompletePayload).planetId === planet.id &&
-            (e.payload as CompletePayload).building === payload.building,
-        )
-      ) {
+      if (isQueued(h, 'building', planet.id, payload.building)) {
         return h.reject('E_ALREADY_QUEUED');
       }
       const level1 = buildingLevel(def, 1);
@@ -235,15 +241,7 @@ export const constructionModule: GameModule = {
       if (nextLevel > buildingMaxLevel(def)) {
         return h.reject('E_MAX_LEVEL');
       }
-      if (
-        h.state.scheduled.some(
-          (e) =>
-            e.type === 'construction.complete' &&
-            (e.payload as CompletePayload).kind === 'upgrade' &&
-            (e.payload as CompletePayload).planetId === planet.id &&
-            (e.payload as CompletePayload).building === instance.type,
-        )
-      ) {
+      if (isQueued(h, 'upgrade', planet.id, instance.type)) {
         return h.reject('E_ALREADY_QUEUED');
       }
       const next = buildingLevel(def, nextLevel);
@@ -318,7 +316,7 @@ export const constructionModule: GameModule = {
       if (isBombarded(h.state, planet.id)) {
         // production frozen under bombardment → re-defer until it lifts (scale the
         // retry by timeScale like every other duration, so a fast match isn't stuck)
-        h.schedule(h.ctx.now + MS_PER_HOUR / timeScaleOf(h.ctx), 'construction.complete', p);
+        h.schedule(h.ctx.now + hoursToMs(h.ctx, 1), 'construction.complete', p);
         return;
       }
       if (p.kind === 'building' && typeof p.building === 'string') {
@@ -431,8 +429,17 @@ export const constructionModule: GameModule = {
       const hours = (span / MS_PER_HOUR) * scale;
       const data = h.ctx.data;
 
+      // Planets hosting a live ground assault — their garrisons don't regen
+      // mid-battle (mirrors the ship `battleId` guard in the fleet loop below;
+      // a planet carries no in-battle flag, so derive it from `state.battles`).
+      const groundBattleLocations = new Set<string>();
+      for (const b of Object.values(h.state.battles)) {
+        if (b.phase === 'ground') groundBattleLocations.add(b.location);
+      }
+
       for (const planet of Object.values(h.state.planets)) {
         if (!planet || planet.owner === null || planet.garrison.length === 0) continue;
+        if (groundBattleLocations.has(planet.id)) continue;
         let totalHealRate = 0;
         for (const b of planet.buildings) {
           if (b.hp <= 0) continue; // destroyed building contributes nothing
@@ -449,6 +456,60 @@ export const constructionModule: GameModule = {
           const healed = totalHealRate * hours * fullHp;
           const newHp = Math.min(fullHp, currentHp + healed);
           stack.hp = newHp >= fullHp ? undefined : newHp;
+        }
+      }
+
+      // Ship regen/repair — the two pools mend differently (shields-roadmap §1):
+      //   • SHIELD (`shieldHp`) recharges for free anywhere out of combat, once past a
+      //     short delay after the last hit (`lastDamagedAt`) — the async "hit-and-run"
+      //     loop; paused entirely while in a battle.
+      //   • HULL (`hp`) never regens for free: it repairs ONLY while the fleet is
+      //     stationed over a FRIENDLY world (base rate + a repair building's healRate),
+      //     and hull damage drags the fleet's speed (route.ts) until mended.
+      const SHIELD_REGEN = 0.06; // shield-pool fraction restored per game-hour
+      const SHIELD_REGEN_DELAY = MS_PER_HOUR; // shields stay down this long after a hit
+      for (const fleet of Object.values(h.state.fleets)) {
+        if (!fleet || fleet.battleId) continue; // a fleet in combat regenerates nothing
+
+        // Hull mends only while parked over a FRIENDLY world with a repair yard
+        // (shipyard/spaceport `shipRepair`, shields-roadmap SH-2.1) — no yard, no mend.
+        let hullRate = 0;
+        const planet = fleet.location ? h.state.planets[fleet.location] : undefined;
+        if (planet && !fleet.movement && planet.owner === fleet.owner) {
+          for (const b of planet.buildings) {
+            if (b.hp <= 0) continue;
+            const def = data.buildings[b.type];
+            if (def) hullRate += buildingLevel(def, b.level).shipRepair;
+          }
+        }
+
+        // Shields regen only over the part of this span past the post-damage delay.
+        const shieldFrom = Math.max(from, (fleet.lastDamagedAt ?? -Infinity) + SHIELD_REGEN_DELAY);
+        const shieldHours = shieldFrom < to ? ((to - shieldFrom) / MS_PER_HOUR) * scale : 0;
+
+        for (const stack of fleet.units) {
+          const unitDef = data.units[stack.unit];
+          if (!unitDef) continue;
+
+          // Hull (`hp`): friendly-port repair only, never a free regen.
+          if (stack.hp !== undefined) {
+            const fullHp = stack.count * unitDef.stats.hp;
+            if (fullHp <= 0 || stack.hp >= fullHp) stack.hp = undefined;
+            else if (hullRate > 0) {
+              const cur = Math.min(fullHp, stack.hp + hullRate * hours * fullHp);
+              stack.hp = cur >= fullHp ? undefined : cur;
+            }
+          }
+
+          // Shield (`shieldHp`): free out-of-combat regen once past the damage delay.
+          if (stack.shieldHp !== undefined) {
+            const fullShield = stack.count * unitDef.stats.shield;
+            if (fullShield <= 0 || stack.shieldHp >= fullShield) stack.shieldHp = undefined;
+            else if (shieldHours > 0) {
+              const cur = Math.min(fullShield, stack.shieldHp + SHIELD_REGEN * shieldHours * fullShield);
+              stack.shieldHp = cur >= fullShield ? undefined : cur;
+            }
+          }
         }
       }
     });

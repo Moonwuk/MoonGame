@@ -15,9 +15,16 @@ not by rewriting logic.
 Monorepo (pnpm workspaces):
 
 - `packages/shared-core` — the deterministic, data-driven simulation. Built first,
-  in isolation (no server, no DB, no network). This is where the work currently is.
-- `packages/server` — authoritative server (Stage 3). Placeholder.
-- `packages/client` — React Native client (Stage 4). Placeholder.
+  in isolation (no server, no DB, no network) — the foundation the rest builds on.
+- `packages/server` — authoritative server (Stage 3, in progress). Working in-memory WS slice:
+  `MatchRoom` (advance → applyAction → **per-player fog deltas**), durable+bounded+rate-limited
+  receipts, a Postgres match/receipt store, a **v1 offline scheduler**, and a **multi-match registry**
+  with a match-browser read-model (`GET /matches`) — all wired in the prototype host,
+  `prototype/netserver.ts`. Not yet: auth/JWT, `@void/action-layer` wiring.
+- `packages/client` — client (Stage 4). Direction is a **PWA-first web client** (TWA Android +
+  Capacitor iOS), not React Native — see `docs/cross-platform-roadmap.md` (decision record). Holds
+  the `MultiplayerClient` transport adapter plus a framework-agnostic welcome-screen view-model +
+  theme tokens (`welcomeScreen.ts`/`theme.ts`); the rendered app shell is still a placeholder.
 - `data/` — game content as JSON. `docs/` — design docs.
 
 ## Commands
@@ -31,7 +38,12 @@ pnpm run typecheck    # tsc --noEmit, all packages
 pnpm run format       # Prettier --write
 ```
 
-CI runs lint + typecheck + test + `pnpm audit --audit-level=high`.
+Run the gate locally before committing — `pnpm run check` = lint + typecheck + test
+(+ `pnpm audit --audit-level=high`). CI mirrors it on every push: `.github/workflows/security.yml`
+runs `pnpm run check` + `pnpm audit` alongside a diverse scanner set (Semgrep, CodeQL, Trivy, OSV,
+Gitleaks, TruffleHog, zizmor), and `.github/workflows/android.yml` builds the Android APK. The
+security pipeline is **informational / non-blocking** — no branch protection makes the gate a
+required check yet, so a red push can still merge; keep it green yourself.
 
 ## Non-negotiable invariants
 

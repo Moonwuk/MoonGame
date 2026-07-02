@@ -7,10 +7,13 @@ import {
   createInitialState,
   createKernel,
   economyModule,
+  factionModule,
   heroModule,
+  marketModule,
   movementModule,
   parseGameData,
   planetTypeModule,
+  scientistModule,
   sectorModule,
   stationModule,
   technologyModule,
@@ -21,6 +24,7 @@ import {
   type GameModule,
   type GameState,
   type Hero,
+  type MatchConfig,
   type Planet,
   type Player,
 } from '@void/shared-core';
@@ -52,6 +56,7 @@ export function loadShippedData(): GameData {
     sectorKinds: readJson('sectorKinds.json'),
     planetTypes: readJson('planetTypes.json'),
     technologies: readJson('technologies.json'),
+    scientists: readJson('scientists.json'),
   });
 }
 
@@ -68,13 +73,16 @@ export const DEV_MODULES: GameModule[] = [
   constructionModule,
   stationModule, // deploy void stations on empty nodes (then build radar/fort there)
   technologyModule,
+  scientistModule, // per-player research leader: +slot via research.slots + has_scientist gates
+  factionModule, // always-on faction passives (production / speed / combat) via hooks
+  marketModule, // session resource bourse: list / buy (15% burn) / cancel
   armyModule,
   victoryModule,
   visibilityModule, // fog-of-war memory (variant B): records last-seen worlds
 ];
 
 export interface DevMatchOptions {
-  /** Match id (default `'dev'`). Set it when hosting several matches from one process. */
+  /** Match/room id (default `'dev'`). Distinct ids let a registry hold many matches. */
   id?: string;
   /** Server clock. Defaults (in `MatchRoom`) to wall time; pinned in tests. */
   now?: () => number;
@@ -85,6 +93,9 @@ export interface DevMatchOptions {
    *  one idle fleet, all joined through a neutral `nexus` — lets soak/load tests
    *  seat N players against one room. */
   players?: string[];
+  /** Ruleset for this match (time scale + victory conditions). Defaults in `MatchRoom`
+   *  to `{ timeScale: 1 }`; the match browser shows it as the match's "rules". */
+  config?: MatchConfig;
   /** Observation stream (persistence / metrics wiring — see `main.ts` F8). */
   observe?: (event: RoomObservation) => void;
   /** Resume from a durable snapshot instead of seeding a fresh match: the passed
@@ -141,12 +152,12 @@ function fleet(id: string, owner: string, location: string, units: Array<[string
     location,
     movement: null,
     units: units.map(([unit, count]) => ({ unit, count })),
-    orbit: 'far',
+    // freshly placed → not yet in orbit (a single orbit; entered via fleet.orbit / arrival)
     traits: [],
   };
 }
 
-const DEV_FACTIONS = ['vanguard', 'swarm', 'necromancer'];
+const DEV_FACTIONS = ['vanguard', 'swarm'];
 
 /** N homeworlds joined through a neutral junction, one idle fleet each (default
  *  two players: green/red). Homeworlds are spread evenly around the nexus. */
@@ -187,7 +198,8 @@ export function createDevMatch(data: GameData, options: DevMatchOptions = {}): M
       ['cruiser', 2],
       ['scout_drone', 1],
     ]);
-    heroes[id] = { owner: id, location: `home_${id}`, cooldowns: {} };
+    const heroId = `hero:${id}`;
+    heroes[heroId] = { id: heroId, owner: id, location: `home_${id}`, cooldowns: {} };
   });
   const state: GameState = options.initialState ?? { ...base, players, planets, fleets, heroes };
   return new MatchRoom({
@@ -203,5 +215,6 @@ export function createDevMatch(data: GameData, options: DevMatchOptions = {}): M
     gate: options.gate,
     actionRateMax: options.actionRateMax,
     actionRateWindowMs: options.actionRateWindowMs,
+    ...(options.config ? { config: options.config } : {}),
   });
 }

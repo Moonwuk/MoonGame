@@ -26,30 +26,30 @@ let r = advance(s, 5 * HOUR);
 s = r.state;
 note(s.time, `p1 treasury after 5h: ${treas(s, 'p1')}`);
 
-// 2) order a refinery + a cruiser at HOME
-r = order(s, buildBuilding('p1', 'HOME', 'refinery'), s.time);
+// 2) order a refinery + a cruiser at C1R1
+r = order(s, buildBuilding('p1', 'C1R1', 'refinery'), s.time);
 s = r.state;
-note(s.time, `build refinery @HOME → ${r.error ?? 'ok'}`);
-r = order(s, buildUnit('p1', 'HOME', 'cruiser', 1), s.time);
+note(s.time, `build refinery @C1R1 → ${r.error ?? 'ok'}`);
+r = order(s, buildUnit('p1', 'C1R1', 'cruiser', 1), s.time);
 s = r.state;
-note(s.time, `build cruiser @HOME → ${r.error ?? 'ok'}`);
+note(s.time, `build cruiser @C1R1 → ${r.error ?? 'ok'}`);
 
-// 3) send the blue fleet to take neutral FORGE
-r = order(s, moveFleet('p1', 'blue-1', 'FORGE'), s.time);
+// 3) send the blue fleet to take a nearby neutral world
+r = order(s, moveFleet('p1', 'p1-1', 'C3R3'), s.time);
 s = r.state;
-note(s.time, `move blue-1 → FORGE → ${r.error ?? 'ok'}`);
+note(s.time, `move blue-1 → C3R3 → ${r.error ?? 'ok'}`);
 
-// 4) run the world forward; when blue-1 is idle over hostile FORGE, descend & land
+// 4) run the world forward; when blue-1 is idle over a hostile world, descend & land
 for (let t = s.time + HOUR; t <= 40 * HOUR; t += HOUR) {
   r = advance(s, t);
   s = r.state;
-  const b = s.fleets['blue-1'];
+  const b = s.fleets['p1-1'];
   if (b && b.location && !b.movement && !b.battleId && s.planets[b.location]?.owner !== 'p1') {
     if (b.orbit !== 'near') {
-      r = order(s, orbitFleet('p1', 'blue-1', 'near'), s.time);
+      r = order(s, orbitFleet('p1', 'p1-1', 'near'), s.time);
       if (r.state) s = r.state;
     }
-    r = order(s, assaultFleet('p1', 'blue-1'), s.time);
+    r = order(s, assaultFleet('p1', 'p1-1'), s.time);
     if (!r.error) s = r.state;
   }
   for (const e of r.events) {
@@ -66,14 +66,14 @@ for (let t = s.time + HOUR; t <= 40 * HOUR; t += HOUR) {
   }
 }
 
-note(s.time, `FORGE owner = ${s.planets.FORGE?.owner}`);
-note(s.time, `HOME garrison = ${JSON.stringify(s.planets.HOME?.garrison)}`);
+note(s.time, `C3R3 owner = ${s.planets.C3R3?.owner}`);
+note(s.time, `C1R1 garrison = ${JSON.stringify(s.planets.C1R1?.garrison)}`);
 
-// 5) launch a fresh fleet from HOME's garrison
-r = order(s, launchFleet('p1', 'HOME'), s.time);
+// 5) launch a fresh fleet from C1R1's garrison
+r = order(s, launchFleet('p1', 'C1R1'), s.time);
 s = r.state;
-note(s.time, `launch fleet @HOME → ${r.error ?? 'ok'}`);
-const launched = Object.values(s.fleets).find((f) => f.owner === 'p1' && f.location === 'HOME');
+note(s.time, `launch fleet @C1R1 → ${r.error ?? 'ok'}`);
+const launched = Object.values(s.fleets).find((f) => f.owner === 'p1' && f.location === 'C1R1');
 note(s.time, `launched fleet units = ${JSON.stringify(launched?.units)} landing=${JSON.stringify(launched?.landing)}`);
 
 note(s.time, `final p1 treasury: ${treas(s, 'p1')}`);

@@ -19,6 +19,7 @@ export {
   type FogMemory,
   type Hero,
   type TempLane,
+  type MarketOrder,
   type Fleet,
   type FleetMovement,
   type FleetEdge,
@@ -44,11 +45,13 @@ export {
   type MatchEndReason,
   type MatchScore,
   type MatchState,
+  type DiplomaticStance,
 } from './state/gameState';
 export {
   buildStateFromMap,
   validateMatchMap,
   type BuildFromMapOptions,
+  type SlotAssignment,
 } from './state/buildFromMap';
 export {
   sectorKindDef,
@@ -58,6 +61,7 @@ export {
   allowedBuildings,
   sectorAppearance,
 } from './state/sectorKind';
+export { factionStart, type FactionStart } from './state/factionStart';
 export {
   planRoute,
   routeDistance,
@@ -65,6 +69,7 @@ export {
   estimateTravelHours,
 } from './state/route';
 export { isBombarded, bombardedPlanets } from './state/orbit';
+export { DEFAULT_STANCE, pairKey, getStance, setStance } from './state/diplomacy';
 export { diffState, applyDelta, type StateDelta } from './state/delta';
 export { visibleState, identifiedNodes } from './state/visibility';
 export type { VisibleState, SignatureContact, SignatureSize } from './state/visibility';
@@ -104,10 +109,14 @@ export type {
 export {
   MatchMapSchema,
   MapSectorSchema,
+  MapSlotSchema,
+  SpawnPolicySchema,
   parseMatchMap,
   safeParseMatchMap,
   type MatchMap,
   type MapSector,
+  type MapSlot,
+  type SpawnPolicy,
 } from './data/mapSchema';
 
 // Data-driven content
@@ -126,6 +135,8 @@ export {
   SectorKindDefSchema,
   PlanetTypeDefSchema,
   TechnologyDefSchema,
+  TechnologyConditionSchema,
+  ScientistDefSchema,
   TechnologyEffectsSchema,
   TechnologyUnlocksSchema,
   ResourceBagSchema,
@@ -133,6 +144,9 @@ export {
   type GameData,
   type UnitDef,
   type FactionDef,
+  type FactionLoadout,
+  type FactionPassives,
+  type StartingStack,
   type BuildingDef,
   type BuildingLevel,
   type EffectRule,
@@ -141,6 +155,8 @@ export {
   type SectorKindAppearance,
   type PlanetTypeDef,
   type TechnologyDef,
+  type TechnologyCondition,
+  type ScientistDef,
   type TechnologyEffects,
   type TechnologyUnlocks,
   type UnitStats,
@@ -161,8 +177,11 @@ export { sectorModule } from './modules/sector';
 export { planetTypeModule } from './modules/planetType';
 export { constructionModule } from './modules/construction';
 export { stationModule } from './modules/station';
-export { technologyModule } from './modules/technology';
+export { technologyModule, technologyLock } from './modules/technology';
+export { scientistModule } from './modules/scientist';
+export { factionModule } from './modules/faction';
 export { armyModule } from './modules/army';
 export { victoryModule } from './modules/victory';
 export { visibilityModule } from './modules/visibility';
 export { heroModule } from './modules/hero';
+export { marketModule } from './modules/market';

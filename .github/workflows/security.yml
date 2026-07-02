@@ -1,0 +1,509 @@
+name: Security scan
+
+# Informational, NON-BLOCKING security pipeline. Runs a DIVERSE set of scanners on
+# EVERY push (any branch) — different methods / data sources / surfaces, not clones —
+# aggregates everything into ONE report, and posts it back (sticky PR comment, or a
+# commit comment otherwise) + job summary + artifact. Never fails the build; NOT a
+# required check.
+#
+# Each scan job writes a `status-<key>.json` sentinel AFTER the scan with the real
+# exit code / outcome. The summarizer LEADS with a scan-confirmation table built from
+# those sentinels, so a silently-failed scanner is flagged "⚠️ NOT confirmed" instead
+# of a misleading quiet "0 findings" (anti fail-open — audit F-08).
+#
+# Hardening (self-flagged by the zizmor job): every checkout sets
+# `persist-credentials: false` (jobs only read — none push — so the workflow token
+# must not linger in .git/config, artipacked/credential-persistence), and every
+# `${{ steps.*.outcome }}` is read via an `env:` var (`$VAR`) instead of being
+# expanded inline into a `run:` shell (template-injection).
+#
+# Actions are SHA-pinned (SD-6.1 / F-16) with a trailing `# vN` for readability.
+# Scanner Docker images are pinned as well: the version-tagged set (trivy/osv/syft/
+# gitleaks) by tag, and semgrep/trufflehog/zizmor by @sha256 digest (pinned from their
+# :latest on 2026-07 — re-pin periodically to refresh their detection rules).
+
+on:
+  push:
+    branches: ['**']
+  workflow_dispatch:
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  check:
+    name: lint + typecheck + test + audit
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: pnpm run check
+        id: check
+        continue-on-error: true
+        run: pnpm run check
+      - name: pnpm audit
+        continue-on-error: true
+        run: pnpm audit --json > pnpm-audit.json || true
+      - name: sentinels
+        env:
+          CHECK_OUTCOME: ${{ steps.check.outcome }}
+        run: |
+          echo "{\"check\":\"$CHECK_OUTCOME\"}" > check-status.json
+          ok=true; [ -s pnpm-audit.json ] || ok=false
+          echo "{\"key\":\"audit\",\"ok\":$ok}" > status-audit.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: report-check
+          path: |
+            pnpm-audit.json
+            check-status.json
+            status-audit.json
+          if-no-files-found: warn
+
+  semgrep:
+    name: SAST patterns (Semgrep)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: semgrep
+        continue-on-error: true
+        run: |
+          set +e
+          docker run --rm -v "$PWD:/src" -w /src semgrep/semgrep@sha256:06938c1f365d3f67b8cedd8bc117607ae64253f88a0e768e9da9408548927dd6 \
+            semgrep scan --config=p/typescript --config=p/javascript --config=p/security-audit \
+            --sarif --output=semgrep.sarif --metrics=off
+          rc=$?
+          set -e
+          ok=true; case $rc in 125 | 126 | 127) ok=false ;; esac
+          [ -s semgrep.sarif ] || ok=false
+          echo "{\"key\":\"semgrep\",\"ok\":$ok,\"exit\":$rc}" > status-semgrep.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: report-semgrep
+          path: |
+            semgrep.sarif
+            status-semgrep.json
+          if-no-files-found: warn
+      - name: upload to code scanning
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@dd903d2e4f5405488e5ef1422510ee31c8b32357 # v3
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep
+
+  codeql:
+    name: SAST dataflow (CodeQL)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: github/codeql-action/init@dd903d2e4f5405488e5ef1422510ee31c8b32357 # v3
+        with:
+          languages: javascript-typescript
+      - id: cqa
+        continue-on-error: true
+        uses: github/codeql-action/analyze@dd903d2e4f5405488e5ef1422510ee31c8b32357 # v3
+        with:
+          category: codeql
+          output: codeql-out
+          upload: always
+      - name: sentinel
+        if: always()
+        env:
+          CQA_OUTCOME: ${{ steps.cqa.outcome }}
+        run: |
+          ok=false
+          if [ "$CQA_OUTCOME" = "success" ]; then ok=true; fi
+          echo "{\"key\":\"codeql\",\"ok\":$ok}" > status-codeql.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: report-codeql
+          path: |
+            codeql-out/**/*.sarif
+            status-codeql.json
+          if-no-files-found: warn
+
+  gitleaks:
+    name: Secrets — tree (Gitleaks)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: gitleaks
+        continue-on-error: true
+        run: |
+          set +e
+          docker run --rm -v "$PWD:/src" -w /src zricethezav/gitleaks:v8.18.4 \
+            detect --source=/src --no-git --redact \
+            --report-format sarif --report-path gitleaks.sarif
+          rc=$?
+          set -e
+          ok=true; case $rc in 125 | 126 | 127) ok=false ;; esac
+          [ -s gitleaks.sarif ] || ok=false
+          echo "{\"key\":\"gitleaks\",\"ok\":$ok,\"exit\":$rc}" > status-gitleaks.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: report-gitleaks
+          path: |
+            gitleaks.sarif
+            status-gitleaks.json
+          if-no-files-found: warn
+      - name: upload to code scanning
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@dd903d2e4f5405488e5ef1422510ee31c8b32357 # v3
+        with:
+          sarif_file: gitleaks.sarif
+          category: gitleaks
+
+  trufflehog:
+    name: Secrets — history + verify (TruffleHog)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0 # full history — the differentiator vs Gitleaks (--no-git)
+          persist-credentials: false
+      - name: trufflehog
+        continue-on-error: true
+        run: |
+          set +e
+          docker run --rm -v "$PWD:/src" -w /src trufflesecurity/trufflehog@sha256:de8ef4e573653b30c002e3491bf0484d23e31b73fe5519db6b395408e6834d4f \
+            git file:///src --json --no-update > trufflehog.json 2>/dev/null
+          rc=$?
+          set -e
+          ok=true; case $rc in 125 | 126 | 127) ok=false ;; esac
+          echo "{\"key\":\"trufflehog\",\"ok\":$ok,\"exit\":$rc}" > status-trufflehog.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: report-trufflehog
+          path: |
+            trufflehog.json
+            status-trufflehog.json
+          if-no-files-found: warn
+
+  osv:
+    name: SCA — osv.dev (OSV-Scanner)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: osv-scanner
+        continue-on-error: true
+        run: |
+          set +e
+          docker run --rm -v "$PWD:/src" -w /src ghcr.io/google/osv-scanner:v1.9.1 \
+            --lockfile=pnpm-lock.yaml --lockfile=mobile/package-lock.json \
+            --format=sarif --output=osv.sarif
+          rc=$?
+          set -e
+          ok=true; case $rc in 125 | 126 | 127) ok=false ;; esac
+          [ -s osv.sarif ] || ok=false
+          echo "{\"key\":\"osv\",\"ok\":$ok,\"exit\":$rc}" > status-osv.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: report-osv
+          path: |
+            osv.sarif
+            status-osv.json
+          if-no-files-found: warn
+      - name: upload to code scanning
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@dd903d2e4f5405488e5ef1422510ee31c8b32357 # v3
+        with:
+          sarif_file: osv.sarif
+          category: osv-scanner
+
+  trivy-fs:
+    name: Vuln + IaC — files (Trivy fs)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: trivy fs
+        continue-on-error: true
+        run: |
+          set +e
+          docker run --rm -v "$PWD:/src" -w /src aquasec/trivy:0.58.2 \
+            fs --scanners vuln,secret,misconfig --format sarif --output trivy.sarif .
+          rc=$?
+          set -e
+          ok=true; case $rc in 125 | 126 | 127) ok=false ;; esac
+          [ -s trivy.sarif ] || ok=false
+          echo "{\"key\":\"trivy-fs\",\"ok\":$ok,\"exit\":$rc}" > status-trivy-fs.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: report-trivy-fs
+          path: |
+            trivy.sarif
+            status-trivy-fs.json
+          if-no-files-found: warn
+      - name: upload to code scanning
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@dd903d2e4f5405488e5ef1422510ee31c8b32357 # v3
+        with:
+          sarif_file: trivy.sarif
+          category: trivy-fs
+
+  trivy-image:
+    name: Vuln — built image base OS (Trivy image)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: build image
+        continue-on-error: true
+        run: docker build -t void-dominion:scan .
+      - name: trivy image + image SBOM
+        continue-on-error: true
+        run: |
+          set +e
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD:/out" -w /out \
+            aquasec/trivy:0.58.2 image --format sarif --output trivy-image.sarif void-dominion:scan
+          rc=$?
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD:/out" -w /out \
+            anchore/syft:v1.20.0 scan void-dominion:scan -o cyclonedx-json=sbom-image.cdx.json
+          set -e
+          ok=true; case $rc in 125 | 126 | 127) ok=false ;; esac
+          [ -s trivy-image.sarif ] || ok=false
+          echo "{\"key\":\"trivy-image\",\"ok\":$ok,\"exit\":$rc}" > status-trivy-image.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: report-trivy-image
+          path: |
+            trivy-image.sarif
+            sbom-image.cdx.json
+            status-trivy-image.json
+          if-no-files-found: warn
+      - name: upload to code scanning
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@dd903d2e4f5405488e5ef1422510ee31c8b32357 # v3
+        with:
+          sarif_file: trivy-image.sarif
+          category: trivy-image
+
+  sbom:
+    name: SBOM — files (Syft / CycloneDX)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: syft sbom
+        continue-on-error: true
+        run: |
+          set +e
+          docker run --rm -v "$PWD:/src" -w /src anchore/syft:v1.20.0 \
+            scan dir:/src -o cyclonedx-json=sbom.cdx.json
+          rc=$?
+          set -e
+          ok=true; case $rc in 125 | 126 | 127) ok=false ;; esac
+          [ -s sbom.cdx.json ] || ok=false
+          echo "{\"key\":\"sbom\",\"ok\":$ok,\"exit\":$rc}" > status-sbom.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: report-sbom
+          path: |
+            sbom.cdx.json
+            status-sbom.json
+          if-no-files-found: warn
+
+  zizmor:
+    name: Workflow security (zizmor)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: zizmor
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          docker run --rm -e GH_TOKEN -v "$PWD:/src" -w /src ghcr.io/zizmorcore/zizmor@sha256:d1117e5dbd9ee4970644067b534ab6ab50371f3c6f7f4d05446eb603a6e78f48 \
+            --format sarif . > zizmor.sarif
+          rc=$?
+          set -e
+          ok=true; case $rc in 125 | 126 | 127) ok=false ;; esac
+          [ -s zizmor.sarif ] || ok=false
+          echo "{\"key\":\"zizmor\",\"ok\":$ok,\"exit\":$rc}" > status-zizmor.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: report-zizmor
+          path: |
+            zizmor.sarif
+            status-zizmor.json
+          if-no-files-found: warn
+      - name: upload to code scanning
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@dd903d2e4f5405488e5ef1422510ee31c8b32357 # v3
+        with:
+          sarif_file: zizmor.sarif
+          category: zizmor
+
+  scorecard:
+    name: Repo posture (OpenSSF Scorecard)
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' # posture checks are meaningful on the default branch
+    permissions:
+      contents: read
+      security-events: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - id: sc
+        continue-on-error: true
+        uses: ossf/scorecard-action@4eaacf0543bb3f2c246792bd56e8cdeffafb205a # v2.4.3
+        with:
+          results_file: scorecard.sarif
+          results_format: sarif
+          publish_results: false
+      - name: sentinel
+        if: always()
+        env:
+          SC_OUTCOME: ${{ steps.sc.outcome }}
+        run: |
+          ok=false
+          if [ "$SC_OUTCOME" = "success" ]; then ok=true; fi
+          echo "{\"key\":\"scorecard\",\"ok\":$ok}" > status-scorecard.json
+      - name: upload to code scanning
+        if: always()
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@dd903d2e4f5405488e5ef1422510ee31c8b32357 # v3
+        with:
+          sarif_file: scorecard.sarif
+          category: scorecard
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: report-scorecard
+          path: |
+            scorecard.sarif
+            status-scorecard.json
+          if-no-files-found: warn
+
+  report:
+    name: summarize + report
+    needs:
+      [
+        check,
+        semgrep,
+        codeql,
+        gitleaks,
+        trufflehog,
+        osv,
+        trivy-fs,
+        trivy-image,
+        sbom,
+        zizmor,
+        scorecard,
+      ]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # commit comments
+      pull-requests: write # PR comments
+      issues: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: reports
+      - name: summarize
+        run: node .github/scripts/summarize-security.mjs reports security-report.md
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+          GITHUB_SERVER_URL: ${{ github.server_url }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+      - name: job summary
+        run: cat security-report.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: security-report
+          path: |
+            security-report.md
+            reports/**/*.sarif
+            reports/**/*.cdx.json
+          if-no-files-found: warn
+      - name: post report (sticky PR comment or commit comment)
+        continue-on-error: true
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        with:
+          script: |
+            const fs = require('fs');
+            const marker = '<!-- void-security-report -->';
+            const body = marker + '\n' + fs.readFileSync('security-report.md', 'utf8');
+            const { owner, repo } = context.repo;
+            const sha = context.sha;
+            let prs = [];
+            try {
+              const res = await github.rest.repos.listPullRequestsAssociatedWithCommit({ owner, repo, commit_sha: sha });
+              prs = res.data.filter((p) => p.state === 'open');
+            } catch (e) {
+              core.warning('PR lookup failed: ' + e.message);
+            }
+            if (prs.length) {
+              for (const pr of prs) {
+                const { data: comments } = await github.rest.issues.listComments({ owner, repo, issue_number: pr.number, per_page: 100 });
+                const existing = comments.find((c) => c.body && c.body.includes(marker));
+                if (existing) {
+                  await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+                } else {
+                  await github.rest.issues.createComment({ owner, repo, issue_number: pr.number, body });
+                }
+              }
+            } else {
+              await github.rest.repos.createCommitComment({ owner, repo, commit_sha: sha, body });
+            }
