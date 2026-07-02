@@ -17,7 +17,7 @@
 
 `[core]` `packages/shared-core/src/modules` (+ `data`) · `[act]` `action-layer` ·
 `[srv]` `server` · `[cli]` `client` · `[proto]` `prototype` · `[data]` `data/*.json` ·
-`[docs]` `docs` · `[sec]` CI/сканеры (`.gitlab-ci.yml`, `docs/security`, конфиги сканеров)
+`[docs]` `docs` · `[sec]` CI/сканеры (`.github/workflows/security.yml`, `docs/security`, конфиги сканеров)
 
 ## Статусы
 
@@ -27,7 +27,8 @@
 > модель времени, экономика, карта+движение (incl. `fleet.stop`), секторы, бой
 > (орбита/десант/захват/бомбардировка/ПВО), здания, флот⊕армия+транспорт, **типы
 > планет**, **victory-модуль** (data-driven очки), **`visibleState`** (туман войны),
-> каркас **action-layer**, multiplayer-slice, **F6 туман на рассылке**, играбельный прототип. 587 тестов зелёные.
+> каркас **action-layer**, multiplayer-slice, **F6 туман на рассылке**, играбельный прототип.
+> Тесты зелёные (актуальный счётчик — в шапке `state.md`).
 
 ---
 
@@ -88,17 +89,22 @@
 
 ## Блок F · Сервер (Этап 3) `[srv]` _(опирается на `[act]`)_
 
-- **F1** ⏳ Скелет Fastify + health-роут.
-- **F2** 🔒(F1) Postgres JSONB: load/save `GameState`.
-- **F3** 🔒(F1) Redis/BullMQ: будилка по `scheduled`-событиям (флот прибудет через N ч).
-- **F4** 🔒(F1) WebSocket-слой: пуш diff'ов.
-- **F5** 🔒(F2) Очередь действий per-player (последовательная обработка → нет double-spend).
+- **F1** ✅ Скелет Fastify + health-роут (SV-0.1: `/health`·`/ready`·`/metrics`, pino, drain).
+- **F2** ✅ Postgres JSONB: load/save `GameState` + квитанции (`store/postgres.ts`),
+  строгий commit-before-broadcast.
+- **F3** ✅ (переопределён): будилка по `scheduled`-событиям — v1 без Redis/BullMQ
+  (`clockDriver.ts`, in-process); durable-эволюция — **pg-boss** на мульти-процессе
+  (решение в `tech-stack.md`).
+- **F4** ✅ WebSocket-слой: пуш per-player дельт (`wsServer.ts` + `protocol.ts`).
+- **F5** ✅ Последовательная обработка действий: per-room актор-mailbox на durable-пути
+  (double-spend невозможен; per-player rate-limit сверху).
 - **F6** ✅ Фильтр видимости **перед** отправкой клиенту: `MatchRoom` рассылает
   per-player дельты от `visibleState` (+ сигнатуры/память отдельными полями), события
   тоже фильтруются по видимости; e2e-тест «враг скрыт + нет утечки `red_1` по проводу».
-  Дальше: AOI-оптимизация, JWT (F7).
-- **F7** 🔒(F4) JWT в WS-handshake.
-- **F8** ✅ Persist + драйвер пробуждения в `packages/server/main.ts` (паритет с
+  Дальше: AOI-оптимизация.
+- **F7** ✅ JWT в WS-handshake (SE-0.1: join-токен в `?token=`, `auth.ts`, пин алгоритма,
+  Origin-allowlist; opt-in через `AUTH_JWT_SECRET`).
+- **F8** ✅ Persist + драйвер пробуждения в `packages/server/src/main.ts` (паритет с
   прото-сервером, который имел их с PA-4.1). `persistence.ts` (`createStores`: Memory по
   умолчанию, Postgres по `DATABASE_URL` + `migrate`; `snapshotOf`), `clockDriver.ts`
   (`msUntilNextEvent`→`tick`, cap `MAX_DELAY`), `main.ts` wired (observe→persist+receipt,
@@ -229,18 +235,19 @@
 
 - **PERF-1** ✅ **Сведено и проверено** (ветка devin `engine-optimization`, влита):
   горячий путь планировщика (`kernel.ts`: `scheduled` отсортирован → `earliestDue` O(1)
-  + бинарная вставка), route-кэш в `movement`, оптимизации `combat`/`orbit`/`economy`.
-  **Детерминизм сохранён** (golden-RNG + 587 тестов зелёные).
+  - бинарная вставка), route-кэш в `movement`, оптимизации `combat`/`orbit`/`economy`.
+    **Детерминизм сохранён** (golden-RNG + 587 тестов зелёные).
 
 ## Блок SEC · AppSec / DevSecOps `[sec]`
 
 > Трек безопасности — живёт рядом с продуктовым и раздаётся как задачи. База —
-> `.gitlab-ci.yml` + `docs/security/pipeline.md`. Один кирпич = один сканер/правило/шаг.
+> `.github/workflows/security.yml` + `docs/security/pipeline.md`. Один кирпич = один сканер/правило/шаг.
 > Глубокие роадмапы (задачи/подзадачи): `secure-sdlc-roadmap.md` (как строим безопасно) и
 > `secure-environment-roadmap.md` (как безопасно эксплуатируем) — SEC/F-бирки сшиты с ними.
 
-- **SEC-0** ✅ Базовый GitLab-пайплайн: SAST (Semgrep) + SCA (pnpm audit + osv-scanner)
-  + секреты (Gitleaks) + Trivy fs + SBOM (Syft), ratcheting-гейт.
+- **SEC-0** ✅ Базовый DevSecOps-пайплайн: SAST (Semgrep) + SCA (pnpm audit + osv-scanner)
+  - секреты (Gitleaks) + Trivy fs + SBOM (Syft), ratcheting-гейт. Сейчас живёт в GitHub
+    Actions (`security.yml`; мигрирован с GitLab — `docs/security/audit-2026-06-27.md`).
 - **SEC-1** ⏳ Триаж + baseline: разобрать находки, подавить ложные **с обоснованием**
   (`.semgrepignore` / `.gitleaks.toml` / `.trivyignore`), разобранные сканеры → блокирующие.
 - **SEC-2** ⏳ Кастомные Semgrep-правила под инварианты ядра: запрет `Math.random`/
