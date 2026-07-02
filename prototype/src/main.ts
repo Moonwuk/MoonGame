@@ -209,7 +209,7 @@ let ME = 'p1';
 // account balance, NOT match state, so the prototype shows a placeholder here; the real
 // balance comes from the account once monetization is wired.
 const SOVEREIGNS = 25;
-type PlanetTab = 'ground' | 'ships' | 'buildings';
+type PlanetTab = 'ground' | 'ships' | 'squadron' | 'buildings';
 type BuildLane = 'buildings' | 'units';
 type BuildKind = 'building' | 'upgrade' | 'unit';
 
@@ -835,7 +835,14 @@ if (typeof window !== 'undefined') window.addEventListener('resize', () => clamp
 
 const planet = (id: string | null | undefined): Planet | undefined =>
   id ? s.planets[id] : undefined;
-const isShip = (u: string) => !data.units[u]?.traits.includes('ground');
+// Squadrons/carriers are their own build category (air wing): a carrier (◈) ferries the
+// fighter squadrons (△) it launches, so both live under the Wings tab — apart from line
+// spacecraft (which stay under Ships).
+const isSquadron = (u: string) => {
+  const t = data.units[u]?.traits ?? [];
+  return t.includes('squadron') || t.includes('carrier');
+};
+const isShip = (u: string) => !data.units[u]?.traits.includes('ground') && !isSquadron(u);
 const isGround = (u: string) => data.units[u]?.domain === 'ground';
 const floor = Math.floor;
 const dist = (a: { x: number; y: number }, b: { x: number; y: number }) =>
@@ -3636,6 +3643,7 @@ function panelHtml(): string {
   const kindName = SECTOR_TYPES[SECTOR_OF[p.id]]?.name ?? SECTOR_OF[p.id] ?? '—';
   const ground = p.garrison.filter((st) => isGround(st.unit));
   const ships = p.garrison.filter((st) => isShip(st.unit));
+  const wing = p.garrison.filter((st) => isSquadron(st.unit));
   const gcount = sumUnits(p.garrison);
   const here = Object.values(s.fleets).filter((f) => f.location === p.id);
   let h =
@@ -3662,7 +3670,7 @@ function panelHtml(): string {
     'ships',
     'Ships',
     ships.length + here.length,
-  )}${tabButton('buildings', 'Buildings', p.buildings.length)}</div>`;
+  )}${tabButton('squadron', 'Wings', wing.length)}${tabButton('buildings', 'Buildings', p.buildings.length)}</div>`;
 
   // Tab content is split into self-contained blocks; on desktop they flow into
   // side-by-side columns (filling the wide panel), on phones they stack vertically.
@@ -3707,6 +3715,21 @@ function panelHtml(): string {
     }
     cols.push(
       `<div class="hint">Built spacecraft join the garrison first; launch creates a mobile fleet.</div>`,
+    );
+  } else if (planetTab === 'squadron') {
+    if (wing.length) {
+      cols.push(`<div class="sec">Авиагруппа в гарнизоне</div>` + unitRows(wing));
+    }
+    if (mine) {
+      const wingBuilds = BUILD_UNITS.filter((u) => isSquadron(u));
+      cols.push(
+        `<div class="sec">Верфь авиагруппы</div>` +
+          conveyorHtml(p.id, 'units') +
+          buildButtons(p.id, wingBuilds, 'unit'),
+      );
+    }
+    cols.push(
+      `<div class="hint">Носитель (◈) несёт эскадрильи (△). Запускайте авиагруппу из панели выбранного флота кнопкой «🛩 Запустить эскадрилью».</div>`,
     );
   } else {
     cols.push(
@@ -4550,7 +4573,7 @@ side.addEventListener('click', (ev) => {
   } else if (act === 'selfleet') {
     setFleetSelection([arg]);
   } else if (act === 'tab') {
-    if (arg === 'ground' || arg === 'ships' || arg === 'buildings') {
+    if (arg === 'ground' || arg === 'ships' || arg === 'squadron' || arg === 'buildings') {
       planetTab = arg;
     }
   } else if (act === 'build') {
