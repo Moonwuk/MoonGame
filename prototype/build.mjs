@@ -200,7 +200,7 @@ body.sheet-open #cmdbar{bottom:calc(34vh + 12px);}
 .dp-fclear{margin-left:auto;padding:3px 9px;border-radius:6px;border:1px solid var(--line);background:transparent;
   color:var(--dim);font:600 10px ui-monospace,monospace;cursor:pointer;}
 .dp-list{overflow:auto;padding:6px;display:flex;flex-direction:column;gap:4px;}
-.dp-row{display:flex;align-items:center;gap:9px;padding:9px 10px;border-radius:7px;border:1px solid var(--line);
+.dp-row{display:flex;align-items:center;flex-wrap:wrap;gap:9px;padding:9px 10px;border-radius:7px;border:1px solid var(--line);
   background:rgba(8,28,32,.5);cursor:pointer;}
 .dp-row.me{cursor:default;border-color:var(--cyan-dim);background:rgba(53,214,230,.07);}
 .dp-row.open{border-color:var(--cyan-dim);}
@@ -211,6 +211,21 @@ body.sheet-open #cmdbar{bottom:calc(34vh + 12px);}
 .dp-w{font-size:11px;color:var(--dim);font-variant-numeric:tabular-nums;flex:0 0 auto;}
 .dp-stance{font-size:9px;letter-spacing:1px;border:1px solid;border-radius:3px;padding:2px 6px;flex:0 0 auto;font-weight:700;}
 .dp-tag{font-size:9px;letter-spacing:1px;color:var(--cyan-dim);flex:0 0 auto;}
+/* bot favour (approval) meter — a second line on AI rows: cap ☺ + threshold-ticked bar + tier word */
+.dp-fav{flex:1 0 100%;display:flex;align-items:center;gap:7px;margin-top:1px;cursor:help;}
+.dp-fav-cap{font-size:11px;color:var(--dim);flex:0 0 auto;font-variant-emoji:text;}
+.dp-fav-track{position:relative;flex:1;height:6px;border-radius:3px;background:rgba(120,140,150,.16);
+  border:1px solid var(--line);overflow:hidden;min-width:60px;}
+.dp-fav-fill{position:absolute;left:0;top:0;bottom:0;border-radius:3px;transition:width .3s;}
+.dp-fav-tick{position:absolute;top:-1px;bottom:-1px;width:1px;z-index:2;}
+.dp-fav-tick.emb{background:rgba(232,178,74,.85);}
+.dp-fav-tick.war{background:rgba(229,72,77,.9);}
+.dp-fav.ok .dp-fav-fill{background:linear-gradient(90deg,rgba(53,214,230,.5),var(--cyan));}
+.dp-fav.embargo .dp-fav-fill{background:#e8b24a;}
+.dp-fav.war .dp-fav-fill{background:#e5484d;}
+.dp-fav-lbl{font-size:8px;letter-spacing:.6px;text-transform:uppercase;flex:0 0 auto;color:var(--dim);}
+.dp-fav.embargo .dp-fav-lbl{color:#e8b24a;}
+.dp-fav.war .dp-fav-lbl{color:#e5484d;}
 .dp-actions{display:flex;flex-wrap:wrap;align-items:center;gap:5px;padding:0 10px 9px 39px;}
 .dp-act{padding:6px 10px;border-radius:6px;border:1px solid var(--line);background:transparent;color:var(--dim);
   font:700 11px ui-monospace,monospace;cursor:pointer;}
