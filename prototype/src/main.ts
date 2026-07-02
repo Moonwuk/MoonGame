@@ -172,11 +172,12 @@ const LOCK = '#7df0d0'; // selection / targeting reticle accent
 const TAU = Math.PI * 2;
 const TOP = 50; // top-bar height
 const RAIL = 50; // left-rail width
-const BUILDABLE = ['mine', 'refinery', 'tax_office', 'barracks', 'radar', 'fort'];
-// `orbital_aa` (orbital ПВО — anti-ship near-orbit emplacement) is NOT freely
-// buildable: it's a tech unlock (pending the in-session research tree). It still
-// comes pre-installed with a space fortress (installFortressAA).
-const BUILD_UNITS = ['marine', 'cruiser', 'scout', 'siege', 'strike_carrier', 'fighter_squadron'];
+const BUILDABLE = ['mine', 'refinery', 'tax_office', 'barracks', 'radar', 'fort', 'orbital_aa'];
+// `orbital_aa` (orbital ПВО — anti-ship near-orbit emplacement) is a defensive BUILDING:
+// the player builds it like a fort. It fires on hostile fleets over the world (core
+// `aaStrengthAt` sums building AA) but does NOT block ground capture — only ground troops
+// do that. A space fortress also comes with one pre-installed (installFortressAA).
+const BUILD_UNITS = ['cruiser', 'scout', 'siege', 'strike_carrier', 'fighter_squadron'];
 const BUILD_ICON: Record<string, string> = {
   mine: '⬢',
   refinery: '◇',
@@ -185,10 +186,9 @@ const BUILD_ICON: Record<string, string> = {
   fort: '⬡',
   starfort: '✦',
   radar: '⊚',
+  orbital_aa: '⌁',
 };
 const UNIT_ICON: Record<string, string> = {
-  marine: '◆',
-  orbital_aa: '⌁',
   cruiser: '▲',
   scout: '◌',
   siege: '✦',
@@ -212,7 +212,7 @@ let ME = 'p1';
 // Суверены — the donate/premium currency (docs/economy-roadmap.md). It's a meta-layer
 // account balance, NOT match state, so the prototype shows a placeholder here; the real
 // balance comes from the account once monetization is wired.
-const SOVEREIGNS = 25;
+const SOVEREIGNS = 500;
 type PlanetTab = 'ground' | 'ships' | 'squadron' | 'buildings';
 type BuildLane = 'buildings' | 'units';
 type BuildKind = 'building' | 'upgrade' | 'unit';
@@ -459,6 +459,7 @@ let diploExpanded: string | null = null; // participant row showing its action b
 const diploStanceFilter = new Set<DiplomaticStance>();
 const diploTypeFilter = new Set<'human' | 'ai'>();
 let convoOpen = COALITION; // the open conversation in the messages tab (seat id or COALITION)
+let pingMenuLoc: string | null = null; // province whose ping composer is open (null = closed)
 // Screen hit-boxes for the on-map ping markers, rebuilt every frame by drawPings().
 let pingHits: Array<{ loc: string; x: number; y: number }> = [];
 
@@ -1543,15 +1544,14 @@ function apply(out: StepOut) {
   handleEvents(out.events);
 }
 
-// A space fortress comes with a fixed orbital-AA emplacement (prototype scenario
-// rule). The garrison unit makes the junction "defended" — it can no longer be
-// walked into, only stormed — and its AA now fires on near-orbit attackers.
+// A space fortress comes with a fixed orbital-AA emplacement (prototype scenario rule).
+// It's a building now: its AA fires on near-orbit attackers, but it does NOT make the
+// junction "defended" against a walk-in — only ground troops block ground capture.
 function installFortressAA(planetId: string) {
   const pl = s.planets[planetId];
   if (!pl) return;
-  const aa = pl.garrison.find((u) => u.unit === 'orbital_aa' && u.hp === undefined);
-  if (aa) aa.count += 1;
-  else pl.garrison.push({ unit: 'orbital_aa', count: 1 });
+  if (pl.buildings.some((b) => b.type === 'orbital_aa')) return; // already emplaced
+  pl.buildings.push({ type: 'orbital_aa', level: 1, hp: data.buildings.orbital_aa?.hp ?? 30 });
 }
 
 /** Apply a player-issued order and surface a rejection in the log (so a denied
@@ -3156,14 +3156,15 @@ function render(now: number) {
     const yBase = A.y; // baseline of the bottom (widest) row
     const apexTop = yBase - rows.length * TH;
     cx.save();
-    // While in transit, point the ship pyramid along its heading ("нос по курсу"): the
-    // apex (drawn toward -y / up) rotates onto A.ang. Only the triangles turn — the cargo
-    // pips and the ship-count text below stay upright and readable.
-    if (f.movement) {
-      cx.translate(A.x, A.y);
-      cx.rotate(A.ang + Math.PI / 2);
-      cx.translate(-A.x, -A.y);
-    }
+    // Point the ship pyramid along its heading ("нос по курсу"): the apex (drawn toward
+    // -y / up) rotates onto A.ang — the travel lane while in transit, or the orbital
+    // tangent while stationed on the ring (both supplied by fleetAnchor). Previously this
+    // was gated on `f.movement`, so an orbiting fleet kept its default apex-up pose and
+    // appeared frozen pointing straight up. Only the triangles turn — the cargo pips and
+    // ship-count text below stay upright and readable.
+    cx.translate(A.x, A.y);
+    cx.rotate(A.ang + Math.PI / 2);
+    cx.translate(-A.x, -A.y);
     cx.shadowColor = col;
     cx.shadowBlur = 6 + 6 * engine;
     cx.fillStyle = rgba(col, 0.16 + 0.12 * engine);
@@ -3652,7 +3653,7 @@ function panelHtml(): string {
   const here = Object.values(s.fleets).filter((f) => f.location === p.id);
   let h =
     cardHeader(ownerColor(p.owner), p.id, `${p.owner ? NAME[p.owner] : 'Neutral'} · ${kindName} · ${ptName} · ${sec}`) +
-    `<div class="pstats"><span>⚔ ${gcount} garrison</span><span>${unitIcon('marine')} ${sumUnits(ground)} ground</span><span>${unitIcon('cruiser')} ${sumUnits(ships)} ships</span><span>▣ ${p.buildings.length} built</span></div>`;
+    `<div class="pstats"><span>⚔ ${gcount} garrison</span><span>${unitIcon('infantry')} ${sumUnits(ground)} ground</span><span>${unitIcon('cruiser')} ${sumUnits(ships)} ships</span><span>▣ ${p.buildings.length} built</span></div>`;
   if (pt && (pt.productionBonus !== 0 || pt.defenseBonus !== 0)) {
     const pct = (n: number) => (n >= 0 ? '+' : '') + Math.round(n * 100) + '%';
     const parts: string[] = [];
@@ -3669,6 +3670,9 @@ function panelHtml(): string {
       h += `<div class="row">${btn('capital', '', '★ Сделать столицей', true)}</div>`;
     }
   }
+
+  // Tactical ping — mark this province and share it (coalition chat, or a player's DM).
+  h += `<div class="row">${btn('ping', '', '📍 Пинг — отметить и отправить…', true)}</div>`;
 
   h += `<div class="ptabs">${tabButton('ground', 'Ground', ground.length)}${tabButton(
     'ships',
@@ -3817,6 +3821,11 @@ function buildingDossier(id: string, level: number): Dossier | null {
         name: def.name,
         body: `Автономная крепость, вмороженная в астероидное поле: ${hl(pct(lv.defenseBonus ?? 0))} к обороне и ${hl(lv.hp)} прочности. Превращает безликий перекрёсток в укреплённый узел с орбитой и ПКО — взять его можно только штурмом.`,
       };
+    case 'orbital_aa':
+      return {
+        name: def.name,
+        body: `Стационарная зенитная батарея — неподвижное сооружение, ${hl(lv.aaDamage ?? 0)} урона в час по кораблям на низкой орбите. Кошмар для бомбардировщиков, повисших над планетой, и для налетающих эскадрилий. Захват мира не блокирует — это дело наземной обороны; батарея лишь выкашивает флот над головой.`,
+      };
     case 'metal_station':
       return {
         name: def.name,
@@ -3851,16 +3860,6 @@ function unitDossier(id: string): Dossier | null {
       return {
         name: 'Siege Platform',
         body: `Тяжёлая осадная платформа: ${hl(st.attack)} урона с дистанции ${hl(st.range ?? 0)}, но тонкая броня (${hl(st.defense)} защиты). Её место за спинами крейсеров, откуда она крушит укрепления и верфи.`,
-      };
-    case 'marine':
-      return {
-        name: 'Marine',
-        body: `Десантная пехота, ${hl(st.attack)}/${hl(st.defense)} в наземном бою. Грузится на флот и высаживается, чтобы захватывать миры, которые орбита лишь подавляет огнём.`,
-      };
-    case 'orbital_aa':
-      return {
-        name: 'Orbital AA',
-        body: `Стационарная зенитная батарея — неподвижна, но выдаёт ${hl(st.aaDamage ?? 0)} урона по кораблям на низкой орбите. Кошмар для бомбардировщиков, повисших над планетой, и для налетающих эскадрилий.`,
       };
     case 'strike_carrier':
       return {
@@ -3914,6 +3913,7 @@ function codexHtml(kind: string, id: string): string {
       .join(', ');
     if (prod) rows.push(cxRow('Produces', prod));
     if ((lv.defenseBonus ?? 0) > 0.01) rows.push(cxRow('Garrison defense', `+${Math.round((lv.defenseBonus ?? 0) * 100)}%`));
+    if ((lv.aaDamage ?? 0) > 0) rows.push(cxRow('Anti-air', String(lv.aaDamage)));
     if ((lv.radarRange ?? 0) > 0) rows.push(cxRow('Radar reach', String(lv.radarRange)));
     if ((def.scoreValue ?? 0) > 0) rows.push(cxRow('Victory points', `${def.scoreValue} / level`));
     rows.push(cxRow('Tiers', maxLvl > 1 ? `${maxLvl} (upgradeable)` : '1'));
@@ -4614,6 +4614,8 @@ side.addEventListener('click', (ev) => {
     playerOrder(mobilizeDivision(ME, selPlanet!, Number(arg)));
   } else if (act === 'capital') {
     playerOrder(designateCapital(ME, selPlanet!));
+  } else if (act === 'ping') {
+    openPingMenu();
   } else if (act === 'bombard') {
     playerOrder(bombardFleet(ME, selFleet!, arg === 'on'));
   } else if (act === 'barragemode') {
@@ -6818,6 +6820,70 @@ function pingSelected(): void {
     input.focus();
   }
 }
+
+// --- province ping composer (tap a province → choose where the ping goes) --------
+// A ping marks a province and shares it. Destination is either the coalition channel
+// (a shared on-map marker every ally sees) or a single player's DM (a private jump-to
+// pointer in that thread). Opened from the province panel's 📍 button.
+function openPingMenu(): void {
+  if (!selPlanet || !s.planets[selPlanet]) {
+    note('Сначала выберите провинцию');
+    return;
+  }
+  pingMenuLoc = selPlanet;
+  renderPingMenu();
+  document.getElementById('pingmenu')?.classList.add('show');
+  (document.getElementById('pm-text') as HTMLInputElement | null)?.focus();
+}
+function closePingMenu(): void {
+  pingMenuLoc = null;
+  document.getElementById('pingmenu')?.classList.remove('show');
+}
+function renderPingMenu(): void {
+  const el = document.getElementById('pingmenu');
+  if (!el || !pingMenuLoc) return;
+  const loc = pingMenuLoc;
+  const dstBtn = (dest: string, color: string, ic: string, name: string, tag: string, cls = ''): string =>
+    `<button class="pm-dst${cls}" data-pmdest="${esc(dest)}">` +
+    `<span class="pm-ic" style="color:${color}">${ic}</span>${esc(name)}` +
+    (tag ? `<em>${esc(tag)}</em>` : '') +
+    `</button>`;
+  const coal = dstBtn(COALITION, 'var(--amber)', '⚡', 'Коалиция', `${coalitionMembers().length} уч.`, ' coal');
+  const dms = diploSeats()
+    .filter((id) => id !== ME)
+    .map((id) => dstBtn(id, ownerColor(id), seatBadge(id).icon, NAME[id] ?? id, seatBadge(id).tag))
+    .join('');
+  el.innerHTML =
+    `<div class="pm-box">` +
+    `<div class="pm-head">📍 Пинг · <b>${esc(loc)}</b></div>` +
+    `<div class="pm-sub">Отметьте провинцию и отправьте — метка станет кликабельной (↪ камера).</div>` +
+    `<input id="pm-text" class="pm-text" maxlength="80" placeholder="Описание метки (необязательно)…" autocomplete="off">` +
+    `<div class="pm-lbl">В чат коалиции</div>${coal}` +
+    (dms ? `<div class="pm-lbl">В ЛС игроку</div>${dms}` : '') +
+    `<button class="pm-cancel" data-pmcancel>Отмена</button>` +
+    `</div>`;
+}
+/** Place the pending province ping toward `dest`: the coalition channel (shared on-map
+ *  marker) or a player's DM (private jump-to pointer). Composer text = the description. */
+function createPingTo(dest: string): void {
+  const loc = pingMenuLoc;
+  if (!loc || !s.planets[loc]) {
+    closePingMenu();
+    return;
+  }
+  const input = document.getElementById('pm-text') as HTMLInputElement | null;
+  const desc = (input?.value.trim() ?? '').slice(0, 80);
+  if (dest === COALITION) {
+    // Same path as the coalition composer's 📍: net → server-stamped marker; solo → local line.
+    if (NET && netClient) netClient.placePing({ kind: 'mark', target: { node: loc }, label: desc });
+    else pushMsg(COALITION, desc || `метка ${loc}`, false, ME, loc);
+    note('📍 Пинг → Коалиция');
+  } else {
+    pushMsg(dest, desc || `метка ${loc}`, false, ME, loc);
+    note(`📍 Пинг → ${NAME[dest] ?? dest}`);
+  }
+  closePingMenu();
+}
 /** Active coalition pings, one marker per province (the latest ping there wins). The
  *  coalition chat log and the map markers share this single source. */
 function activePings(): SessionMsg[] {
@@ -6978,6 +7044,27 @@ if (diploEl) {
     if (ke.key === 'Enter' && (ke.target as HTMLElement).id === 'dp-text') {
       e.preventDefault();
       sendDiploMsg();
+    }
+  });
+}
+
+// Province ping composer: a destination button places the ping; the backdrop or Отмена
+// closes it; Enter in the note field defaults to the coalition channel.
+const pingMenuEl = document.getElementById('pingmenu');
+if (pingMenuEl) {
+  pingMenuEl.addEventListener('click', (e) => {
+    const tg = e.target as HTMLElement;
+    const dest = (tg.closest('.pm-dst') as HTMLElement | null)?.dataset.pmdest;
+    if (dest) return createPingTo(dest);
+    if (tg.closest('[data-pmcancel]') || tg === pingMenuEl) closePingMenu();
+  });
+  pingMenuEl.addEventListener('keydown', (e) => {
+    const ke = e as KeyboardEvent;
+    if (ke.key === 'Enter' && (ke.target as HTMLElement).id === 'pm-text') {
+      e.preventDefault();
+      createPingTo(COALITION);
+    } else if (ke.key === 'Escape') {
+      closePingMenu();
     }
   });
 }
