@@ -100,8 +100,11 @@ export interface MatchRoomOptions {
    *  and the persist are atomic); without `persist`, the gated apply is synchronous. A
    *  server-issued `sessionId` (never client-chosen — it keys the sequence cursor and
    *  authorizes the envelope, SV-1.1-live-A) must reach `receive`. The gate's in-memory
-   *  stores are bounded (SV-1.1-live-B: FIFO receipts + LRU cursors); a cross-restart
-   *  DURABLE store for them is a further follow-up (needs F2). */
+   *  stores are bounded (SV-1.1-live-B: FIFO receipts + LRU cursors) and need NO
+   *  cross-restart durability: they are keyed by the per-connection `sessionId`, so a
+   *  restart or hibernation drops them exactly when the sessions they track also end — a
+   *  reconnect mints a fresh `sessionId` → a fresh cursor and a fresh `actionId` namespace,
+   *  so no post-loss action can hit a lost entry (verified). */
   gate?: ActionGate;
   /** Cap on retained idempotency receipts; past it the oldest are evicted (FIFO).
    *  Bounds memory for a long match — a retried action older than the last N is no
