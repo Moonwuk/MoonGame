@@ -1,4 +1,5 @@
 import type { GameState } from './gameState';
+import { deepEqual } from '../util/clone';
 
 const COLLECTIONS = ['players', 'planets', 'fleets', 'battles'] as const;
 type Collection = (typeof COLLECTIONS)[number];
@@ -51,7 +52,7 @@ export function diffState(prev: GameState, next: GameState): StateDelta {
     const c: Record<string, unknown> = {};
     const r: string[] = [];
     for (const id of Object.keys(n)) {
-      if (!(id in p) || JSON.stringify(p[id]) !== JSON.stringify(n[id])) c[id] = n[id];
+      if (!(id in p) || !deepEqual(p[id], n[id])) c[id] = n[id];
     }
     for (const id of Object.keys(p)) {
       if (!(id in n)) r.push(id);
@@ -62,7 +63,7 @@ export function diffState(prev: GameState, next: GameState): StateDelta {
   let meta: Record<string, unknown> | undefined;
   let removedMeta: string[] | undefined;
   for (const k of META_KEYS) {
-    if (JSON.stringify(prev[k]) !== JSON.stringify(next[k])) {
+    if (!deepEqual(prev[k], next[k])) {
       if (next[k] === undefined) (removedMeta ??= []).push(k);
       else (meta ??= {})[k] = next[k];
     }

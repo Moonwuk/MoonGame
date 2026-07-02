@@ -71,8 +71,8 @@ export {
 export { isBombarded, bombardedPlanets } from './state/orbit';
 export { DEFAULT_STANCE, pairKey, getStance, setStance } from './state/diplomacy';
 export { diffState, applyDelta, type StateDelta } from './state/delta';
-export { visibleState, identifiedNodes } from './state/visibility';
-export type { VisibleState, SignatureContact, SignatureSize } from './state/visibility';
+export { visibleState, visibleView, identifiedNodes } from './state/visibility';
+export type { VisibleState, VisibleView, SignatureContact, SignatureSize } from './state/visibility';
 export { hashState } from './state/hash';
 
 // Action contract

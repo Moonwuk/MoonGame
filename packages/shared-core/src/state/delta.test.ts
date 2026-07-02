@@ -76,6 +76,16 @@ describe('state delta — diff/apply round-trip', () => {
     expect(prev.planets).toHaveProperty('B'); // original still intact
   });
 
+  it('treats a key-reordered but logically equal entity as unchanged', () => {
+    const prev = base();
+    const next = deepClone(prev);
+    // Same content, different key insertion order — logically the same entity.
+    next.players.p1 = { name: 'One', id: 'p1', resources: { metal: 10 }, faction: 'x', status: 'active' };
+    const delta = diffState(prev, next);
+    expect(delta.changed).toEqual({});
+    expect(delta.meta).toBeUndefined();
+  });
+
   it('removes a meta key that went defined → undefined (survives the JSON wire)', () => {
     const prev = base();
     prev.diplomacy = { 'p1|p2': 'war' };

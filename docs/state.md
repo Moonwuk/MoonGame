@@ -6,7 +6,7 @@
 > `deep-technical-roadmap.md`, `multiplayer.md`, `metagame.md`, `map-roadmap.md`, `security-a06.md` (модель угроз/A06), корневой `CLAUDE.md` / `CONTRIBUTING.md`.
 >
 > **Ветка:** feature-ветка · **PR:** создаётся после изменений.
-> **Гейт:** `pnpm run check` (lint + typecheck + test). **Тесты: 796 зелёных** (4 skip, 85 файлов).
+> **Гейт:** `pnpm run check` (lint + typecheck + test). **Тесты: 804 зелёных** (4 skip, 85 файлов).
 
 ---
 
@@ -480,7 +480,9 @@ home?, fleetId?}` — `grade` (редкость, число слотов в кл
 (грубое «что-то есть», ведро по `Σ count × UnitDef.signature`), а не сам флот. Прячет:
 чужую казну/технологии, контент невидимых миров (топология остаётся), невидимые
 флоты/бои и **всё расписание** (утечка планов). Покрыто тестами, включая anti-leak
-по JSON.
+по JSON. **`visibleView`** — та же проекция + её identify-набор за **один** проход
+покрытия: рассылка (`MatchRoom.broadcastState`) берёт оба из него, не считая
+`coverageFor` дважды на игрока (~−40% на проекцию броадкаста по бенчу).
 
 **Память (вариант B, `visibilityModule` + `modules/visibility.ts`).** Модуль на
 `time.advanced`/`planet.captured`/`fleet.arrived` пишет per-player снимки опознанных

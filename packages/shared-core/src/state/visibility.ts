@@ -216,6 +216,13 @@ export function identifiedNodes(state: GameState, viewerId: PlayerId, data: Game
   return coverageFor(state, viewerId, data).identify;
 }
 
+/** A player's projection plus the identify set it was computed from. */
+export interface VisibleView {
+  view: VisibleState;
+  /** Nodes the viewer currently identifies — the same set `identifiedNodes` returns. */
+  identified: Set<PlanetId>;
+}
+
 /**
  * Project `state` to what `viewerId` may see. Pure: the input is never mutated
  * (works on a `deepClone`). Hides every other player's private data, the
@@ -223,8 +230,27 @@ export function identifiedNodes(state: GameState, viewerId: PlayerId, data: Game
  * (it leaks future intent); radar-only enemy fleets become coarse signatures.
  */
 export function visibleState(state: GameState, viewerId: PlayerId, data: GameData): VisibleState {
+  return visibleView(state, viewerId, data).view;
+}
+
+/**
+ * `visibleState` plus the identify set behind it, from ONE coverage pass.
+ * The broadcast path needs both (the view to diff, the set to fog-filter
+ * events); computing them together halves the per-player coverage work.
+ */
+export function visibleView(state: GameState, viewerId: PlayerId, data: GameData): VisibleView {
+  const coverage = coverageFor(state, viewerId, data);
+  return { view: project(state, viewerId, data, coverage), identified: coverage.identify };
+}
+
+/** The projection body, over a precomputed coverage (see `visibleView`). */
+function project(
+  state: GameState,
+  viewerId: PlayerId,
+  data: GameData,
+  { identify, radar }: Coverage,
+): VisibleState {
   const view = deepClone(state) as VisibleState;
-  const { identify, radar } = coverageFor(state, viewerId, data);
 
   // Other players' private data: keep identity, drop treasury and research (incl. the
   // chosen research leader — its branch focus / +slot is strategic, not public).

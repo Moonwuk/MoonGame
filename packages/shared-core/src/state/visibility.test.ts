@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { parseGameData, type GameData } from '../data/schemas';
 import { createInitialState, type Fleet, type GameState, type Planet, type Player } from './gameState';
-import { visibleState } from './visibility';
+import { identifiedNodes, visibleState, visibleView } from './visibility';
 
 const data: GameData = parseGameData({
   version: '0.1.0',
@@ -62,6 +62,15 @@ function scenario(): GameState {
     scheduled: [{ id: 'evt:1', at: 5, type: 'fleet.arrived', payload: {}, seq: 0 }],
   };
 }
+
+describe('visibleView (one coverage pass for the broadcast path)', () => {
+  it('returns the same projection and identify set as the two separate calls', () => {
+    const state = scenario();
+    const { view, identified } = visibleView(state, 'p1', data);
+    expect(view).toEqual(visibleState(state, 'p1', data));
+    expect([...identified].sort()).toEqual([...identifiedNodes(state, 'p1', data)].sort());
+  });
+});
 
 describe('visibleState (fog of war as a security boundary)', () => {
   it('keeps own and identified objects, hides the rest', () => {
