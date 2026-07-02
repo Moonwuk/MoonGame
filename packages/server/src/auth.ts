@@ -28,8 +28,6 @@ export interface JoinTokenVerifyConfig {
   issuer: string;
   /** Required `aud` — a token minted for another audience is rejected. */
   audience: string;
-  /** Clock skew tolerance in seconds for exp/nbf (default 0). */
-  clockToleranceSec?: number;
   /** Optional hard cap (seconds) on a token's age from `iat`, enforced at the gate
    *  regardless of the minting side's TTL — a defence-in-depth bound on a leaked token's
    *  window. Absent ⇒ replay is bounded only by `exp`. */
@@ -64,7 +62,7 @@ export async function verifyJoinToken(
       issuer: config.issuer,
       audience: config.audience,
       typ: JOIN_TOKEN_TYP, // reject a token minted for another purpose (key-reuse guard)
-      clockTolerance: config.clockToleranceSec ?? 0,
+      clockTolerance: 0, // no skew tolerance — exp is enforced exactly
       requiredClaims: ['exp'], // a join token without `exp` is not a join token
       ...(config.maxTokenAgeSec !== undefined ? { maxTokenAge: config.maxTokenAgeSec } : {}),
     });

@@ -60,18 +60,15 @@ function baseUrl(request: IncomingMessage): string {
   return `http://${request.headers.host ?? 'localhost'}`;
 }
 
+const UPGRADE_REASON: Record<number, string> = {
+  401: 'Unauthorized',
+  403: 'Forbidden',
+  409: 'Conflict',
+  500: 'Internal Server Error',
+};
+
 function rejectUpgrade(socket: Duplex, status: number): void {
-  const reason =
-    status === 401
-      ? 'Unauthorized'
-      : status === 403
-        ? 'Forbidden'
-        : status === 409
-          ? 'Conflict'
-          : status === 500
-            ? 'Internal Server Error'
-            : 'Not Found';
-  socket.write(`HTTP/1.1 ${status} ${reason}\r\n\r\n`);
+  socket.write(`HTTP/1.1 ${status} ${UPGRADE_REASON[status] ?? 'Not Found'}\r\n\r\n`);
   socket.destroy();
 }
 
@@ -100,6 +97,14 @@ export function createMultiplayerServer(
   // of health-poll noise. Boot/shutdown + explicit logs stay; add per-route logging where
   // it earns its keep.
   const app = Fastify({ logger: options.logger ?? false, disableRequestLogging: true });
+
+  // Fail-secure (invariant #4): a route handler that throws/rejects (e.g. a store fault in
+  // the match API) must return a stable code with NO internal detail — Fastify's default
+  // handler would echo err.message on the wire. The detail stays in the logs.
+  app.setErrorHandler((error, request, reply) => {
+    request.log.error(error);
+    void reply.code(500).send({ error: 'E_INTERNAL' });
+  });
 
   // Liveness: cheap, unauthenticated, and DELIBERATELY contentless — it must not leak
   // match ids/seqs (audit F-13, which the old node:http `/health` did). Readiness is a

@@ -574,7 +574,7 @@ export class MatchRoom {
       await this.enqueue(() =>
         this.admitCommitted(playerId, peer, envelope, sessionId).catch(() => {
           try {
-            this.sendGateRejection(peer, envelopeActionId(envelope), 'E_INTERNAL');
+            this.sendReject(peer, envelopeActionId(envelope), 'E_INTERNAL');
           } catch {
             /* peer gone */
           }
@@ -630,12 +630,12 @@ export class MatchRoom {
     // its clientSeq, or a legitimate backoff-retry of the same seq would hit E_REPLAY. This
     // is the fine-grained per-player limit (the connection-level flood guard is in wsServer).
     if (this.rateLimited(playerId)) {
-      this.sendGateRejection(peer, envelopeActionId(envelope), 'E_RATE_LIMIT');
+      this.sendReject(peer, envelopeActionId(envelope), 'E_RATE_LIMIT');
       return null;
     }
     const admission = this.gate!.admit(envelope, { matchId: this.id, playerId, sessionId });
     if (!admission.ok) {
-      this.sendGateRejection(peer, envelopeActionId(envelope), admission.code);
+      this.sendReject(peer, envelopeActionId(envelope), admission.code);
       return null;
     }
     const value = admission.value;
@@ -643,7 +643,7 @@ export class MatchRoom {
       // Idempotent replay — mirror the bare path's dedup response: a full resync for an
       // action that succeeded, the cached rejection otherwise. No re-apply.
       if (value.receipt.ok) this.send(peer, this.stateMessageFor(playerId));
-      else this.sendGateRejection(peer, value.receipt.actionId, value.receipt.code ?? 'E_INTERNAL');
+      else this.sendReject(peer, value.receipt.actionId, value.receipt.code ?? 'E_INTERNAL');
       return null;
     }
     return value;
@@ -853,14 +853,18 @@ export class MatchRoom {
       code === undefined
         ? { actionId: action.id, playerId, seq: this.seq, ok }
         : { actionId: action.id, playerId, seq: this.seq, ok, code };
-    this.storeReceipt(receipt, action.type);
+    // Sync path: not inside a `committing` window, so emitting the observation now is safe
+    // (a driver reschedule sees the committed clock). The committed path retains + observes
+    // separately so it can defer the observation past its `committing` window.
+    this.retainReceipt(receipt);
+    this.observeAction(receipt, action.type);
     return receipt;
   }
 
-  /** Records a receipt in the in-memory idempotency map (FIFO-capped) and emits the
-   *  `action` observation. Split from `recordReceipt` so the committed path can build
-   *  the receipt with a prospective `seq`, persist it, and only THEN commit it here. */
-  private storeReceipt(receipt: ActionReceipt, actionType: string): void {
+  /** Retain a receipt in the in-memory idempotency map (FIFO-capped). No side effects
+   *  beyond the map, so the committed path can retain during its `committing` window and
+   *  emit the observation only after it clears. */
+  private retainReceipt(receipt: ActionReceipt): void {
     this.receipts.set(receipt.actionId, receipt);
     // Bound memory (F-04): idempotency is needed for the retry window (minutes), not
     // forever — evict the oldest receipts past the cap (Map preserves insertion order).
@@ -869,6 +873,13 @@ export class MatchRoom {
       if (oldest === undefined) break;
       this.receipts.delete(oldest);
     }
+  }
+
+  /** Emit the `action` observation (metrics + the driver re-arm). MUST be called with
+   *  `committing` false: a driver's `reschedule` reads `msUntilNextEvent`, which reports
+   *  null while committing — so emitting mid-commit would leave the driver un-armed and
+   *  the 24/7 world stalled for connected players until their next action. */
+  private observeAction(receipt: ActionReceipt, actionType: string): void {
     this.observe?.({
       kind: 'action',
       actionId: receipt.actionId,
@@ -916,7 +927,7 @@ export class MatchRoom {
         // Last-resort: report and swallow. The `send` itself must not throw (a dead
         // socket would otherwise reject the task), so guard it too.
         try {
-          if (peer) this.sendTransientReject(peer, action.id, 'E_INTERNAL');
+          if (peer) this.sendReject(peer, action.id, 'E_INTERNAL');
         } catch {
           /* peer gone */
         }
@@ -940,7 +951,7 @@ export class MatchRoom {
     }
     // Rate limit — transient reject, NO receipt (a genuine retry after backoff lands).
     if (this.rateLimited(playerId)) {
-      if (peer) this.sendTransientReject(peer, action.id, 'E_RATE_LIMIT');
+      if (peer) this.sendReject(peer, action.id, 'E_RATE_LIMIT');
       return;
     }
     await this.commitApply(playerId, action, peer);
@@ -961,11 +972,18 @@ export class MatchRoom {
     peer?: RoomPeer,
   ): Promise<CommitVerdict> {
     this.committing = true;
+    // Deferred to the `finally` (after `committing` clears): emitting the `action`
+    // observation re-arms the clock driver, which reads `msUntilNextEvent` — null while
+    // committing. Emitting mid-commit would leave the driver un-armed and stall the 24/7
+    // world for connected players until their next action.
+    let observeCommitted: (() => void) | undefined;
     try {
       // Authorization — a durable failure receipt (no state change).
       if (action.playerId !== playerId || !this.hasPlayer(playerId)) {
-        const committed = await this.commitReject(playerId, action, 'E_FORBIDDEN', peer);
-        return committed ? { ok: false, code: 'E_FORBIDDEN', durable: true } : TRANSIENT_VERDICT;
+        const receipt = await this.commitReject(playerId, action, 'E_FORBIDDEN', peer);
+        if (!receipt) return TRANSIENT_VERDICT;
+        observeCommitted = () => this.observeAction(receipt, action.type);
+        return { ok: false, code: 'E_FORBIDDEN', durable: true };
       }
 
       // Catch the world up PURELY — without touching `this.stateValue` — so an external
@@ -974,8 +992,10 @@ export class MatchRoom {
       const serverNow = this.clock();
       const advanced = this.computeAdvance(this.stateValue, serverNow);
       if (!advanced.ok) {
-        const committed = await this.commitReject(playerId, action, advanced.code, peer);
-        return committed ? { ok: false, code: advanced.code, durable: true } : TRANSIENT_VERDICT;
+        const receipt = await this.commitReject(playerId, action, advanced.code, peer);
+        if (!receipt) return TRANSIENT_VERDICT;
+        observeCommitted = () => this.observeAction(receipt, action.type);
+        return { ok: false, code: advanced.code, durable: true };
       }
 
       const context = this.context(Math.max(serverNow, advanced.state.time));
@@ -992,7 +1012,8 @@ export class MatchRoom {
         }
         this.stateValue = advanced.state;
         this.seq = seq;
-        this.storeReceipt(receipt, action.type);
+        this.retainReceipt(receipt);
+        observeCommitted = () => this.observeAction(receipt, action.type);
         if (advanced.events.length > 0) this.broadcastState(advanced.events);
         if (peer) this.sendRejection(peer, receipt);
         return { ok: false, code: result.code, durable: true };
@@ -1006,33 +1027,37 @@ export class MatchRoom {
       }
       this.stateValue = result.state;
       this.seq = seq;
-      this.storeReceipt(receipt, action.type);
+      this.retainReceipt(receipt);
+      observeCommitted = () => this.observeAction(receipt, action.type);
       this.broadcastState([...advanced.events, ...result.events]);
       this.observeEndIfNeeded();
       return { ok: true };
     } finally {
       this.committing = false;
+      observeCommitted?.(); // now that committing is false, the driver re-arm sees the real next event
     }
   }
 
   /** Persist a failure receipt (state unchanged) before acking the rejection, so a
    *  retry after a restart stays deduped. A failed write ⇒ transient reject, no commit.
-   *  Returns whether the durable failure receipt was committed (false = transient). */
+   *  Returns the committed receipt (for the caller's deferred observation) or null on a
+   *  transient failure. Retains the receipt but does NOT observe — the caller emits the
+   *  observation after its `committing` window (see commitApply). */
   private async commitReject(
     playerId: PlayerId,
     action: Action,
     code: string,
     peer?: RoomPeer,
-  ): Promise<boolean> {
+  ): Promise<ActionReceipt | null> {
     const seq = this.seq + 1;
     const receipt: ActionReceipt = { actionId: action.id, playerId, seq, ok: false, code };
     if (!(await this.persistGuarded(this.snapshot(this.stateValue, seq), receipt, action.id, peer))) {
-      return false;
+      return null;
     }
     this.seq = seq;
-    this.storeReceipt(receipt, action.type);
+    this.retainReceipt(receipt);
     if (peer) this.sendRejection(peer, receipt);
-    return true;
+    return receipt;
   }
 
   /** Awaits the durable write. On reject/throw: commit nothing, send a TRANSIENT reject
@@ -1047,22 +1072,16 @@ export class MatchRoom {
       await this.persist!(snapshot, receipt);
       return true;
     } catch {
-      if (peer) this.sendTransientReject(peer, actionId, 'E_UNAVAILABLE');
+      if (peer) this.sendReject(peer, actionId, 'E_UNAVAILABLE');
       return false;
     }
   }
 
-  /** A rejection that records NO receipt — the action is retriable (rate-limit / a
-   *  durable-write failure / an unexpected error), not a permanent verdict. */
-  private sendTransientReject(peer: RoomPeer, actionId: string, code: string): void {
-    this.send(peer, { type: 'rejection', matchId: this.id, seq: this.seq, actionId, code });
-  }
-
-  /** A rejection from the action-layer front door (SV-1.1). The stable `E_*` code goes
-   *  to the client with no internal detail; whether it is retriable depends on the code
-   *  (transient E_RATE_LIMIT vs. permanent E_FORBIDDEN / E_BAD_PAYLOAD), which the client
-   *  decides — the room records no receipt (the gate owns idempotency). */
-  private sendGateRejection(peer: RoomPeer, actionId: string, code: string): void {
+  /** Send a rejection that records NO room receipt. Whether the action is retriable is
+   *  per-code and the client's call: transient (E_RATE_LIMIT / E_UNAVAILABLE / E_INTERNAL)
+   *  vs. permanent (E_FORBIDDEN / E_BAD_PAYLOAD / a sequence code). Used by both the bare
+   *  committed path and the action-layer gate front door. */
+  private sendReject(peer: RoomPeer, actionId: string, code: string): void {
     this.send(peer, { type: 'rejection', matchId: this.id, seq: this.seq, actionId, code });
   }
 

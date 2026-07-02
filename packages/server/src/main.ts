@@ -37,8 +37,11 @@ const bootTime = Date.now();
 const authSecret = process.env.AUTH_JWT_SECRET;
 const issuer = process.env.AUTH_ISSUER ?? 'void-dominion';
 const audience = process.env.AUTH_AUDIENCE ?? 'match';
+// Short TTL: the token rides in the WS URL (?token=), so keep a leaked one's window small;
+// the verify side also caps age from `iat` as defence-in-depth.
+const JOIN_TOKEN_TTL_SEC = 15 * 60;
 const auth: JoinTokenVerifyConfig | undefined = authSecret
-  ? { key: hmacSecret(authSecret), algorithms: ['HS256'], issuer, audience }
+  ? { key: hmacSecret(authSecret), algorithms: ['HS256'], issuer, audience, maxTokenAgeSec: JOIN_TOKEN_TTL_SEC }
   : undefined;
 const allowedOrigins = process.env.ALLOWED_ORIGINS
   ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim()).filter(Boolean)
@@ -50,7 +53,7 @@ const signToken = authSecret
       signJoinToken(
         { matchId, playerId },
         { key: hmacSecret(authSecret), algorithm: 'HS256', issuer, audience },
-        { ttlSeconds: 3600 },
+        { ttlSeconds: JOIN_TOKEN_TTL_SEC },
       )
   : undefined;
 
@@ -131,13 +134,20 @@ const registry = new LazyMatchRegistry({ load: loadMatch });
 
 // The dev-grade match create/join API (SV-2.4): a nick claims a seat first-come (shared
 // with the ?nick= WS login) and gets a short-lived join token for the authenticated
-// handshake. NOT an authorization boundary — see matchApi.ts.
+// handshake. NOT an authorization boundary — see matchApi.ts. It is only exposed when auth
+// is configured (its whole job is minting join tokens), so a default dev server has no
+// unauthenticated HTTP write surface; a per-process creation cap bounds abuse until a real
+// deployment gates creation behind identity + a rate-limit.
 const accountStore = new MemoryAccountStore();
+const MAX_MATCHES = 1000;
+let matchCount = 1; // the seeded 'dev' match
 const matchApi: MatchApiDeps = {
   createMatch: async () => {
+    if (matchCount >= MAX_MATCHES) throw new Error('match capacity reached'); // → 500, bounded
     const matchId = `m-${randomUUID()}`;
     const seed = createDevMatch(data, { id: matchId, time: Date.now() });
     await stores.store.save(snapshotOf(seed));
+    matchCount += 1;
     return { matchId, seats: Object.keys(seed.state.players) };
   },
   join: async (matchId, nick) => {
@@ -150,6 +160,13 @@ const matchApi: MatchApiDeps = {
   },
 };
 
+if (auth && !allowedOrigins) {
+  process.stderr.write(
+    'warning: AUTH is on but ALLOWED_ORIGINS is unset — no Origin allowlist (CSWSH). ' +
+      'Set ALLOWED_ORIGINS before exposing this beyond a trusted network.\n',
+  );
+}
+
 const server = createMultiplayerServer({
   registry,
   host,
@@ -161,7 +178,8 @@ const server = createMultiplayerServer({
   auth,
   allowedOrigins,
   accountStore, // dev ?nick= WS login (when auth is off)
-  httpRoutes: (app) => registerMatchApi(app, matchApi),
+  // Only expose create/join when auth is on (it mints tokens); no auth ⇒ use ?player=.
+  httpRoutes: auth ? (app) => registerMatchApi(app, matchApi) : undefined,
 });
 
 const wsBase = await server.listen(); // ws://host:port/matches (multi-match → the base prefix)
@@ -176,7 +194,10 @@ process.stdout.write(
     `  gate   : ${gateFactory ? 'ON (clients MUST send action.v1 envelopes echoing welcome.sessionId)' : 'off (bare actions)'}`,
     `  health : ${httpUrl}/health`,
     ...(auth
-      ? [`  join   : POST ${httpUrl}/matches  ·  GET ${httpUrl}/matches/dev/join?nick=<you>`]
+      ? [
+          `  join   : POST ${httpUrl}/matches  ·  GET ${httpUrl}/matches/dev/join?nick=<you>`,
+          `           (dev-grade: unauthenticated, seat claimed by nick — not an authz boundary)`,
+        ]
       : [`  dev    : ${wsBase}/dev?player=green  ·  ${wsBase}/dev?player=red`]),
     host === '0.0.0.0'
       ? '  (bound to 0.0.0.0 — connect other devices via this machine’s LAN IP)'
