@@ -90,6 +90,7 @@ export {
   type AdvanceFailure,
   type ActionIdParts,
 } from './action/types';
+export { isValidActionPayload } from './actions/payloadSchemas';
 
 // Microkernel
 export { Kernel, createKernel } from './kernel/kernel';

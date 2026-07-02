@@ -28,7 +28,9 @@ import {
   type Planet,
   type Player,
 } from '@void/shared-core';
-import { MatchRoom } from './matchRoom';
+import type { ActionGate } from '@void/action-layer';
+import { MatchRoom, type ActionReceipt, type RoomObservation } from './matchRoom';
+import type { MatchSnapshot, StoredReceipt } from './store';
 
 /**
  * A runnable dev match on the *real* simulation core — the smallest faithful
@@ -94,6 +96,25 @@ export interface DevMatchOptions {
   /** Ruleset for this match (time scale + victory conditions). Defaults in `MatchRoom`
    *  to `{ timeScale: 1 }`; the match browser shows it as the match's "rules". */
   config?: MatchConfig;
+  /** Observation stream (persistence / metrics wiring — see `main.ts` F8). */
+  observe?: (event: RoomObservation) => void;
+  /** Resume from a durable snapshot instead of seeding a fresh match: the passed
+   *  state replaces the freshly-seeded one (the seed still runs, cheaply, and is
+   *  discarded). The clock keeps running from `state.time`. */
+  initialState?: GameState;
+  /** Rehydrate idempotency receipts on resume (see `MatchRoom.initialReceipts`),
+   *  so an action deduped before a restart stays deduped after it. */
+  initialReceipts?: ActionReceipt[];
+  /** Resume the action counter from a persisted snapshot (see `MatchRoom.initialSeq`). */
+  initialSeq?: number;
+  /** Strict commit-before-broadcast durable write (see `MatchRoom.persist`). */
+  persist?: (snapshot: MatchSnapshot, receipt: StoredReceipt) => Promise<void>;
+  /** Opt-in `@void/action-layer` front-door (see `MatchRoom.gate`). */
+  gate?: ActionGate;
+  /** Per-player action rate limit (see `MatchRoom.actionRateMax` / `actionRateWindowMs`);
+   *  pinned in tests to exercise throttling deterministically. */
+  actionRateMax?: number;
+  actionRateWindowMs?: number;
 }
 
 function player(id: string, name: string, faction: string): Player {
@@ -180,13 +201,20 @@ export function createDevMatch(data: GameData, options: DevMatchOptions = {}): M
     const heroId = `hero:${id}`;
     heroes[heroId] = { id: heroId, owner: id, location: `home_${id}`, cooldowns: {} };
   });
-  const state: GameState = { ...base, players, planets, fleets, heroes };
+  const state: GameState = options.initialState ?? { ...base, players, planets, fleets, heroes };
   return new MatchRoom({
     id: options.id ?? 'dev',
     initialState: state,
     kernel: createKernel(DEV_MODULES),
     data,
     now: options.now,
+    observe: options.observe,
+    initialReceipts: options.initialReceipts,
+    initialSeq: options.initialSeq,
+    persist: options.persist,
+    gate: options.gate,
+    actionRateMax: options.actionRateMax,
+    actionRateWindowMs: options.actionRateWindowMs,
     ...(options.config ? { config: options.config } : {}),
   });
 }

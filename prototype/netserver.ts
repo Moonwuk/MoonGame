@@ -19,6 +19,7 @@ import {
   MatchRoom,
   MatchRegistry,
   createMultiplayerServer,
+  registerBrowserApi,
   MemoryAccountStore,
   MemoryMatchStore,
   MemoryReceiptStore,
@@ -84,9 +85,16 @@ const observe = (ev: RoomObservation): void => {
   // and re-arm the offline wakeup: an action may schedule or consume events, and a
   // lobby Start releases the frozen clock — both move the next-event time.
   if (ev.kind === 'action' || ev.kind === 'lobby' || ev.kind === 'end') scheduleSave();
-  // Re-arm on EVERY room event: an action may (un)schedule events, a lobby Start releases
-  // the clock, and a join/leave starts/stops the live-player heartbeat below.
-  armWakeup();
+  // Re-arm on room events: an action may (un)schedule events, a lobby Start releases
+  // the clock, and a join/leave starts/stops the live-player heartbeat below. A genuine
+  // external event also gives the stall guard a fresh chance (the situation may have
+  // changed). `advance_overflow` is EXCLUDED: a stalled catch-up emits it from inside
+  // `room.tick()` itself, so resetting/re-arming on it would defeat the wake-stall
+  // back-off in `onWake` (an eternal 0ms wake spin).
+  if (ev.kind !== 'advance_overflow') {
+    wakeStalls = 0;
+    armWakeup();
+  }
 };
 
 const host = process.env.HOST ?? '127.0.0.1';
@@ -163,6 +171,16 @@ const room = new MatchRoom({
   emitStateHash: true, // attach hashState(view) so the client overlay can flag desync
   observe, // M0: log every room event to JSONL + count for the on-exit summary
   initialReceipts, // rehydrated idempotency (deduped action stays deduped after restart)
+  initialSeq: restored?.seq, // resume the action counter — else the optimistic-by-seq
+  // store drops post-restart saves until seq climbs back past the stored value
+  // Strict commit-before-broadcast: await the durable write of the new snapshot +
+  // receipt before the room commits state / broadcasts. The debounced scheduleSave in
+  // `observe` above becomes a harmless coalesced extra for actions (still needed for
+  // tick-driven advances, which are recomputable and persist after the fact).
+  persist: async (snapshot, receipt) => {
+    await matchStore.save(snapshot);
+    await receiptStore.save('proto', receipt);
+  },
   timeScale: TIME_SCALE, // playtest fast-forward (1 = real-time)
 });
 
@@ -214,7 +232,9 @@ const MAX_TIMER_MS = 60 * 60_000; // 1h cap (setTimeout overflow + clock-drift s
 // on-screen between actions. newGame() starts with NO scheduled events, so without this
 // the very first thing players see after Start is a frozen "Day 1 00:00".
 const HEARTBEAT_MS = 1_000;
+const WAKE_STALL_LIMIT = 3; // consecutive due-but-non-progressing wakes → back off
 let wakeTimer: ReturnType<typeof setTimeout> | null = null;
+let wakeStalls = 0;
 function armWakeup(): void {
   if (wakeTimer) {
     clearTimeout(wakeTimer);
@@ -260,10 +280,27 @@ function runServerQueues(): void {
 
 function onWake(): void {
   wakeTimer = null;
-  room.tick(); // fire whatever is now due (a no-op if a capped timer fired early)
-  runServerAI(); // drive any empty seat once the clock has moved
-  runServerQueues(); // CC-server: advance each fleet's authoritative order chain
+  const progressed = room.tick(); // fire whatever is now due (no-op if a capped timer fired early)
+  // Stall guard: work is due (ms 0) but the clock didn't move ⇒ a same-instant runaway.
+  // While stalled, SKIP the AI/queue drivers — their submissions (even rejected ones)
+  // emit `action` observations that would reset this guard and re-arm a 0ms wake — and
+  // back off after a few tries instead of busy-looping (the room has already surfaced
+  // an advance_overflow). A real player action re-arms via `observe`, which resets the
+  // counter and gives it a fresh chance.
+  const stalled = !progressed && room.msUntilNextEvent() === 0;
+  if (!stalled) {
+    wakeStalls = 0;
+    runServerAI(); // drive any empty seat once the clock has moved
+    runServerQueues(); // CC-server: advance each fleet's authoritative order chain
+  }
   scheduleSave(); // persist the advanced world
+  if (stalled && ++wakeStalls >= WAKE_STALL_LIMIT) {
+    process.stderr.write(
+      'wakeup driver idling: the world clock stalled (a same-instant scheduling loop) — ' +
+        'check for a module scheduling events at its own instant.\n',
+    );
+    return; // idle — do not re-arm
+  }
   armWakeup(); // re-arm for the next event (or the remainder of a long sleep)
 }
 
@@ -276,7 +313,15 @@ registry.register(room, {
   createdAt: Date.now(),
   startedAt: initialState.time,
 });
-const server = createMultiplayerServer({ registry, host, port, indexHtml });
+const server = createMultiplayerServer({
+  registry,
+  host,
+  port,
+  indexHtml,
+  accountStore, // `?nick=` WS login resolves its seat here
+  // The match-browser read-model + archive intents (GET /matches, POST …/archive).
+  httpRoutes: (app) => registerBrowserApi(app, registry),
+});
 let wsUrl: string;
 try {
   wsUrl = await server.listen();

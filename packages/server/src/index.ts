@@ -18,9 +18,35 @@ export {
   type MatchLists,
   type ArchiveResult,
 } from './matchRegistry';
+export {
+  InMemoryRoomRegistry,
+  LazyRoomRegistry,
+  type LazyRoomRegistryOptions,
+  type LoadedMatch,
+  type RoomRegistry,
+} from './roomRegistry';
+export {
+  registerBrowserApi,
+  registerMatchApi,
+  type CreatedMatch,
+  type JoinFailure,
+  type JoinResult,
+  type MatchApiDeps,
+} from './matchApi';
 export { InMemoryEphemeralStore, type EphemeralStore } from './ephemeral';
+export {
+  hmacSecret,
+  signJoinToken,
+  verifyJoinToken,
+  type JoinClaim,
+  type JoinTokenResult,
+  type JoinTokenSignConfig,
+  type JoinTokenVerifyConfig,
+  type VerifyKey,
+} from './auth';
 export type {
   ClientActionMessage,
+  ClientActionEnvelopeMessage,
   ClientMessage,
   ClientPingMessage,
   ServerErrorCode,
