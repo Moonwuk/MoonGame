@@ -75,6 +75,10 @@ import {
   freshSortie,
   tickRearm,
   scrambleOrder,
+  botFavour,
+  FAVOUR_BASE,
+  FAVOUR_EMBARGO,
+  FAVOUR_WAR,
   type QStep,
   type Patrol,
 } from './game';
@@ -4112,6 +4116,27 @@ function diploPasses(id: string): boolean {
   if (diploTypeFilter.size && !diploTypeFilter.has(isAiSeat(id) ? 'ai' : 'human')) return false;
   return true;
 }
+/** A bot's approval-of-you meter (game.ts botDiplomacyModule). A bot only ever sits at
+ *  ≤ FAVOUR_BASE, so a full bar = its passive-friendly baseline; your aggression drains it
+ *  past the embargo tick (won't trade on the market) and then the war tick (declares war).
+ *  Only shown for AI seats — humans have no favour meter. */
+function favourBarHtml(bot: string): string {
+  const f = botFavour(s, bot, ME);
+  const pct = clamp(f / FAVOUR_BASE, 0, 1) * 100;
+  const embPct = (FAVOUR_EMBARGO / FAVOUR_BASE) * 100;
+  const warPct = (FAVOUR_WAR / FAVOUR_BASE) * 100;
+  const tier = f < FAVOUR_WAR ? 'war' : f < FAVOUR_EMBARGO ? 'embargo' : 'ok';
+  const label = tier === 'war' ? 'на грани войны' : tier === 'embargo' ? 'эмбарго' : 'дружелюбно';
+  return (
+    `<div class="dp-fav ${tier}" title="Одобрение бота: ${Math.round(f)}/${FAVOUR_BASE} — ${label}. ` +
+    `Ниже ${FAVOUR_EMBARGO} бот вводит эмбарго на рынке, ниже ${FAVOUR_WAR} — объявляет войну.">` +
+    `<span class="dp-fav-cap">☺</span>` +
+    `<div class="dp-fav-track"><div class="dp-fav-fill" style="width:${pct.toFixed(1)}%"></div>` +
+    `<span class="dp-fav-tick emb" style="left:${embPct.toFixed(1)}%"></span>` +
+    `<span class="dp-fav-tick war" style="left:${warPct.toFixed(1)}%"></span></div>` +
+    `<span class="dp-fav-lbl">${label}</span></div>`
+  );
+}
 function diploRowsHtml(): string {
   const others = diploSeats().filter((id) => id !== ME);
   const byName = (a: string, b: string) => (NAME[a] ?? a).localeCompare(NAME[b] ?? b);
@@ -4137,6 +4162,8 @@ function diploRowsHtml(): string {
       const stanceTag = isMe
         ? `<span class="dp-tag">ВЫ</span>`
         : `<span class="dp-stance" style="color:${STANCE_COLOR[st!]};border-color:${STANCE_COLOR[st!]}">${STANCE_RU[st!]}</span>`;
+      // Bots (AI seats) carry a favour meter toward you; humans/you don't.
+      const favBar = !isMe && AI_PLAYERS.has(id) ? favourBarHtml(id) : '';
       const expanded = diploExpanded === id && !isMe;
       const actions = expanded
         ? `<div class="dp-actions">` +
@@ -4152,6 +4179,7 @@ function diploRowsHtml(): string {
         `<span class="dp-name">${esc(NAME[id] ?? id)} <em>${bdg.tag}</em></span>` +
         `<span class="dp-w" title="провинций">⬣ ${w}</span>` +
         stanceTag +
+        favBar +
         `</div>` +
         actions
       );
