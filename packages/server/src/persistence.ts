@@ -1,10 +1,13 @@
 import type { MatchRoom } from './matchRoom';
 import {
+  MemoryAccountStore,
   MemoryMatchStore,
   MemoryReceiptStore,
+  PostgresAccountStore,
   PostgresMatchStore,
   PostgresReceiptStore,
   migrate,
+  type AccountStore,
   type MatchSnapshot,
   type MatchStore,
   type ReceiptStore,
@@ -22,6 +25,9 @@ import {
 export interface Stores {
   store: MatchStore;
   receiptStore: ReceiptStore;
+  /** Nick→seat identity. Durable (Postgres) alongside the match itself, so a returning
+   *  nick resumes its own side after a restart — not just the match state (review #6). */
+  accountStore: AccountStore;
   /** Which backend is active — for the boot log ('memory' loses state on restart). */
   kind: 'memory' | 'postgres';
   close(): Promise<void>;
@@ -33,6 +39,7 @@ export async function createStores(env: NodeJS.ProcessEnv = process.env): Promis
     return {
       store: new MemoryMatchStore(),
       receiptStore: new MemoryReceiptStore(),
+      accountStore: new MemoryAccountStore(),
       kind: 'memory',
       close: () => Promise.resolve(),
     };
@@ -45,6 +52,7 @@ export async function createStores(env: NodeJS.ProcessEnv = process.env): Promis
   return {
     store: new PostgresMatchStore(pool),
     receiptStore: new PostgresReceiptStore(pool),
+    accountStore: new PostgresAccountStore(pool), // shares the pool; closed by pool.end()
     kind: 'postgres',
     close: () => pool.end(),
   };

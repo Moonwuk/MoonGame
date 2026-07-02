@@ -8,7 +8,6 @@ import { createStores, snapshotOf } from './persistence';
 import { hmacSecret, signJoinToken, type JoinTokenVerifyConfig } from './auth';
 import { registerMatchApi, type MatchApiDeps } from './matchApi';
 import { LazyMatchRegistry, type LoadedMatch } from './matchRegistry';
-import { MemoryAccountStore } from './store';
 import type { RoomObservation } from './matchRoom';
 import type { MatchSnapshot, StoredReceipt } from './store';
 
@@ -138,7 +137,7 @@ const registry = new LazyMatchRegistry({ load: loadMatch });
 // is configured (its whole job is minting join tokens), so a default dev server has no
 // unauthenticated HTTP write surface; a per-process creation cap bounds abuse until a real
 // deployment gates creation behind identity + a rate-limit.
-const accountStore = new MemoryAccountStore();
+const accountStore = stores.accountStore; // durable alongside the match when DATABASE_URL is set
 const MAX_MATCHES = 1000;
 let matchCount = 1; // the seeded 'dev' match
 const matchApi: MatchApiDeps = {
