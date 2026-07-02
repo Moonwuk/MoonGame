@@ -3,7 +3,7 @@
 > Живой «якорь контекста»: что готово, как работает, что дальше. Обновляется по
 > мере разработки (после крупных изменений). Парные документы: `architecture.md`,
 > `modulesystem.md`, `gdd.md`, `roadmap.md`, `backlog.md` (кирпичики задач),
-> `deep-technical-roadmap.md`, `multiplayer.md`, `metagame.md`, `map-roadmap.md`, корневой `CLAUDE.md` / `CONTRIBUTING.md`.
+> `deep-technical-roadmap.md`, `multiplayer.md`, `metagame.md`, `map-roadmap.md`, `security-a06.md` (модель угроз/A06), корневой `CLAUDE.md` / `CONTRIBUTING.md`.
 >
 > **Ветка:** feature-ветка · **PR:** создаётся после изменений.
 > **Гейт:** `pnpm run check` (lint + typecheck + test). **Тесты: 794 зелёных** (4 skip, 85 файлов).
@@ -164,8 +164,8 @@ prototype/       src/game.ts, src/main.ts (UI), src/smoke.ts, build.mjs, uitest.
 {orderId, amount}`** — купить (частично) за деньги (`credits`); **`market.cancel
 {orderId}`** — продавец забирает непроданный остаток. **Комиссия 15% сжигается**
 (сток против инфляции): покупатель платит `amount×price`, продавец получает 85%.
-Коды: `E_BAD_PAYLOAD, E_UNKNOWN_RESOURCE, E_FORBIDDEN, E_INSUFFICIENT, E_NO_ORDER,
-E_OWN_ORDER, E_BAD_AMOUNT`. Публичен (туман не режет); в `delta` META.
+Коды: `E_BAD_PAYLOAD, E_UNKNOWN_RESOURCE, E_FORBIDDEN, E_INSUFFICIENT, E_ORDER_LIMIT
+(≤20 открытых на игрока, A06), E_NO_ORDER, E_OWN_ORDER, E_BAD_AMOUNT`. Публичен (туман не режет); в `delta` META.
 
 ### movement (`movement`)
 
@@ -186,8 +186,8 @@ combat считал перехват двух флотов, пересекающ
 Событие `fleet.arrival` несёт `departedAt` → устаревшее прибытие брошенной леги (после
 stop + re-route) игнорируется (без телепорта). Хук `fleet.speed` (скорость = по
 медленному кораблю). **Оптимизация:** `RouteCache` — ленивый кэш узловых маршрутов.
-Коды: `E_BAD_PAYLOAD, E_NO_FLEET, E_FORBIDDEN, E_FLEET_BUSY, E_SAME_LOCATION,
-E_NO_DESTINATION, E_NO_ROUTE, E_NOT_A_LANE, E_FLEET_IMMOBILE`.
+Коды: `E_BAD_PAYLOAD, E_NO_FLEET (и «не твой флот» — один код, A06), E_FLEET_BUSY,
+E_SAME_LOCATION, E_NO_DESTINATION, E_NO_ROUTE, E_NOT_A_LANE, E_FLEET_IMMOBILE`.
 Действие **`fleet.stop {fleetId}`** — припарковать летящий флот в его **текущей
 непрерывной точке** на лейне (доля по прошедшему времени леги), эмит `fleet.parked`
 — не на следующем узле, а где стоит; в глубоком космосе не зависает.
@@ -303,8 +303,8 @@ INSTEAD-of-фокус — opportunity-cost (лидер-«+слот» branchless)
 - Действие **`fleet.barrage {fleetId, targetId|null}`** — фокус-огонь: навести
   артиллерию на конкретный враждебный флот (`barrageTarget` на флоте) или сбросить
   (`null` → авто-ближайший). Устаревшая цель (погибла / вышла из радиуса) сбрасывается
-  сама. Коды: `E_NO_FLEET, E_FORBIDDEN, E_NO_ARTILLERY, E_NO_TARGET, E_NOT_HOSTILE,
-E_BAD_PAYLOAD`. Поиск флота по цели — **own-key** (`__proto__`/`constructor` не
+  сама. Коды: `E_NO_FLEET (вкл. «не твой»), E_NO_ARTILLERY, E_NO_TARGET (вкл. «не враг» —
+не течёт стойка, A06), E_BAD_PAYLOAD`. Поиск флота по цели — **own-key** (`__proto__`/`constructor` не
   проходят, защита от отравления `barrageTarget` → тихий DoS отрезка).
 - **Режимы огня артиллерии** (`barrageMode` на флоте, лестница агрессии; действие
   **`fleet.barrageMode {fleetId, mode}`**): **`passive`** — не стреляет; **`return`**
@@ -317,7 +317,7 @@ E_BAD_PAYLOAD`. Поиск флота по цели — **own-key** (`__proto__`
   `fleet.destroyed`); награда: **баф скорости** ×1.5 на 3ч (`retreatHasteUntil`, хук
   `fleet.speed`). Бой 1-на-1 распускается, противник освобождается (`releaseOrDestroyFleet`).
   Только орбитальный корабль-сторона (не десант/гарнизон). Событие `fleet.retreated {escaped}`.
-  Коды: `E_BAD_PAYLOAD, E_NO_FLEET, E_FORBIDDEN, E_NOT_IN_BATTLE, E_CANNOT_RETREAT`.
+  Коды: `E_BAD_PAYLOAD, E_NO_FLEET (вкл. «не твой»), E_NOT_IN_BATTLE, E_CANNOT_RETREAT`.
 
 ### construction (`construction`) — здания + наземная стройка
 
