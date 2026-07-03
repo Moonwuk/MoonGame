@@ -76,6 +76,17 @@ describe('state delta — diff/apply round-trip', () => {
     expect(prev.planets).toHaveProperty('B'); // original still intact
   });
 
+  it('carries diplomacyOffers as a meta key (add and clear)', () => {
+    const prev = base();
+    const next = deepClone(prev);
+    next.diplomacyOffers = { 'p1>p2': 'peace' };
+    expect(diffState(prev, next).meta).toMatchObject({ diplomacyOffers: { 'p1>p2': 'peace' } });
+    expect(applyDelta(prev, diffState(prev, next))).toEqual(next);
+    // and clearing it removes the key on the other side
+    const wire = JSON.parse(JSON.stringify(diffState(next, prev)));
+    expect('diplomacyOffers' in applyDelta(next, wire)).toBe(false);
+  });
+
   it('treats a key-reordered but logically equal entity as unchanged', () => {
     const prev = base();
     const next = deepClone(prev);

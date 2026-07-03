@@ -38,6 +38,9 @@ import {
   buildUnit,
   aiOrders,
   declareWar,
+  netIncome,
+  retreatFleet,
+  STANCE_RANK,
   marketLots,
   marketList,
   marketTake,
@@ -109,10 +112,11 @@ import {
   estimateTravelHours,
   fleetBaseSpeed,
   getStance,
+  pairHas,
   hashState,
   planRoute,
 } from '../../packages/shared-core/src/index';
-import { MultiplayerClient, type MultiplayerPing } from '../../packages/client/src/index';
+import { MultiplayerClient, type MultiplayerPing, createBattleModel, type BattleSideView } from '../../packages/client/src/index';
 import {
   buildLabel,
   checkForUpdateDetailed,
@@ -500,13 +504,25 @@ let AI_PLAYERS = new Set<string>(['p2']);
 // the AI's fights elsewhere don't inflate your tally.
 let killStats = { destroyed: 0, lost: 0 };
 const myBattleLocs = new Set<string>();
+// Orbital-AA volleys to visualize (H2): map-space endpoints captured at event time
+// (the target may die in that very volley), drawn as a fading flak burst ~0.7s.
+const aaShots: Array<{
+  from: { x: number; y: number };
+  to: { x: number; y: number };
+  at: number;
+  close: boolean; // ближняя ПВО (гарнизон, залп раз в 15 мин) — рисуется легче
+}> = [];
+// Casualties per contested location (owner → unit → count), accumulated from
+// unit.died while a battle runs and paid out as a result note on battle.resolved.
+const battleLosses = new Map<string, Record<string, Record<string, number>>>();
 // Single-player setup screen state: per-seat role (seat 0 is always you) + your
 // chosen homeworld. Seats 2-4 toggle 'ai'/'off'; an 'ai' seat spawns a rival.
 let setupSlots: Array<'human' | 'ai' | 'off'> = ['human', 'ai', 'off', 'off'];
 let setupStart: string = START_CANDIDATES[0] ?? MAP[0]!.id;
 // Chosen time-flow multiplier for the launched match (×1/×2/×5/×10). ×1 = today's
 // normal play pace; the launch maps it onto the speedbar (applyTimeSpeed).
-let setupSpeed = 1;
+const SETUP_SPEEDS = [1, 2, 5, 10, 50];
+let setupSpeed = 10;
 let lastPanelHtml = '';
 let lastCmdHtml = '';
 let lastSplitHtml = '';
@@ -594,12 +610,14 @@ const NEBULAE = Array.from({ length: 5 }, (_, i) => {
 
 // The backdrop (deep-space + nebulae + radar grid + star ticks) is baked into the
 // cached static layer (see buildStaticLayer). This is the only live backdrop bit:
-// a slow radar sweep across the plotting table — pure command-console chrome.
-// Live sweep state (pivot + leading-edge angle), captured each frame so map blips
-// can light up as the arm crosses them (radar "ping" afterglow). sweepOn guards
+// a slow radar sweep across the plotting table — console chrome that follows the
+// HARDWARE: one rotating arm per OWN radar source (planet array / radar ship),
+// pivoted on the source and clipped to ITS reach; co-located sources collapse into
+// one arm showing only the farthest radius. All arms share one rotation phase; map
+// blips light up as an arm crosses them (radar "ping" afterglow). sweepOn guards
 // engines without conic gradients (no visible sweep → no ping).
-let sweepCx = 0;
-let sweepCy = 0;
+type SweepArm = { x: number; y: number; r: number }; // screen-space pivot + reach
+let sweepArms: SweepArm[] = [];
 let sweepAng = 0;
 let sweepOn = false;
 let sweepPrevAng = -1; // previous frame's arm angle, for "did the arm cross X" tests
@@ -615,37 +633,76 @@ const radarMemory = new Map<string, { node: string; size: 'S' | 'M' | 'L'; at: n
  *  imprint lingers a whole rotation). 0 when the sweep is inactive. */
 function sweepGlow(c: { x: number; y: number }): number {
   if (!sweepOn) return 0;
-  const entAng = Math.atan2(c.y - sweepCy, c.x - sweepCx); // canvas-clockwise, matches the conic
-  let delta = (sweepAng - entAng) % TAU;
-  if (delta < 0) delta += TAU;
-  const t = 1 - delta / TAU;
-  return t * t; // ease so the just-crossed flash reads, with a lingering tail
+  let best = 0;
+  for (const a of sweepArms) {
+    const dx = c.x - a.x;
+    const dy = c.y - a.y;
+    if (dx * dx + dy * dy > a.r * a.r) continue; // outside this arm's reach
+    let delta = (sweepAng - Math.atan2(dy, dx)) % TAU; // canvas-clockwise, matches the conic
+    if (delta < 0) delta += TAU;
+    const t = 1 - delta / TAU;
+    if (t * t > best) best = t * t; // ease so the just-crossed flash reads
+  }
+  return best;
 }
 
 function drawScanSweep(now: number) {
+  sweepArms = [];
+  sweepOn = false;
   if (!cx.createConicGradient) return; // graceful: skip on engines without it
-  // Pivot the sweep at the MAP centre (projected through the camera), not the
-  // screen centre — so it pans / zooms with the map instead of staying glued to
-  // the viewport.
-  const mc = world({ x: (MINX + MAXX) / 2, y: (MINY + MAXY) / 2 });
-  const cxp = mc.x;
-  const cyp = mc.y;
-  const ang = (now / SWEEP_DIV) % TAU;
-  sweepCx = cxp;
-  sweepCy = cyp;
-  sweepAng = ang;
-  sweepOn = true;
-  const grd = cx.createConicGradient(ang, cxp, cyp);
-  // very subtle trailing wedge — barely-there in a still frame, reads as a slow
-  // rotating radar sweep in motion (fades over ~0.4 turn behind the leading edge)
-  grd.addColorStop(0, 'rgba(53,214,230,0.032)');
-  grd.addColorStop(0.16, 'rgba(53,214,230,0.008)');
-  grd.addColorStop(0.4, 'rgba(53,214,230,0)');
-  grd.addColorStop(1, 'rgba(53,214,230,0)');
+  // One arm per OWN radar source, pivoted on the array / the ship itself (a moving
+  // ship carries its arm along). Sources sharing a pivot (a radar world with a
+  // radar ship docked) merge — only the farthest radius is shown.
+  const merged = new Map<string, SweepArm>();
+  const add = (at: { x: number; y: number }, reach: number): void => {
+    const c = world(at);
+    const r = world({ x: at.x + reach, y: at.y }).x - c.x; // uniform projection ⇒ true circle
+    if (r <= 0) return;
+    const key = `${Math.round(c.x)}:${Math.round(c.y)}`;
+    const cur = merged.get(key);
+    if (!cur || r > cur.r) merged.set(key, { x: c.x, y: c.y, r });
+  };
+  for (const p of Object.values(s.planets)) {
+    if (p.owner !== ME) continue;
+    const r = planetRadar(p);
+    if (r > 0) add(p.position, r);
+  }
+  for (const f of Object.values(s.fleets)) {
+    if (f.owner !== ME) continue;
+    const r = fleetRadar(f);
+    const pos = r > 0 ? fleetPos(f) : null;
+    if (pos) add(pos, r);
+  }
+  sweepArms = [...merged.values()];
+  sweepAng = (now / SWEEP_DIV) % TAU;
+  sweepOn = sweepArms.length > 0;
+  if (!sweepOn) return;
   cx.save();
   cx.globalCompositeOperation = 'lighter';
-  cx.fillStyle = grd;
-  cx.fillRect(0, 0, VW, VH);
+  for (const a of sweepArms) {
+    if (!visible(a, a.r + 40)) continue; // draw-cull; the arm still paints contacts
+    // subtle trailing wedge, clipped to this source's reach — reads as a slow
+    // rotating radar sweep (fades over ~0.4 turn behind the leading edge)
+    const grd = cx.createConicGradient(sweepAng, a.x, a.y);
+    grd.addColorStop(0, 'rgba(53,214,230,0.05)');
+    grd.addColorStop(0.16, 'rgba(53,214,230,0.012)');
+    grd.addColorStop(0.4, 'rgba(53,214,230,0)');
+    grd.addColorStop(1, 'rgba(53,214,230,0)');
+    cx.save();
+    cx.beginPath();
+    cx.arc(a.x, a.y, a.r, 0, TAU);
+    cx.clip();
+    cx.fillStyle = grd;
+    cx.fillRect(a.x - a.r, a.y - a.r, a.r * 2, a.r * 2);
+    cx.restore();
+    // the leading edge — the visible radar arm itself
+    cx.strokeStyle = 'rgba(53,214,230,0.26)';
+    cx.lineWidth = 1;
+    cx.beginPath();
+    cx.moveTo(a.x, a.y);
+    cx.lineTo(a.x + Math.cos(sweepAng) * a.r, a.y + Math.sin(sweepAng) * a.r);
+    cx.stroke();
+  }
   cx.restore();
 }
 
@@ -670,8 +727,16 @@ function updateRadarContacts(now: number): void {
       const node = s.planets[fn];
       if (!node) continue;
       const pos = world(node.position);
-      if (sweptThisFrame(Math.atan2(pos.y - sweepCy, pos.x - sweepCx))) {
-        radarMemory.set(f.id, { node: fn, size: sigClass(fleetSignature(f)), at: now });
+      // painted only by an arm whose radar disc actually covers the blip
+      const painted = sweepArms.some((a) => {
+        const dx = pos.x - a.x;
+        const dy = pos.y - a.y;
+        return dx * dx + dy * dy <= a.r * a.r && sweptThisFrame(Math.atan2(dy, dx));
+      });
+      if (painted) {
+        const size = sigClass(fleetSignature(f));
+        if (!radarMemory.has(f.id)) note(`◆ новый радарный контакт (${size}) у ${fn}`, fn);
+        radarMemory.set(f.id, { node: fn, size, at: now });
       }
     }
   }
@@ -860,7 +925,7 @@ function kfmt(n: number): string {
 
 function cost(bag: Record<string, number> | undefined): string {
   if (!bag) return 'free';
-  const parts = Object.entries(bag).map(([r, n]) => `${n}${r === 'metal' ? 'm' : 'c'}`);
+  const parts = Object.entries(bag).map(([r, n]) => `${n}${TECH_CUR[r] ?? r[0]}`);
   return parts.length ? parts.join(' ') : 'free';
 }
 function afford(bag: Record<string, number> | undefined): boolean {
@@ -1133,7 +1198,7 @@ function divisionsHtml(planetId: string): string {
   for (let i = 0; i < tpls.length; i++) {
     const t = tpls[i]!;
     const f = formationStats(t);
-    const cost = Object.entries(f.cost).map(([r, a]) => `${a}${r[0]}`).join(' ') || '—';
+    const cost = Object.entries(f.cost).map(([r, a]) => `${a}${TECH_CUR[r] ?? r[0]}`).join(' ') || '—';
     const afford = Object.entries(f.cost).every(([r, a]) => (res[r] ?? 0) >= a);
     h += btn('mobilize', String(i), `${esc(t.name)} (${f.count}) · ${cost}`, afford && f.count > 0);
   }
@@ -1254,11 +1319,33 @@ function fleetAnchor(f: Fleet): { x: number; y: number; ang: number } | null {
   const ang = orbitsLive() ? a0 + Math.PI / 2 : a0;
   return { x: pc.x + Math.cos(a0) * r, y: pc.y + Math.sin(a0) * r, ang };
 }
-function note(msg: string) {
+function note(msg: string, at?: string) {
   const d = floor(s.time / DAY) + 1;
   const h = floor((s.time % DAY) / HOUR);
   logLines.push(`D${d} ${String(h).padStart(2, '0')}h · ${msg}`);
   while (logLines.length > 9) logLines.shift();
+  toast(msg, at);
+}
+
+/** Transient event toast over the map — feedback must not live only in a hidden
+ *  log window. Tap dismisses; with a map anchor the tap also flies the camera
+ *  there (the jumpToPing path). At most 3 stacked, ~5s life each. */
+function toast(msg: string, at?: string): void {
+  const host = document.getElementById('toasts');
+  if (!host) return;
+  const el = document.createElement('div');
+  el.className = at ? 'toast jump' : 'toast';
+  el.textContent = at ? `${msg} ↪` : msg;
+  el.addEventListener('click', () => {
+    if (at) jumpToPing(at);
+    el.remove();
+  });
+  host.appendChild(el);
+  while (host.children.length > 3) host.firstElementChild?.remove();
+  window.setTimeout(() => {
+    el.classList.add('out');
+    window.setTimeout(() => el.remove(), 450);
+  }, 5200);
 }
 
 /** The map node a fleet occupies / is travelling over / is parked nearest to. */
@@ -1792,22 +1879,41 @@ function handleEvents(events: DomainEvent[]) {
     const p = e.payload as Record<string, unknown>;
     switch (e.type) {
       case 'battle.started':
-        note(`⚔️ battle at ${p.location} (${p.phase})`);
+        // Fogged: a bots' brawl behind the fog is not our intel (NET already fogs
+        // events server-side; this matches it for the local sim).
+        if (p.attacker === ME || p.defender === ME || known(p.location as string))
+          note(`⚔️ battle at ${p.location} (${p.phase})`, p.location as string);
         if (p.attacker === ME || p.defender === ME) myBattleLocs.add(p.location as string);
         break;
-      case 'battle.resolved':
-        note(
-          `battle at ${p.location} ended — ${p.winner ? NAME[p.winner as string] + ' won' : 'stalemate'}`,
-        );
-        myBattleLocs.delete(p.location as string);
+      case 'battle.resolved': {
+        const loc = p.location as string;
+        if (myBattleLocs.has(loc) || known(loc)) {
+          const losses = battleLosses.get(loc);
+          const tally = losses
+            ? Object.entries(losses)
+                .map(([who, units]) => {
+                  const total = Object.values(units).reduce((a, b) => a + b, 0);
+                  return `${NAME[who] ?? who} −${total}`;
+                })
+                .join(', ')
+            : '';
+          note(
+            `⚔ battle at ${loc} ended — ${p.winner ? NAME[p.winner as string] + ' won' : 'stalemate'}${tally ? ` · потери: ${tally}` : ''}`,
+            loc,
+          );
+        }
+        battleLosses.delete(loc);
+        myBattleLocs.delete(loc);
         break;
+      }
       case 'technology.researched':
         if (p.playerId === ME)
           note(`⚛ изучено: ${data.technologies[p.technology as string]?.name ?? (p.technology as string)}`);
         if (techWin.classList.contains('show')) renderTech();
         break;
       case 'planet.captured':
-        note(`🚩 ${NAME[p.owner as string]} captured ${p.planetId}`);
+        if (p.owner === ME || known(p.planetId as string))
+          note(`🚩 ${NAME[p.owner as string]} captured ${p.planetId}`, p.planetId as string);
         if (diploOpen && diploTab === 'diplo') renderDiplo(); // province counts shifted
         break;
       case 'diplomacy.changed': {
@@ -1838,13 +1944,31 @@ function handleEvents(events: DomainEvent[]) {
         note(`⬆️ ${p.building} → L${p.level} at ${p.planetId}`);
         break;
       case 'building.destroyed':
-        note(`💥 ${p.building} destroyed at ${p.planetId}`);
+        note(`💥 ${p.building} destroyed at ${p.planetId}`, p.planetId as string);
         break;
       case 'unit.built':
         note(`🛠️ ${p.count}× ${p.unit} at ${p.planetId}`);
         break;
       case 'fleet.launched':
         note(`🚀 ${NAME[p.owner as string]} launched a fleet from ${p.planetId}`);
+        break;
+      case 'aa.fired': {
+        const planet = s.planets[p.planetId as string];
+        if (!planet || !known(p.planetId as string)) break; // fogged flak stays unseen
+        const target = s.fleets[p.fleetId as string];
+        const to = (target && fleetPos(target)) ?? {
+          x: planet.position.x + 6,
+          y: planet.position.y - 14, // the victim died this volley — burst over the orbit
+        };
+        aaShots.push({ from: { ...planet.position }, to, at: performance.now(), close: p.tier === 'close' });
+        while (aaShots.length > 40) aaShots.shift();
+        break;
+      }
+      case 'market.bought':
+        if (p.seller === ME || p.buyer === ME)
+          note(
+            `⇄ биржа: ${p.amount} ${TECH_CUR[p.resource as string] ?? p.resource} за ${p.paid ?? '?'} ¤ (${p.buyer === ME ? 'покупка' : 'продажа'})`,
+          );
         break;
       case 'fleet.merged':
         if (p.owner === ME) note(`⛬ fleets merged at ${p.at}`);
@@ -1862,6 +1986,15 @@ function handleEvents(events: DomainEvent[]) {
           const n = (p.count as number) ?? 0;
           if (p.owner === ME) killStats.lost += n;
           else killStats.destroyed += n;
+        }
+        // Ledger for the battle-result card (visible fights only).
+        if (myBattleLocs.has(p.at as string) || known(p.at as string)) {
+          const at = p.at as string;
+          const owner = (p.owner as string) ?? '?';
+          const perOwner = battleLosses.get(at) ?? {};
+          const perUnit = (perOwner[owner] ??= {});
+          perUnit[p.unit as string] = (perUnit[p.unit as string] ?? 0) + ((p.count as number) ?? 0);
+          battleLosses.set(at, perOwner);
         }
         break;
       }
@@ -2124,16 +2257,34 @@ function targetBrackets(x: number, y: number, r: number, t: number) {
 
 
 
-function drawBattlePulse(x: number, y: number, pulse: number) {
+function drawBattlePulse(x: number, y: number, pulse: number, phase: 'orbital' | 'ground' = 'orbital') {
+  // Two DIFFERENT pictures for the two battle phases (the audit found them
+  // indistinguishable): orbital = the familiar red expanding rings (a dogfight in
+  // space); ground = an amber pulse hugging the surface + a flat "front line" bar.
+  const col = phase === 'ground' ? '#f0b429' : '#ff5a4d';
   cx.save();
-  cx.shadowColor = '#ff5a4d';
+  cx.shadowColor = col;
   cx.shadowBlur = 12;
   for (let i = 0; i < 3; i++) {
     const k = (pulse + i / 3) % 1;
-    cx.strokeStyle = rgba('#ff5a4d', 0.55 * (1 - k));
+    cx.strokeStyle = rgba(col, 0.55 * (1 - k));
     cx.lineWidth = 1.2 + i * 0.25;
     cx.beginPath();
-    cx.arc(x, y, 18 + k * 24, 0, TAU);
+    if (phase === 'ground') {
+      cx.setLineDash([5, 4]);
+      cx.arc(x, y, 14 + k * 12, 0, TAU); // tight, dashed — clamped to the world
+    } else {
+      cx.arc(x, y, 18 + k * 24, 0, TAU);
+    }
+    cx.stroke();
+  }
+  if (phase === 'ground') {
+    cx.setLineDash([]);
+    cx.strokeStyle = rgba(col, 0.85);
+    cx.lineWidth = 2;
+    cx.beginPath();
+    cx.moveTo(x - 10, y + 16);
+    cx.lineTo(x + 10, y + 16); // the front line under the world
     cx.stroke();
   }
   cx.restore();
@@ -2325,12 +2476,11 @@ function drawAimPreview() {
   if (!ids.length) return;
   // Prefer a node target; if none is near, aim at the closest point ON a lane —
   // the army will route to that road and park there (Bytro continuous order).
-  // The node pick radius MUST match selectAt's (24px): with the old 30px, a tap
-  // 24–30px from a junction dispatched a lane park (fleet flies to the road point)
-  // while the preview drew the path to the node — the reported mismatch.
+  // The node pick radius MUST match selectAt's rNode (24px mouse / 30px touch):
+  // any mismatch makes the preview draw a path the release will not dispatch.
   let target: { x: number; y: number } | null = null;
   let targetId: string | null = null;
-  let best = 24;
+  let best = tapByTouch ? 30 : 24;
   for (const n of MAP) {
     const c = world(n);
     const d = Math.hypot(aimPointer.x - c.x, aimPointer.y - c.y);
@@ -2421,9 +2571,17 @@ const bgx = bg.getContext('2d') as CanvasRenderingContext2D;
 let bgContent = ''; // viewport + ownership signature (camera-independent)
 let bgCam = { x: 0, y: 0, scale: 1 }; // camera the static layer was last baked at
 
+/** The owner of node `id` AS THE VIEWER MAY KNOW IT: live when identified (or fog
+ *  off), last-known from memory when only remembered, unknown otherwise. The
+ *  political fill and its cache signature both read THIS, never the raw truth —
+ *  the map must not repaint a hidden capture (an intel leak the fog exists to stop). */
+function knownOwner(id: string): string | null {
+  if (known(id)) return s.planets[id]?.owner ?? null;
+  return memory.get(id)?.owner ?? null;
+}
 function ownersSig(): string {
   let out = '';
-  for (const n of MAP) out += (s.planets[n.id]?.owner ?? '·') + ',';
+  for (const n of MAP) out += (knownOwner(n.id) ?? '·') + ',';
   return out;
 }
 
@@ -2563,7 +2721,7 @@ function buildStaticLayer(): void {
     const p = s.planets[n.id];
     if (!p) continue;
     const c = world(n);
-    seeds.push({ x: c.x, y: c.y, w: (p.size ?? 1) * W, owner: p.owner ?? null, kind: n.sector });
+    seeds.push({ x: c.x, y: c.y, w: (p.size ?? 1) * W, owner: knownOwner(n.id), kind: n.sector });
   }
   // Keep the power diagram valid: clamp the weight spread so a heavier neighbour can
   // never swallow a close smaller node's cell (which left it with no province border).
@@ -2788,15 +2946,57 @@ function render(now: number) {
     if (!anchor) continue;
     const c = world(anchor);
     if (!visible(c, 120)) continue;
-    drawBattlePulse(c.x, c.y, wave);
+    drawBattlePulse(c.x, c.y, wave, b.phase);
     if (typeof b.nextRoundAt === 'number') {
       cx.save();
       cx.font = '700 10px ui-monospace,Menlo,monospace';
       cx.textAlign = 'center';
-      cx.fillStyle = '#ff8a7d';
-      cx.fillText(`⚔ ${timeLeft(b.nextRoundAt)}`, c.x, c.y - 28);
+      cx.fillStyle = b.phase === 'ground' ? '#f5cf6b' : '#ff8a7d';
+      cx.fillText(
+        `${b.phase === 'ground' ? '⚒ десант' : '⚔ орбита'} · ${timeLeft(b.nextRoundAt)}`,
+        c.x,
+        c.y - 28,
+      );
       cx.restore();
     }
+  }
+
+  // orbital-AA flak (H2): a dashed ground-to-orbit tracer with a burst at the
+  // target end, fading out — a fleet under AA fire no longer melts silently.
+  if (aaShots.length) {
+    const nowMs = performance.now();
+    cx.save();
+    for (let i = aaShots.length - 1; i >= 0; i--) {
+      const shot = aaShots[i]!;
+      const age = nowMs - shot.at;
+      if (age > 700) {
+        aaShots.splice(i, 1);
+        continue;
+      }
+      const a = world(shot.from);
+      const b = world(shot.to);
+      if (!visible(a, 160) && !visible(b, 160)) continue;
+      const fade = 1 - age / 700;
+      // Two tiers, two looks: the hourly ORBITAL volley is a heavy orange lance;
+      // the 15-minute CLOSE flak is a thinner, paler stitch with a smaller burst.
+      const col = shot.close ? '#9adfe8' : '#ff8a3d';
+      cx.strokeStyle = rgba(col, (shot.close ? 0.55 : 0.7) * fade);
+      cx.lineWidth = shot.close ? 0.8 : 1.1;
+      cx.setLineDash(shot.close ? [2, 4] : [3, 5]);
+      cx.lineDashOffset = -age / 12; // the tracer visibly climbs from the surface
+      cx.shadowColor = col;
+      cx.shadowBlur = shot.close ? 5 : 8;
+      cx.beginPath();
+      cx.moveTo(a.x, a.y);
+      cx.lineTo(b.x, b.y);
+      cx.stroke();
+      cx.setLineDash([]);
+      cx.fillStyle = rgba(shot.close ? '#d9f4f7' : '#ffd29b', 0.8 * fade);
+      cx.beginPath();
+      cx.arc(b.x, b.y, (shot.close ? 1.5 : 2) + (age / 700) * (shot.close ? 3 : 5), 0, TAU);
+      cx.fill();
+    }
+    cx.restore();
   }
 
   // selected sector: its radar detection radius (a physical circle in map space →
@@ -3552,17 +3752,34 @@ function panelHtml(): string {
 
       const here = planet(f.location);
       const docked = !!here && !f.movement && !f.battleId;
+      if (f.battleId) {
+        // The battle card (framework-agnostic view-model from @void/client): both
+        // sides, hull bars, phase, live round countdown — and the one action, retreat.
+        const bm = createBattleModel(s, f.battleId, ME, data);
+        if (bm.ok) {
+          const bar = (v: { current: number; max: number } | undefined, glyph: string): string =>
+            v && v.max > 0 ? ` · ${glyph} ${kfmt(v.current)}/${kfmt(v.max)}` : '';
+          const sideRow = (sv: BattleSideView, tag: string): string => {
+            const troops = sv.units.map((u) => `${u.count}× ${u.unit}`).join(', ') || '—';
+            return `<div class="row${sv.mine ? '' : ' dim'}">${sv.mine ? '▶' : '·'} <b>${esc(sv.ownerName)}</b> (${tag}, ${
+              sv.kind === 'garrison' ? 'гарнизон' : sv.kind === 'landing' ? 'десант' : 'флот'
+            }): ${esc(troops)}${bar(sv.hull, '♥')}${bar(sv.shield, '◈')}</div>`;
+          };
+          h += `<div class="sec">⚔ Бой — ${bm.phase === 'ground' ? 'высадка' : 'орбита'} · раунд ${bm.round}</div>`;
+          h += sideRow(bm.attacker, 'атака') + sideRow(bm.defender, 'оборона');
+          if (bm.nextRoundAt != null)
+            h += `<div class="row">следующий раунд через <span class="pn-timer" data-at="${bm.nextRoundAt}">…</span></div>`;
+          h += `<div class="row">${btn('retreat', '', '⤺ Отступить', bm.retreatFleetId === f.id)}</div>`;
+          h += `<div class="hint">Отход стоит −40% ТЕКУЩЕГО корпуса и щита (израненный флот теряет 40% остатка — отход не добивает) и даёт рывок скорости для бегства. Десант в высадке отступить не может; с орбиты вне боя корабль уходит свободно.</div>`;
+        }
+      }
       if (!docked) {
-        const engaged = f.battleId ? s.battles[f.battleId] : undefined;
-        h += `<div class="hint">${
-          f.battleId
-            ? engaged?.nextRoundAt !== undefined
-              ? `Engaged — next damage round in <span class="pn-timer" data-at="${engaged.nextRoundAt}">…</span>.`
-              : 'Engaged — orbital battle in progress.'
-            : f.edge
+        if (!f.battleId)
+          h += `<div class="hint">${
+            f.edge
               ? 'Parked on a lane — press Move to march on (it routes from here).'
               : 'In transit — routing along the lanes. Collisions trigger an orbital battle.'
-        }</div>`;
+          }</div>`;
       } else {
         // enemy/neutral world you can act on — empty space is pass-through only
         const hostile = here!.owner !== f.owner && (SECTOR_TYPES[SECTOR_OF[here!.id]]?.capturable ?? false);
@@ -4008,7 +4225,6 @@ const STANCE_COLOR: Record<DiplomaticStance, string> = {
 };
 // Friendliness rank: war (hostile) < peace < pact < alliance (closest). Warming the
 // relation up a rank needs the other side's consent; cooling it down is unilateral.
-const STANCE_RANK: Record<DiplomaticStance, number> = { war: 0, peace: 1, pact: 2, alliance: 3 };
 const STANCES: DiplomaticStance[] = ['war', 'peace', 'pact', 'alliance'];
 
 function worldsOf(id: string): number {
@@ -4019,7 +4235,10 @@ function worldsOf(id: string): number {
 /** A seat the AI drives. Everyone else (ME, or another human in net play) is human —
  *  this drives the roster's human/AI icon and whether a proposal is auto-decided. */
 function isAiSeat(id: string): boolean {
-  return AI_PLAYERS.has(id);
+  // The authoritative flag lives in state (Player.ai, seeded by newGame). The local
+  // AI_PLAYERS set stays only as a local-mode fallback for installed scenarios; in
+  // NET play the server state is the single source — a human-claimed seat is human.
+  return s.players[id]?.ai === true || (!NET && AI_PLAYERS.has(id));
 }
 /** Seats taking part in the match, in the fixed seat order. */
 function diploSeats(): string[] {
@@ -4054,11 +4273,33 @@ function aiAcceptsStance(target: string, to: DiplomaticStance): boolean {
     case 'pact':
       return mine * 4 >= theirs * 3; // mine ≥ 0.75× theirs — a respectable partner
     case 'alliance':
-      return mine >= theirs; // ally only an equal-or-stronger power
+      return false; // боты не вступают в коалиции — правило, не сила
   }
 }
 
 /** Append a line to the session log (bounded). Patches the feed if it's on screen. */
+/** Unread social events (war declarations, stance shifts) — badge on the ✉ rail. */
+let unreadMsgs = 0;
+/** Snapshots carry no domain events, so a NET client would never hear a war being
+ *  declared on it. Diff the stance map of consecutive snapshots for pairs with ME
+ *  and surface the change through the normal note/DM path. */
+function diffNetDiplomacy(prev: GameState, next: GameState): void {
+  const keys = new Set([...Object.keys(prev.diplomacy ?? {}), ...Object.keys(next.diplomacy ?? {})]);
+  for (const key of keys) {
+    if (!pairHas(key, ME)) continue;
+    const before = prev.diplomacy?.[key] ?? 'war';
+    const after = next.diplomacy?.[key] ?? 'war';
+    if (before === after) continue;
+    const [a, b] = key.split('|');
+    const other = a === ME ? b! : a!;
+    const who = NAME[other] ?? other;
+    if (after === 'war') note(`⚔ ${who} объявил вам войну!`);
+    else note(`🕊 ${who}: отношения → ${STANCE_RU[after]}`);
+    pushMsg(other, `Стойка изменена: ${STANCE_RU[after]}`, true, other);
+    unreadMsgs++;
+  }
+}
+
 function pushMsg(to: string, text: string, sys: boolean, from = ME, ping?: string): void {
   sessionMessages.push({ at: s.time, from, to, text, sys, ping, realAt: Date.now() });
   if (sessionMessages.length > 300) sessionMessages.shift();
@@ -4074,6 +4315,10 @@ function proposeStance(target: string, to: DiplomaticStance): void {
   const from = getStance(s, ME, target);
   if (from === to) return;
   if (STANCE_RANK[to] > STANCE_RANK[from]) {
+    if (to === 'alliance' && isAiSeat(target)) {
+      note('Боты не вступают в коалиции');
+      return;
+    }
     if (!isAiSeat(target)) {
       note('переговоры с другими игроками — позже (нужен сервер)');
       return;
@@ -4163,14 +4408,14 @@ function diploRowsHtml(): string {
         ? `<span class="dp-tag">ВЫ</span>`
         : `<span class="dp-stance" style="color:${STANCE_COLOR[st!]};border-color:${STANCE_COLOR[st!]}">${STANCE_RU[st!]}</span>`;
       // Bots (AI seats) carry a favour meter toward you; humans/you don't.
-      const favBar = !isMe && AI_PLAYERS.has(id) ? favourBarHtml(id) : '';
+      const favBar = !isMe && isAiSeat(id) ? favourBarHtml(id) : '';
       const expanded = diploExpanded === id && !isMe;
       const actions = expanded
         ? `<div class="dp-actions">` +
-          STANCES.map(
-            (t) =>
-              `<button class="dp-act${t === st ? ' on' : ''}" data-stance="${t}" data-seat="${id}" style="--sc:${STANCE_COLOR[t]}">${STANCE_RU[t]}</button>`,
-          ).join('') +
+          STANCES.map((t) => {
+            const barred = t === 'alliance' && isAiSeat(id); // боты не вступают в коалиции
+            return `<button class="dp-act${t === st ? ' on' : ''}" data-stance="${t}" data-seat="${id}" style="--sc:${STANCE_COLOR[t]}"${barred ? ' disabled title="Боты не вступают в коалиции"' : ''}>${STANCE_RU[t]}</button>`;
+          }).join('') +
           `<button class="dp-msg" data-msgseat="${id}">✉</button></div>`
         : '';
       return (
@@ -4264,11 +4509,16 @@ function convoThreadHtml(): string {
   const pingBtn = isCoal
     ? `<button class="dp-ping" title="Отметить выбранную провинцию пингом">📍</button>`
     : '';
+  // NET: the text composer is a placebo (messages never leave this browser) — show
+  // the truth and keep the one thing that IS networked, the 📍 ping.
+  const compose = NET
+    ? `<div class="dp-compose dp-off">${pingBtn}<span class="dp-offtxt">Сетевой чат ещё не подключён — используйте пинги 📍</span></div>`
+    : `<div class="dp-compose">${pingBtn}<input id="dp-text" maxlength="160" placeholder="Сообщение…" autocomplete="off"><button class="dp-send">▶</button></div>`;
   return (
     `<div class="dp-thread">` +
     `<div class="dp-thhead">${title}</div>` +
     `<div class="dp-feed" id="dp-feed">${convoFeedInnerHtml(convoOpen)}</div>` +
-    `<div class="dp-compose">${pingBtn}<input id="dp-text" maxlength="160" placeholder="Сообщение…" autocomplete="off"><button class="dp-send">▶</button></div>` +
+    compose +
     `</div>`
   );
 }
@@ -4378,12 +4628,27 @@ function renderObjDesc(): void {
   pane.innerHTML = html;
 }
 
+let sheetWasOpen = false;
 function renderPanel() {
   // While arming a merge target, collapse the panel so the map (and the fleet to
   // merge with) is fully tappable — important on phones where the sheet covers it.
   const open = !merging && (selFleet !== null || selPlanet !== null || selFleets.size > 0);
   side.style.display = open ? 'flex' : 'none';
   document.body.classList.toggle('sheet-open', open); // mobile: hide log/comms under the sheet
+  // Phone: the bottom sheet covers ~50vh — when it OPENS, pan the camera so the
+  // selected object is not the one thing the panel talks about yet hides.
+  if (open && !sheetWasOpen && MOBILE) {
+    const anchor = selFleet
+      ? (s.fleets[selFleet] && fleetAnchor(s.fleets[selFleet]!)) || null
+      : selPlanet && s.planets[selPlanet]
+        ? world(s.planets[selPlanet]!.position)
+        : null;
+    if (anchor && anchor.y > VH * 0.42) {
+      cam.y -= anchor.y - VH * 0.3; // lift it into the visible upper half
+      clampCam();
+    }
+  }
+  sheetWasOpen = open;
   if (!open) {
     lastPanelHtml = '';
     lastObjDescHtml = '';
@@ -4622,6 +4887,8 @@ side.addEventListener('click', (ev) => {
     playerOrder(barrageModeFleet(ME, selFleet!, arg));
   } else if (act === 'assault') {
     playerOrder(assaultFleet(ME, selFleet!));
+  } else if (act === 'retreat') {
+    playerOrder(retreatFleet(ME, selFleet!));
   } else if (act === 'qmode') {
     queuing = !queuing; // arm/disarm queue-append; taps now build the chain
     if (queuing) {
@@ -4759,20 +5026,23 @@ cmdbar.addEventListener('click', (ev) => {
 // Tap/click selection at a screen point (drag-aware — see the pointer handlers).
 function selectAt(mx: number, my: number) {
   closePingPop(); // any map tap dismisses an open ping popup (a marker tap reopens below)
+  // Hit radii: widened for a finger (44px-target rule); nearest-in-radius wins, so
+  // clustered objects resolve to what the player aimed at, not iteration order.
+  const rFleet = tapByTouch ? 24 : 16;
+  const rPing = tapByTouch ? 18 : 12;
+  const rNode = tapByTouch ? 30 : 24;
   // Merge armed: the next tap on a friendly fleet (not itself in the selection) is
   // the anchor — the selected fleet(s) fly to it and fuse. Any other tap cancels.
   if (merging) {
     const movers = selectedFleetIds();
-    for (const f of Object.values(s.fleets)) {
-      if (f.owner !== ME || movers.includes(f.id)) continue;
-      const a = fleetAnchor(f);
-      if (a && Math.hypot(mx - a.x, my - a.y) < 16) {
-        orderMerge(movers, f.id);
-        merging = false;
-        lastPanelHtml = '';
-        return;
-      }
-    }
+    const anchor = nearestHit(
+      Object.values(s.fleets).filter((f) => f.owner === ME && !movers.includes(f.id)),
+      fleetAnchor,
+      mx,
+      my,
+      rFleet,
+    );
+    if (anchor) orderMerge(movers, anchor.id);
     merging = false;
     lastPanelHtml = '';
     return;
@@ -4782,15 +5052,14 @@ function selectAt(mx: number, my: number) {
   // auto-targeting the nearest hostile in range. A mis-aimed/peace target is
   // rejected server-side (surfaced as a log note).
   if (barrageAim) {
-    let targetId: string | null = null;
-    for (const f of Object.values(s.fleets)) {
-      if (f.owner === ME) continue;
-      const a = fleetAnchor(f);
-      if (a && Math.hypot(mx - a.x, my - a.y) < 16) {
-        targetId = f.id;
-        break;
-      }
-    }
+    const target = nearestHit(
+      Object.values(s.fleets).filter((f) => f.owner !== ME),
+      fleetAnchor,
+      mx,
+      my,
+      rFleet,
+    );
+    const targetId: string | null = target?.id ?? null;
     for (const id of selectedFleetIds()) {
       if (fleetHasArtillery(s.fleets[id])) playerOrder(barrageFleet(ME, id, targetId));
     }
@@ -4805,27 +5074,29 @@ function selectAt(mx: number, my: number) {
   // A tap on an ally ping marker opens its description popup (takes priority over
   // selection, since markers float above the node they mark).
   if (!aiming) {
-    for (const h of pingHits) {
-      if (Math.hypot(mx - h.x, my - h.y) < 12) {
-        openPingPop(h.loc);
-        return;
-      }
+    const ping = nearestHit(pingHits, (h) => h, mx, my, rPing);
+    if (ping) {
+      openPingPop(ping.loc);
+      return;
     }
   }
   if (!aiming) {
-    for (const f of Object.values(s.fleets)) {
-      if (f.owner !== ME) continue;
-      const a = fleetAnchor(f);
-      if (a && Math.hypot(mx - a.x, my - a.y) < 16) {
-        if (additive) toggleFleetInSelection(f.id); // Ctrl/⌘ → extend the group
-        else setFleetSelection([f.id]); // (clears any selected planet)
-        return;
-      }
+    const mine = nearestHit(
+      Object.values(s.fleets).filter((f) => f.owner === ME),
+      fleetAnchor,
+      mx,
+      my,
+      rFleet,
+    );
+    if (mine) {
+      if (additive) toggleFleetInSelection(mine.id); // Ctrl/⌘ → extend the group
+      else setFleetSelection([mine.id]); // (clears any selected planet)
+      return;
     }
   }
-  for (const n of MAP) {
-    const c = world(n);
-    if (Math.hypot(mx - c.x, my - c.y) < 24) {
+  {
+    const n = nearestHit(MAP, (nn) => world(nn), mx, my, rNode);
+    if (n) {
       if (queuing) {
         // Queue-append armed → this world becomes the next step in the fleet's chain,
         // not an immediate move. Stays armed so you can tap several worlds in a row.
@@ -4866,9 +5137,48 @@ function selectAt(mx: number, my: number) {
 
 // --- camera control: drag-pan, pinch-zoom, wheel-zoom, tap-select ------------
 
+/** A finger wobbles more than a mouse: the pan-vs-tap threshold widens on touch. */
+function tapSlop(ev: PointerEvent): number {
+  return ev.pointerType === 'touch' ? 11 : 6;
+}
+/** Set per tap: hit radii in selectAt widen for a finger (44px-target rule). */
+let tapByTouch = false;
+/** Nearest candidate within `r` of the tap — NOT the first in iteration order, so
+ *  overlapping objects (an orbit ring of fleets) resolve to what the player aimed at. */
+function nearestHit<T>(
+  items: Iterable<T>,
+  pos: (t: T) => { x: number; y: number } | null,
+  mx: number,
+  my: number,
+  r: number,
+): T | null {
+  let best: T | null = null;
+  let bd = r;
+  for (const it of items) {
+    const c = pos(it);
+    if (!c) continue;
+    const d = Math.hypot(mx - c.x, my - c.y);
+    if (d < bd) {
+      bd = d;
+      best = it;
+    }
+  }
+  return best;
+}
+
 const pointers = new Map<number, { x: number; y: number }>();
 let dragStart: { x: number; y: number } | null = null;
 let dragged = false;
+// Long-press (touch): ~350ms still finger = additive fleet pick on a fleet, or a
+// box-select anywhere else — the touch stand-ins for Ctrl-click and Shift-drag.
+let longPressTimer: number | null = null;
+let longPressFired = false;
+function cancelLongPress(): void {
+  if (longPressTimer !== null) {
+    clearTimeout(longPressTimer);
+    longPressTimer = null;
+  }
+}
 let pinchDist = 0;
 let boxSelecting = false;
 const ptXY = (ev: PointerEvent) => {
@@ -4881,11 +5191,45 @@ canvas.addEventListener('pointerdown', (ev) => {
   pointers.set(ev.pointerId, p);
   if (pointers.size === 1) {
     dragStart = p;
+    tapByTouch = ev.pointerType === 'touch'; // preview + commit share the snap radius
+    longPressFired = false;
     boxSelecting = ev.shiftKey;
     additive = ev.ctrlKey || ev.metaKey; // Ctrl/⌘-click → add to the fleet selection
     selectionBox = boxSelecting ? { x1: p.x, y1: p.y, x2: p.x, y2: p.y } : null;
     dragged = false;
+    if (aiming) aimPointer = p; // the aim preview starts under the finger at once
+    // Touch long-press: a still finger for ~350ms picks a fleet ADDITIVELY (the
+    // Ctrl-click of phones) or opens a BOX-SELECT from empty space (the Shift-drag).
+    if (ev.pointerType === 'touch' && !aiming && !merging && !barrageAim) {
+      cancelLongPress();
+      longPressTimer = window.setTimeout(() => {
+        longPressTimer = null;
+        if (pointers.size !== 1 || dragged) return;
+        longPressFired = true;
+        navigator.vibrate?.(25);
+        const mine = nearestHit(
+          Object.values(s.fleets).filter((f) => f.owner === ME),
+          fleetAnchor,
+          p.x,
+          p.y,
+          24,
+        );
+        if (mine) {
+          toggleFleetInSelection(mine.id); // add / drop from the group
+        } else {
+          boxSelecting = true; // drag now stretches the selection box
+          selectionBox = { x1: p.x, y1: p.y, x2: p.x, y2: p.y };
+        }
+      }, 350);
+    }
   } else if (pointers.size === 2) {
+    cancelLongPress();
+    if (aiming) {
+      // Second finger = cancel the armed move (the audit's escape hatch).
+      aiming = false;
+      lastPanelHtml = '';
+      note('прицеливание отменено');
+    }
     const [a, b] = [...pointers.values()];
     pinchDist = Math.hypot(a.x - b.x, a.y - b.y);
   }
@@ -4895,20 +5239,27 @@ canvas.addEventListener('pointermove', (ev) => {
   if (!prev) return;
   const p = ptXY(ev);
   pointers.set(ev.pointerId, p);
+  const moved = dragStart && Math.hypot(p.x - dragStart.x, p.y - dragStart.y) > tapSlop(ev);
+  if (moved) cancelLongPress(); // a moving finger is a drag, not a long-press
   if (pointers.size >= 2) {
     const [a, b] = [...pointers.values()];
     const d = Math.hypot(a.x - b.x, a.y - b.y);
     if (pinchDist > 0) zoomAt((a.x + b.x) / 2, (a.y + b.y) / 2, d / pinchDist);
     pinchDist = d;
     dragged = true;
+  } else if (aiming) {
+    // Move is armed: the finger DRAGS THE AIM (live preview via aimPointer), the
+    // camera stays put — releasing commits. Panning used to hijack this drag and
+    // silently swallow the order (the audit's blind-order finding).
+    void 0;
   } else if (boxSelecting && dragStart) {
     selectionBox = { x1: dragStart.x, y1: dragStart.y, x2: p.x, y2: p.y };
-    if (Math.hypot(p.x - dragStart.x, p.y - dragStart.y) > 6) dragged = true;
+    if (moved) dragged = true;
   } else {
     cam.x += p.x - prev.x;
     cam.y += p.y - prev.y;
     clampCam(); // keep the map from being dragged entirely off-screen
-    if (dragStart && Math.hypot(p.x - dragStart.x, p.y - dragStart.y) > 6) dragged = true;
+    if (moved) dragged = true;
   }
 });
 function endPointer(ev: PointerEvent) {
@@ -4936,10 +5287,22 @@ function endPointer(ev: PointerEvent) {
   }
   pointers.delete(ev.pointerId);
   if (pointers.size < 2) pinchDist = 0;
-  if (single && !dragged && p) selectAt(p.x, p.y);
+  cancelLongPress();
+  if (longPressFired) {
+    longPressFired = false; // the long-press already acted; this release is spent
+    return;
+  }
+  if (single && p && (aiming || !dragged)) {
+    // While aiming, a DRAGGED release still commits — the finger was steering the
+    // aim preview, and letting go is the confirmation.
+    tapByTouch = ev.pointerType === 'touch';
+    selectAt(p.x, p.y);
+  }
 }
 canvas.addEventListener('pointerup', endPointer);
 canvas.addEventListener('pointercancel', (ev) => {
+  cancelLongPress();
+  longPressFired = false;
   pointers.delete(ev.pointerId);
   pinchDist = 0;
   selectionBox = null;
@@ -4971,6 +5334,11 @@ for (const b of Array.from(document.querySelectorAll('[data-speed]'))) {
       x.classList.toggle('on', Number((x as HTMLElement).dataset.speed) === speed);
   });
 }
+// Pace chips (×1/×10/×50): retune the play/fast pair mid-match and start running at
+// the new multiplier — the same mapping the setup screen launches with.
+for (const b of Array.from(document.querySelectorAll('[data-mult]'))) {
+  b.addEventListener('click', () => applyTimeSpeed(Number((b as HTMLElement).dataset.mult)));
+}
 
 // Map a setup time-flow multiplier (×1/×2/×5/×10) onto the speedbar and start running at
 // it. ×1 is true wall-clock — 1 game-hour per real hour — matching the real-time MMO
@@ -4987,6 +5355,8 @@ function applyTimeSpeed(mult: number): void {
   speed = play;
   for (const x of Array.from(document.querySelectorAll('[data-speed]')))
     x.classList.toggle('on', Number((x as HTMLElement).dataset.speed) === speed);
+  for (const x of Array.from(document.querySelectorAll('[data-mult]')))
+    x.classList.toggle('on', Number((x as HTMLElement).dataset.mult) === mult);
 }
 
 // Restart → back to the skirmish setup (bot selection). The speedbar button serves the
@@ -5416,7 +5786,7 @@ function renderTemplates(): void {
     ? f.synergies.map((x) => `<span class="syn">◈ ${esc(x.name)} — ${esc(x.desc)}</span>`).join('')
     : `<span class="syn none">◇ Нет бонусов состава — смешай рода войск.</span>`;
   const cost = Object.entries(f.cost)
-    .map(([r, a]) => `${a} ${r}`)
+    .map(([r, a]) => `${a}${TECH_CUR[r] ?? r[0]}`)
     .join(' · ');
   setupDivEl.innerHTML =
     `<p class="ssub">Собери 3 шаблона дивизий из 6 слотов. Состав даёт суммарные статы и бонусы; во время боя шаблоны не меняются. Тапни слот, чтобы сменить юнит.</p>` +
@@ -5744,7 +6114,11 @@ function openSetup(from: 'welcome' | 'hub' = 'welcome'): void {
   setupReturn = from;
   setupSlots = ['human', 'ai', 'off', 'off'];
   setupStart = START_CANDIDATES[0] ?? MAP[0]!.id;
-  setupSpeed = 1; // default to normal time flow each time the setup opens
+  // A lively default: ×1 wall-clock reads as a FROZEN screen to a newcomer, so the
+  // setup opens on the last chosen multiplier (first launch: ×10). True real time
+  // stays one tap away — the ×1 chip.
+  const savedSpeed = Number(localStorage.getItem('void.setupSpeed'));
+  setupSpeed = SETUP_SPEEDS.includes(savedSpeed) ? savedSpeed : 10;
   showConnect(false);
   setupEl.style.display = 'flex';
   // Always open on the Старт tab (the division designer keeps its own state).
@@ -5783,6 +6157,30 @@ function buildSetupConfig(): SetupConfig {
 // Install a ready GameState as the live match: reset all interaction state, queues,
 // camera and log, then hide the setup overlay. `aiPlayers` are the seats the local
 // sim drives. Shared by the normal skirmish and (via a hook) the dev test mode.
+// Tap a resource chip → what the number means: stock and hourly net flow.
+purse.addEventListener('click', (ev) => {
+  const el = (ev.target as Element).closest('[data-res]') as HTMLElement | null;
+  if (!el) return;
+  const key = el.dataset.res!;
+  const stock = Math.round(s.players[ME]?.resources?.[key] ?? 0);
+  const flow = Math.round(netIncome(s, ME)[key] ?? 0);
+  note(
+    `${TECH_CUR[key] ?? ''} ${el.title}: ${kfmt(stock)} в казне · ${flow >= 0 ? '+' : ''}${kfmt(flow)}/ч (производство минус содержание войск)`,
+  );
+});
+
+// Tap the ✦ score chip → a plain-words breakdown of how the score is built and how
+// the match ends (the victory rule is otherwise invisible mid-match).
+devlineEl.addEventListener('click', (ev) => {
+  if (!(ev.target as Element).closest('.dstat')) return;
+  const mine = Object.values(s.planets).filter((p) => p.owner === ME);
+  const worlds = mine.filter((p) => (p.kind ?? 'planet') === 'planet').length;
+  const score = Math.round(s.match?.scores?.[ME]?.total ?? 0);
+  note(
+    `✦ ${score}/${SCORE_LIMIT}: мир — 50, прочий сектор — 10, здания добавляют по уровню (у вас ${worlds} миров, ${mine.length - worlds} секторов). Победа: ✦ ${SCORE_LIMIT}, уничтожение соперников или доминирование.`,
+  );
+});
+
 function installMatch(state: GameState, aiPlayers: Set<string>): void {
   s = state;
   ME = 'p1';
@@ -5800,8 +6198,16 @@ function installMatch(state: GameState, aiPlayers: Set<string>): void {
   splitState = null;
   killStats = { destroyed: 0, lost: 0 };
   myBattleLocs.clear();
+  memory.clear(); // fog memory belongs to the OLD match — stale intel must not carry over
+  radarMemory.clear();
+  battleLosses.clear();
+  aaShots.length = 0;
   logLines.length = 0; // fresh log — drop notes from the menu-background match
   banner = null; // clear any end-banner left by the menu-background match (else it sticks)
+  // The match goal, written AFTER the wipe so it is the first line a player can read.
+  // Kept honest against the kernel: victoryModule ends on score (SCORE_LIMIT), on
+  // elimination, or on domination — no "capital capture" victory exists.
+  note(`Задача: ✦ ${SCORE_LIMIT} (мир — 50, сектор — 10) или уничтожение соперников.`);
   for (const k of Object.keys(buildQueues)) delete buildQueues[k];
   defaultView(); // phone: zoom onto home; desktop: whole-map fit
   setupEl.style.display = 'none';
@@ -5828,6 +6234,7 @@ setupSpeedEl.addEventListener('click', (ev) => {
   const t = (ev.target as Element).closest('[data-spd]');
   if (!t) return;
   setupSpeed = Number(t.getAttribute('data-spd'));
+  localStorage.setItem('void.setupSpeed', String(setupSpeed));
   renderSetup();
 });
 setupGoEl.addEventListener('click', () => startMatch(buildSetupConfig()));
@@ -5885,6 +6292,7 @@ function connect(): void {
           pingTimer = setInterval(() => client.ping(performance.now()), 2000);
           client.ping(performance.now()); // seed an RTT reading immediately
         }
+        if (admitted && s !== snap.state) diffNetDiplomacy(s, snap.state);
         s = snap.state;
         if (snap.playerId) ME = snap.playerId;
         // Desync check (M0): the server tags each snapshot with hashState(view); we
@@ -6093,13 +6501,22 @@ async function toggleArchive(id: string, restore: boolean): Promise<void> {
 
 function renderMatches(): void {
   const el = $('mlist');
+  // Never a dead end: whatever the server says (unreachable / empty list), the
+  // browser always offers the path that ALWAYS works — a solo skirmish offline.
+  const soloCard = (msg: string): void => {
+    el.innerHTML =
+      `<div class="mempty">${msg}</div>` +
+      '<div class="msolo"><button class="mbtn" id="msolo-go">▶ Начать одиночный скирмиш</button>' +
+      '<div class="msolo-sub">Сервер не нужен — свободные места займут боты.</div></div>';
+    document.getElementById('msolo-go')?.addEventListener('click', () => openSetup('hub'));
+  };
   if (!matchLists) {
-    el.innerHTML = '<div class="mempty">нажмите «Обновить список»</div>';
+    soloCard(statusEl.textContent === 'сервер недоступен' ? 'сервер недоступен' : 'нажмите «Обновить список»');
     return;
   }
   const rows = matchLists[activeTab] ?? [];
   if (rows.length === 0) {
-    el.innerHTML = '<div class="mempty">пусто</div>';
+    soloCard('здесь пусто');
     return;
   }
   el.textContent = '';
@@ -6292,6 +6709,7 @@ function frame(nowReal: number) {
     devlineEl.innerHTML = statusHtml;
     lastClockText = statusHtml;
   }
+
   // Dev net overlay (M0): FPS always; when connected, append round-trip latency and
   // a desync flag (✓ in sync with the server, ✗ + running mismatch count if not).
   let fpsText = `${Math.round(fpsEma)} FPS`;
@@ -6311,19 +6729,36 @@ function frame(nowReal: number) {
   const r = s.players[ME]?.resources ?? {};
   // Monochrome line glyphs from the console's own icon family (no emoji variants, so
   // they render as text, not colour emoji). Name in `title` for hover/long-press.
-  const chip = (icon: string, val: string, name: string) =>
-    `<span class="res" title="${name}"><i>${icon}</i><b>${val}</b></span>`;
+  // Flow under the stock: the tested netIncome() (production − upkeep, per hour)
+  // finally shown to the player. A resource with no stock AND no flow is dimmed —
+  // it plays no part in the current match yet.
+  const inc = netIncome(s, ME);
+  const chip = (icon: string, key: string, name: string) => {
+    const stock = r[key] ?? 0;
+    const flow = Math.round(inc[key] ?? 0);
+    const flowTxt =
+      flow !== 0 ? `<em class="${flow > 0 ? 'up' : 'dn'}">${flow > 0 ? '+' : ''}${kfmt(flow)}/ч</em>` : '';
+    const dead = stock === 0 && flow === 0 ? ' dead' : '';
+    return `<span class="res${dead}" title="${name}" data-res="${key}"><i>${icon}</i><b>${kfmt(stock)}</b>${flowTxt}</span>`;
+  };
   const hudHtml =
-    chip('¤', kfmt(r.credits ?? 0), 'Credits') +
-    chip('❖', kfmt(r.food ?? 0), 'Food') +
-    chip('⬢', kfmt(r.metal ?? 0), 'Metal') +
-    chip('↯', kfmt(r.energy ?? 0), 'Energy') +
-    chip('▦', kfmt(r.microelectronics ?? 0), 'Microelectronics');
+    chip('¤', 'credits', 'Credits') +
+    chip('❖', 'food', 'Food') +
+    chip('⬢', 'metal', 'Metal') +
+    chip('↯', 'energy', 'Energy') +
+    chip('▦', 'microelectronics', 'Microelectronics');
   if (hudHtml !== lastHudHtml) {
     purse.innerHTML = hudHtml;
     lastHudHtml = hudHtml;
   }
-  const battles = Object.keys(s.battles).length;
+  const msgBadge = document.getElementById('msgbadge');
+  if (msgBadge) {
+    msgBadge.style.display = unreadMsgs > 0 ? '' : 'none';
+    msgBadge.textContent = String(unreadMsgs);
+  }
+  const battles = Object.values(s.battles).filter(
+    (b) => b.attacker.owner === ME || b.defender.owner === ME || known(b.location),
+  ).length;
   const alertText = String(battles);
   if (alertText !== lastAlertText) {
     alertBadge.style.display = battles > 0 ? 'grid' : 'none';
@@ -6423,7 +6858,10 @@ if (pingPopEl) {
 
 // Session menu: the rail's Diplomacy / Dispatches buttons open the roster / message log.
 document.getElementById('rail-diplo')?.addEventListener('click', () => openDiplo('diplo'));
-document.getElementById('rail-msgs')?.addEventListener('click', () => openDiplo('msgs'));
+document.getElementById('rail-msgs')?.addEventListener('click', () => {
+  unreadMsgs = 0; // reading the tab clears the badge
+  openDiplo('msgs');
+});
 
 // === floating chat window (desktop only) =====================================
 // A naive profanity scrub for the optional censor toggle — whole-word match, the
@@ -6607,10 +7045,11 @@ function closeChat(): void {
   renderChat();
 }
 function sendChatMsg(): void {
+  if (NET) return note('сетевой чат ещё не подключён — используйте пинги 📍');
   const input = document.getElementById('cw-text') as HTMLInputElement | null;
   const text = input?.value.trim();
   if (!text) return;
-  pushMsg(chatTab, text, false); // to the open channel / DM (net play would broadcast)
+  pushMsg(chatTab, text, false); // local sessions only — the net relay is a next brick
   if (input) {
     input.value = '';
     input.focus?.();
@@ -6790,10 +7229,11 @@ function toggleSet<T>(set: Set<T>, v: T): void {
   else set.add(v);
 }
 function sendDiploMsg(): void {
+  if (NET) return note('сетевой чат ещё не подключён — используйте пинги 📍');
   const input = document.getElementById('dp-text') as HTMLInputElement | null;
   const text = input?.value.trim();
   if (!text) return;
-  pushMsg(convoOpen, text, false); // to the open conversation (in net play this would broadcast)
+  pushMsg(convoOpen, text, false); // local sessions only — the net relay is a next brick
   if (input) {
     input.value = '';
     input.focus();
@@ -7069,9 +7509,6 @@ if (pingMenuEl) {
   });
 }
 
-note(
-  'Welcome, Commander. A wide frontier of provinces separates you from CRIMSON — the worlds among them score 50, every other sector 10. Reach 600 points or take the enemy capital.',
-);
 requestAnimationFrame(frame);
 
 // --- in-app APK auto-update -------------------------------------------------
