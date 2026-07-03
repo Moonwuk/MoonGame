@@ -124,6 +124,15 @@ prototype/       src/game.ts, src/main.ts (UI), src/smoke.ts, build.mjs, uitest.
   шпионит — тайна вора), истечение проверяется на границе безопасности, не только
   чисткой `time.advanced`. События `intel.stolen`/`espionage.failed` адресованы вору
   (`owner` в payload — серверный фильтр событий не отдаёт их жертве). Кап 8 окон.
+  **Играбельно в прототипе (H5)**: `espionageModule` подключён в `MODULES` (значит и в
+  netserver); билдер `spyOn` в `game.ts`; UI — «🕵 казна»/«🕵 флоты» в развёрнутой строке
+  ростера дипломатии + «🕵 Разведать мир · 150¤» на карточке чужого мира (включая
+  fogged-«LAST KNOWN» — цель берётся из памяти; протухший владелец честно отбивается
+  ядром). Клиентский туман уважает живые окна: `planet` добавляет узел в identify (и в
+  память), `fleets` показывает флоты цели на карте (`fleetSeen`), `treasury` печатает
+  ресурсы жертвы в ростере с остатком окна. Тосты `intel.stolen`/`espionage.failed`
+  фильтруются по `owner === ME` (зеркало серверного фильтра). 4 e2e-теста
+  (`prototype/src/espionage.test.ts`).
 - `diplomacy?: Record<pairKey, DiplomaticStance>` — попарные дип-отношения (`war`/`peace`/
   `pact`/`alliance`), симметрично и **публично** (туман не режет). Дефолт пары без записи —
   `war` (= FFA). Примитивы в `state/diplomacy.ts`. **`combat.isHostile` читает стойку прямо из

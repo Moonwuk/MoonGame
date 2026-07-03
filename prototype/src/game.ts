@@ -25,6 +25,7 @@ import {
   armyModule,
   victoryModule,
   technologyModule,
+  espionageModule,
   getStance,
   isBotPair,
   setStance,
@@ -2049,6 +2050,7 @@ export const MODULES: GameModule[] = [
   victoryModule, // terminal match state from authoritative state (domination / elimination / score / timeout)
   fleetLaunchModule,
   diplomacyModule, // peace-by-default + declare-war action (combat reads state.diplomacy)
+  espionageModule, // SPY-1 core module: espionage.spy → time-boxed intel windows (state.intel)
   botDiplomacyModule, // bots: friendly-by-default favour meter → embargo/war only when provoked
   marketModule, // session resource market: two-sided order book (sell/buy lots), embargo-gated
   divisionModule, // ground divisions: mobilise from a template + daily restoration
@@ -2155,6 +2157,14 @@ export const researchTech = (playerId: string, technology: string) =>
 /** Declare war on (or otherwise re-stance) another commander. */
 export const declareWar = (playerId: string, target: string, stance: DiplomaticStance = 'war') =>
   act(playerId, 'diplomacy.declare', { target, stance });
+/** Steal a time-boxed intel window on another commander (SPY-1 core module):
+ *  `treasury` / `fleets` spy on the player; `planet` needs the world's id too. */
+export const spyOn = (
+  playerId: string,
+  target: string,
+  kind: 'treasury' | 'planet' | 'fleets',
+  planetId?: string,
+) => act(playerId, 'espionage.spy', { target, kind, ...(planetId ? { planetId } : {}) });
 
 // --- CC-1: fleet order queue (command chains) -------------------------------
 // A queued step is one intent a fleet runs when it next falls idle. The host driver

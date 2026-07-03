@@ -255,6 +255,12 @@ body.sheet-open #cmdbar{bottom:calc(34vh + 12px);}
 .dp-act{padding:6px 10px;border-radius:6px;border:1px solid var(--line);background:transparent;color:var(--dim);
   font:700 11px ui-monospace,monospace;cursor:pointer;}
 .dp-act.on{color:var(--sc);border-color:var(--sc);background:rgba(53,214,230,.08);}
+.dp-spy{padding:6px 10px;border-radius:6px;border:1px solid var(--amber-dim,#8a6a2f);background:transparent;
+  color:var(--amber);font:700 11px ui-monospace,monospace;cursor:pointer;}
+.dp-spy:hover{border-color:var(--amber);background:rgba(255,180,58,.1);}
+.dp-intel{padding:2px 10px 9px 39px;font-size:11px;color:var(--cyan);}
+.dp-intel b{color:#eafffb;}
+.dp-intel em{font-style:normal;color:var(--dim);font-size:9px;}
 .dp-msg{margin-left:auto;padding:6px 11px;border-radius:6px;border:1px solid var(--cyan-dim);
   background:rgba(53,214,230,.1);color:var(--cyan);font-size:13px;cursor:pointer;}
 .dp-feed{overflow:auto;padding:10px 12px;display:flex;flex-direction:column;gap:7px;flex:1;min-height:0;}
