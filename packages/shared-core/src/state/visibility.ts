@@ -1,4 +1,5 @@
 import { buildingLevel, type GameData } from '../data/schemas';
+import { offerInvolves } from './diplomacy';
 import { deepClone } from '../util/clone';
 import type { Fleet, GameState, PlanetId, PlayerId, ScheduledEvent } from './gameState';
 
@@ -120,7 +121,12 @@ function withinRadiusAt(
     if (dx * dx + dy * dy <= r2) out.add(planet.id);
   }
 }
-function withinRadius(state: GameState, originId: PlanetId, radius: number, out: Set<PlanetId>): void {
+function withinRadius(
+  state: GameState,
+  originId: PlanetId,
+  radius: number,
+  out: Set<PlanetId>,
+): void {
   const origin = state.planets[originId]?.position;
   if (origin) withinRadiusAt(state, origin, radius, out);
 }
@@ -212,7 +218,11 @@ function coverageFor(state: GameState, viewerId: PlayerId, data: GameData): Cove
 
 /** The set of nodes `viewerId` currently identifies (full detail). Exported so
  *  `visibilityModule` snapshots exactly what the projection treats as live. */
-export function identifiedNodes(state: GameState, viewerId: PlayerId, data: GameData): Set<PlanetId> {
+export function identifiedNodes(
+  state: GameState,
+  viewerId: PlayerId,
+  data: GameData,
+): Set<PlanetId> {
   return coverageFor(state, viewerId, data).identify;
 }
 
@@ -275,6 +285,15 @@ function project(
     for (const id of Object.keys(view.heroes)) {
       if (view.heroes[id]?.owner !== viewerId) delete view.heroes[id];
     }
+  }
+  // Diplomatic OFFERS are private to the two negotiating parties (the committed
+  // stances themselves are public): a third party must not see who is suing for
+  // peace with whom. Keep only offers the viewer sends or receives.
+  if (view.diplomacyOffers) {
+    for (const key of Object.keys(view.diplomacyOffers)) {
+      if (!offerInvolves(key, viewerId)) delete view.diplomacyOffers[key];
+    }
+    if (Object.keys(view.diplomacyOffers).length === 0) delete view.diplomacyOffers;
   }
 
   // Planets: keep topology (id/position/links) but strip contents you can't see.

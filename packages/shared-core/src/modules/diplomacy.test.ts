@@ -6,6 +6,7 @@ import { combatModule } from './combat';
 import { createInitialState, type Fleet, type GameState, type Player } from '../state/gameState';
 import { parseGameData, type GameData } from '../data/schemas';
 import {
+  getOffer,
   getStance,
   setStance,
   stanceToRelation,
@@ -90,20 +91,62 @@ describe('diplomacyModule — declarations (D2)', () => {
     expect(getStance(r2.state, 'p1', 'p2')).toBe('war');
   });
 
-  it('de-escalation (toward peace / pact / alliance) is rejected — consent protocol is D3', () => {
+  it('a friendly declaration records an OFFER — the stance does not move (consent, D3)', () => {
     const state = baseState(); // default stance: war
-    expect(errCode(kernel.applyAction(state, declare('p1', 'p2', 'peace'), ctx()))).toBe(
-      'E_CONSENT_REQUIRED',
+    const r = okApply(kernel.applyAction(deepFreeze(state), declare('p1', 'p2', 'peace'), ctx()));
+    expect(getStance(r.state, 'p1', 'p2')).toBe('war'); // a lone declaration changes nothing
+    expect(getOffer(r.state, 'p1', 'p2')).toBe('peace'); // …but the offer now stands
+    expect(r.events).toContainEqual({
+      type: 'diplomacy.offered',
+      payload: { from: 'p1', to: 'p2', stance: 'peace' },
+    });
+    expect(r.events.some((e) => e.type === 'diplomacy.changed')).toBe(false);
+  });
+
+  it('a matching counter-declaration commits the friendlier stance and clears the offers', () => {
+    const state = baseState();
+    const offered = okApply(kernel.applyAction(state, declare('p1', 'p2', 'peace'), ctx()));
+    const r = okApply(kernel.applyAction(offered.state, declare('p2', 'p1', 'peace', 2), ctx()));
+    expect(getStance(r.state, 'p1', 'p2')).toBe('peace'); // mutual — committed
+    expect(getOffer(r.state, 'p1', 'p2')).toBeNull();
+    expect(getOffer(r.state, 'p2', 'p1')).toBeNull();
+    expect(r.state.diplomacyOffers).toBeUndefined(); // emptied map is dropped
+    expect(r.events).toContainEqual({
+      type: 'diplomacy.changed',
+      payload: { a: 'p2', b: 'p1', stance: 'peace', from: 'war' },
+    });
+  });
+
+  it('mismatched offers coexist until one side matches the other', () => {
+    const state = baseState(); // war
+    const s1 = okApply(kernel.applyAction(state, declare('p1', 'p2', 'pact'), ctx())).state;
+    const s2 = okApply(kernel.applyAction(s1, declare('p2', 'p1', 'alliance', 2), ctx())).state;
+    expect(getStance(s2, 'p1', 'p2')).toBe('war'); // pact ≠ alliance — no deal yet
+    // p1 comes around to the alliance — that matches p2's standing offer.
+    const done = okApply(kernel.applyAction(s2, declare('p1', 'p2', 'alliance', 3), ctx())).state;
+    expect(getStance(done, 'p1', 'p2')).toBe('alliance');
+    expect(done.diplomacyOffers).toBeUndefined(); // p1's stale pact offer cleared too
+  });
+
+  it('an escalation voids the pair’s standing offers (war ends the negotiation)', () => {
+    const state = baseState();
+    setStance(state, 'p1', 'p2', 'peace');
+    const offered = okApply(kernel.applyAction(state, declare('p1', 'p2', 'pact'), ctx())).state;
+    expect(getOffer(offered, 'p1', 'p2')).toBe('pact');
+    const warred = okApply(kernel.applyAction(offered, declare('p2', 'p1', 'war', 2), ctx())).state;
+    expect(getStance(warred, 'p1', 'p2')).toBe('war');
+    expect(warred.diplomacyOffers).toBeUndefined(); // the pact offer did not survive
+  });
+
+  it('re-declaring an identical standing offer is rejected', () => {
+    const state = baseState();
+    const offered = okApply(kernel.applyAction(state, declare('p1', 'p2', 'peace'), ctx())).state;
+    expect(errCode(kernel.applyAction(offered, declare('p1', 'p2', 'peace', 2), ctx()))).toBe(
+      'E_ALREADY_OFFERED',
     );
-    const friendly = baseState();
-    setStance(friendly, 'p1', 'p2', 'peace');
-    expect(errCode(kernel.applyAction(friendly, declare('p1', 'p2', 'alliance'), ctx()))).toBe(
-      'E_CONSENT_REQUIRED',
-    );
-    // A player under attack cannot unilaterally switch the war off.
-    expect(errCode(kernel.applyAction(state, declare('p2', 'p1', 'pact'), ctx()))).toBe(
-      'E_CONSENT_REQUIRED',
-    );
+    // …but replacing it with a DIFFERENT friendly stance is fine.
+    const replaced = okApply(kernel.applyAction(offered, declare('p1', 'p2', 'pact', 3), ctx()));
+    expect(getOffer(replaced.state, 'p1', 'p2')).toBe('pact');
   });
 
   it('re-declaring the current stance is rejected (no-op declaration)', () => {

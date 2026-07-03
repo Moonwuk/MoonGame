@@ -1,7 +1,10 @@
 import type { GameModule } from '../kernel/module';
 import type { DiplomaticStance } from '../state/gameState';
 import {
+  clearOffers,
+  getOffer,
   getStance,
+  setOffer,
   setStance,
   stanceToRelation,
   type DiplomacyCapability,
@@ -11,9 +14,7 @@ import {
  *  hostile. Unilateral declarations may only move a pair UP this axis (toward
  *  war); moving down (toward peace / pact / alliance) needs the other side's
  *  consent, because the map is symmetric — otherwise a player under attack could
- *  declare `peace` mid-war and unilaterally switch the enemy's combat off. The
- *  consent protocol (offer + accept) is a follow-up brick (D3); until then the
- *  friendly stances enter a match via seeding (`setStance` at creation). */
+ *  declare `peace` mid-war and unilaterally switch the enemy's combat off. */
 const HOSTILITY: Record<DiplomaticStance, number> = {
   alliance: 0,
   pact: 1,
@@ -26,12 +27,19 @@ function isStance(value: unknown): value is DiplomaticStance {
 }
 
 /**
- * Diplomacy — the declaration module (backlog D2, GDD §gdd.md коалиции). Builds
- * on the D1 state primitives (`state/diplomacy.ts`):
+ * Diplomacy — declarations (D2) + the consent protocol (D3). Builds on the D1
+ * state primitives (`state/diplomacy.ts`), all through one action:
  *
- *  - `diplomacy.declare { target, stance }` — unilaterally move your stance
- *    toward `target` UP the hostility axis (…→ pact → peace → war). Emits
- *    `diplomacy.changed { a, b, stance, from }`.
+ *  - `diplomacy.declare { target, stance }` toward MORE hostile — unilateral:
+ *    the stance flips at once (declaring war never needs consent) and any
+ *    standing offers between the pair are voided (a war declaration ends the
+ *    negotiation). Emits `diplomacy.changed { a, b, stance, from }`.
+ *  - `diplomacy.declare` toward FRIENDLIER — mutual: the first declaration
+ *    records a standing OFFER (stance unchanged, `diplomacy.offered` emitted,
+ *    visible only to the two parties); when the other side declares the SAME
+ *    stance, the pair commits — stance flips, offers clear, `diplomacy.changed`
+ *    fires. An invariant falls out: a standing offer is always strictly
+ *    friendlier than the pair's current stance (commits and escalations clear).
  *  - provides the `diplomacy` capability (`getRelation`: stance → hostile /
  *    neutral / ally) that combat's `isHostile` consults; without this module
  *    combat falls back to reading the stance directly — same behaviour, so the
@@ -39,7 +47,7 @@ function isStance(value: unknown): value is DiplomaticStance {
  */
 export const diplomacyModule: GameModule = {
   id: 'diplomacy',
-  version: '1.0.0',
+  version: '1.1.0',
   setup(api) {
     api.provideCapability<DiplomacyCapability>('diplomacy', {
       getRelation: (state, a, b) => stanceToRelation(getStance(state, a, b)),
@@ -55,15 +63,33 @@ export const diplomacyModule: GameModule = {
       if (!h.state.players[target]) {
         return h.reject('E_NO_PLAYER');
       }
-      const from = getStance(h.state, action.playerId, target);
+      const me = action.playerId;
+      const from = getStance(h.state, me, target);
       if (stance === from) {
         return h.reject('E_SAME_STANCE');
       }
-      if (HOSTILITY[stance] < HOSTILITY[from]) {
-        return h.reject('E_CONSENT_REQUIRED'); // de-escalation needs both sides (D3)
+
+      if (HOSTILITY[stance] > HOSTILITY[from]) {
+        // Escalation — unilateral, and it ends any negotiation in flight.
+        clearOffers(h.state, me, target);
+        setStance(h.state, me, target, stance);
+        h.emit('diplomacy.changed', { a: me, b: target, stance, from });
+        return;
       }
-      setStance(h.state, action.playerId, target, stance);
-      h.emit('diplomacy.changed', { a: action.playerId, b: target, stance, from });
+
+      // De-escalation — the consent protocol (D3): commit on a matching
+      // counter-offer, otherwise record/replace this side's standing offer.
+      if (getOffer(h.state, target, me) === stance) {
+        clearOffers(h.state, me, target);
+        setStance(h.state, me, target, stance);
+        h.emit('diplomacy.changed', { a: me, b: target, stance, from });
+        return;
+      }
+      if (getOffer(h.state, me, target) === stance) {
+        return h.reject('E_ALREADY_OFFERED'); // this exact offer already stands
+      }
+      setOffer(h.state, me, target, stance);
+      h.emit('diplomacy.offered', { from: me, to: target, stance });
     });
   },
 };

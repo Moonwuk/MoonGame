@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { parseGameData, type GameData } from '../data/schemas';
-import { createInitialState, type Fleet, type GameState, type Planet, type Player } from './gameState';
+import {
+  createInitialState,
+  type Fleet,
+  type GameState,
+  type Planet,
+  type Player,
+} from './gameState';
 import { identifiedNodes, visibleState, visibleView } from './visibility';
 
 const data: GameData = parseGameData({
@@ -21,11 +27,33 @@ const data: GameData = parseGameData({
 function player(id: string): Player {
   return { id, name: id, faction: 'x', status: 'active', resources: { metal: 99 } };
 }
-function planet(id: string, owner: string | null, links: string[], extra: Partial<Planet> = {}): Planet {
-  return { id, owner, position: { x: 0, y: 0 }, links, resources: {}, buildings: [], garrison: [], traits: [], ...extra };
+function planet(
+  id: string,
+  owner: string | null,
+  links: string[],
+  extra: Partial<Planet> = {},
+): Planet {
+  return {
+    id,
+    owner,
+    position: { x: 0, y: 0 },
+    links,
+    resources: {},
+    buildings: [],
+    garrison: [],
+    traits: [],
+    ...extra,
+  };
 }
 function fleet(id: string, owner: string, location: string, units: Array<[string, number]>): Fleet {
-  return { id, owner, location, movement: null, units: units.map(([unit, count]) => ({ unit, count })), traits: [] };
+  return {
+    id,
+    owner,
+    location,
+    movement: null,
+    units: units.map(([unit, count]) => ({ unit, count })),
+    traits: [],
+  };
 }
 
 /** Graph A→B→C→D→E (jumps), but radar works by physical DISTANCE (x-coords below).
@@ -48,8 +76,16 @@ function scenario(): GameState {
     planets: {
       A: planet('A', 'p1', ['B'], { ...at(0), buildings: [{ type: 'radar', level: 1, hp: 10 }] }),
       B: planet('B', null, ['A', 'C'], { ...at(100), garrison: [{ unit: 'cruiser', count: 1 }] }),
-      C: planet('C', 'p2', ['B', 'D'], { ...at(250), garrison: [{ unit: 'cruiser', count: 2 }], planetType: 'radar_world' }),
-      D: planet('D', 'p2', ['C', 'E'], { ...at(450), garrison: [{ unit: 'cruiser', count: 5 }], planetType: 'hidden_world' }),
+      C: planet('C', 'p2', ['B', 'D'], {
+        ...at(250),
+        garrison: [{ unit: 'cruiser', count: 2 }],
+        planetType: 'radar_world',
+      }),
+      D: planet('D', 'p2', ['C', 'E'], {
+        ...at(450),
+        garrison: [{ unit: 'cruiser', count: 5 }],
+        planetType: 'hidden_world',
+      }),
       E: planet('E', 'p2', ['D'], { ...at(180), garrison: [{ unit: 'cruiser', count: 1 }] }),
     },
     fleets: {
@@ -62,6 +98,23 @@ function scenario(): GameState {
     scheduled: [{ id: 'evt:1', at: 5, type: 'fleet.arrived', payload: {}, seq: 0 }],
   };
 }
+
+describe('visibleState — diplomatic offers are private to the two parties', () => {
+  it('keeps the viewer’s sent/received offers, strips everyone else’s negotiations', () => {
+    const state = scenario();
+    state.diplomacyOffers = {
+      'p1>p2': 'peace', // viewer sends
+      'p2>p1': 'pact', // viewer receives
+      'p2>p3': 'alliance', // someone else's negotiation — must not leak
+    };
+    const view = visibleState(state, 'p1', data);
+    expect(view.diplomacyOffers).toEqual({ 'p1>p2': 'peace', 'p2>p1': 'pact' });
+    // p3 keeps only the negotiation it is a party to; the p1↔p2 talks never leak.
+    const outsider = visibleState(state, 'p3', data);
+    expect(outsider.diplomacyOffers).toEqual({ 'p2>p3': 'alliance' });
+    expect(JSON.stringify(outsider)).not.toContain('p1>p2');
+  });
+});
 
 describe('visibleView (one coverage pass for the broadcast path)', () => {
   it('returns the same projection and identify set as the two separate calls', () => {
@@ -147,8 +200,20 @@ describe('visibleState (fog of war as a security boundary)', () => {
     // own construction (A is p1's) survives; an enemy build (C is p2's) and an
     // owner-less event are stripped — so a player sees their own build queue, not the foe's.
     state.scheduled = [
-      { id: 'own', at: 10, type: 'construction.complete', payload: { planetId: 'A', building: 'mine' }, seq: 0 },
-      { id: 'enemy', at: 20, type: 'construction.complete', payload: { planetId: 'C', building: 'mine' }, seq: 1 },
+      {
+        id: 'own',
+        at: 10,
+        type: 'construction.complete',
+        payload: { planetId: 'A', building: 'mine' },
+        seq: 0,
+      },
+      {
+        id: 'enemy',
+        at: 20,
+        type: 'construction.complete',
+        payload: { planetId: 'C', building: 'mine' },
+        seq: 1,
+      },
       { id: 'none', at: 5, type: 'fleet.arrived', payload: {}, seq: 2 },
     ];
     expect(visibleState(state, 'p1', data).scheduled.map((e) => e.id)).toEqual(['own']);
@@ -159,8 +224,20 @@ describe('visibleState (fog of war as a security boundary)', () => {
     // `technology.complete` is tagged by playerId, not owner/planetId/fleetId — the
     // viewer must still see their OWN research ETA, and never the enemy's.
     state.scheduled = [
-      { id: 'my-research', at: 30, type: 'technology.complete', payload: { playerId: 'p1', technology: 't' }, seq: 0 },
-      { id: 'foe-research', at: 40, type: 'technology.complete', payload: { playerId: 'p2', technology: 't' }, seq: 1 },
+      {
+        id: 'my-research',
+        at: 30,
+        type: 'technology.complete',
+        payload: { playerId: 'p1', technology: 't' },
+        seq: 0,
+      },
+      {
+        id: 'foe-research',
+        at: 40,
+        type: 'technology.complete',
+        payload: { playerId: 'p2', technology: 't' },
+        seq: 1,
+      },
     ];
     expect(visibleState(state, 'p1', data).scheduled.map((e) => e.id)).toEqual(['my-research']);
   });
@@ -195,8 +272,15 @@ describe('visibleState (fog of war as a security boundary)', () => {
       ...base,
       players: { p1: player('p1'), p2: player('p2') },
       planets: {
-        X: planet('X', null, ['Y'], { position: { x: 0, y: 0 }, garrison: [{ unit: 'cruiser', count: 1 }] }),
-        Y: planet('Y', 'p2', ['X'], { position: { x: 50, y: 0 }, garrison: [{ unit: 'cruiser', count: 3 }], planetType: 'secret_world' }),
+        X: planet('X', null, ['Y'], {
+          position: { x: 0, y: 0 },
+          garrison: [{ unit: 'cruiser', count: 1 }],
+        }),
+        Y: planet('Y', 'p2', ['X'], {
+          position: { x: 50, y: 0 },
+          garrison: [{ unit: 'cruiser', count: 3 }],
+          planetType: 'secret_world',
+        }),
       },
       fleets: { lone: fleet('lone', 'p1', 'X', units) },
     };
@@ -213,7 +297,14 @@ describe('visibleState (fog of war as a security boundary)', () => {
   it('a radar-equipped fleet restores sight by distance (radar module)', () => {
     // The same fleet carrying a scout (radarRange 350): Y at 50 units is well within
     // the inner identify half (175) → fully revealed. Sight comes from the module.
-    const view = visibleState(loneFleet([['cruiser', 1], ['scout', 1]]), 'p1', data);
+    const view = visibleState(
+      loneFleet([
+        ['cruiser', 1],
+        ['scout', 1],
+      ]),
+      'p1',
+      data,
+    );
     expect(view.planets.Y?.owner).toBe('p2');
     expect(view.planets.Y?.garrison).toHaveLength(1);
   });
@@ -260,7 +351,10 @@ describe('radar tracks the moving ship, not its destination', () => {
   const at = (x: number): Partial<Planet> => ({ position: { x, y: 0 } });
 
   it('a moving fleet projects radar from its current position', () => {
-    const base = createInitialState({ seed: 'radar-move', version: { data: '0.1.0', manifest: '1' } });
+    const base = createInitialState({
+      seed: 'radar-move',
+      version: { data: '0.1.0', manifest: '1' },
+    });
     const state: GameState = {
       ...base,
       time: 100, // 10% along a 0→1000 leg ⇒ the ship is at x=100
