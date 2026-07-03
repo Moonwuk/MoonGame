@@ -5,12 +5,15 @@
 #   - npm at "/mobile" → the standalone Capacitor project (its own package-lock.json), which
 #                        the workspace `pnpm audit` never walks — otherwise nothing watches it
 #   - github-actions   → keeps the SHA-pinned action versions in .github/workflows fresh
+# All three delay new releases by 7 days (supply-chain cooldown; zizmor: dependabot-cooldown).
 version: 2
 updates:
   - package-ecosystem: npm
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     open-pull-requests-limit: 5
     groups:
       dev-dependencies:
@@ -20,10 +23,14 @@ updates:
     directory: /mobile
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     open-pull-requests-limit: 5
 
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     open-pull-requests-limit: 5
