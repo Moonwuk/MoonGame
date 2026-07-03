@@ -1969,6 +1969,21 @@ function handleEvents(events: DomainEvent[]) {
         if (p.owner === ME)
           note(`🕵 Агент провалился (${NAME[p.target as string] ?? p.target}) — плата сгорела`);
         break;
+      // Counter-intel (SPY-2): addressed to the VICTIM. A failed attempt names the
+      // spy (caught red-handed); a noticed clean theft only says WHAT leaked.
+      case 'espionage.detected': {
+        // A caught spy shifts the victim-bot's favour meter — repaint the roster.
+        if (diploOpen && diploTab === 'diplo') renderDiplo();
+        if (p.owner !== ME) break;
+        const what =
+          p.kind === 'treasury' ? 'казна' : p.kind === 'fleets' ? 'данные о флотах' : 'данные мира';
+        note(
+          p.spy
+            ? `🛡 Контрразведка: агент ${NAME[p.spy as string] ?? p.spy} пойман при попытке кражи (${what})!`
+            : `🛡 Контрразведка: утечка разведданных (${what}) — вор не установлен`,
+        );
+        break;
+      }
       case 'planet.captured':
         if (p.owner === ME || known(p.planetId as string))
           note(`🚩 ${NAME[p.owner as string]} captured ${p.planetId}`, p.planetId as string);

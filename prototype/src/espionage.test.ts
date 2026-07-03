@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { newGame, order, spyOn, advance, HOUR, DAY } from './game';
+import { newGame, order, spyOn, advance, botFavour, FAVOUR_SPY_CAUGHT_HIT, HOUR, DAY } from './game';
 import type { GameState } from '../../packages/shared-core/src/index';
 
 // The core espionageModule (SPY-1) wired into the prototype kernel: `espionage.spy`
@@ -60,5 +60,26 @@ describe('espionage in the prototype kernel (SPY-1 playable)', () => {
     // 24h base window (timeScale-compressed) — two full days later it must be gone.
     const later = advance(st, st.time + 2 * DAY + HOUR).state;
     expect(later.intel?.['p1'] ?? []).toHaveLength(0);
+  });
+
+  it('SPY-2: a bot that catches your spy red-handed sours its favour toward you', () => {
+    // Keep spying until an attempt is DETECTED with the spy identified (failed
+    // attempt, base 0.4 × detect 0.5 → a couple dozen seeded tries always land one).
+    let st = funded();
+    for (let i = 0; i < 40; i++) {
+      const before = botFavour(st, 'p2', 'p1');
+      const out = order(st, spyOn('p1', 'p2', 'treasury'), st.time);
+      expect(out.error).toBeUndefined();
+      st = out.state;
+      const caught = out.events.find(
+        (e) => e.type === 'espionage.detected' && (e.payload as { spy?: string }).spy === 'p1',
+      );
+      if (caught) {
+        expect((caught.payload as { owner: string }).owner).toBe('p2'); // addressed to the victim
+        expect(botFavour(st, 'p2', 'p1')).toBe(Math.max(0, before - FAVOUR_SPY_CAUGHT_HIT));
+        return;
+      }
+    }
+    throw new Error('no red-handed detection in 40 seeded attempts');
   });
 });

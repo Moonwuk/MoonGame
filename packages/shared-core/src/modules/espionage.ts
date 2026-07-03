@@ -17,8 +17,15 @@ import { canAfford, payCost } from '../util/treasury';
  * defaults (`espionage.cost` / `espionage.chance` / `espionage.duration`), so
  * tech, factions, buildings or counter-intelligence modules can bend them
  * without touching this module. Failure costs the fee too — spying is a
- * gamble; whether the victim ever LEARNS of the attempt is counter-intel's
- * business (a later brick), so the failure event is addressed to the actor.
+ * gamble; the failure event is addressed to the actor.
+ *
+ * Counter-intelligence (SPY-2): every paid attempt also rolls DETECTION for
+ * the victim (`espionage.detect` pipeline; base 0.5 after a failed attempt —
+ * the agent left tracks — vs 0.25 after a clean success). A detected attempt
+ * emits `espionage.detected` addressed to the VICTIM; the thief's identity is
+ * included only when the attempt FAILED (an agent caught red-handed) — a
+ * successful theft that gets noticed reveals THAT intel leaked, not by whom.
+ * The spy is never told they were spotted.
  */
 
 const SPY_KINDS = new Set(['treasury', 'planet', 'fleets']);
@@ -32,6 +39,10 @@ const CHANCE_MIN = 0.05;
 const CHANCE_MAX = 0.95;
 /** Base window length, in game-hours (timeScale-compressed like every duration). */
 const BASE_DURATION_HOURS = 24;
+/** Base odds the VICTIM notices the attempt (`espionage.detect` pipeline bends them;
+ *  the result is clamped to [0,1] — hooks may legitimately push to never/always). */
+const BASE_DETECT_FAILED = 0.5; // a blown attempt leaves tracks
+const BASE_DETECT_SUCCESS = 0.25; // a clean theft is noticed rarer
 /** A beneficiary holds at most this many live grants — the oldest one is evicted
  *  first (fail-secure bound: state must not grow without limit). */
 const MAX_GRANTS = 8;
@@ -97,10 +108,26 @@ export const espionageModule: GameModule = {
       const chance = Number.isFinite(rawChance)
         ? Math.min(CHANCE_MAX, Math.max(CHANCE_MIN, rawChance))
         : BASE_CHANCE;
-      if (h.rng.nextFloat() >= chance) {
-        // Addressed to the actor (`owner` routes the event through the fog filter);
-        // whether the victim detects the attempt is a counter-intel brick.
+      const succeeded = h.rng.nextFloat() < chance;
+
+      // Counter-intelligence (SPY-2): the detect roll is drawn for EVERY paid
+      // attempt — success or failure — so the RNG stream shape does not depend on
+      // the outcome (or on what hooks did to the odds).
+      const rawDetect = h.hook<number>(
+        'espionage.detect',
+        succeeded ? BASE_DETECT_SUCCESS : BASE_DETECT_FAILED,
+        { playerId: action.playerId, target: p.target, kind: p.kind, succeeded },
+      );
+      const detectChance = Number.isFinite(rawDetect) ? Math.min(1, Math.max(0, rawDetect)) : 0;
+      const detected = h.rng.nextFloat() < detectChance;
+
+      if (!succeeded) {
+        // Addressed to the actor (`owner` routes the event through the fog filter).
         h.emit('espionage.failed', { owner: action.playerId, target: p.target, kind: p.kind });
+        if (detected) {
+          // Caught red-handed: the victim learns the kind AND who sent the agent.
+          h.emit('espionage.detected', { owner: p.target, kind: p.kind, spy: action.playerId });
+        }
         return;
       }
 
@@ -126,6 +153,10 @@ export const espionageModule: GameModule = {
         until: grant.until,
         ...(p.kind === 'planet' ? { intelPlanet: grantTarget } : {}),
       });
+      if (detected) {
+        // A noticed CLEAN theft: the victim learns the leak's kind, not the thief.
+        h.emit('espionage.detected', { owner: p.target, kind: p.kind });
+      }
     });
 
     // Housekeeping: expired windows are dropped as time advances, so persisted
