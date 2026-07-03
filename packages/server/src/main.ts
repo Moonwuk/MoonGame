@@ -153,6 +153,9 @@ const server = createMultiplayerServer({
   host,
   port,
   logger: true, // structured pino logs for boot/shutdown (dev harness → prod entrypoint)
+  // Behind a TLS-terminating proxy (Caddy), set TRUST_PROXY=1 so request.ip (and the
+  // auth API's per-IP rate limit) sees the client, not the proxy.
+  trustProxy: process.env.TRUST_PROXY === '1',
   // /ready is red while the durable store is unreachable, so a load balancer stops
   // routing new traffic without failing liveness (/health).
   ready: () => stores.store.ping?.() ?? Promise.resolve(true),
