@@ -655,18 +655,21 @@ function finishBattle(h: HandlerContext, battle: Battle, stalemate = false): voi
 
 // --- orbital AA & bombardment (the near orbit, GDD §7.4) ---------------------
 
-/** A planet's orbital-AA firepower = Σ its garrison units' `aaDamage` PLUS Σ its
- *  buildings' `aaDamage` (a fixed orbital-AA emplacement is a structure, not a unit). */
-function aaStrengthAt(
-  planet: { garrison: UnitStack[]; buildings: BuildingInstance[] },
-  data: GameData,
-): number {
-  let total = sumUnitStat(planet.garrison, data, 'aaDamage');
+/** The ORBITAL AA tier: Σ the buildings' `aaDamage` — fixed heavy emplacements.
+ *  Fires one full-strength volley per game-HOUR. */
+function aaOrbitalAt(planet: { buildings: BuildingInstance[] }, data: GameData): number {
+  let total = 0;
   for (const b of planet.buildings) {
     const def = data.buildings[b.type];
     if (def) total += buildingLevel(def, b.level).aaDamage;
   }
   return total;
+}
+/** The CLOSE (point-defense) AA tier: Σ the garrison units' `aaDamage` — mobile
+ *  flak. Fires every QUARTER game-hour at a quarter of the hourly rate, so the
+ *  hourly output matches the stat while the dodge window shrinks to 15 minutes. */
+function aaCloseAt(planet: { garrison: UnitStack[] }, data: GameData): number {
+  return sumUnitStat(planet.garrison, data, 'aaDamage');
 }
 
 /** Lowest-id hostile, free fleet sitting on the NEAR orbit of `planetId`.
@@ -729,21 +732,27 @@ function runOrbital(h: HandlerContext, from: number, to: number, hours: number):
     }
     const localFleets = fleetsByLocation.get(planetId);
 
-    // Orbital AA — anti-ship, only when not defending the ground. Unlike the
-    // continuous layers below, AA fires in discrete VOLLEYS once per game-hour
-    // (like battle rounds), on the world-time hour grid: one full-strength strike
-    // per boundary crossed in (from, to]. A fleet that slips in and out of orbit
-    // BETWEEN volleys escapes untouched — timing a raid past the flak matters.
+    // AA — anti-ship, only when not defending the ground. Two tiers, both firing
+    // discrete VOLLEYS on the world-time grid (a fleet slipping in and out of orbit
+    // BETWEEN volleys escapes untouched — timing a raid past the flak matters):
+    //   - ORBITAL (buildings): one full-strength volley per game-HOUR;
+    //   - CLOSE (garrison units): a quarter-strength volley every QUARTER-hour —
+    //     same hourly output, but only a 15-minute window to dodge.
+    // The quarter grid contains the hour grid, so one walk over quarter boundaries
+    // covers both; at a shared boundary the heavy orbital volley lands first.
     if (planet.owner !== null && !groundAssaults.has(planetId)) {
-      const aa = aaStrengthAt(planet, data);
-      if (aa > 0) {
-        const stepMs = roundIntervalMs(h.ctx); // one game-hour of world time
-        let volleys = Math.floor(to / stepMs) - Math.floor(from / stepMs);
-        for (; volleys > 0; volleys--) {
+      const aaOrbital = aaOrbitalAt(planet, data);
+      const aaClose = aaCloseAt(planet, data);
+      if (aaOrbital > 0 || aaClose > 0) {
+        const hourMs = roundIntervalMs(h.ctx); // one game-hour of world time
+        const quarterMs = hourMs / 4;
+        const firstQ = Math.floor(from / quarterMs) + 1;
+        const lastQ = Math.floor(to / quarterMs);
+        const volley = (damage: number, tier: 'orbital' | 'close'): boolean => {
           // Re-aim every volley: a target destroyed mid-span frees the next strike
           // for the next hostile still hanging in orbit.
-          const target = nearOrbitHostile(h, planetId, planet.owner, localFleets);
-          if (!target) break;
+          const target = nearOrbitHostile(h, planetId, planet.owner!, localFleets);
+          if (!target) return false;
           // Announce BEFORE applying: the client draws the flak burst planet→fleet
           // even when this very volley destroys the target (H2 — visible AA fire).
           h.emit('aa.fired', {
@@ -751,13 +760,23 @@ function runOrbital(h: HandlerContext, from: number, to: number, hours: number):
             owner: planet.owner,
             fleetId: target.id,
             by: target.owner,
-            damage: aa,
+            damage,
+            tier,
           });
-          applyDamageToSide(h, { kind: 'fleet', fleetId: target.id }, aa, data, planetId);
+          applyDamageToSide(h, { kind: 'fleet', fleetId: target.id }, damage, data, planetId);
           const after = h.state.fleets[target.id];
           if (after && after.units.length === 0) {
             h.emit('fleet.destroyed', { fleetId: after.id, owner: after.owner });
             delete h.state.fleets[after.id];
+          }
+          return true;
+        };
+        outer: for (let q = firstQ; q <= lastQ; q++) {
+          if (aaOrbital > 0 && q % 4 === 0) {
+            if (!volley(aaOrbital, 'orbital')) break outer;
+          }
+          if (aaClose > 0) {
+            if (!volley(aaClose / 4, 'close')) break outer;
           }
         }
       }

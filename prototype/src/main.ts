@@ -506,7 +506,12 @@ let killStats = { destroyed: 0, lost: 0 };
 const myBattleLocs = new Set<string>();
 // Orbital-AA volleys to visualize (H2): map-space endpoints captured at event time
 // (the target may die in that very volley), drawn as a fading flak burst ~0.7s.
-const aaShots: Array<{ from: { x: number; y: number }; to: { x: number; y: number }; at: number }> = [];
+const aaShots: Array<{
+  from: { x: number; y: number };
+  to: { x: number; y: number };
+  at: number;
+  close: boolean; // ближняя ПВО (гарнизон, залп раз в 15 мин) — рисуется легче
+}> = [];
 // Casualties per contested location (owner → unit → count), accumulated from
 // unit.died while a battle runs and paid out as a result note on battle.resolved.
 const battleLosses = new Map<string, Record<string, Record<string, number>>>();
@@ -1955,7 +1960,7 @@ function handleEvents(events: DomainEvent[]) {
           x: planet.position.x + 6,
           y: planet.position.y - 14, // the victim died this volley — burst over the orbit
         };
-        aaShots.push({ from: { ...planet.position }, to, at: performance.now() });
+        aaShots.push({ from: { ...planet.position }, to, at: performance.now(), close: p.tier === 'close' });
         while (aaShots.length > 40) aaShots.shift();
         break;
       }
@@ -2973,20 +2978,23 @@ function render(now: number) {
       const b = world(shot.to);
       if (!visible(a, 160) && !visible(b, 160)) continue;
       const fade = 1 - age / 700;
-      cx.strokeStyle = rgba('#ff8a3d', 0.7 * fade);
-      cx.lineWidth = 1.1;
-      cx.setLineDash([3, 5]);
+      // Two tiers, two looks: the hourly ORBITAL volley is a heavy orange lance;
+      // the 15-minute CLOSE flak is a thinner, paler stitch with a smaller burst.
+      const col = shot.close ? '#9adfe8' : '#ff8a3d';
+      cx.strokeStyle = rgba(col, (shot.close ? 0.55 : 0.7) * fade);
+      cx.lineWidth = shot.close ? 0.8 : 1.1;
+      cx.setLineDash(shot.close ? [2, 4] : [3, 5]);
       cx.lineDashOffset = -age / 12; // the tracer visibly climbs from the surface
-      cx.shadowColor = '#ff8a3d';
-      cx.shadowBlur = 8;
+      cx.shadowColor = col;
+      cx.shadowBlur = shot.close ? 5 : 8;
       cx.beginPath();
       cx.moveTo(a.x, a.y);
       cx.lineTo(b.x, b.y);
       cx.stroke();
       cx.setLineDash([]);
-      cx.fillStyle = rgba('#ffd29b', 0.8 * fade);
+      cx.fillStyle = rgba(shot.close ? '#d9f4f7' : '#ffd29b', 0.8 * fade);
       cx.beginPath();
-      cx.arc(b.x, b.y, 2 + (age / 700) * 5, 0, TAU); // the burst blooms as it fades
+      cx.arc(b.x, b.y, (shot.close ? 1.5 : 2) + (age / 700) * (shot.close ? 3 : 5), 0, TAU);
       cx.fill();
     }
     cx.restore();
