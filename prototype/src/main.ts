@@ -2476,12 +2476,11 @@ function drawAimPreview() {
   if (!ids.length) return;
   // Prefer a node target; if none is near, aim at the closest point ON a lane —
   // the army will route to that road and park there (Bytro continuous order).
-  // The node pick radius MUST match selectAt's (24px): with the old 30px, a tap
-  // 24–30px from a junction dispatched a lane park (fleet flies to the road point)
-  // while the preview drew the path to the node — the reported mismatch.
+  // The node pick radius MUST match selectAt's rNode (24px mouse / 30px touch):
+  // any mismatch makes the preview draw a path the release will not dispatch.
   let target: { x: number; y: number } | null = null;
   let targetId: string | null = null;
-  let best = 24;
+  let best = tapByTouch ? 30 : 24;
   for (const n of MAP) {
     const c = world(n);
     const d = Math.hypot(aimPointer.x - c.x, aimPointer.y - c.y);
@@ -4629,12 +4628,27 @@ function renderObjDesc(): void {
   pane.innerHTML = html;
 }
 
+let sheetWasOpen = false;
 function renderPanel() {
   // While arming a merge target, collapse the panel so the map (and the fleet to
   // merge with) is fully tappable — important on phones where the sheet covers it.
   const open = !merging && (selFleet !== null || selPlanet !== null || selFleets.size > 0);
   side.style.display = open ? 'flex' : 'none';
   document.body.classList.toggle('sheet-open', open); // mobile: hide log/comms under the sheet
+  // Phone: the bottom sheet covers ~50vh — when it OPENS, pan the camera so the
+  // selected object is not the one thing the panel talks about yet hides.
+  if (open && !sheetWasOpen && MOBILE) {
+    const anchor = selFleet
+      ? (s.fleets[selFleet] && fleetAnchor(s.fleets[selFleet]!)) || null
+      : selPlanet && s.planets[selPlanet]
+        ? world(s.planets[selPlanet]!.position)
+        : null;
+    if (anchor && anchor.y > VH * 0.42) {
+      cam.y -= anchor.y - VH * 0.3; // lift it into the visible upper half
+      clampCam();
+    }
+  }
+  sheetWasOpen = open;
   if (!open) {
     lastPanelHtml = '';
     lastObjDescHtml = '';
@@ -5155,6 +5169,16 @@ function nearestHit<T>(
 const pointers = new Map<number, { x: number; y: number }>();
 let dragStart: { x: number; y: number } | null = null;
 let dragged = false;
+// Long-press (touch): ~350ms still finger = additive fleet pick on a fleet, or a
+// box-select anywhere else — the touch stand-ins for Ctrl-click and Shift-drag.
+let longPressTimer: number | null = null;
+let longPressFired = false;
+function cancelLongPress(): void {
+  if (longPressTimer !== null) {
+    clearTimeout(longPressTimer);
+    longPressTimer = null;
+  }
+}
 let pinchDist = 0;
 let boxSelecting = false;
 const ptXY = (ev: PointerEvent) => {
@@ -5167,11 +5191,45 @@ canvas.addEventListener('pointerdown', (ev) => {
   pointers.set(ev.pointerId, p);
   if (pointers.size === 1) {
     dragStart = p;
+    tapByTouch = ev.pointerType === 'touch'; // preview + commit share the snap radius
+    longPressFired = false;
     boxSelecting = ev.shiftKey;
     additive = ev.ctrlKey || ev.metaKey; // Ctrl/⌘-click → add to the fleet selection
     selectionBox = boxSelecting ? { x1: p.x, y1: p.y, x2: p.x, y2: p.y } : null;
     dragged = false;
+    if (aiming) aimPointer = p; // the aim preview starts under the finger at once
+    // Touch long-press: a still finger for ~350ms picks a fleet ADDITIVELY (the
+    // Ctrl-click of phones) or opens a BOX-SELECT from empty space (the Shift-drag).
+    if (ev.pointerType === 'touch' && !aiming && !merging && !barrageAim) {
+      cancelLongPress();
+      longPressTimer = window.setTimeout(() => {
+        longPressTimer = null;
+        if (pointers.size !== 1 || dragged) return;
+        longPressFired = true;
+        navigator.vibrate?.(25);
+        const mine = nearestHit(
+          Object.values(s.fleets).filter((f) => f.owner === ME),
+          fleetAnchor,
+          p.x,
+          p.y,
+          24,
+        );
+        if (mine) {
+          toggleFleetInSelection(mine.id); // add / drop from the group
+        } else {
+          boxSelecting = true; // drag now stretches the selection box
+          selectionBox = { x1: p.x, y1: p.y, x2: p.x, y2: p.y };
+        }
+      }, 350);
+    }
   } else if (pointers.size === 2) {
+    cancelLongPress();
+    if (aiming) {
+      // Second finger = cancel the armed move (the audit's escape hatch).
+      aiming = false;
+      lastPanelHtml = '';
+      note('прицеливание отменено');
+    }
     const [a, b] = [...pointers.values()];
     pinchDist = Math.hypot(a.x - b.x, a.y - b.y);
   }
@@ -5181,20 +5239,27 @@ canvas.addEventListener('pointermove', (ev) => {
   if (!prev) return;
   const p = ptXY(ev);
   pointers.set(ev.pointerId, p);
+  const moved = dragStart && Math.hypot(p.x - dragStart.x, p.y - dragStart.y) > tapSlop(ev);
+  if (moved) cancelLongPress(); // a moving finger is a drag, not a long-press
   if (pointers.size >= 2) {
     const [a, b] = [...pointers.values()];
     const d = Math.hypot(a.x - b.x, a.y - b.y);
     if (pinchDist > 0) zoomAt((a.x + b.x) / 2, (a.y + b.y) / 2, d / pinchDist);
     pinchDist = d;
     dragged = true;
+  } else if (aiming) {
+    // Move is armed: the finger DRAGS THE AIM (live preview via aimPointer), the
+    // camera stays put — releasing commits. Panning used to hijack this drag and
+    // silently swallow the order (the audit's blind-order finding).
+    void 0;
   } else if (boxSelecting && dragStart) {
     selectionBox = { x1: dragStart.x, y1: dragStart.y, x2: p.x, y2: p.y };
-    if (Math.hypot(p.x - dragStart.x, p.y - dragStart.y) > tapSlop(ev)) dragged = true;
+    if (moved) dragged = true;
   } else {
     cam.x += p.x - prev.x;
     cam.y += p.y - prev.y;
     clampCam(); // keep the map from being dragged entirely off-screen
-    if (dragStart && Math.hypot(p.x - dragStart.x, p.y - dragStart.y) > tapSlop(ev)) dragged = true;
+    if (moved) dragged = true;
   }
 });
 function endPointer(ev: PointerEvent) {
@@ -5222,13 +5287,22 @@ function endPointer(ev: PointerEvent) {
   }
   pointers.delete(ev.pointerId);
   if (pointers.size < 2) pinchDist = 0;
-  if (single && !dragged && p) {
+  cancelLongPress();
+  if (longPressFired) {
+    longPressFired = false; // the long-press already acted; this release is spent
+    return;
+  }
+  if (single && p && (aiming || !dragged)) {
+    // While aiming, a DRAGGED release still commits — the finger was steering the
+    // aim preview, and letting go is the confirmation.
     tapByTouch = ev.pointerType === 'touch';
     selectAt(p.x, p.y);
   }
 }
 canvas.addEventListener('pointerup', endPointer);
 canvas.addEventListener('pointercancel', (ev) => {
+  cancelLongPress();
+  longPressFired = false;
   pointers.delete(ev.pointerId);
   pinchDist = 0;
   selectionBox = null;
