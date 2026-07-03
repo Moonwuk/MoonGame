@@ -8,7 +8,7 @@ import type {
   PlayerId,
   SignatureContact,
 } from '@void/shared-core';
-import { diffState, hashState, identifiedNodes, visibleState } from '@void/shared-core';
+import { diffState, hashState, identifiedNodes, visibleView } from '@void/shared-core';
 import type { AcceptedAction, ActionGate } from '@void/action-layer';
 import {
   parseClientMessage,
@@ -459,14 +459,17 @@ export class MatchRoom {
   }
 
   /** What `playerId` may see right now: a clean visible `GameState` baseline
-   *  (fog applied, internal memory stripped) plus the fog extras for the wire. */
+   *  (fog applied, internal memory stripped), the fog extras for the wire, and
+   *  the identify set behind them (one coverage pass serves view + event fog). */
   private viewFor(playerId: PlayerId): {
     base: GameState;
     signatures: SignatureContact[];
     remembered: string[];
+    identified: Set<string>;
   } {
-    const { signatures, remembered, ...base } = visibleState(this.stateValue, playerId, this.data);
-    return { base: base as GameState, signatures, remembered };
+    const { view, identified } = visibleView(this.stateValue, playerId, this.data);
+    const { signatures, remembered, ...base } = view;
+    return { base: base as GameState, signatures, remembered, identified };
   }
 
   removePeer(playerId: PlayerId, peer: RoomPeer): void {
@@ -1103,7 +1106,7 @@ export class MatchRoom {
       try {
         const view = this.viewFor(playerId);
         const baseline = this.lastVisible.get(playerId) ?? view.base;
-        const identify = identifiedNodes(this.stateValue, playerId, this.data);
+        const identify = view.identified;
         const message: ServerMessage = {
           type: 'delta',
           matchId: this.id,

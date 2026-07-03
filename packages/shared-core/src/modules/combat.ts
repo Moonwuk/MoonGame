@@ -16,7 +16,7 @@ import { MS_PER_HOUR } from '../util/time';
 import { sumUnitStat } from '../util/stacks';
 import { requireOwnedIdleFleet } from '../util/fleet';
 import { isCapturable } from '../state/sectorKind';
-import { getStance } from '../state/diplomacy';
+import { getStance, type DiplomacyCapability } from '../state/diplomacy';
 import { distance } from '../state/route';
 /** Hard cap on rounds so a zero-damage stalemate can't run forever (fail-secure). */
 const MAX_COMBAT_ROUNDS = 240;
@@ -93,9 +93,15 @@ function isHostile(h: HandlerContext, a: string, b: string): boolean {
   if (a === b) {
     return false;
   }
-  // Diplomacy lives in `state.diplomacy` (D1). Only an explicit `war` stance is
-  // hostile; the default for an unrecorded pair is `war` (FFA), so behaviour is
-  // unchanged unless a game seeds peace/pact/alliance (the prototype does).
+  // The `diplomacy` capability (D2) owns the stance→relation projection; consult
+  // it when a diplomacy module is present. Without one, fall back to the D1 read:
+  // only an explicit `war` stance is hostile, and the default for an unrecorded
+  // pair is `war` (FFA) — the capability's base mapping matches, so behaviour is
+  // identical either way (graceful degradation, invariant #3).
+  const diplomacy = h.capability<DiplomacyCapability>('diplomacy');
+  if (diplomacy) {
+    return diplomacy.getRelation(h.state, a, b) === 'hostile';
+  }
   return getStance(h.state, a, b) === 'war';
 }
 
@@ -218,34 +224,32 @@ const RETREAT_HASTE_MULT = 1.5;
 /** …and for how long (world-time) the boost lasts. */
 const RETREAT_HASTE_MS = 3 * MS_PER_HOUR;
 
-/** Apply the retreat toll to a fleet's ships in place: −40% MAX hull and −40% MAX
- *  shield per stack. Ships die if the hull hit drops the pool below their count
- *  (retreating while already battered can cost hulls); wiped stacks are dropped. */
+/** Apply the retreat toll to a fleet's ships in place: −40% of the CURRENT hull
+ *  and shield pools per stack (not the maximum — a battered fleet loses 40% of
+ *  what it has LEFT). The toll alone can therefore never finish a fleet off:
+ *  0.6 × a positive pool stays positive, so the carried landing force always
+ *  withdraws with its ships. Ships are still lost when the shrunken pool no
+ *  longer fills their hulls (Math.ceil keeps the last damaged ship alive). */
 function applyRetreatToll(fleet: Fleet, data: GameData): void {
-  const survivors: UnitStack[] = [];
   for (const stack of fleet.units) {
     const def = data.units[stack.unit];
     if (!def) {
-      survivors.push(stack);
       continue;
     }
     const perHull = def.stats.hp > 0 ? def.stats.hp : 1;
     const maxHull = stack.count * perHull;
-    const newHull = Math.max(0, (stack.hp ?? maxHull) - RETREAT_TOLL * maxHull);
+    const newHull = (1 - RETREAT_TOLL) * (stack.hp ?? maxHull);
     const newCount = newHull <= 0 ? 0 : Math.ceil(newHull / perHull);
-    if (newCount <= 0) continue; // this stack didn't survive the withdrawal
+    if (newCount <= 0 || newCount > stack.count) continue; // fail-secure: never grow
 
     const perShield = def.stats.shield ?? 0;
     if (perShield > 0) {
-      const maxShield = stack.count * perShield;
-      const newShield = Math.max(0, (stack.shieldHp ?? maxShield) - RETREAT_TOLL * maxShield);
+      const newShield = (1 - RETREAT_TOLL) * (stack.shieldHp ?? stack.count * perShield);
       stack.shieldHp = Math.min(newShield, newCount * perShield); // cap at surviving capacity
     }
     stack.count = newCount;
     stack.hp = newHull;
-    survivors.push(stack);
   }
-  fleet.units = survivors;
 }
 
 // --- battle lifecycle --------------------------------------------------------
@@ -657,18 +661,21 @@ function finishBattle(h: HandlerContext, battle: Battle, stalemate = false): voi
 
 // --- orbital AA & bombardment (the near orbit, GDD §7.4) ---------------------
 
-/** A planet's orbital-AA firepower = Σ its garrison units' `aaDamage` PLUS Σ its
- *  buildings' `aaDamage` (a fixed orbital-AA emplacement is a structure, not a unit). */
-function aaStrengthAt(
-  planet: { garrison: UnitStack[]; buildings: BuildingInstance[] },
-  data: GameData,
-): number {
-  let total = sumUnitStat(planet.garrison, data, 'aaDamage');
+/** The ORBITAL AA tier: Σ the buildings' `aaDamage` — fixed heavy emplacements.
+ *  Fires one full-strength volley per game-HOUR. */
+function aaOrbitalAt(planet: { buildings: BuildingInstance[] }, data: GameData): number {
+  let total = 0;
   for (const b of planet.buildings) {
     const def = data.buildings[b.type];
     if (def) total += buildingLevel(def, b.level).aaDamage;
   }
   return total;
+}
+/** The CLOSE (point-defense) AA tier: Σ the garrison units' `aaDamage` — mobile
+ *  flak. Fires every QUARTER game-hour at a quarter of the hourly rate, so the
+ *  hourly output matches the stat while the dodge window shrinks to 15 minutes. */
+function aaCloseAt(planet: { garrison: UnitStack[] }, data: GameData): number {
+  return sumUnitStat(planet.garrison, data, 'aaDamage');
 }
 
 /** Lowest-id hostile, free fleet sitting on the NEAR orbit of `planetId`.
@@ -705,7 +712,7 @@ function bombardPower(fleet: Fleet, data: GameData): number {
  *
  *  Optimized with a fleet-by-location index and a ground-assault set so the
  *  cost is O(planets + fleets + battles) instead of O(planets × fleets). */
-function runOrbital(h: HandlerContext, hours: number): void {
+function runOrbital(h: HandlerContext, from: number, to: number, hours: number): void {
   const data = h.ctx.data;
 
   // Pre-index fleets by location — O(fleets).
@@ -731,17 +738,51 @@ function runOrbital(h: HandlerContext, hours: number): void {
     }
     const localFleets = fleetsByLocation.get(planetId);
 
-    // Orbital AA — anti-ship, only when not defending the ground.
+    // AA — anti-ship, only when not defending the ground. Two tiers, both firing
+    // discrete VOLLEYS on the world-time grid (a fleet slipping in and out of orbit
+    // BETWEEN volleys escapes untouched — timing a raid past the flak matters):
+    //   - ORBITAL (buildings): one full-strength volley per game-HOUR;
+    //   - CLOSE (garrison units): a quarter-strength volley every QUARTER-hour —
+    //     same hourly output, but only a 15-minute window to dodge.
+    // The quarter grid contains the hour grid, so one walk over quarter boundaries
+    // covers both; at a shared boundary the heavy orbital volley lands first.
     if (planet.owner !== null && !groundAssaults.has(planetId)) {
-      const aa = aaStrengthAt(planet, data);
-      if (aa > 0) {
-        const target = nearOrbitHostile(h, planetId, planet.owner, localFleets);
-        if (target) {
-          applyDamageToSide(h, { kind: 'fleet', fleetId: target.id }, aa * hours, data, planetId);
+      const aaOrbital = aaOrbitalAt(planet, data);
+      const aaClose = aaCloseAt(planet, data);
+      if (aaOrbital > 0 || aaClose > 0) {
+        const hourMs = roundIntervalMs(h.ctx); // one game-hour of world time
+        const quarterMs = hourMs / 4;
+        const firstQ = Math.floor(from / quarterMs) + 1;
+        const lastQ = Math.floor(to / quarterMs);
+        const volley = (damage: number, tier: 'orbital' | 'close'): boolean => {
+          // Re-aim every volley: a target destroyed mid-span frees the next strike
+          // for the next hostile still hanging in orbit.
+          const target = nearOrbitHostile(h, planetId, planet.owner!, localFleets);
+          if (!target) return false;
+          // Announce BEFORE applying: the client draws the flak burst planet→fleet
+          // even when this very volley destroys the target (H2 — visible AA fire).
+          h.emit('aa.fired', {
+            planetId,
+            owner: planet.owner,
+            fleetId: target.id,
+            by: target.owner,
+            damage,
+            tier,
+          });
+          applyDamageToSide(h, { kind: 'fleet', fleetId: target.id }, damage, data, planetId);
           const after = h.state.fleets[target.id];
           if (after && after.units.length === 0) {
             h.emit('fleet.destroyed', { fleetId: after.id, owner: after.owner });
             delete h.state.fleets[after.id];
+          }
+          return true;
+        };
+        outer: for (let q = firstQ; q <= lastQ; q++) {
+          if (aaOrbital > 0 && q % 4 === 0) {
+            if (!volley(aaOrbital, 'orbital')) break outer;
+          }
+          if (aaClose > 0) {
+            if (!volley(aaClose / 4, 'close')) break outer;
           }
         }
       }
@@ -1103,7 +1144,7 @@ export const combatModule: GameModule = {
         return;
       }
       const hours = (span / MS_PER_HOUR) * timeScaleOf(h.ctx);
-      runOrbital(h, hours);
+      runOrbital(h, from, to, hours);
       runArtillery(h, hours);
     });
 
@@ -1178,9 +1219,10 @@ export const combatModule: GameModule = {
     });
 
     // Disengage from an ongoing battle. Only an orbital ship-side can pull out (a
-    // landing force mid-assault can't). Toll: −40% MAX hull & shield; reward: a
-    // temporary speed boost to flee. The 1-v-1 battle dissolves and the opponent is
-    // freed to give chase. Retreating while already crippled can cost ships or the fleet.
+    // landing force mid-assault can't). Toll: −40% of the CURRENT hull & shield;
+    // reward: a temporary speed boost to flee. The 1-v-1 battle dissolves and the
+    // opponent is freed to give chase. The toll wounds but never kills — leaving
+    // orbit OUTSIDE a battle stays free (a plain fleet.move).
     api.onAction('fleet.retreat', (action, h) => {
       const { fleetId } = action.payload as { fleetId?: string };
       if (typeof fleetId !== 'string') {

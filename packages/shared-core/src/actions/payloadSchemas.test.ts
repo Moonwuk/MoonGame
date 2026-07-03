@@ -22,6 +22,8 @@ const CLIENT_ACTION_TYPES = [
   'building.upgrade',
   'unit.build',
   'technology.research',
+  'diplomacy.declare',
+  'espionage.spy',
   'market.list',
   'market.buy',
   'market.cancel',
@@ -59,6 +61,10 @@ describe('SV-1.2 · action payload schemas', () => {
       ['unit.build', { planetId: 'p1', unit: 'cruiser', count: 2 }],
       ['unit.build', { planetId: 'p1', unit: 'cruiser' }], // count optional (defaults to 1)
       ['technology.research', { technology: 'railgun' }],
+      ['diplomacy.declare', { target: 'p2', stance: 'war' }],
+      ['diplomacy.declare', { target: 'p2', stance: 'alliance' }], // friendly declare = an offer
+      ['espionage.spy', { target: 'p2', kind: 'treasury' }],
+      ['espionage.spy', { target: 'p2', kind: 'planet', planetId: 'home_b' }],
     ];
     for (const [type, payload] of valid) {
       expect(isValidActionPayload(type, payload), `${type}: ${JSON.stringify(payload)}`).toBe(true);
@@ -88,6 +94,11 @@ describe('SV-1.2 · action payload schemas', () => {
       ['technology.research', {}], // missing technology
       ['station.deploy', { planetId: '' }], // empty id
       ['hero.move', { to: null }], // wrong type
+      ['diplomacy.declare', { target: 'p2', stance: 'frenemy' }], // not a known stance
+      ['diplomacy.declare', { target: 'p2' }], // missing stance
+      ['diplomacy.declare', { stance: 'war' }], // missing target
+      ['espionage.spy', { target: 'p2', kind: 'planet' }], // planet theft needs a planetId
+      ['espionage.spy', { target: 'p2', kind: 'pings' }], // not a stealable kind (yet)
     ];
     for (const [type, payload] of bad) {
       expect(isValidActionPayload(type, payload), `${type}: ${JSON.stringify(payload)}`).toBe(false);

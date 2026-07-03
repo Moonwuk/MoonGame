@@ -25,7 +25,9 @@ import {
   armyModule,
   victoryModule,
   technologyModule,
+  espionageModule,
   getStance,
+  isBotPair,
   setStance,
   pairKey,
   timeScaleOf,
@@ -572,13 +574,18 @@ export function clampPowerWeights(seeds: Array<{ x: number; y: number; w: number
   for (const s of seeds) s.w = wmin + (s.w - wmin) * k;
 }
 
+// Shared stance vocabulary — main.ts routes propose-vs-declare by the same ranks
+// the core module enforces (one table, no drift).
+export { STANCE_RANK } from '../../packages/shared-core/src/index';
+
 function player(
   id: string,
   name: string,
   faction: string,
   resources: Record<string, number>,
+  ai = false,
 ): Player {
-  return { id, name, faction, status: 'active', resources };
+  return { id, name, faction, status: 'active', resources, ...(ai ? { ai: true } : {}) };
 }
 
 function fleet(
@@ -1088,6 +1095,7 @@ export const FAVOUR_BASE = 60; // starting favour toward every seat
 export const FAVOUR_EMBARGO = 35; // below → the bot embargoes you on the market (future)
 export const FAVOUR_WAR = 15; // below → the bot itself declares war (the extreme case)
 export const FAVOUR_WAR_DECLARED_HIT = 30; // drop when a seat declares WAR on the bot
+export const FAVOUR_SPY_CAUGHT_HIT = 20; // drop when the bot catches that seat's spy red-handed
 export const FAVOUR_WAR_DECAY_PER_DAY = 5; // sustained war keeps eroding favour
 export const FAVOUR_HEAL_PER_DAY = 6; // peace slowly mends it back toward FAVOUR_BASE
 
@@ -1149,13 +1157,13 @@ export function newGame(setup: SetupConfig = DEFAULT_SETUP): GameState {
     // but can't stop a landing — only ground troops do). Seed a starting infantry garrison
     // so the homeworld isn't a free walk-in; mobile ground beyond it comes via divisions.
     home.garrison = [{ unit: 'infantry', count: 3 }];
-    players[seat.id] = player(seat.id, seat.name, seat.faction, {
-      credits: 260,
-      metal: 320,
-      food: 120,
-      energy: 90,
-      microelectronics: 40,
-    });
+    players[seat.id] = player(
+      seat.id,
+      seat.name,
+      seat.faction,
+      { credits: 260, metal: 320, food: 120, energy: 90, microelectronics: 40 },
+      seat.ai,
+    );
     fleets[`${seat.id}-1`] = fleet(
       `${seat.id}-1`,
       seat.id,
@@ -1300,6 +1308,11 @@ export const diplomacyModule: GameModule = {
       }
       if (!h.state.players[p.target]) return h.reject('E_NO_PLAYER');
       const stance: DiplomaticStance = p.stance ?? 'war';
+      // A coalition is between humans only — a bot is never a valid alliance party
+      // (server-side rule; the menu greys the option out too).
+      if (stance === 'alliance' && isBotPair(h.state, action.playerId, p.target)) {
+        return h.reject('E_BOT_ALLIANCE');
+      }
       setStance(h.state, action.playerId, p.target, stance);
       h.emit('diplomacy.changed', { a: action.playerId, b: p.target, stance });
     });
@@ -1323,6 +1336,16 @@ export const botDiplomacyModule: GameModule = {
       const meter = (h.state as DivState).approval?.[b];
       if (!meter || meter[a] === undefined) return; // b isn't a tracked bot vs a
       meter[a] = Math.max(0, meter[a]! - FAVOUR_WAR_DECLARED_HIT);
+    });
+    // Counter-intel fallout (SPY-2): a bot that catches a spy red-handed (failed
+    // attempt, identity burned — the event carries `spy`) sours toward the sender.
+    // An anonymous leak (detected clean theft) blames nobody — no favour change.
+    api.on('espionage.detected', (event, h) => {
+      const { owner, spy } = event.payload as { owner: string; spy?: string };
+      if (!spy) return;
+      const meter = (h.state as DivState).approval?.[owner];
+      if (!meter || meter[spy] === undefined) return; // the victim isn't a tracked bot
+      meter[spy] = Math.max(0, meter[spy]! - FAVOUR_SPY_CAUGHT_HIT);
     });
     // Per span: sustained war erodes favour, peace mends it; a bottomed-out meter makes
     // the bot commit to war (once), then vents so it won't thrash war/peace every tick.
@@ -1957,9 +1980,19 @@ function isQStep(x: unknown): x is QStep {
     case 'orbit':
     case 'assault':
     case 'load':
+    case 'unload':
+    case 'bombard':
+    case 'repeat':
       return true;
     case 'wait':
-      return typeof s.hours === 'number' && s.hours >= 0;
+      // Finite and bounded: Infinity would wedge the chain forever AND corrupt the
+      // JSONB round-trip (JSON.stringify(Infinity) === null). CC-5.1 bounds.
+      return (
+        typeof s.hours === 'number' &&
+        Number.isFinite(s.hours) &&
+        s.hours >= 0 &&
+        s.hours <= MAX_WAIT_HOURS
+      );
     default:
       return false;
   }
@@ -1989,7 +2022,13 @@ export const orderQueueModule: GameModule = {
       if (typeof f === 'string') return h.reject(f);
       if (!isQStep(p.step)) return h.reject('E_BAD_PAYLOAD');
       const orders = ((h.state as DivState).orders ??= {});
-      (orders[f.id] ??= []).push(p.step);
+      const q = (orders[f.id] ??= []);
+      if (q.length >= MAX_CHAIN_STEPS) return h.reject('E_QUEUE_FULL'); // bounded plans (CC-5.1)
+      // Runtime stamps (wait countdown, driver verdict) are never client-supplied.
+      const step = { ...p.step } as QStep & { until?: number };
+      delete step.until;
+      delete step.blocked;
+      q.push(step);
     });
     api.onAction('order.clear', (action, h) => {
       const p = action.payload as { fleetId?: unknown };
@@ -2005,9 +2044,46 @@ export const orderQueueModule: GameModule = {
       const orders = (h.state as DivState).orders;
       const q = orders?.[f.id];
       if (q && q.length) {
-        q.shift();
+        popChainStep(q); // shared rule: shift, or rotate to the tail on a 🔁 chain
         if (q.length === 0) delete orders![f.id];
       }
+    });
+    api.onAction('order.remove', (action, h) => {
+      // Edit one step of the plan (a mis-tap on step 3 of 6 must not cost the plan).
+      const p = action.payload as { fleetId?: unknown; index?: unknown };
+      const f = ownedFleet(h, action.playerId, p?.fleetId);
+      if (typeof f === 'string') return h.reject(f);
+      const i = p.index;
+      if (typeof i !== 'number' || !Number.isInteger(i) || i < 0) return h.reject('E_BAD_PAYLOAD');
+      const orders = (h.state as DivState).orders;
+      const q = orders?.[f.id];
+      if (!q || i >= q.length) return h.reject('E_NO_STEP');
+      q.splice(i, 1);
+      if (q.length === 0) delete orders![f.id];
+    });
+    api.onAction('order.block', (action, h) => {
+      // The DRIVER's verdict on a failed head step: pause the chain with its reason
+      // instead of silently popping (CC-4.1 minimum). The owner-addressed event lets
+      // a connected client toast it; the panel shows it from state on next login.
+      const p = action.payload as { fleetId?: unknown; code?: unknown };
+      const f = ownedFleet(h, action.playerId, p?.fleetId);
+      if (typeof f === 'string') return h.reject(f);
+      if (typeof p.code !== 'string' || !/^[A-Z0-9_]{1,32}$/.test(p.code)) {
+        return h.reject('E_BAD_PAYLOAD');
+      }
+      const head = (h.state as DivState).orders?.[f.id]?.[0];
+      if (!head) return h.reject('E_NO_STEP');
+      head.blocked = p.code;
+      h.emit('order.blocked', { fleetId: f.id, owner: f.owner, step: head.kind, code: p.code });
+    });
+    api.onAction('order.retry', (action, h) => {
+      // Un-pause a blocked chain: clear the verdict so the driver tries the step again.
+      const p = action.payload as { fleetId?: unknown };
+      const f = ownedFleet(h, action.playerId, p?.fleetId);
+      if (typeof f === 'string') return h.reject(f);
+      const head = (h.state as DivState).orders?.[f.id]?.[0];
+      if (!head || head.blocked === undefined) return h.reject('E_NO_STEP');
+      delete head.blocked;
     });
     api.onAction('order.hold', (action, h) => {
       // Stamp the head 'wait' step's resume time — set once, when it reaches the head, so
@@ -2015,10 +2091,28 @@ export const orderQueueModule: GameModule = {
       const p = action.payload as { fleetId?: unknown; until?: unknown };
       const f = ownedFleet(h, action.playerId, p?.fleetId);
       if (typeof f === 'string') return h.reject(f);
-      if (typeof p.until !== 'number') return h.reject('E_BAD_PAYLOAD');
+      if (typeof p.until !== 'number' || !Number.isFinite(p.until)) return h.reject('E_BAD_PAYLOAD');
       const head = (h.state as DivState).orders?.[f.id]?.[0];
       if (!head || head.kind !== 'wait') return h.reject('E_NO_WAIT');
       head.until = p.until;
+      // Put the resume moment on the world timeline: the offline wakeup driver arms by
+      // msUntilNextEvent(), so without this the chain would freeze mid-wait until some
+      // unrelated event (or a login) happened to tick the room.
+      h.schedule(Math.max(p.until, h.ctx.now + 1), 'order.wake', { fleetId: f.id });
+    });
+    // 'order.wake' exists only to appear on the schedule (see order.hold) — waking the
+    // room is the whole job; the queue driver then sees the elapsed wait and pops it.
+    api.on('order.wake', () => {});
+    // Housekeeping: a destroyed fleet must not leave its chain in state (and in every
+    // snapshot) forever. Deterministic sweep on the world clock.
+    api.on('time.advanced', (_ev, h) => {
+      const st = h.state as DivState;
+      const orders = st.orders;
+      if (!orders) return;
+      for (const fid of Object.keys(orders)) {
+        if (!h.state.fleets[fid] || orders[fid]!.length === 0) delete orders[fid];
+      }
+      if (Object.keys(orders).length === 0) delete st.orders;
     });
   },
 };
@@ -2038,6 +2132,7 @@ export const MODULES: GameModule[] = [
   victoryModule, // terminal match state from authoritative state (domination / elimination / score / timeout)
   fleetLaunchModule,
   diplomacyModule, // peace-by-default + declare-war action (combat reads state.diplomacy)
+  espionageModule, // SPY-1 core module: espionage.spy → time-boxed intel windows (state.intel)
   botDiplomacyModule, // bots: friendly-by-default favour meter → embargo/war only when provoked
   marketModule, // session resource market: two-sided order book (sell/buy lots), embargo-gated
   divisionModule, // ground divisions: mobilise from a template + daily restoration
@@ -2106,6 +2201,8 @@ export const orbitFleet = (playerId: string, fleetId: string, orbit: 'near' = 'n
   act(playerId, 'fleet.orbit', { fleetId, orbit });
 export const assaultFleet = (playerId: string, fleetId: string) =>
   act(playerId, 'fleet.assault', { fleetId });
+export const retreatFleet = (playerId: string, fleetId: string) =>
+  act(playerId, 'fleet.retreat', { fleetId });
 export const bombardFleet = (playerId: string, fleetId: string, on: boolean) =>
   act(playerId, 'fleet.bombard', { fleetId, on });
 /** Focus an artillery fleet's standoff fire on one enemy fleet (targetId), or
@@ -2142,6 +2239,14 @@ export const researchTech = (playerId: string, technology: string) =>
 /** Declare war on (or otherwise re-stance) another commander. */
 export const declareWar = (playerId: string, target: string, stance: DiplomaticStance = 'war') =>
   act(playerId, 'diplomacy.declare', { target, stance });
+/** Steal a time-boxed intel window on another commander (SPY-1 core module):
+ *  `treasury` / `fleets` spy on the player; `planet` needs the world's id too. */
+export const spyOn = (
+  playerId: string,
+  target: string,
+  kind: 'treasury' | 'planet' | 'fleets',
+  planetId?: string,
+) => act(playerId, 'espionage.spy', { target, kind, ...(planetId ? { planetId } : {}) });
 
 // --- CC-1: fleet order queue (command chains) -------------------------------
 // A queued step is one intent a fleet runs when it next falls idle. The host driver
@@ -2149,12 +2254,21 @@ export const declareWar = (playerId: string, target: string, stance: DiplomaticS
 // [move A, move B, assault] executes hands-off across real hours. The pure, testable
 // pieces live here; the mutable queue + UI live in main.ts. Later bricks add timed and
 // reactive (auto-assault / auto-launch on contact) steps on top of this shape.
-export type QStep =
+export type QStep = (
   | { kind: 'move'; to: string } // route to a world, then hold for the next step
   | { kind: 'orbit' } // enter orbit over the fleet's current world
   | { kind: 'assault' } // land carried troops (enters orbit first when needed)
   | { kind: 'load' } // re-embark the liftable garrison here (pick your troops back up)
-  | { kind: 'wait'; hours: number; until?: number }; // hold N game-hours, then continue (delayed order)
+  | { kind: 'unload' } // drop the carried troops onto the world the fleet is docked over
+  | { kind: 'bombard' } // start bombarding the world here (enters orbit first when needed)
+  | { kind: 'wait'; hours: number; until?: number } // hold N game-hours, then continue (delayed order)
+  | { kind: 'repeat' } // 🔁 loop marker: finished steps rotate to the tail — patrol until cleared
+) & { blocked?: string }; // set by the DRIVER when the step's order was rejected: the chain
+// pauses on the failed step with its E_* reason instead of silently skipping (CC-4.1 minimum)
+
+/** Chain bounds (CC-5.1): steps per fleet and the longest single `wait` (game-hours). */
+export const MAX_CHAIN_STEPS = 32;
+export const MAX_WAIT_HOURS = 24 * 30;
 
 /** A fleet may run its next queued step only when idle — not in transit, not locked in
  *  a battle. (A fleet parked on a lane counts as idle; its next move routes from there.) */
@@ -2176,12 +2290,36 @@ export function stepActions(me: string, fleetId: string, step: QStep, fleet: Fle
         ? [assaultFleet(me, fleetId)]
         : [orbitFleet(me, fleetId), assaultFleet(me, fleetId)];
     case 'load':
-      // Loading depends on the world's garrison + the fleet's free cargo, not just the
-      // fleet, so the driver computes it via loadHereActions(state, me, fleet) instead.
+    case 'unload':
+      // (Un)loading depends on the world's garrison / the fleet's hold, not just the
+      // fleet, so the driver computes it via (un)loadHereActions(state, me, fleet).
       return [];
+    case 'bombard':
+      // Starting a bombardment needs near orbit, like an assault (orbit is instant).
+      return fleet.orbit === 'near'
+        ? [bombardFleet(me, fleetId, true)]
+        : [orbitFleet(me, fleetId), bombardFleet(me, fleetId, true)];
     case 'wait':
       // A pure hold — issues no order; the driver counts it down via waitStatus.
       return [];
+    case 'repeat':
+      // The 🔁 loop marker issues nothing itself — the drivers rotate it (popChainStep).
+      return [];
+  }
+}
+
+/** Drop a chain's finished head IN PLACE — and when the chain carries a 🔁 repeat
+ *  marker, rotate the head to the tail (cleansed of its runtime stamps) instead of
+ *  discarding it, so `[A, B, 🔁]` patrols A→B→A→… until cleared. One shared rule for
+ *  the authoritative `order.pop` and the single-player driver. */
+export function popChainStep(steps: QStep[]): void {
+  const head = steps.shift();
+  if (!head) return;
+  if (steps.some((st) => st.kind === 'repeat') || (head.kind === 'repeat' && steps.length > 0)) {
+    const fresh = { ...head } as QStep & { until?: number };
+    delete fresh.until; // a re-queued wait re-counts from when it's next reached
+    delete fresh.blocked;
+    steps.push(fresh);
   }
 }
 
@@ -2377,6 +2515,18 @@ export function loadHereActions(state: GameState, me: string, fleet: Fleet): Act
   return out;
 }
 
+/** The unload orders for everything in `fleet`'s hold onto the world it's docked
+ *  over — the symmetric partner of loadHereActions ("drop the troops off here").
+ *  Mirrors the live `army.unload` preconditions: just a world under the fleet. Pure. */
+export function unloadHereActions(state: GameState, me: string, fleet: Fleet): Action[] {
+  if (fleet.location === null || !state.planets[fleet.location]) return [];
+  const out: Action[] = [];
+  for (const st of fleet.landing ?? []) {
+    if (st.count > 0) out.push(unloadArmy(me, fleet.id, st.unit, st.count));
+  }
+  return out;
+}
+
 // --- CC-server: authoritative order-chain — actions + the server-side driver core -------
 
 /** Append one step to a fleet's authoritative order chain (CC-server). */
@@ -2388,6 +2538,15 @@ export const orderClear = (playerId: string, fleetId: string) =>
 /** Drop the head step (the driver pops after issuing it / after a wait elapses). */
 export const orderPop = (playerId: string, fleetId: string) =>
   act(playerId, 'order.pop', { fleetId });
+/** Remove one step of the chain by index (plan editing — a mis-tap costs one tap). */
+export const orderRemove = (playerId: string, fleetId: string, index: number) =>
+  act(playerId, 'order.remove', { fleetId, index });
+/** Pause the chain on its failed head step with the rejection's E_* reason (driver verdict). */
+export const orderBlock = (playerId: string, fleetId: string, code: string) =>
+  act(playerId, 'order.block', { fleetId, code });
+/** Clear a blocked head step's verdict so the driver tries it again. */
+export const orderRetry = (playerId: string, fleetId: string) =>
+  act(playerId, 'order.retry', { fleetId });
 /** Stamp the head 'wait' step's resume time (set once when the step reaches the head). */
 export const orderHold = (playerId: string, fleetId: string, until: number) =>
   act(playerId, 'order.hold', { fleetId, until });
@@ -2401,21 +2560,39 @@ export const orderHold = (playerId: string, fleetId: string, until: number) =>
 export function serverQueueActions(
   state: GameState,
   now: number,
-): Array<{ fleetId: string; owner: string; actions: Action[]; pop: boolean; holdUntil?: number }> {
+): Array<{ fleetId: string; owner: string; actions: Action[]; pop: boolean; holdUntil?: number; fail?: string }> {
   const orders = (state as DivState).orders ?? {};
-  const out: Array<{ fleetId: string; owner: string; actions: Action[]; pop: boolean; holdUntil?: number }> = [];
+  const out: Array<{ fleetId: string; owner: string; actions: Action[]; pop: boolean; holdUntil?: number; fail?: string }> = [];
   for (const [fid, steps] of Object.entries(orders)) {
     const f = state.fleets[fid];
-    if (!f || steps.length === 0) continue; // stale entry — the host clears it
+    if (!f || steps.length === 0) continue; // stale entry — the module sweeps it on advance
     if (!fleetIdle(f)) continue; // in transit / battle → hold the chain
     const step = steps[0]!;
+    if (step.blocked !== undefined) continue; // paused on a failed step — needs the player
+    if (step.kind === 'repeat') {
+      // Rotate the 🔁 marker to the tail so the next real step comes up; an orphan
+      // marker (nothing left to repeat) just idles.
+      if (steps.length > 1) out.push({ fleetId: fid, owner: f.owner, actions: [], pop: true });
+      continue;
+    }
     if (step.kind === 'wait') {
       const w = waitStatus(step, now, HOUR);
       if (step.until === undefined) out.push({ fleetId: fid, owner: f.owner, actions: [], pop: false, holdUntil: w.until });
       else if (w.done) out.push({ fleetId: fid, owner: f.owner, actions: [], pop: true });
       continue; // still counting down → do nothing this tick
     }
-    const actions = step.kind === 'load' ? loadHereActions(state, f.owner, f) : stepActions(f.owner, fid, step, f);
+    const actions =
+      step.kind === 'load'
+        ? loadHereActions(state, f.owner, f)
+        : step.kind === 'unload'
+          ? unloadHereActions(state, f.owner, f)
+          : stepActions(f.owner, fid, step, f);
+    // A planned (un)load with nothing to move is a broken plan, not a no-op — the
+    // garrison the player counted on is gone (or the hold is empty). Fail loudly.
+    if ((step.kind === 'load' || step.kind === 'unload') && actions.length === 0) {
+      out.push({ fleetId: fid, owner: f.owner, actions: [], pop: false, fail: 'E_NO_CARGO' });
+      continue;
+    }
     out.push({ fleetId: fid, owner: f.owner, actions, pop: true });
   }
   return out;
