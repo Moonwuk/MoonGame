@@ -230,6 +230,35 @@ describe('orbital — anti-air (orbital AA)', () => {
     expect(r.events.map((e) => e.type)).toContain('fleet.destroyed');
   });
 
+  it('fires in hourly VOLLEYS: a sub-hour dip into orbit escapes untouched', () => {
+    const kernel = createKernel([combatModule]);
+    const st = stateWith({
+      planets: [planet('P', 'p1', { garrison: [['aa', 2]] })],
+      fleets: [fleet('E', 'p2', 'P', [['cruiser', 1]], { orbit: 'near' })],
+    });
+    // (0, 0.9h] crosses no hour boundary — the flak has not volleyed yet.
+    const half = okAdvance(kernel.advanceTo(st, at(0.9 * HOUR)));
+    expect(half.state.fleets.E?.units[0]?.hp ?? 40).toBe(40); // unscathed
+    expect(half.events.map((e) => e.type)).not.toContain('aa.fired');
+    // (0.9h, 1.1h] crosses exactly ONE boundary → one full-strength volley (28).
+    const crossed = okAdvance(kernel.advanceTo(half.state, at(1.1 * HOUR)));
+    expect(crossed.events.filter((e) => e.type === 'aa.fired')).toHaveLength(1);
+    expect(crossed.state.fleets.E?.units[0]?.hp).toBe(12); // 40 − 28, not 40 − 28×0.2
+  });
+
+  it('the volley grid compresses with timeScale like every other duration', () => {
+    const kernel = createKernel([combatModule]);
+    const st = stateWith({
+      planets: [planet('P', 'p1', { garrison: [['aa', 1]] })], // 14 per volley
+      fleets: [fleet('E', 'p2', 'P', [['cruiser', 2]], { orbit: 'near' })],
+    });
+    // ×2: a game-hour passes every 30 real minutes → (0, 1h] holds TWO volleys.
+    const ctx2 = { ...at(HOUR), config: { timeScale: 2 } };
+    const r = kernel.advanceTo(st, ctx2);
+    if (!r.ok) throw new Error(r.code);
+    expect(r.events.filter((e) => e.type === 'aa.fired')).toHaveLength(2);
+  });
+
   it('announces every volley — aa.fired carries shooter, target and damage (H2)', () => {
     const kernel = createKernel([combatModule]);
     const st = stateWith({

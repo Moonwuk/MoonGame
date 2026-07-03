@@ -703,7 +703,7 @@ function bombardPower(fleet: Fleet, data: GameData): number {
  *
  *  Optimized with a fleet-by-location index and a ground-assault set so the
  *  cost is O(planets + fleets + battles) instead of O(planets × fleets). */
-function runOrbital(h: HandlerContext, hours: number): void {
+function runOrbital(h: HandlerContext, from: number, to: number, hours: number): void {
   const data = h.ctx.data;
 
   // Pre-index fleets by location — O(fleets).
@@ -729,12 +729,21 @@ function runOrbital(h: HandlerContext, hours: number): void {
     }
     const localFleets = fleetsByLocation.get(planetId);
 
-    // Orbital AA — anti-ship, only when not defending the ground.
+    // Orbital AA — anti-ship, only when not defending the ground. Unlike the
+    // continuous layers below, AA fires in discrete VOLLEYS once per game-hour
+    // (like battle rounds), on the world-time hour grid: one full-strength strike
+    // per boundary crossed in (from, to]. A fleet that slips in and out of orbit
+    // BETWEEN volleys escapes untouched — timing a raid past the flak matters.
     if (planet.owner !== null && !groundAssaults.has(planetId)) {
       const aa = aaStrengthAt(planet, data);
       if (aa > 0) {
-        const target = nearOrbitHostile(h, planetId, planet.owner, localFleets);
-        if (target) {
+        const stepMs = roundIntervalMs(h.ctx); // one game-hour of world time
+        let volleys = Math.floor(to / stepMs) - Math.floor(from / stepMs);
+        for (; volleys > 0; volleys--) {
+          // Re-aim every volley: a target destroyed mid-span frees the next strike
+          // for the next hostile still hanging in orbit.
+          const target = nearOrbitHostile(h, planetId, planet.owner, localFleets);
+          if (!target) break;
           // Announce BEFORE applying: the client draws the flak burst planet→fleet
           // even when this very volley destroys the target (H2 — visible AA fire).
           h.emit('aa.fired', {
@@ -742,9 +751,9 @@ function runOrbital(h: HandlerContext, hours: number): void {
             owner: planet.owner,
             fleetId: target.id,
             by: target.owner,
-            damage: aa * hours,
+            damage: aa,
           });
-          applyDamageToSide(h, { kind: 'fleet', fleetId: target.id }, aa * hours, data, planetId);
+          applyDamageToSide(h, { kind: 'fleet', fleetId: target.id }, aa, data, planetId);
           const after = h.state.fleets[target.id];
           if (after && after.units.length === 0) {
             h.emit('fleet.destroyed', { fleetId: after.id, owner: after.owner });
@@ -1110,7 +1119,7 @@ export const combatModule: GameModule = {
         return;
       }
       const hours = (span / MS_PER_HOUR) * timeScaleOf(h.ctx);
-      runOrbital(h, hours);
+      runOrbital(h, from, to, hours);
       runArtillery(h, hours);
     });
 
