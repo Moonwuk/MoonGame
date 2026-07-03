@@ -3,15 +3,15 @@ import type { MatchRegistry } from './matchRegistry';
 
 /**
  * SV-2.4 — the minimal match create/join HTTP API, so players can actually enter a match
- * on the authenticated path: create a match, then exchange a nick for a join token that
- * gates the WebSocket handshake (SE-0.1).
+ * on the authenticated path: create a match, then exchange your identity for a join token
+ * that gates the WebSocket handshake (SE-0.1).
  *
- * DEV-GRADE, and deliberately minimal (no excess): creation is unauthenticated and a seat
- * is claimed first-come by nick (same identity model as the `?nick=` WS login) — NOT a real
- * authorization boundary. Real "who may create / who owns this seat" needs external identity
- * (OIDC — accounts-roadmap) and belongs to a later brick; gate this API behind that + a
- * create rate-limit before any public deployment. The join TOKEN is a real boundary at the
- * WS layer; who is handed one here is not yet.
+ * Identity comes through the optional `identify` hook. When wired (login+password accounts,
+ * SE-1.x — see authApi.ts), BOTH routes require a valid `Authorization: Bearer <session>`:
+ * create is a logged-in action, and join claims the seat for the SESSION'S account (its
+ * login is the nick) — a `?nick=` query can no longer impersonate anyone. Without `identify`
+ * (dev harness), the legacy first-come `?nick=` behaviour applies, which is NOT an
+ * authorization boundary. Upgrading to external identity (OIDC) stays a later brick.
  */
 
 export interface CreatedMatch {
@@ -29,12 +29,23 @@ export interface JoinResult {
 /** A stable failure from `join`, mapped to an HTTP status by the route. */
 export type JoinFailure = { error: 'E_NO_MATCH' | 'E_MATCH_FULL' | 'E_AUTH_DISABLED' };
 
+/** An authenticated caller, as resolved by the `identify` hook. */
+export interface Identity {
+  accountId: string;
+  login: string;
+}
+
 export interface MatchApiDeps {
   /** Seed + persist a new match; returns its id and seat player ids. */
   createMatch(): Promise<CreatedMatch>;
   /** Resolve `nick` to a seat in `matchId` and mint its join token, or a stable failure:
-   *  the match does not exist, every seat is taken, or token auth is not configured. */
-  join(matchId: string, nick: string): Promise<JoinResult | JoinFailure>;
+   *  the match does not exist, every seat is taken, or token auth is not configured.
+   *  `accountId` is stamped into the join token when the caller is authenticated. */
+  join(matchId: string, nick: string, accountId?: string): Promise<JoinResult | JoinFailure>;
+  /** Resolve the caller's identity from the request (session token), or null when the
+   *  request carries no valid session. Wired ⇒ create/join REQUIRE identity (401 E_AUTH)
+   *  and the session's login IS the nick. Absent ⇒ legacy `?nick=` dev behaviour. */
+  identify?(request: FastifyRequest): Promise<Identity | null>;
 }
 
 const STATUS: Record<JoinFailure['error'], number> = {
@@ -44,10 +55,30 @@ const STATUS: Record<JoinFailure['error'], number> = {
 };
 
 export function registerMatchApi(app: FastifyInstance, deps: MatchApiDeps): void {
-  app.post('/matches', () => deps.createMatch());
+  const identify = deps.identify;
+
+  app.post('/matches', async (request: FastifyRequest, reply: FastifyReply) => {
+    if (identify && !(await identify(request))) {
+      void reply.code(401);
+      return { error: 'E_AUTH' as const };
+    }
+    return deps.createMatch();
+  });
 
   app.get('/matches/:id/join', async (request: FastifyRequest, reply: FastifyReply) => {
     const { id } = request.params as { id: string };
+    if (identify) {
+      // Authenticated path: the seat belongs to the SESSION's account — a query nick
+      // is ignored, so nobody joins as somebody else.
+      const who = await identify(request);
+      if (!who) {
+        void reply.code(401);
+        return { error: 'E_AUTH' as const };
+      }
+      const result = await deps.join(id, who.login, who.accountId);
+      if ('error' in result) void reply.code(STATUS[result.error]);
+      return result;
+    }
     const nick = (request.query as { nick?: string }).nick;
     if (typeof nick !== 'string' || nick.trim() === '') {
       void reply.code(400);

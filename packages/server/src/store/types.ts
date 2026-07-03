@@ -53,6 +53,28 @@ export interface AccountStore {
   close?(): Promise<void>;
 }
 
+/** A stored account: identity for the login+password authentication (SE-1.x). */
+export interface UserRecord {
+  userId: string;
+  /** The login as the user typed it at registration (display form). Uniqueness is
+   *  CASE-INSENSITIVE — `Vasya` and `vasya` are the same account. */
+  login: string;
+  /** Password hash in the self-describing `scrypt$…` format (see password.ts). */
+  passHash: string;
+}
+
+/** Accounts for login+password auth. Lookup is case-insensitive on `login`. */
+export interface UserStore {
+  /** Create an account; fail-secure duplicate handling: an existing login (any case)
+   *  → `E_LOGIN_TAKEN`, never an overwrite. */
+  createUser(
+    login: string,
+    passHash: string,
+  ): Promise<{ ok: true; userId: string } | { ok: false; code: 'E_LOGIN_TAKEN' }>;
+  findUser(login: string): Promise<UserRecord | null>;
+  close?(): Promise<void>;
+}
+
 /** An action receipt as stored for idempotency — structurally an `ActionReceipt`. */
 export interface StoredReceipt {
   actionId: string;
