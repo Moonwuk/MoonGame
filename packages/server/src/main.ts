@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import rateLimit from '@fastify/rate-limit';
 import { createDevMatch, loadShippedData } from './scenario';
 import { createMultiplayerServer } from './wsServer';
 import { startClockDriver, type ClockDriverHandle } from './clockDriver';
@@ -167,8 +168,16 @@ const server = createMultiplayerServer({
   httpRoutes:
     auth && signSession
       ? (app) => {
-          registerAuthApi(app, { users: stores.userStore, signSession });
-          registerMatchApi(app, matchApi);
+          // The account + match surface sits behind @fastify/rate-limit, registered in an
+          // ENCAPSULATED scope so the coarse per-IP backstop covers only these write
+          // routes — liveness probes (/health, /ready) on the parent app stay unthrottled
+          // for load balancers. The route modules keep their own tighter, uniform-401-
+          // preserving per-endpoint budgets on top (defence in depth on the auth path).
+          void app.register(async (scope) => {
+            await scope.register(rateLimit, { max: 100, timeWindow: '1 minute' });
+            registerAuthApi(scope, { users: stores.userStore, signSession });
+            registerMatchApi(scope, matchApi);
+          });
         }
       : undefined,
 });
