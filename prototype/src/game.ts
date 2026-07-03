@@ -25,6 +25,7 @@ import {
   armyModule,
   victoryModule,
   technologyModule,
+  espionageModule,
   getStance,
   isBotPair,
   setStance,
@@ -1094,6 +1095,7 @@ export const FAVOUR_BASE = 60; // starting favour toward every seat
 export const FAVOUR_EMBARGO = 35; // below → the bot embargoes you on the market (future)
 export const FAVOUR_WAR = 15; // below → the bot itself declares war (the extreme case)
 export const FAVOUR_WAR_DECLARED_HIT = 30; // drop when a seat declares WAR on the bot
+export const FAVOUR_SPY_CAUGHT_HIT = 20; // drop when the bot catches that seat's spy red-handed
 export const FAVOUR_WAR_DECAY_PER_DAY = 5; // sustained war keeps eroding favour
 export const FAVOUR_HEAL_PER_DAY = 6; // peace slowly mends it back toward FAVOUR_BASE
 
@@ -1334,6 +1336,16 @@ export const botDiplomacyModule: GameModule = {
       const meter = (h.state as DivState).approval?.[b];
       if (!meter || meter[a] === undefined) return; // b isn't a tracked bot vs a
       meter[a] = Math.max(0, meter[a]! - FAVOUR_WAR_DECLARED_HIT);
+    });
+    // Counter-intel fallout (SPY-2): a bot that catches a spy red-handed (failed
+    // attempt, identity burned — the event carries `spy`) sours toward the sender.
+    // An anonymous leak (detected clean theft) blames nobody — no favour change.
+    api.on('espionage.detected', (event, h) => {
+      const { owner, spy } = event.payload as { owner: string; spy?: string };
+      if (!spy) return;
+      const meter = (h.state as DivState).approval?.[owner];
+      if (!meter || meter[spy] === undefined) return; // the victim isn't a tracked bot
+      meter[spy] = Math.max(0, meter[spy]! - FAVOUR_SPY_CAUGHT_HIT);
     });
     // Per span: sustained war erodes favour, peace mends it; a bottomed-out meter makes
     // the bot commit to war (once), then vents so it won't thrash war/peace every tick.
@@ -2120,6 +2132,7 @@ export const MODULES: GameModule[] = [
   victoryModule, // terminal match state from authoritative state (domination / elimination / score / timeout)
   fleetLaunchModule,
   diplomacyModule, // peace-by-default + declare-war action (combat reads state.diplomacy)
+  espionageModule, // SPY-1 core module: espionage.spy → time-boxed intel windows (state.intel)
   botDiplomacyModule, // bots: friendly-by-default favour meter → embargo/war only when provoked
   marketModule, // session resource market: two-sided order book (sell/buy lots), embargo-gated
   divisionModule, // ground divisions: mobilise from a template + daily restoration
@@ -2226,6 +2239,14 @@ export const researchTech = (playerId: string, technology: string) =>
 /** Declare war on (or otherwise re-stance) another commander. */
 export const declareWar = (playerId: string, target: string, stance: DiplomaticStance = 'war') =>
   act(playerId, 'diplomacy.declare', { target, stance });
+/** Steal a time-boxed intel window on another commander (SPY-1 core module):
+ *  `treasury` / `fleets` spy on the player; `planet` needs the world's id too. */
+export const spyOn = (
+  playerId: string,
+  target: string,
+  kind: 'treasury' | 'planet' | 'fleets',
+  planetId?: string,
+) => act(playerId, 'espionage.spy', { target, kind, ...(planetId ? { planetId } : {}) });
 
 // --- CC-1: fleet order queue (command chains) -------------------------------
 // A queued step is one intent a fleet runs when it next falls idle. The host driver
