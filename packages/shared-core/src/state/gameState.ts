@@ -80,7 +80,8 @@ export interface PlayerTechnologyState {
  *  - `pact`     → neutral (a non-aggression pact — like peace, but a declared,
  *                 breakable agreement rather than mere absence of war)
  *  - `alliance` → ally (shared side; an ally's world can't be attacked)
- *  The stance→relation mapping itself lives in the future `diplomacyModule`. */
+ *  The stance→relation mapping is `stanceToRelation` (`state/diplomacy.ts`),
+ *  provided as the `diplomacy` capability by `diplomacyModule` (D2). */
 export type DiplomaticStance = 'war' | 'peace' | 'pact' | 'alliance';
 
 export type MatchStatus = 'ongoing' | 'ended';

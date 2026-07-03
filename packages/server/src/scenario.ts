@@ -6,6 +6,7 @@ import {
   constructionModule,
   createInitialState,
   createKernel,
+  diplomacyModule,
   economyModule,
   factionModule,
   heroModule,
@@ -68,6 +69,7 @@ export const DEV_MODULES: GameModule[] = [
   economyModule,
   movementModule,
   heroModule, // per-player hero: redeploy, temp public lanes, planet annihilation
+  diplomacyModule, // declarations (escalation-only) + the `diplomacy` capability combat consults
   combatModule,
   captureOnArrivalModule, // walk-in capture of undefended neutral sectors (after combat)
   constructionModule,

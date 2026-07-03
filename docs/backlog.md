@@ -77,15 +77,25 @@
   (`war`/`peace`/`pact`/`alliance`, симметрично, публично — не режется туманом). Чистые
   примитивы `state/diplomacy.ts` (`pairKey`/`getStance`/`setStance`/`DEFAULT_STANCE='war'`,
   дефолт сохраняет текущее FFA: разные владельцы = враги без модуля). В `delta`-META; 10 тестов.
-- **D2** 🔒(D1) `diplomacyModule`: действия объявления; провайдит capability `diplomacy`
-  (`getRelation` уже потребляется `combat.isHostile`); маппинг stance→relation; тесты.
+- **D2** ✅ `diplomacyModule` (`modules/diplomacy.ts`): действие `diplomacy.declare
+{target, stance}` — **эскалация унилатеральна** (только к войне по оси
+  alliance→pact→peace→war; смягчение → `E_CONSENT_REQUIRED`, иначе жертва выключала бы
+  чужой бой односторонним «миром»); событие `diplomacy.changed`. Провайдит capability
+  `diplomacy` (`getRelation`, контракт в `state/diplomacy.ts`), которую `combat.isHostile`
+  читает с фолбэком на прямой D1-стенс (мягкая деградация); маппинг `stanceToRelation`
+  (war→hostile, peace/pact→neutral, alliance→ally). Схема payload'а в гейте; в
+  `DEV_MODULES`. 8 тестов (вкл. e2e peace→declare→бой).
+- **D3** ⏳ Consent-протокол смягчения: оффер + принятие (peace/pact/alliance по взаимному
+  объявлению), поверх D2 (`E_CONSENT_REQUIRED` — его место входа).
 
 ## Блок E · Слой действий (Этап 2) `[act]` _(начат devin)_
 
-- **E1** ⏳ Зод-схемы на каждый тип действия (валидация входа по типу).
-- **E2** ⏳ Стор receipts с интерфейсом под персистентность (вместо in-memory).
-- **E3** 🔒(E1) Интеграционный тест: невалидное / повтор по тому же id / несанкц.
-  действие → безопасный отказ с кодом.
+- **E1** ✅ Зод-схемы на каждый тип действия (закрыт SV-1.2:
+  `shared-core/actions/payloadSchemas.ts` инжектится в гейт как `payloadValidator`).
+- **E2** ✅ Стор receipts с интерфейсом под персистентность (закрыт сервером:
+  `ReceiptStore` в `store/` — in-memory + Postgres, durable receipts переживают рестарт).
+- **E3** ✅ Интеграционный тест: невалидное / повтор по тому же id / несанкц.
+  действие → безопасный отказ с кодом (абьюз-e2e зелёный, см. `state.md`).
 
 ## Блок F · Сервер (Этап 3) `[srv]` _(опирается на `[act]`)_
 

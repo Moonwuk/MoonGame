@@ -64,6 +64,11 @@ export const actionPayloadSchemas: Record<string, z.ZodType> = {
   }),
   'market.buy': z.object({ orderId: id, amount: z.number().finite().positive() }),
   'market.cancel': z.object({ orderId: id }),
+  // diplomacy.ts — a declaration toward another player (escalation-only, D2)
+  'diplomacy.declare': z.object({
+    target: id,
+    stance: z.enum(['war', 'peace', 'pact', 'alliance']),
+  }),
 };
 
 /** True if `payload` is a valid payload for the client-submittable action `type`. A type
