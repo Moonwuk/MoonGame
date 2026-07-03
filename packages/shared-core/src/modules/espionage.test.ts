@@ -34,6 +34,21 @@ const dudShot: GameModule = {
     api.hook<number>('espionage.chance', () => 0);
   },
 };
+// Detection pins (SPY-2): the detect clamp is [0,1], so 1/0 are exact always/never.
+const alwaysDetect: GameModule = {
+  id: 'always-detect',
+  version: '1.0.0',
+  setup(api) {
+    api.hook<number>('espionage.detect', () => 1);
+  },
+};
+const neverDetect: GameModule = {
+  id: 'never-detect',
+  version: '1.0.0',
+  setup(api) {
+    api.hook<number>('espionage.detect', () => 0);
+  },
+};
 
 function player(id: string, credits = 500): Player {
   return { id, name: id, faction: '', status: 'active', resources: { credits } };
@@ -83,7 +98,7 @@ describe('espionage — stealing an intel window', () => {
   });
 
   it('a failed attempt burns the fee, grants nothing, and reports to the actor only', () => {
-    const dud = createKernel([espionageModule, dudShot]);
+    const dud = createKernel([espionageModule, dudShot, neverDetect]);
     const r = okApply(dud.applyAction(baseState(), spy('p1', { target: 'p2', kind: 'treasury' }), ctx(0)));
     expect(r.state.players.p1?.resources.credits).toBe(350); // spying is a gamble
     expect(r.state.intel).toBeUndefined();
@@ -135,6 +150,55 @@ describe('espionage — stealing an intel window', () => {
     const r = kernel.advanceTo(s, ctx(2 * HOUR));
     if (!r.ok) throw new Error(r.code);
     expect(r.state.intel).toBeUndefined();
+  });
+});
+
+describe('espionage — counter-intelligence (SPY-2)', () => {
+  const detectedOf = (r: ApplyResult & { ok: true }) =>
+    r.events.filter((e) => e.type === 'espionage.detected');
+
+  it('a caught FAILED attempt exposes the spy to the victim', () => {
+    const k = createKernel([espionageModule, dudShot, alwaysDetect]);
+    const r = okApply(k.applyAction(baseState(), spy('p1', { target: 'p2', kind: 'treasury' }), ctx(0)));
+    expect(detectedOf(r)).toEqual([
+      // owner = the VICTIM — the fog filter routes this event to them, not the spy
+      { type: 'espionage.detected', payload: { owner: 'p2', kind: 'treasury', spy: 'p1' } },
+    ]);
+  });
+
+  it('a noticed SUCCESSFUL theft reveals the leak but not the thief', () => {
+    const k = createKernel([espionageModule, sureShot, alwaysDetect]);
+    const r = okApply(k.applyAction(baseState(), spy('p1', { target: 'p2', kind: 'fleets' }), ctx(0)));
+    const det = detectedOf(r);
+    expect(det).toHaveLength(1);
+    expect(det[0]!.payload).toEqual({ owner: 'p2', kind: 'fleets' }); // no `spy` field
+    // the theft itself still went through
+    expect(r.state.intel?.p1?.[0]).toMatchObject({ kind: 'fleets', target: 'p2' });
+  });
+
+  it('perfect spies are never detected (hook pinned to 0)', () => {
+    const k = createKernel([espionageModule, sureShot, neverDetect]);
+    const r = okApply(k.applyAction(baseState(), spy('p1', { target: 'p2', kind: 'treasury' }), ctx(0)));
+    expect(detectedOf(r)).toHaveLength(0);
+  });
+
+  it('the detect pipeline receives the attempt outcome (defence can price them apart)', () => {
+    const seen: boolean[] = [];
+    const probe: GameModule = {
+      id: 'probe',
+      version: '1.0.0',
+      setup(api) {
+        api.hook<number>('espionage.detect', (v, args) => {
+          seen.push((args as { succeeded: boolean }).succeeded);
+          return v;
+        });
+      },
+    };
+    const win = createKernel([espionageModule, sureShot, probe]);
+    okApply(win.applyAction(baseState(), spy('p1', { target: 'p2', kind: 'treasury' }), ctx(0)));
+    const lose = createKernel([espionageModule, dudShot, probe]);
+    okApply(lose.applyAction(baseState(), spy('p1', { target: 'p2', kind: 'treasury' }), ctx(0)));
+    expect(seen).toEqual([true, false]);
   });
 });
 

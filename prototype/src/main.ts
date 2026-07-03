@@ -19,6 +19,7 @@ import {
   TAX_OFFICE_BONUS,
   moveFleet,
   moveFleetEdge,
+  spyOn,
   stopFleet,
   orbitFleet,
   assaultFleet,
@@ -140,6 +141,7 @@ import type {
   Action,
   DiplomaticStance,
   DomainEvent,
+  IntelGrant,
 } from '../../packages/shared-core/src/index';
 
 // --- constants ---------------------------------------------------------------
@@ -1505,6 +1507,29 @@ interface Vision {
   identify: Set<string>;
   radar: Set<string>;
 }
+
+// --- espionage (SPY-1 in the prototype) ---------------------------------------
+// The core `espionageModule` grants time-boxed intel windows (`state.intel[ME]`);
+// here the client fog honours them: a `planet` grant identifies that node, a
+// `fleets` grant shows the target's fleets through the fog, a `treasury` grant is
+// read by the diplomacy roster. Mirrors what `visibleState` does server-side.
+/** Base fee of one attempt — mirrors the core module's BASE_COST (UI label only;
+ *  the kernel is authoritative and rejects with E_INSUFFICIENT when short). */
+const SPY_COST = 150;
+/** My LIVE intel windows (expired ones are ignored even before the core prunes them). */
+function myIntel(): IntelGrant[] {
+  return (s.intel?.[ME] ?? []).filter((g) => g.until > s.time);
+}
+/** Live grants of one kind, as a target-id set (planet ids / player ids). */
+function intelTargets(kind: IntelGrant['kind']): Set<string> {
+  const out = new Set<string>();
+  for (const g of myIntel()) if (g.kind === kind) out.add(g.target);
+  return out;
+}
+// Owners whose fleets are revealed this frame by a live `fleets` grant — rebuilt
+// alongside `vision` each frame so the render path checks a Set, not the grant list.
+let intelFleetOwners = new Set<string>();
+
 /** Variant-B visibility: an identify range (full detail, feeds memory) plus a
  *  wider radar range (enemy fleets seen only as coarse signatures). The radar
  *  reach scales with radar-array level and radar-ships. null vision = fog off. */
@@ -1534,8 +1559,20 @@ function computeVision(): Vision {
         }
       }
     }
+  // Stolen `planet` windows identify their node (feeds memory too, so the scan
+  // is remembered after the window closes); `fleets` windows fill the owner set
+  // that fleet rendering consults.
+  for (const id of intelTargets('planet')) if (s.planets[id]) identify.add(id);
+  intelFleetOwners = intelTargets('fleets');
   for (const id of identify) radar.add(id); // identify implies radar
   return { identify, radar };
+}
+
+/** Is this fleet visible? Own always; enemy — when its node is identified OR a
+ *  live `fleets` intel window covers its owner. */
+function fleetSeen(f: Fleet): boolean {
+  if (f.owner === ME) return true;
+  return known(fleetNode(f)) || intelFleetOwners.has(f.owner);
 }
 
 // Per-viewer MEMORY of the last identified state of a node (variant B): once you
@@ -1924,6 +1961,39 @@ function handleEvents(events: DomainEvent[]) {
           note(`⚛ изучено: ${data.technologies[p.technology as string]?.name ?? (p.technology as string)}`);
         if (techWin.classList.contains('show')) renderTech();
         break;
+      // Both espionage events are addressed to the ACTOR (`owner`); in NET play the
+      // server's fog filter already withholds them from the victim — mirror it here.
+      case 'intel.stolen': {
+        if (p.owner !== ME) break;
+        const what =
+          p.kind === 'treasury'
+            ? `казна ${NAME[p.target as string] ?? p.target}`
+            : p.kind === 'fleets'
+              ? `флоты ${NAME[p.target as string] ?? p.target}`
+              : `мир ${p.intelPlanet ?? p.target}`;
+        note(`🕵 Агент добыл разведданные: ${what} — окно 24ч`);
+        if (diploOpen && diploTab === 'diplo') renderDiplo(); // the intel row appeared
+        break;
+      }
+      case 'espionage.failed':
+        if (p.owner === ME)
+          note(`🕵 Агент провалился (${NAME[p.target as string] ?? p.target}) — плата сгорела`);
+        break;
+      // Counter-intel (SPY-2): addressed to the VICTIM. A failed attempt names the
+      // spy (caught red-handed); a noticed clean theft only says WHAT leaked.
+      case 'espionage.detected': {
+        // A caught spy shifts the victim-bot's favour meter — repaint the roster.
+        if (diploOpen && diploTab === 'diplo') renderDiplo();
+        if (p.owner !== ME) break;
+        const what =
+          p.kind === 'treasury' ? 'казна' : p.kind === 'fleets' ? 'данные о флотах' : 'данные мира';
+        note(
+          p.spy
+            ? `🛡 Контрразведка: агент ${NAME[p.spy as string] ?? p.spy} пойман при попытке кражи (${what})!`
+            : `🛡 Контрразведка: утечка разведданных (${what}) — вор не установлен`,
+        );
+        break;
+      }
       case 'order.blocked':
         // CC-4.1 minimum: the chain paused on a failed step — say so the moment the
         // verdict lands (the fog filter routes this to the owner only).
@@ -3466,7 +3536,7 @@ function render(now: number) {
   const stationed: Record<string, Fleet[]> = {};
   for (const f of Object.values(s.fleets))
     if (f.location && !f.movement) {
-      if (f.owner !== ME && !known(f.location)) continue; // hidden enemy orbit
+      if (!fleetSeen(f)) continue; // hidden enemy orbit (no identify, no intel window)
       (stationed[f.location] ??= []).push(f);
     }
   for (const pid of Object.keys(stationed)) {
@@ -3498,13 +3568,10 @@ function render(now: number) {
   for (const d of Object.values(divisionsOf(s)))
     if (d.carriedBy) carriedDivCount[d.carriedBy] = (carriedDivCount[d.carriedBy] ?? 0) + 1;
   for (const f of Object.values(s.fleets)) {
-    if (f.owner !== ME) {
-      const fn = fleetNode(f);
-      if (!known(fn)) {
-        // not identified: a radar contact is shown only as a swept signature
-        // (drawRadarContacts), painted by the arm and remembered — never live here.
-        continue;
-      }
+    if (!fleetSeen(f)) {
+      // not identified and no intel window: a radar contact is shown only as a
+      // swept signature (drawRadarContacts), painted by the arm — never live here.
+      continue;
     }
     const A = fleetAnchor(f);
     if (!A || !visible(A, 120)) continue;
@@ -4163,12 +4230,20 @@ function panelHtml(): string {
         mem.buildings
           .map((b) => `${BUILD_ICON[b.type] ?? '▪'} ${data.buildings[b.type]?.name ?? b.type} L${b.level}`)
           .join(', ') || 'none seen';
+      // Espionage from memory: you know WHOSE world this was — an agent can reveal
+      // its live contents without flying there. Wrong/stale owner → the kernel
+      // rejects the attempt (bad target), which is honest: intel decays.
+      const spyRow =
+        mem.owner && mem.owner !== ME
+          ? `<div class="row">${btn('spyplanet', mem.owner, `🕵 Разведать мир · ${SPY_COST}¤`, afford({ credits: SPY_COST }))}</div>`
+          : '';
       return (
         cardHeader(ownerColor(mem.owner), p.id, 'LAST KNOWN ✦') +
         `<div class="row dim">Out of sensor range — last scan (may be stale).</div>` +
         `<div class="row">Owner: <b>${mem.owner ? NAME[mem.owner] : 'Neutral'}</b></div>` +
         `<div class="row">Garrison when seen: <b>${mem.garrison}</b></div>` +
         `<div class="row">Structures: ${icons}</div>` +
+        spyRow +
         `<div class="hint">Re-scan with a fleet or radar to refresh.</div>` +
         btn('cancel', '', 'Deselect', true)
       );
@@ -4213,6 +4288,17 @@ function panelHtml(): string {
 
   // Tactical ping — mark this province and share it (coalition chat, or a player's DM).
   h += `<div class="row">${btn('ping', '', '📍 Пинг — отметить и отправить…', true)}</div>`;
+
+  // Espionage: steal a 24h intel window on this enemy world (SPY-1). While a
+  // window lives its countdown replaces the button — the node stays identified.
+  if (!mine && p.owner) {
+    const live = myIntel().find((g) => g.kind === 'planet' && g.target === p.id);
+    h += `<div class="row">${
+      live
+        ? `<b style="color:var(--cyan)">🕵 Окно разведки</b> <span class="dim">ещё ${fmtEta(Math.max(0, live.until - s.time) / HOUR)}</span>`
+        : btn('spyplanet', p.owner, `🕵 Разведать мир · ${SPY_COST}¤`, afford({ credits: SPY_COST }))
+    }</div>`;
+  }
 
   h += `<div class="ptabs">${tabButton('ground', 'Ground', ground.length)}${tabButton(
     'ships',
@@ -4705,6 +4791,28 @@ function favourBarHtml(bot: string): string {
     `<span class="dp-fav-lbl">${label}</span></div>`
   );
 }
+/** Live stolen-intel readout for one seat (under its expanded actions): the
+ *  treasury window prints the victim's actual resources, a fleets window says the
+ *  map shows them, planet windows list the scanned worlds. Empty when nothing lives. */
+function intelRowHtml(target: string): string {
+  const bits: string[] = [];
+  for (const g of myIntel()) {
+    const left = fmtEta(Math.max(0, g.until - s.time) / HOUR);
+    if (g.kind === 'treasury' && g.target === target) {
+      const r = s.players[target]?.resources ?? {};
+      const bag = Object.entries(r)
+        .map(([k, v]) => `${TECH_CUR[k] ?? k}${Math.floor(v as number)}`)
+        .join(' ');
+      bits.push(`казна: <b>${bag || '—'}</b> <em>${left}</em>`);
+    } else if (g.kind === 'fleets' && g.target === target) {
+      bits.push(`флоты видны на карте <em>${left}</em>`);
+    } else if (g.kind === 'planet' && s.planets[g.target]?.owner === target) {
+      bits.push(`мир <b>${esc(g.target)}</b> раскрыт <em>${left}</em>`);
+    }
+  }
+  if (!bits.length) return '';
+  return `<div class="dp-intel">🕵 ${bits.join(' · ')}</div>`;
+}
 function diploRowsHtml(): string {
   const others = diploSeats().filter((id) => id !== ME);
   const byName = (a: string, b: string) => (NAME[a] ?? a).localeCompare(NAME[b] ?? b);
@@ -4739,7 +4847,10 @@ function diploRowsHtml(): string {
             const barred = t === 'alliance' && isAiSeat(id); // боты не вступают в коалиции
             return `<button class="dp-act${t === st ? ' on' : ''}" data-stance="${t}" data-seat="${id}" style="--sc:${STANCE_COLOR[t]}"${barred ? ' disabled title="Боты не вступают в коалиции"' : ''}>${STANCE_RU[t]}</button>`;
           }).join('') +
-          `<button class="dp-msg" data-msgseat="${id}">✉</button></div>`
+          `<button class="dp-spy" data-spy="treasury" data-seat="${id}" title="Украсть данные казны · ${SPY_COST}¤ · шанс ~60% · окно 24ч (плата сгорает и при провале)">🕵 казна</button>` +
+          `<button class="dp-spy" data-spy="fleets" data-seat="${id}" title="Украсть данные о флотах · ${SPY_COST}¤ · шанс ~60% · окно 24ч (плата сгорает и при провале)">🕵 флоты</button>` +
+          `<button class="dp-msg" data-msgseat="${id}">✉</button></div>` +
+          intelRowHtml(id)
         : '';
       return (
         `<div class="dp-row${expanded ? ' open' : ''}${isMe ? ' me' : ''}"${isMe ? '' : ` data-seat="${id}"`}>` +
@@ -5200,6 +5311,8 @@ side.addEventListener('click', (ev) => {
     enqueueBuild(selPlanet!, { kind: 'unit', id: arg, count: 1 });
   } else if (act === 'mobilize') {
     playerOrder(mobilizeDivision(ME, selPlanet!, Number(arg)));
+  } else if (act === 'spyplanet') {
+    playerOrder(spyOn(ME, arg, 'planet', selPlanet!)); // arg = the world's (last known) owner
   } else if (act === 'capital') {
     playerOrder(designateCapital(ME, selPlanet!));
   } else if (act === 'ping') {
@@ -7982,6 +8095,12 @@ if (diploEl) {
     if (actBtn) {
       proposeStance(actBtn.dataset.seat!, actBtn.dataset.stance as DiplomaticStance);
       renderDiplo();
+      return;
+    }
+    const spyBtn = tg.closest('.dp-spy') as HTMLElement | null;
+    if (spyBtn) {
+      playerOrder(spyOn(ME, spyBtn.dataset.seat!, spyBtn.dataset.spy as 'treasury' | 'fleets'));
+      renderDiplo(); // the intel row (or the rejection note) reflects the outcome
       return;
     }
     const msgseat = (tg.closest('.dp-msg') as HTMLElement | null)?.dataset.msgseat;
