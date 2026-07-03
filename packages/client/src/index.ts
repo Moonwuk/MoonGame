@@ -12,6 +12,25 @@ export {
 
 export { theme, type Theme } from './theme';
 export {
+  type Cam,
+  type Viewport,
+  type Bounds,
+  FIT_MARGIN,
+  MIN_SCALE,
+  MAX_SCALE,
+  PAN_SLACK,
+  clamp,
+  clampScale,
+  fitTransform,
+  projectBase,
+  worldToScreen,
+  screenToWorld,
+  clampCam,
+  zoomAt,
+  centerOn,
+  inView,
+} from './camera';
+export {
   createStatusBarModel,
   createSelectionModel,
   type StatusResource,

@@ -124,6 +124,12 @@ import {
 } from '../../packages/shared-core/src/index';
 import { MultiplayerClient, type MultiplayerPing, createBattleModel, type BattleSideView } from '../../packages/client/src/index';
 import {
+  worldToScreen as camWorldToScreen,
+  zoomAt as camZoomAt,
+  clampCam as camClampCam,
+  centerOn as camCenterOn,
+} from '../../packages/client/src/camera';
+import {
   buildLabel,
   checkForUpdateDetailed,
   currentBuild,
@@ -805,91 +811,47 @@ function insets(): { left: number; right: number; top: number; bottom: number } 
   const botPad = Math.min(150, Math.max(78, VH * 0.16));
   return { left: RAIL + 80, right: VW - rightPad, top: TOP + topPad, bottom: VH - botPad };
 }
-// Leave a little breathing room around the whole-map (scale-1) view so it reads as a
-// framed board, not edge-to-edge. This is the floor of the zoom range (MIN_SCALE = 1).
-const FIT_MARGIN = 0.94;
-// Base fit: map-space → screen, fitting the whole map inside the play area at scale 1.
-function projBase(p: { x: number; y: number }): { x: number; y: number } {
-  const { left, right, top, bottom } = insets();
-  const aw = Math.max(60, right - left);
-  const ah = Math.max(60, bottom - top);
-  const mapW = MAXX - MINX || 1;
-  const mapH = MAXY - MINY || 1;
-  // UNIFORM scale (preserve aspect): one factor for both axes, so a circle in map
-  // space stays a circle on screen — distances aren't stretched, and the radar
-  // ring reads as a true circle. Fit the whole map inside the play area and centre
-  // it (the spare axis gets symmetric margins / letterbox).
-  const scale = Math.min(aw / mapW, ah / mapH) * FIT_MARGIN;
-  const offX = left + (aw - mapW * scale) / 2;
-  const offY = top + (ah - mapH * scale) / 2;
-  return { x: offX + (p.x - MINX) * scale, y: offY + (p.y - MINY) * scale };
-}
+// The view transform (fit / zoom / pan / projection) lives in the shared camera module
+// (@void/client · camera.ts, CP0.2 — one render implementation for the prototype and the
+// Stage-4 client). MINX..MAXY (set once from MAP above) are the map bounds it projects.
+const mapBounds = () => ({ minX: MINX, minY: MINY, maxX: MAXX, maxY: MAXY });
 
-// Camera: pan offset + zoom over the base fit. Node/label sizes stay constant
-// in screen pixels; only positions transform (a node-graph style zoom).
+// Camera: pan offset + zoom over the base fit (scale range MIN_SCALE..MAX_SCALE lives in
+// the module: 1 = whole-map fit, 6 = one province + neighbours). Node/label sizes stay
+// constant in screen px; only positions transform (node-graph style zoom). On a phone the
+// opening view zooms onto the home region; double-tap resets, pinch out to the overview.
 const cam = { scale: 1, x: 0, y: 0 };
-// Zoom range tied to content: 1 = the whole-map fit (you can't zoom out past it into
-// empty void); 6 = close enough to read one province + its neighbours on a phone. On a
-// phone the opening view zooms onto your home region (the wide map is too dense to read
-// whole on a narrow screen); double-tap resets to that view, pinch out to the overview.
-const MIN_SCALE = 1;
-const MAX_SCALE = 6;
 const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
 // node sector type by id — drives asteroid-junction rendering + capture-by-arrival
 const SECTOR_OF: Record<string, string> = Object.fromEntries(MAP.map((n) => [n.id, n.sector]));
 function world(p: { x: number; y: number }): { x: number; y: number } {
-  const b = projBase(p);
-  return { x: b.x * cam.scale + cam.x, y: b.y * cam.scale + cam.y };
+  return camWorldToScreen(p, cam, insets(), mapBounds());
 }
 function visible(c: { x: number; y: number }, pad = 80): boolean {
   return c.x >= -pad && c.x <= VW + pad && c.y >= -pad && c.y <= VH + pad;
 }
 function zoomAt(fx: number, fy: number, factor: number) {
-  // Anchor the zoom on the focal point (cursor / pinch centre): the map-space point under
-  // it stays put, so zoom grows toward where you're looking instead of drifting.
-  const bx = (fx - cam.x) / cam.scale;
-  const by = (fy - cam.y) / cam.scale;
-  cam.scale = clamp(cam.scale * factor, MIN_SCALE, MAX_SCALE);
-  cam.x = fx - bx * cam.scale;
-  cam.y = fy - by * cam.scale;
-  clampCam();
+  // Zoom anchored on the focal point (cursor / pinch centre) — camera.ts clamps scale + pan.
+  const n = camZoomAt(cam, fx, fy, factor, insets(), mapBounds());
+  cam.scale = n.scale;
+  cam.x = n.x;
+  cam.y = n.y;
 }
 
-/** Keep the map filling the play area, but with SLACK at the edges so the outermost
- *  provinces don't jam against the screen border — you can pan a comfortable margin
- *  past the content edge, which makes edge navigation easy. At the whole-map (min-zoom)
- *  floor the map sits centred and still; a zoomed-in map pans freely across its content. */
+/** Keep the map filling the play area with SLACK at the edges (module: PAN_SLACK) so the
+ *  outermost provinces don't jam against the border. Delegates to the shared camera. */
 function clampCam(): void {
-  const { left, right, top, bottom } = insets();
-  const tl = projBase({ x: MINX, y: MINY });
-  const br = projBase({ x: MAXX, y: MAXY });
-  const pL = tl.x * cam.scale;
-  const pR = br.x * cam.scale;
-  const pT = tl.y * cam.scale;
-  const pB = br.y * cam.scale;
-  // Breathing room: allow panning ~16% of the play area past each edge.
-  const mx = (right - left) * 0.16;
-  const my = (bottom - top) * 0.16;
-  // Per axis: if the map is at least as big as the play area, pan within it (+ slack) so
-  // an edge can sit a margin inside; otherwise it fits, so park it centred in the play area.
-  cam.x =
-    pR - pL >= right - left
-      ? clamp(cam.x, right - pR - mx, left - pL + mx)
-      : (left + right - pL - pR) / 2;
-  cam.y =
-    pB - pT >= bottom - top
-      ? clamp(cam.y, bottom - pB - my, top - pT + my)
-      : (top + bottom - pT - pB) / 2;
+  const n = camClampCam(cam, insets(), mapBounds());
+  cam.x = n.x;
+  cam.y = n.y;
 }
 
 /** Put map-point `p` at the centre of the play area at `scale` (clamped + bounded). */
 function centerOn(p: { x: number; y: number }, scale: number): void {
-  cam.scale = clamp(scale, MIN_SCALE, MAX_SCALE);
-  const b = projBase(p);
-  const { left, right, top, bottom } = insets();
-  cam.x = (left + right) / 2 - b.x * cam.scale;
-  cam.y = (top + bottom) / 2 - b.y * cam.scale;
-  clampCam();
+  const n = camCenterOn(cam, p, scale, insets(), mapBounds());
+  cam.scale = n.scale;
+  cam.x = n.x;
+  cam.y = n.y;
 }
 /** The opening / reset view. On a phone the wide map is too dense to read whole, so
  *  zoom onto your home region and pan to explore; on a wide screen the whole-map fit
