@@ -46,6 +46,10 @@ export interface MatchApiDeps {
    *  request carries no valid session. Wired ⇒ create/join REQUIRE identity (401 E_AUTH)
    *  and the session's login IS the nick. Absent ⇒ legacy `?nick=` dev behaviour. */
   identify?(request: FastifyRequest): Promise<Identity | null>;
+  /** Injectable clock + limits for the per-IP rate limit (deterministic tests). */
+  now?: () => number;
+  rateMax?: number;
+  rateWindowMs?: number;
 }
 
 const STATUS: Record<JoinFailure['error'], number> = {
@@ -54,10 +58,42 @@ const STATUS: Record<JoinFailure['error'], number> = {
   E_AUTH_DISABLED: 501,
 };
 
+/** Both write routes mutate durable state (seed a match, claim a seat), so both sit
+ *  behind a per-IP sliding-window rate limit — a create/join-spray brake mirroring the
+ *  auth API's limiter. A bounded map (oldest window evicted first) keeps an
+ *  address-spraying client from growing memory. */
+const RATE_MAX = 30; // create+join attempts per IP per window (shared budget)
+const RATE_WINDOW_MS = 60_000;
+const RATE_MAX_IPS = 10_000;
+
 export function registerMatchApi(app: FastifyInstance, deps: MatchApiDeps): void {
   const identify = deps.identify;
+  const now = deps.now ?? ((): number => Date.now());
+  const rateMax = deps.rateMax ?? RATE_MAX;
+  const rateWindowMs = deps.rateWindowMs ?? RATE_WINDOW_MS;
+  const attempts = new Map<string, { n: number; since: number }>();
+
+  const rateLimited = (ip: string): boolean => {
+    const t = now();
+    const c = attempts.get(ip);
+    if (!c || t - c.since >= rateWindowMs) {
+      attempts.delete(ip); // re-insert → freshest position in the FIFO order
+      attempts.set(ip, { n: 1, since: t });
+      if (attempts.size > RATE_MAX_IPS) {
+        const oldest = attempts.keys().next().value;
+        if (oldest !== undefined) attempts.delete(oldest);
+      }
+      return false;
+    }
+    c.n += 1;
+    return c.n > rateMax;
+  };
 
   app.post('/matches', async (request: FastifyRequest, reply: FastifyReply) => {
+    if (rateLimited(request.ip)) {
+      void reply.code(429);
+      return { error: 'E_RATE_LIMIT' as const };
+    }
     if (identify && !(await identify(request))) {
       void reply.code(401);
       return { error: 'E_AUTH' as const };
@@ -66,6 +102,10 @@ export function registerMatchApi(app: FastifyInstance, deps: MatchApiDeps): void
   });
 
   app.get('/matches/:id/join', async (request: FastifyRequest, reply: FastifyReply) => {
+    if (rateLimited(request.ip)) {
+      void reply.code(429);
+      return { error: 'E_RATE_LIMIT' as const };
+    }
     const { id } = request.params as { id: string };
     if (identify) {
       // Authenticated path: the seat belongs to the SESSION's account — a query nick
