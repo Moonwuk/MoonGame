@@ -80,7 +80,8 @@ export interface PlayerTechnologyState {
  *  - `pact`     → neutral (a non-aggression pact — like peace, but a declared,
  *                 breakable agreement rather than mere absence of war)
  *  - `alliance` → ally (shared side; an ally's world can't be attacked)
- *  The stance→relation mapping itself lives in the future `diplomacyModule`. */
+ *  The stance→relation mapping is `stanceToRelation` (`state/diplomacy.ts`),
+ *  provided as the `diplomacy` capability by `diplomacyModule` (D2). */
 export type DiplomaticStance = 'war' | 'peace' | 'pact' | 'alliance';
 
 export type MatchStatus = 'ongoing' | 'ended';
@@ -338,9 +339,17 @@ export interface GameState {
    *  pair key (`pairKey`). Symmetric and PUBLIC (not fog-gated — who is at war /
    *  allied is open knowledge). A pair with no entry defaults to `DEFAULT_STANCE`
    *  (war), so absence = the engine's no-diplomacy FFA. Read/written through
-   *  `state/diplomacy.ts`; the future `diplomacyModule` (D2) owns the actions and
-   *  exposes it as the `diplomacy` capability that drives combat's `isHostile`. */
+   *  `state/diplomacy.ts`; `diplomacyModule` (D2) owns the actions and exposes it
+   *  as the `diplomacy` capability that drives combat's `isHostile`. */
   diplomacy?: Record<string, DiplomaticStance>;
+  /** Standing DE-ESCALATION offers (D3), keyed by the directed `offerKey`
+   *  (`from>to`) → the friendlier stance offered. An offer is recorded by a
+   *  friendly `diplomacy.declare` and commits when the other side declares the
+   *  same stance (mutual consent); any escalation between the pair voids both
+   *  directions. Unlike `diplomacy`, offers are PRIVATE to the two parties —
+   *  `visibleState` strips everyone else's negotiations. Maintained by
+   *  `diplomacyModule`; helpers in `state/diplomacy.ts`. */
+  diplomacyOffers?: Record<string, DiplomaticStance>;
   /** Session resource market: a public per-match order book maintained by
    *  `marketModule`. Sellers escrow a resource at a price; buyers pay money. */
   market?: MarketOrder[];

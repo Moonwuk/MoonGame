@@ -69,7 +69,20 @@ export {
   estimateTravelHours,
 } from './state/route';
 export { isBombarded, bombardedPlanets } from './state/orbit';
-export { DEFAULT_STANCE, pairKey, getStance, setStance } from './state/diplomacy';
+export {
+  DEFAULT_STANCE,
+  pairKey,
+  getStance,
+  setStance,
+  offerKey,
+  offerInvolves,
+  getOffer,
+  setOffer,
+  clearOffers,
+  stanceToRelation,
+  type DiplomaticRelation,
+  type DiplomacyCapability,
+} from './state/diplomacy';
 export { diffState, applyDelta, type StateDelta } from './state/delta';
 export { visibleState, visibleView, identifiedNodes } from './state/visibility';
 export type { VisibleState, VisibleView, SignatureContact, SignatureSize } from './state/visibility';
@@ -185,3 +198,4 @@ export { victoryModule } from './modules/victory';
 export { visibilityModule } from './modules/visibility';
 export { heroModule } from './modules/hero';
 export { marketModule } from './modules/market';
+export { diplomacyModule } from './modules/diplomacy';
