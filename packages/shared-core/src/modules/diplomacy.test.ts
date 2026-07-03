@@ -1,249 +1,294 @@
 import { describe, it, expect } from 'vitest';
 import { createKernel } from '../kernel/kernel';
-import { diplomacyModule, stanceToRelation, type DiplomacyCapability } from './diplomacy';
-import { getStance, pairKey, setStance } from '../state/diplomacy';
-import {
-  createInitialState,
-  type DiplomaticStance,
-  type GameState,
-  type Player,
-} from '../state/gameState';
+import type { GameModule, HandlerContext } from '../kernel/module';
+import { diplomacyModule } from './diplomacy';
+import { combatModule } from './combat';
+import { createInitialState, type Fleet, type GameState, type Player } from '../state/gameState';
 import { parseGameData, type GameData } from '../data/schemas';
+import {
+  getOffer,
+  getStance,
+  setStance,
+  stanceToRelation,
+  type DiplomacyCapability,
+} from '../state/diplomacy';
 import type { Action, ApplyResult, Context } from '../action/types';
-import type { GameModule } from '../kernel/module';
+import { deepFreeze } from '../util/clone';
 
 const data: GameData = parseGameData({
   version: '0.1.0',
-  resources: ['credits'],
-  units: {},
+  resources: ['metal'],
+  units: {
+    fighter: { faction: 'x', stats: { attack: 10, defense: 0, speed: 10, hp: 20 }, line: 'front' },
+  },
   factions: {},
   buildings: {},
   events: {},
 });
-const ctx: Context = { now: 0, data };
 
-function player(id: string, status: Player['status'] = 'active'): Player {
-  return { id, name: id, faction: '', status, resources: {} };
+const ctx = (now = 0): Context => ({ now, data });
+
+function player(id: string): Player {
+  return { id, name: id, faction: 'x', status: 'active', resources: {} };
+}
+function fleet(id: string, owner: string, location: string): Fleet {
+  return {
+    id,
+    owner,
+    location,
+    movement: null,
+    units: [{ unit: 'fighter', count: 1 }],
+    traits: [],
+  };
 }
 function baseState(): GameState {
   const s = createInitialState({ seed: 'dip', version: { data: '0.1.0', manifest: '1' } });
-  return { ...s, players: { p1: player('p1'), p2: player('p2'), p3: player('p3') } };
+  s.players.p1 = player('p1');
+  s.players.p2 = player('p2');
+  return s;
 }
-function act(type: string, playerId: string, payload: unknown): Action {
-  return { id: `s:${playerId}:1`, type, playerId, payload, issuedAt: 0 };
+function declare(playerId: string, target: string, stance: unknown, seq = 1): Action {
+  return {
+    id: `s:${playerId}:${seq}`,
+    type: 'diplomacy.declare',
+    playerId,
+    payload: { target, stance },
+    issuedAt: 0,
+  };
 }
-function okApply(r: ApplyResult): ApplyResult & { ok: true } {
-  if (!r.ok) throw new Error(`apply failed: ${r.code}`);
+function okApply(r: ApplyResult): Extract<ApplyResult, { ok: true }> {
+  if (!r.ok) throw new Error(`expected ok, got ${r.code}`);
   return r;
 }
 function errCode(r: ApplyResult): string {
-  if (r.ok) throw new Error('expected a rejection');
+  if (r.ok) throw new Error('expected rejection, got ok');
   return r.code;
 }
 
-const kernel = createKernel([diplomacyModule]);
+describe('diplomacyModule — declarations (D2)', () => {
+  const kernel = createKernel([diplomacyModule]);
 
-describe('diplomacy module — declare (unilateral downgrade)', () => {
-  it('declares war from peace and announces it', () => {
-    const s = baseState();
-    setStance(s, 'p1', 'p2', 'peace');
-    const r = okApply(kernel.applyAction(s, act('diplomacy.declare', 'p1', { target: 'p2', stance: 'war' }), ctx));
+  it('declaring war on a peaceful neighbour flips the stance and announces it', () => {
+    const state = baseState();
+    setStance(state, 'p1', 'p2', 'peace');
+    const r = okApply(kernel.applyAction(deepFreeze(state), declare('p1', 'p2', 'war'), ctx()));
     expect(getStance(r.state, 'p1', 'p2')).toBe('war');
-    expect(r.events).toEqual([
-      { type: 'diplomacy.changed', payload: { a: 'p1', b: 'p2', stance: 'war' } },
-    ]);
+    expect(r.events).toContainEqual({
+      type: 'diplomacy.changed',
+      payload: { a: 'p1', b: 'p2', stance: 'war', from: 'peace' },
+    });
   });
 
-  it('dissolves an alliance down to peace without consent', () => {
-    const s = baseState();
-    setStance(s, 'p1', 'p2', 'alliance');
-    const r = okApply(kernel.applyAction(s, act('diplomacy.declare', 'p1', { target: 'p2', stance: 'peace' }), ctx));
-    expect(getStance(r.state, 'p1', 'p2')).toBe('peace');
+  it('escalation is unilateral at every step (alliance → peace, pact → war)', () => {
+    const state = baseState();
+    setStance(state, 'p1', 'p2', 'alliance');
+    const r1 = okApply(kernel.applyAction(state, declare('p1', 'p2', 'peace'), ctx()));
+    expect(getStance(r1.state, 'p1', 'p2')).toBe('peace');
+
+    const state2 = baseState();
+    setStance(state2, 'p1', 'p2', 'pact');
+    const r2 = okApply(kernel.applyAction(state2, declare('p2', 'p1', 'war', 2), ctx()));
+    expect(getStance(r2.state, 'p1', 'p2')).toBe('war');
   });
 
-  it('rejects an upgrade smuggled through declare (peace → pact)', () => {
-    const s = baseState();
-    setStance(s, 'p1', 'p2', 'peace');
-    const r = kernel.applyAction(s, act('diplomacy.declare', 'p1', { target: 'p2', stance: 'pact' }), ctx);
-    expect(errCode(r)).toBe('E_BAD_STANCE');
+  it('a friendly declaration records an OFFER — the stance does not move (consent, D3)', () => {
+    const state = baseState(); // default stance: war
+    const r = okApply(kernel.applyAction(deepFreeze(state), declare('p1', 'p2', 'peace'), ctx()));
+    expect(getStance(r.state, 'p1', 'p2')).toBe('war'); // a lone declaration changes nothing
+    expect(getOffer(r.state, 'p1', 'p2')).toBe('peace'); // …but the offer now stands
+    expect(r.events).toContainEqual({
+      type: 'diplomacy.offered',
+      payload: { from: 'p1', to: 'p2', stance: 'peace' },
+    });
+    expect(r.events.some((e) => e.type === 'diplomacy.changed')).toBe(false);
   });
 
-  it('rejects re-declaring the current stance (war → war on an unrecorded pair)', () => {
-    const r = kernel.applyAction(baseState(), act('diplomacy.declare', 'p1', { target: 'p2', stance: 'war' }), ctx);
-    expect(errCode(r)).toBe('E_BAD_STANCE');
+  it('a matching counter-declaration commits the friendlier stance and clears the offers', () => {
+    const state = baseState();
+    const offered = okApply(kernel.applyAction(state, declare('p1', 'p2', 'peace'), ctx()));
+    const r = okApply(kernel.applyAction(offered.state, declare('p2', 'p1', 'peace', 2), ctx()));
+    expect(getStance(r.state, 'p1', 'p2')).toBe('peace'); // mutual — committed
+    expect(getOffer(r.state, 'p1', 'p2')).toBeNull();
+    expect(getOffer(r.state, 'p2', 'p1')).toBeNull();
+    expect(r.state.diplomacyOffers).toBeUndefined(); // emptied map is dropped
+    expect(r.events).toContainEqual({
+      type: 'diplomacy.changed',
+      payload: { a: 'p2', b: 'p1', stance: 'peace', from: 'war' },
+    });
   });
 
-  it('voids the pair pending offer when the stance changes', () => {
-    const s = baseState();
-    setStance(s, 'p1', 'p2', 'peace');
-    s.diplomacyOffers = { [pairKey('p1', 'p2')]: { from: 'p2', stance: 'alliance' } };
-    const r = okApply(kernel.applyAction(s, act('diplomacy.declare', 'p1', { target: 'p2', stance: 'war' }), ctx));
-    expect(r.state.diplomacyOffers?.[pairKey('p1', 'p2')]).toBeUndefined();
+  it('mismatched offers coexist until one side matches the other', () => {
+    const state = baseState(); // war
+    const s1 = okApply(kernel.applyAction(state, declare('p1', 'p2', 'pact'), ctx())).state;
+    const s2 = okApply(kernel.applyAction(s1, declare('p2', 'p1', 'alliance', 2), ctx())).state;
+    expect(getStance(s2, 'p1', 'p2')).toBe('war'); // pact ≠ alliance — no deal yet
+    // p1 comes around to the alliance — that matches p2's standing offer.
+    const done = okApply(kernel.applyAction(s2, declare('p1', 'p2', 'alliance', 3), ctx())).state;
+    expect(getStance(done, 'p1', 'p2')).toBe('alliance');
+    expect(done.diplomacyOffers).toBeUndefined(); // p1's stale pact offer cleared too
   });
 
-  it.each([
-    ['self target', { target: 'p1', stance: 'war' }, 'E_BAD_TARGET'],
-    ['unknown target', { target: 'ghost', stance: 'war' }, 'E_NO_PLAYER'],
-    ['malformed stance', { target: 'p2', stance: 'frenemy' }, 'E_BAD_PAYLOAD'],
-  ])('fail-secure: %s → %s', (_name, payload, code) => {
-    const r = kernel.applyAction(baseState(), act('diplomacy.declare', 'p1', payload), ctx);
-    expect(errCode(r)).toBe(code);
+  it('an escalation voids the pair’s standing offers (war ends the negotiation)', () => {
+    const state = baseState();
+    setStance(state, 'p1', 'p2', 'peace');
+    const offered = okApply(kernel.applyAction(state, declare('p1', 'p2', 'pact'), ctx())).state;
+    expect(getOffer(offered, 'p1', 'p2')).toBe('pact');
+    const warred = okApply(kernel.applyAction(offered, declare('p2', 'p1', 'war', 2), ctx())).state;
+    expect(getStance(warred, 'p1', 'p2')).toBe('war');
+    expect(warred.diplomacyOffers).toBeUndefined(); // the pact offer did not survive
   });
 
-  it('refuses dealings with a defeated player (both directions)', () => {
-    const s = baseState();
-    s.players.p2 = player('p2', 'defeated');
-    setStance(s, 'p1', 'p2', 'peace');
-    const toDefeated = kernel.applyAction(s, act('diplomacy.declare', 'p1', { target: 'p2', stance: 'war' }), ctx);
-    expect(errCode(toDefeated)).toBe('E_NO_PLAYER');
-    const fromDefeated = kernel.applyAction(s, act('diplomacy.declare', 'p2', { target: 'p1', stance: 'war' }), ctx);
-    expect(errCode(fromDefeated)).toBe('E_FORBIDDEN');
+  it('re-declaring an identical standing offer is rejected', () => {
+    const state = baseState();
+    const offered = okApply(kernel.applyAction(state, declare('p1', 'p2', 'peace'), ctx())).state;
+    expect(errCode(kernel.applyAction(offered, declare('p1', 'p2', 'peace', 2), ctx()))).toBe(
+      'E_ALREADY_OFFERED',
+    );
+    // …but replacing it with a DIFFERENT friendly stance is fine.
+    const replaced = okApply(kernel.applyAction(offered, declare('p1', 'p2', 'pact', 3), ctx()));
+    expect(getOffer(replaced.state, 'p1', 'p2')).toBe('pact');
+  });
+
+  it('re-declaring the current stance is rejected (no-op declaration)', () => {
+    const state = baseState(); // default: war
+    expect(errCode(kernel.applyAction(state, declare('p1', 'p2', 'war'), ctx()))).toBe(
+      'E_SAME_STANCE',
+    );
+  });
+
+  it('fail-secure payload guards: bad stance / self-target / unknown player', () => {
+    const state = baseState();
+    expect(errCode(kernel.applyAction(state, declare('p1', 'p2', 'frenemy'), ctx()))).toBe(
+      'E_BAD_PAYLOAD',
+    );
+    expect(errCode(kernel.applyAction(state, declare('p1', 'p1', 'war'), ctx()))).toBe(
+      'E_BAD_PAYLOAD',
+    );
+    expect(errCode(kernel.applyAction(state, declare('p1', 'ghost', 'war'), ctx()))).toBe(
+      'E_NO_PLAYER',
+    );
   });
 });
 
-describe('diplomacy module — propose / accept / reject (consensual upgrade)', () => {
-  it('stores the offer and announces the proposal (no stance change yet)', () => {
-    const r = okApply(kernel.applyAction(baseState(), act('diplomacy.propose', 'p1', { target: 'p2', stance: 'peace' }), ctx));
-    expect(r.state.diplomacyOffers).toEqual({ [pairKey('p1', 'p2')]: { from: 'p1', stance: 'peace' } });
-    expect(getStance(r.state, 'p1', 'p2')).toBe('war'); // unchanged until accepted
-    expect(r.events).toEqual([
-      { type: 'diplomacy.proposed', payload: { from: 'p1', to: 'p2', stance: 'peace' } },
-    ]);
+describe('diplomacyModule — the `diplomacy` capability', () => {
+  it('projects stances to relations (war→hostile, peace/pact→neutral, alliance→ally, self→ally)', () => {
+    // Probe module: reads the capability the way a consumer (combat) would.
+    let seen: string[] = [];
+    const probe: GameModule = {
+      id: 'probe',
+      version: '1.0.0',
+      setup(api) {
+        api.onAction('probe', (_a, h: HandlerContext) => {
+          const cap = h.capability<DiplomacyCapability>('diplomacy');
+          if (!cap) return h.reject('E_NO_CAPABILITY');
+          seen = [
+            cap.getRelation(h.state, 'p1', 'p2'), // war (default)
+            cap.getRelation(h.state, 'p1', 'p3'), // peace
+            cap.getRelation(h.state, 'p2', 'p3'), // alliance
+            cap.getRelation(h.state, 'p1', 'p1'), // self
+          ];
+        });
+      },
+    };
+    const kernel = createKernel([diplomacyModule, probe]);
+    const state = baseState();
+    state.players.p3 = player('p3');
+    setStance(state, 'p1', 'p3', 'peace');
+    setStance(state, 'p2', 'p3', 'alliance');
+    okApply(
+      kernel.applyAction(
+        state,
+        { id: 's:p1:9', type: 'probe', playerId: 'p1', payload: null, issuedAt: 0 },
+        ctx(),
+      ),
+    );
+    expect(seen).toEqual(['hostile', 'neutral', 'ally', 'ally']);
   });
 
-  it('rejects a proposal that is not an upgrade (pact pair offered peace)', () => {
-    const s = baseState();
-    setStance(s, 'p1', 'p2', 'pact');
-    const r = kernel.applyAction(s, act('diplomacy.propose', 'p1', { target: 'p2', stance: 'peace' }), ctx);
-    expect(errCode(r)).toBe('E_BAD_STANCE');
-  });
-
-  it('lets a counter-proposal (from either side) replace the standing offer', () => {
-    const s = baseState();
-    const first = okApply(kernel.applyAction(s, act('diplomacy.propose', 'p1', { target: 'p2', stance: 'peace' }), ctx));
-    const second = okApply(kernel.applyAction(first.state, act('diplomacy.propose', 'p2', { target: 'p1', stance: 'pact' }), ctx));
-    expect(second.state.diplomacyOffers).toEqual({ [pairKey('p1', 'p2')]: { from: 'p2', stance: 'pact' } });
-  });
-
-  it('accept applies the offered stance, clears the offer and announces the change', () => {
-    const s = okApply(kernel.applyAction(baseState(), act('diplomacy.propose', 'p1', { target: 'p2', stance: 'peace' }), ctx)).state;
-    const r = okApply(kernel.applyAction(s, act('diplomacy.accept', 'p2', { from: 'p1' }), ctx));
-    expect(getStance(r.state, 'p1', 'p2')).toBe('peace');
-    expect(r.state.diplomacyOffers?.[pairKey('p1', 'p2')]).toBeUndefined();
-    expect(r.events).toEqual([
-      { type: 'diplomacy.changed', payload: { a: 'p1', b: 'p2', stance: 'peace' } },
-    ]);
-  });
-
-  it('cannot accept an offer that does not exist, or your own offer', () => {
-    expect(errCode(kernel.applyAction(baseState(), act('diplomacy.accept', 'p2', { from: 'p1' }), ctx))).toBe('E_NO_OFFER');
-    const s = okApply(kernel.applyAction(baseState(), act('diplomacy.propose', 'p1', { target: 'p2', stance: 'peace' }), ctx)).state;
-    // p1 tries to "accept" the offer they made themselves (from: p2 has no offer)
-    expect(errCode(kernel.applyAction(s, act('diplomacy.accept', 'p1', { from: 'p2' }), ctx))).toBe('E_NO_OFFER');
-  });
-
-  it('reject clears the offer without touching the stance', () => {
-    const s = okApply(kernel.applyAction(baseState(), act('diplomacy.propose', 'p1', { target: 'p2', stance: 'alliance' }), ctx)).state;
-    const r = okApply(kernel.applyAction(s, act('diplomacy.reject', 'p2', { from: 'p1' }), ctx));
-    expect(r.state.diplomacyOffers?.[pairKey('p1', 'p2')]).toBeUndefined();
-    expect(getStance(r.state, 'p1', 'p2')).toBe('war');
-    expect(r.events).toEqual([
-      { type: 'diplomacy.rejected', payload: { from: 'p1', to: 'p2', stance: 'alliance' } },
-    ]);
-  });
-
-  it('offers are per-pair: a third party sees no cross-talk', () => {
-    const s = okApply(kernel.applyAction(baseState(), act('diplomacy.propose', 'p1', { target: 'p2', stance: 'peace' }), ctx)).state;
-    // p3 has no offer from p1 even though p1 proposed to p2
-    expect(errCode(kernel.applyAction(s, act('diplomacy.accept', 'p3', { from: 'p1' }), ctx))).toBe('E_NO_OFFER');
+  it('stanceToRelation covers every stance', () => {
+    expect(stanceToRelation('war')).toBe('hostile');
+    expect(stanceToRelation('peace')).toBe('neutral');
+    expect(stanceToRelation('pact')).toBe('neutral');
+    expect(stanceToRelation('alliance')).toBe('ally');
   });
 });
 
-describe('diplomacy module — a coalition is between humans only (no bots)', () => {
+describe('diplomacy × combat — the capability drives isHostile end-to-end', () => {
+  // Fixture: emit `fleet.arrived` without going through movement (combat.test.ts pattern).
+  const arrivalModule: GameModule = {
+    id: 'test-arrival',
+    version: '1.0.0',
+    setup(api) {
+      api.onAction('arrive', (a, h) => {
+        const fleetId = (a.payload as { fleetId: string }).fleetId;
+        h.emit('fleet.arrived', { fleetId, at: h.state.fleets[fleetId]?.location });
+      });
+    },
+  };
+  const arrive = (fleetId: string): Action => ({
+    id: 's:p1:5',
+    type: 'arrive',
+    playerId: 'p1',
+    payload: { fleetId },
+    issuedAt: 0,
+  });
+
+  function contested(): GameState {
+    const s = baseState();
+    s.fleets.f1 = fleet('f1', 'p1', 'A');
+    s.fleets.f2 = fleet('f2', 'p2', 'A');
+    return s;
+  }
+
+  it('at peace two co-located fleets do not engage; after a war declaration they do', () => {
+    const kernel = createKernel([diplomacyModule, combatModule, arrivalModule]);
+    const peaceful = contested();
+    setStance(peaceful, 'p1', 'p2', 'peace');
+
+    const calm = okApply(kernel.applyAction(peaceful, arrive('f1'), ctx()));
+    expect(Object.keys(calm.state.battles)).toHaveLength(0); // neutral — no auto-combat
+
+    const declared = okApply(kernel.applyAction(calm.state, declare('p1', 'p2', 'war'), ctx()));
+    const engaged = okApply(kernel.applyAction(declared.state, arrive('f1'), ctx()));
+    expect(Object.keys(engaged.state.battles)).toHaveLength(1); // hostile — battle starts
+  });
+});
+
+describe('diplomacy — humans-only coalition (боты не приглашаются)', () => {
+  const kernel = createKernel([diplomacyModule]);
   function withBot(): GameState {
     const s = baseState();
     s.players.bot = { ...player('bot'), ai: true };
     return s;
   }
 
-  it('rejects proposing an alliance to a bot — and from one', () => {
-    const toBot = kernel.applyAction(withBot(), act('diplomacy.propose', 'p1', { target: 'bot', stance: 'alliance' }), ctx);
+  it('an alliance-ward declaration involving a bot is refused, never recorded', () => {
+    const toBot = kernel.applyAction(withBot(), declare('p1', 'bot', 'alliance'), ctx());
     expect(errCode(toBot)).toBe('E_BOT_ALLIANCE');
-    const fromBot = kernel.applyAction(withBot(), act('diplomacy.propose', 'bot', { target: 'p1', stance: 'alliance' }), ctx);
+    const fromBot = kernel.applyAction(withBot(), declare('bot', 'p1', 'alliance'), ctx());
     expect(errCode(fromBot)).toBe('E_BOT_ALLIANCE');
   });
 
-  it('still allows peace and a pact with a bot', () => {
-    const r = okApply(kernel.applyAction(withBot(), act('diplomacy.propose', 'p1', { target: 'bot', stance: 'pact' }), ctx));
-    expect(r.state.diplomacyOffers).toEqual({ [pairKey('bot', 'p1')]: { from: 'p1', stance: 'pact' } });
-  });
-
-  it('accept re-validates: a hand-seeded bot-alliance offer cannot be accepted', () => {
-    const s = withBot();
-    s.diplomacyOffers = { [pairKey('p1', 'bot')]: { from: 'bot', stance: 'alliance' } };
-    const r = kernel.applyAction(s, act('diplomacy.accept', 'p1', { from: 'bot' }), ctx);
-    expect(errCode(r)).toBe('E_BOT_ALLIANCE');
+  it('peace and a pact with a bot stay legal (only the coalition is barred)', () => {
+    const r = okApply(kernel.applyAction(withBot(), declare('p1', 'bot', 'peace'), ctx()));
+    expect(r.state.diplomacyOffers).toEqual({ 'p1>bot': 'peace' });
   });
 });
 
-describe('diplomacy module — lifecycle safety', () => {
-  it('accept never writes an out-of-vocabulary stance from a corrupted offer', () => {
-    const s = baseState();
-    s.diplomacyOffers = {
-      [pairKey('p1', 'p2')]: { from: 'p2', stance: 'friendship' as DiplomaticStance },
-    };
-    const r = kernel.applyAction(s, act('diplomacy.accept', 'p1', { from: 'p2' }), ctx);
-    expect(errCode(r)).toBe('E_BAD_STANCE'); // fail-secure: garbage never reaches state.diplomacy
-  });
+describe('diplomacy — an eliminated player leaves no zombie offers', () => {
+  const kernel = createKernel([diplomacyModule]);
 
-  it('voids the standing offers of an eliminated player (no zombie offers)', () => {
-    const s = okApply(
-      kernel.applyAction(baseState(), act('diplomacy.propose', 'p2', { target: 'p1', stance: 'peace' }), ctx),
+  it('sweeps offers the fallen player sent and received', () => {
+    const offered = okApply(
+      kernel.applyAction(baseState(), declare('p2', 'p1', 'peace'), ctx()),
     ).state;
-    // p2 is eliminated: the scheduled event fires exactly like victoryModule emits it.
-    s.players.p2 = { ...s.players.p2!, status: 'defeated' };
-    s.scheduled = [
+    offered.players.p2 = { ...offered.players.p2!, status: 'defeated' };
+    offered.scheduled = [
       { id: 'evt:d', at: 1, type: 'player.eliminated', payload: { playerId: 'p2' }, seq: 0 },
     ];
-    s.scheduleSeq = 1;
-    const r = kernel.advanceTo(s, { ...ctx, now: 1 });
+    offered.scheduleSeq = 1;
+    const r = kernel.advanceTo(offered, ctx(1));
     if (!r.ok) throw new Error(r.code);
-    expect(r.state.diplomacyOffers?.[pairKey('p1', 'p2')]).toBeUndefined();
-    expect(r.events).toContainEqual({
-      type: 'diplomacy.rejected',
-      payload: { from: 'p2', to: 'p1', stance: 'peace' },
-    });
-  });
-});
-
-describe('diplomacy module — capability (stance → relation)', () => {
-  it('maps every stance onto the coarse relation', () => {
-    expect(stanceToRelation('war')).toBe('hostile');
-    expect(stanceToRelation('peace')).toBe('neutral');
-    expect(stanceToRelation('pact')).toBe('neutral');
-    expect(stanceToRelation('alliance')).toBe('ally');
-  });
-
-  it('exposes getStance/getRelation through the capability registry', () => {
-    const probe: GameModule = {
-      id: 'probe',
-      version: '1.0.0',
-      setup(api) {
-        api.onAction('probe.relation', (_a, h) => {
-          const dip = h.capability<DiplomacyCapability>('diplomacy');
-          const rel = dip?.getRelation(h.state, 'p1', 'p2') ?? 'hostile';
-          h.emit('probe.result', { rel, stance: dip?.getStance(h.state, 'p1', 'p2') });
-        });
-      },
-    };
-    const s = baseState();
-    setStance(s, 'p1', 'p2', 'alliance');
-    const withDip = createKernel([probe, diplomacyModule]);
-    const r = okApply(withDip.applyAction(s, act('probe.relation', 'p1', {}), ctx));
-    expect(r.events[0]?.payload).toEqual({ rel: 'ally', stance: 'alliance' });
-    // graceful degradation: without the module the probe falls back to hostile
-    const without = createKernel([probe]);
-    const r2 = okApply(without.applyAction(s, act('probe.relation', 'p1', {}), ctx));
-    expect(r2.events[0]?.payload).toEqual({ rel: 'hostile', stance: undefined });
+    expect(r.state.diplomacyOffers).toBeUndefined(); // the dead letter is gone
   });
 });

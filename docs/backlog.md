@@ -17,7 +17,7 @@
 
 `[core]` `packages/shared-core/src/modules` (+ `data`) · `[act]` `action-layer` ·
 `[srv]` `server` · `[cli]` `client` · `[proto]` `prototype` · `[data]` `data/*.json` ·
-`[docs]` `docs` · `[sec]` CI/сканеры (`.gitlab-ci.yml`, `docs/security`, конфиги сканеров)
+`[docs]` `docs` · `[sec]` CI/сканеры (`.github/workflows/security.yml`, `docs/security`, конфиги сканеров)
 
 ## Статусы
 
@@ -28,8 +28,9 @@
 > (орбита/десант/захват/бомбардировка/ПВО), здания, флот⊕армия+транспорт, **типы
 > планет**, **victory-модуль** (data-driven очки), **`visibleState`** (туман войны),
 > каркас **action-layer**, multiplayer-slice, **F6 туман на рассылке**, играбельный прототип,
-> **дипломатия в ядре** (D1+D2), **предматчевые технологии** (C3), радарные бонусы тех/фракций (A2).
-> 855 тестов зелёные. Блоки A, B, C, D закрыты целиком — ядро (этап 1) собрано.
+> **дипломатия в ядре** (D1+D2+D3), **предматчевые технологии** (C3), радарные бонусы
+> тех/фракций (A2), **шпионаж-фундамент** (SPY-1). Тесты зелёные (актуальный счётчик — в
+> шапке `state.md`). Блоки A, B, C, D закрыты целиком — ядро (этап 1) собрано.
 
 ---
 
@@ -90,76 +91,62 @@
   (`war`/`peace`/`pact`/`alliance`, симметрично, публично — не режется туманом). Чистые
   примитивы `state/diplomacy.ts` (`pairKey`/`getStance`/`setStance`/`DEFAULT_STANCE='war'`,
   дефолт сохраняет текущее FFA: разные владельцы = враги без модуля). В `delta`-META; 10 тестов.
-- **D2** ✅ `diplomacyModule` (ядро): понижение стойки **одностороннее** (`diplomacy.declare`),
-  повышение — **по согласию** (`diplomacy.propose` → оффер в `state.diplomacyOffers` (pairKey,
-  один на пару, новее замещает; туман показывает оффер только его участникам) →
-  `diplomacy.accept`/`diplomacy.reject`); любой сдвиг стойки аннулирует оффер пары. События
-  `diplomacy.changed`/`proposed`/`rejected`; payload-схемы 4 действий; capability `diplomacy`
-  `{getStance, getRelation}` (state параметром; war→hostile, peace/pact→neutral,
-  alliance→ally). `combat.isHostile` по-прежнему читает стойки напрямую (D1). **Коалиция —
-  только между людьми**: `alliance` с ИИ-игроком (`Player.ai`, сеется картой/слотом/
-  прототипом; NET-места не брендируются — botness там = живая занятость) →
-  `E_BOT_ALLIANCE`; мир/пакт с ботом можно (GDD §3). Офферы аннулируются при
-  поражении участника (`player.eliminated` → `diplomacy.rejected`); id игроков не
-  могут содержать `|` (сепаратор pair-key, гейт в схеме карты и слотах). 23 теста
-  модуля + туман/дельта. Прототип пока живёт на своём упрощённом `diplomacy.declare`
-  (то же правило: редьюсер режет `E_BOT_ALLIANCE`, меню гасит кнопку «Союз» для ИИ;
-  его односторонние повышения расходятся со схемой шины — снять при переводе на
-  ядровой модуль).
+- **D2** ✅ `diplomacyModule` (`modules/diplomacy.ts`): действие `diplomacy.declare
+{target, stance}` — **эскалация унилатеральна** (только к войне по оси
+  alliance→pact→peace→war; смягчение → `E_CONSENT_REQUIRED`, иначе жертва выключала бы
+  чужой бой односторонним «миром»); событие `diplomacy.changed`. Провайдит capability
+  `diplomacy` (`getRelation`, контракт в `state/diplomacy.ts`), которую `combat.isHostile`
+  читает с фолбэком на прямой D1-стенс (мягкая деградация); маппинг `stanceToRelation`
+  (war→hostile, peace/pact→neutral, alliance→ally). Схема payload'а в гейте; в
+  `DEV_MODULES`. 8 тестов (вкл. e2e peace→declare→бой).
+- **D3** ✅ Consent-протокол смягчения — то же действие `diplomacy.declare`, взаимно:
+  первое дружественное объявление записывает **оффер** (`GameState.diplomacyOffers`,
+  направленный `from>to`; станс не меняется, событие `diplomacy.offered`), встречное
+  объявление того же станса **коммитит** пару (`diplomacy.changed`) и чистит офферы;
+  любая эскалация аннулирует переговоры (инвариант: живой оффер всегда строго дружелюбнее
+  текущего станса). Офферы **приватны паре** — `visibleState` вырезает чужие переговоры;
+  в `delta`-META. Заменил D2-заглушку `E_CONSENT_REQUIRED`; `E_ALREADY_OFFERED` на повтор.
+  9 тестов (модуль + примитивы + туман + дельта).
+- **D4** ⏳ `[proto]` Миграция прототипа на ядровый `diplomacyModule` — сейчас существуют
+  **две** реализации `diplomacy.declare` с разной семантикой: прототипная в `game.ts`
+  (унилатеральная, вкл. односторонний «мир» — допустимо в песочнице с ботами) и ядровая
+  (D2/D3, consent). Кернел запрещает два хендлера одного типа, поэтому: убрать
+  прототипный модуль из `MODULES`, подключить ядровый; адаптировать UI меню дипломатии
+  под офферы (входящие/исходящие «предложить мир/пакт/союз», индикация ожидания
+  согласия); научить бот-дипломатию отвечать на офферы через favour-шкалу
+  (`botFavour` ≥ порога → бот декларирует тот же станс = принятие; ниже → игнор);
+  `newGame`-посев `peace` через `setStance` не меняется. Тесты бот-принятия.
+  **Поверх (эта ветка):** коалиция — только между людьми: alliance-declare с участием
+  ИИ-игрока (`Player.ai`, сеется картой/слотом/прототипом; NET-места не брендируются —
+  botness там = живая занятость) → `E_BOT_ALLIANCE`, ни оффером, ни коммитом не встаёт;
+  офферы павшего игрока (посланные и полученные) выметаются на `player.eliminated`;
+  id игроков не могут содержать `|`/`>` (сепараторы ключей — гейт `|` в схеме карты и слотах).
 
-## Блок SPY · Шпионаж `[core]` (фундамент) → `[srv]`/`[proto]`
-
-> Кража разведданных сквозь туман. Фундамент — **окна разведданных** (`IntelGrant`):
-> временный доступ к скрытому, который проекция `visibleState` уважает только для вора.
-
-- **SPY-1** ✅ Фундамент в ядре: `GameState.intel` (per-игрок гранты `{kind, target, until}`,
-  приватны — туман отдаёт только свои), `espionageModule` — действие `espionage.spy
-  {target, kind: treasury|planet|fleets, planetId?}`: плата (хук `espionage.cost`, база
-  150¤, сгорает и при провале), шанс (хук `espionage.chance`, база 0.6, кламп 0.05–0.95,
-  seeded RNG), длительность окна (хук `espionage.duration`, база 24ч ×timeScale). Успех →
-  грант + событие `intel.stolen` (роутится вору через `owner`); провал → `espionage.failed`
-  вору. Кап 8 грантов (старейший вытесняется), чистка на `time.advanced`, истечение
-  проверяет и сама проекция. Payload-схема, delta-META, 16 тестов вкл. anti-leak.
-- **SPY-2** 🔒(серверный чат) Кража пингов/переписок: возможна только когда пинги и
-  сообщения станут серверными сущностями (сейчас чат — клиентский плацебо, честно
-  задизейблен в NET). Грант `comms` открывает окну вора чужой канал.
-- **SPY-3** ⏳ Контрразведка: шанс обнаружения попытки (событие жертве), понижение
-  `espionage.chance` зданием/техом, «сжечь» чужой грант.
-- **SPY-4** ⏳ Данные + UI: стоимости/шансы в `data/espionage.json` вместо базовых
-  констант; кнопка «Шпионаж» в дип-меню прототипа (казна/планета/флоты цели), значок
-  активного окна на карточках.
-
-## Блок EFX · Ядро: движок трейтов/эффектов `[core]` `[data]`
-
-> Последний несобранный deliverable этапа 1. Словарь уже есть: `EffectRuleSchema`
-> (`trigger`/`effect`/`params`/`chance`) валидирует `data/events.json`, но
-> интерпретатора нет — юнитовые `traits` модули читают точечно (artillery/immobile/hero).
-
-- **EFX-1** ⏳ `effectsModule`: универсальный интерпретатор EffectRule (подписка на
-  триггеры → применение эффектов по `params`, `chance` через seeded RNG); первые два
-  эффекта — `add_trait` и `modify_resource` (ровно то, что уже лежит в `events.json`);
-  неизвестный `effect`/`trigger` игнорируется мягко (graceful degradation); тесты.
-
-## Блок E · Слой действий (Этап 2) `[act]` _(начат devin)_
-
-- **E1** ⏳ Зод-схемы на каждый тип действия (валидация входа по типу).
-- **E2** ⏳ Стор receipts с интерфейсом под персистентность (вместо in-memory).
-- **E3** 🔒(E1) Интеграционный тест: невалидное / повтор по тому же id / несанкц.
-  действие → безопасный отказ с кодом.
+- **E1** ✅ Зод-схемы на каждый тип действия (закрыт SV-1.2:
+  `shared-core/actions/payloadSchemas.ts` инжектится в гейт как `payloadValidator`).
+- **E2** ✅ Стор receipts с интерфейсом под персистентность (закрыт сервером:
+  `ReceiptStore` в `store/` — in-memory + Postgres, durable receipts переживают рестарт).
+- **E3** ✅ Интеграционный тест: невалидное / повтор по тому же id / несанкц.
+  действие → безопасный отказ с кодом (абьюз-e2e зелёный, см. `state.md`).
 
 ## Блок F · Сервер (Этап 3) `[srv]` _(опирается на `[act]`)_
 
-- **F1** ⏳ Скелет Fastify + health-роут.
-- **F2** 🔒(F1) Postgres JSONB: load/save `GameState`.
-- **F3** 🔒(F1) Redis/BullMQ: будилка по `scheduled`-событиям (флот прибудет через N ч).
-- **F4** 🔒(F1) WebSocket-слой: пуш diff'ов.
-- **F5** 🔒(F2) Очередь действий per-player (последовательная обработка → нет double-spend).
+- **F1** ✅ Скелет Fastify + health-роут (SV-0.1: `/health`·`/ready`·`/metrics`, pino, drain).
+- **F2** ✅ Postgres JSONB: load/save `GameState` + квитанции (`store/postgres.ts`),
+  строгий commit-before-broadcast.
+- **F3** ✅ (переопределён): будилка по `scheduled`-событиям — v1 без Redis/BullMQ
+  (`clockDriver.ts`, in-process); durable-эволюция — **pg-boss** на мульти-процессе
+  (решение в `tech-stack.md`).
+- **F4** ✅ WebSocket-слой: пуш per-player дельт (`wsServer.ts` + `protocol.ts`).
+- **F5** ✅ Последовательная обработка действий: per-room актор-mailbox на durable-пути
+  (double-spend невозможен; per-player rate-limit сверху).
 - **F6** ✅ Фильтр видимости **перед** отправкой клиенту: `MatchRoom` рассылает
   per-player дельты от `visibleState` (+ сигнатуры/память отдельными полями), события
   тоже фильтруются по видимости; e2e-тест «враг скрыт + нет утечки `red_1` по проводу».
-  Дальше: AOI-оптимизация, JWT (F7).
-- **F7** 🔒(F4) JWT в WS-handshake.
-- **F8** ✅ Persist + драйвер пробуждения в `packages/server/main.ts` (паритет с
+  Дальше: AOI-оптимизация.
+- **F7** ✅ JWT в WS-handshake (SE-0.1: join-токен в `?token=`, `auth.ts`, пин алгоритма,
+  Origin-allowlist; opt-in через `AUTH_JWT_SECRET`).
+- **F8** ✅ Persist + драйвер пробуждения в `packages/server/src/main.ts` (паритет с
   прото-сервером, который имел их с PA-4.1). `persistence.ts` (`createStores`: Memory по
   умолчанию, Postgres по `DATABASE_URL` + `migrate`; `snapshotOf`), `clockDriver.ts`
   (`msUntilNextEvent`→`tick`, cap `MAX_DELAY`), `main.ts` wired (observe→persist+receipt,
@@ -298,18 +285,19 @@
 
 - **PERF-1** ✅ **Сведено и проверено** (ветка devin `engine-optimization`, влита):
   горячий путь планировщика (`kernel.ts`: `scheduled` отсортирован → `earliestDue` O(1)
-  + бинарная вставка), route-кэш в `movement`, оптимизации `combat`/`orbit`/`economy`.
-  **Детерминизм сохранён** (golden-RNG + 587 тестов зелёные).
+  - бинарная вставка), route-кэш в `movement`, оптимизации `combat`/`orbit`/`economy`.
+    **Детерминизм сохранён** (golden-RNG + 587 тестов зелёные).
 
 ## Блок SEC · AppSec / DevSecOps `[sec]`
 
 > Трек безопасности — живёт рядом с продуктовым и раздаётся как задачи. База —
-> `.gitlab-ci.yml` + `docs/security/pipeline.md`. Один кирпич = один сканер/правило/шаг.
+> `.github/workflows/security.yml` + `docs/security/pipeline.md`. Один кирпич = один сканер/правило/шаг.
 > Глубокие роадмапы (задачи/подзадачи): `secure-sdlc-roadmap.md` (как строим безопасно) и
 > `secure-environment-roadmap.md` (как безопасно эксплуатируем) — SEC/F-бирки сшиты с ними.
 
-- **SEC-0** ✅ Базовый GitLab-пайплайн: SAST (Semgrep) + SCA (pnpm audit + osv-scanner)
-  + секреты (Gitleaks) + Trivy fs + SBOM (Syft), ratcheting-гейт.
+- **SEC-0** ✅ Базовый DevSecOps-пайплайн: SAST (Semgrep) + SCA (pnpm audit + osv-scanner)
+  - секреты (Gitleaks) + Trivy fs + SBOM (Syft), ratcheting-гейт. Сейчас живёт в GitHub
+    Actions (`security.yml`; мигрирован с GitLab — `docs/security/audit-2026-06-27.md`).
 - **SEC-1** ⏳ Триаж + baseline: разобрать находки, подавить ложные **с обоснованием**
   (`.semgrepignore` / `.gitleaks.toml` / `.trivyignore`), разобранные сканеры → блокирующие.
 - **SEC-2** ⏳ Кастомные Semgrep-правила под инварианты ядра: запрет `Math.random`/

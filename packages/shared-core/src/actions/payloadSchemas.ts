@@ -55,16 +55,6 @@ export const actionPayloadSchemas: Record<string, z.ZodType> = {
   'unit.build': z.object({ planetId: id, unit: id, count: count.optional() }),
   // technology.ts
   'technology.research': z.object({ technology: id }),
-  // diplomacy.ts — a declare only LOWERS a stance (so `alliance` is never declarable)
-  // and a propose only RAISES one (so `war` is never proposable); the CORE
-  // diplomacyModule enforces the same rule against the pair's current stance.
-  // NB: the prototype's transitional `diplomacy.declare` handler accepts any stance
-  // (its client negotiates consent) — under this gate its unilateral upgrades would
-  // be schema-rejected; reconciled when the prototype moves to the core module.
-  'diplomacy.declare': z.object({ target: id, stance: z.enum(['war', 'peace', 'pact']) }),
-  'diplomacy.propose': z.object({ target: id, stance: z.enum(['peace', 'pact', 'alliance']) }),
-  'diplomacy.accept': z.object({ from: id }),
-  'diplomacy.reject': z.object({ from: id }),
   // espionage.ts — steal a time-boxed intel window; `planetId` only with kind 'planet'
   'espionage.spy': z
     .object({
@@ -84,6 +74,12 @@ export const actionPayloadSchemas: Record<string, z.ZodType> = {
   }),
   'market.buy': z.object({ orderId: id, amount: z.number().finite().positive() }),
   'market.cancel': z.object({ orderId: id }),
+  // diplomacy.ts — one action for the whole protocol (D2+D3): escalation applies
+  // at once, a friendlier declaration records/commits a mutual-consent offer
+  'diplomacy.declare': z.object({
+    target: id,
+    stance: z.enum(['war', 'peace', 'pact', 'alliance']),
+  }),
 };
 
 /** True if `payload` is a valid payload for the client-submittable action `type`. A type

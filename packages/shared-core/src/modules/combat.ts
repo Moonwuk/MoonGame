@@ -16,7 +16,7 @@ import { MS_PER_HOUR } from '../util/time';
 import { sumUnitStat } from '../util/stacks';
 import { requireOwnedIdleFleet } from '../util/fleet';
 import { isCapturable } from '../state/sectorKind';
-import { getStance } from '../state/diplomacy';
+import { getStance, type DiplomacyCapability } from '../state/diplomacy';
 import { distance } from '../state/route';
 /** Hard cap on rounds so a zero-damage stalemate can't run forever (fail-secure). */
 const MAX_COMBAT_ROUNDS = 240;
@@ -93,9 +93,15 @@ function isHostile(h: HandlerContext, a: string, b: string): boolean {
   if (a === b) {
     return false;
   }
-  // Diplomacy lives in `state.diplomacy` (D1). Only an explicit `war` stance is
-  // hostile; the default for an unrecorded pair is `war` (FFA), so behaviour is
-  // unchanged unless a game seeds peace/pact/alliance (the prototype does).
+  // The `diplomacy` capability (D2) owns the stance→relation projection; consult
+  // it when a diplomacy module is present. Without one, fall back to the D1 read:
+  // only an explicit `war` stance is hostile, and the default for an unrecorded
+  // pair is `war` (FFA) — the capability's base mapping matches, so behaviour is
+  // identical either way (graceful degradation, invariant #3).
+  const diplomacy = h.capability<DiplomacyCapability>('diplomacy');
+  if (diplomacy) {
+    return diplomacy.getRelation(h.state, a, b) === 'hostile';
+  }
   return getStance(h.state, a, b) === 'war';
 }
 

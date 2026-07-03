@@ -1,6 +1,6 @@
 import { buildingLevel, type GameData } from '../data/schemas';
 import { deepClone } from '../util/clone';
-import { pairHas } from './diplomacy';
+import { offerInvolves } from './diplomacy';
 import type { Fleet, GameState, PlanetId, PlayerId, ScheduledEvent } from './gameState';
 
 /** A scheduled event belongs to a player when it clearly references their own planet,
@@ -121,7 +121,12 @@ function withinRadiusAt(
     if (dx * dx + dy * dy <= r2) out.add(planet.id);
   }
 }
-function withinRadius(state: GameState, originId: PlanetId, radius: number, out: Set<PlanetId>): void {
+function withinRadius(
+  state: GameState,
+  originId: PlanetId,
+  radius: number,
+  out: Set<PlanetId>,
+): void {
   const origin = state.planets[originId]?.position;
   if (origin) withinRadiusAt(state, origin, radius, out);
 }
@@ -228,7 +233,11 @@ function coverageFor(state: GameState, viewerId: PlayerId, data: GameData): Cove
 
 /** The set of nodes `viewerId` currently identifies (full detail). Exported so
  *  `visibilityModule` snapshots exactly what the projection treats as live. */
-export function identifiedNodes(state: GameState, viewerId: PlayerId, data: GameData): Set<PlanetId> {
+export function identifiedNodes(
+  state: GameState,
+  viewerId: PlayerId,
+  data: GameData,
+): Set<PlanetId> {
   return coverageFor(state, viewerId, data).identify;
 }
 
@@ -270,8 +279,34 @@ export function isVisibleTo(
  * (it leaks future intent); radar-only enemy fleets become coarse signatures.
  */
 export function visibleState(state: GameState, viewerId: PlayerId, data: GameData): VisibleState {
+  return visibleView(state, viewerId, data).view;
+}
+
+/** A player's projection plus the identify set it was computed from. */
+export interface VisibleView {
+  view: VisibleState;
+  /** Nodes the viewer currently identifies — the same set `identifiedNodes` returns. */
+  identified: Set<PlanetId>;
+}
+
+/**
+ * `visibleState` plus the identify set behind it, from ONE coverage pass.
+ * The broadcast path needs both (the view to diff, the set to fog-filter
+ * events); computing them together halves the per-player coverage work.
+ */
+export function visibleView(state: GameState, viewerId: PlayerId, data: GameData): VisibleView {
+  const coverage = coverageFor(state, viewerId, data);
+  return { view: project(state, viewerId, data, coverage), identified: coverage.identify };
+}
+
+/** The projection body, over a precomputed coverage (see `visibleView`). */
+function project(
+  state: GameState,
+  viewerId: PlayerId,
+  data: GameData,
+  { identify, radar }: Coverage,
+): VisibleState {
   const view = deepClone(state) as VisibleState;
-  const { identify, radar } = coverageFor(state, viewerId, data);
 
   // Stolen intel windows (espionage): the viewer's LIVE grants open narrow holes in
   // the fog below. Expired grants open nothing — expiry is enforced HERE, at the
@@ -305,13 +340,14 @@ export function visibleState(state: GameState, viewerId: PlayerId, data: GameDat
     if (own?.length) view.intel = { [viewerId]: own };
     else delete view.intel;
   }
-  // Diplomatic STANCES are public knowledge; pending OFFERS are between the two
-  // parties only — a third player must not see who is courting whom. A map left
-  // EMPTY after the strip is removed entirely: otherwise the undefined→{} flip
+  // Diplomatic OFFERS are private to the two negotiating parties (the committed
+  // stances themselves are public): a third party must not see who is suing for
+  // peace with whom. Keep only offers the viewer sends or receives; a map left
+  // EMPTY after the strip is removed entirely — otherwise the undefined→{} flip
   // rides a third party's delta and leaks "someone made the match's first offer".
   if (view.diplomacyOffers) {
     for (const key of Object.keys(view.diplomacyOffers)) {
-      if (!pairHas(key, viewerId)) delete view.diplomacyOffers[key];
+      if (!offerInvolves(key, viewerId)) delete view.diplomacyOffers[key];
     }
     if (Object.keys(view.diplomacyOffers).length === 0) delete view.diplomacyOffers;
   }

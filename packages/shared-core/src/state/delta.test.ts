@@ -79,14 +79,22 @@ describe('state delta — diff/apply round-trip', () => {
   it('carries diplomacyOffers as a meta key (add and clear)', () => {
     const prev = base();
     const next = deepClone(prev);
-    next.diplomacyOffers = { 'p1|p2': { from: 'p1', stance: 'peace' } };
-    expect(diffState(prev, next).meta).toMatchObject({
-      diplomacyOffers: { 'p1|p2': { from: 'p1', stance: 'peace' } },
-    });
+    next.diplomacyOffers = { 'p1>p2': 'peace' };
+    expect(diffState(prev, next).meta).toMatchObject({ diplomacyOffers: { 'p1>p2': 'peace' } });
     expect(applyDelta(prev, diffState(prev, next))).toEqual(next);
     // and clearing it removes the key on the other side
     const wire = JSON.parse(JSON.stringify(diffState(next, prev)));
     expect('diplomacyOffers' in applyDelta(next, wire)).toBe(false);
+  });
+
+  it('treats a key-reordered but logically equal entity as unchanged', () => {
+    const prev = base();
+    const next = deepClone(prev);
+    // Same content, different key insertion order — logically the same entity.
+    next.players.p1 = { name: 'One', id: 'p1', resources: { metal: 10 }, faction: 'x', status: 'active' };
+    const delta = diffState(prev, next);
+    expect(delta.changed).toEqual({});
+    expect(delta.meta).toBeUndefined();
   });
 
   it('removes a meta key that went defined → undefined (survives the JSON wire)', () => {

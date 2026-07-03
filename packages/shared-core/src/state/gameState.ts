@@ -84,16 +84,10 @@ export interface PlayerTechnologyState {
  *  - `pact`     → neutral (a non-aggression pact — like peace, but a declared,
  *                 breakable agreement rather than mere absence of war)
  *  - `alliance` → ally (shared side; an ally's world can't be attacked)
- *  The stance→relation mapping itself lives in `diplomacyModule` (D2). */
+ *  The stance→relation mapping is `stanceToRelation` (`state/diplomacy.ts`),
+ *  provided as the `diplomacy` capability by `diplomacyModule` (D2). */
 export type DiplomaticStance = 'war' | 'peace' | 'pact' | 'alliance';
 
-/** A standing diplomatic offer on a pair: `from` proposed raising the pair's
- *  stance to `stance`; it waits until the other party accepts (`diplomacy.accept`),
- *  rejects (`diplomacy.reject`), or the pair's stance changes (which voids it). */
-export interface DiplomacyOffer {
-  from: PlayerId;
-  stance: DiplomaticStance;
-}
 
 /** A stolen, time-boxed intel window (espionage): while `until` is ahead of the
  *  world clock, `visibleState` lets the OWNING viewer see through the fog at the
@@ -365,16 +359,17 @@ export interface GameState {
    *  pair key (`pairKey`). Symmetric and PUBLIC (not fog-gated — who is at war /
    *  allied is open knowledge). A pair with no entry defaults to `DEFAULT_STANCE`
    *  (war), so absence = the engine's no-diplomacy FFA. Read/written through
-   *  `state/diplomacy.ts`; `diplomacyModule` (D2) owns the actions and exposes
-   *  the `diplomacy` capability. Combat's `isHostile` reads stances directly. */
+   *  `state/diplomacy.ts`; `diplomacyModule` (D2) owns the actions and exposes it
+   *  as the `diplomacy` capability that drives combat's `isHostile`. */
   diplomacy?: Record<string, DiplomaticStance>;
-  /** Pending diplomatic offers, keyed by the same canonical `pairKey` as
-   *  `diplomacy` — at most ONE standing offer per pair (a newer proposal
-   *  overwrites it, a counter-proposal replaces it). An offer only ever
-   *  UPGRADES the pair's stance (toward alliance); downgrades are unilateral
-   *  declarations and never wait here. Owned by `diplomacyModule` (D2);
-   *  fog-sensitive: a viewer sees only offers they are a party to. */
-  diplomacyOffers?: Record<string, DiplomacyOffer>;
+  /** Standing DE-ESCALATION offers (D3), keyed by the directed `offerKey`
+   *  (`from>to`) → the friendlier stance offered. An offer is recorded by a
+   *  friendly `diplomacy.declare` and commits when the other side declares the
+   *  same stance (mutual consent); any escalation between the pair voids both
+   *  directions. Unlike `diplomacy`, offers are PRIVATE to the two parties —
+   *  `visibleState` strips everyone else's negotiations. Maintained by
+   *  `diplomacyModule`; helpers in `state/diplomacy.ts`. */
+  diplomacyOffers?: Record<string, DiplomaticStance>;
   /** Stolen intel windows per beneficiary (`espionageModule`). PRIVATE: a viewer's
    *  projection carries only their own grants — who spies on whom is never public. */
   intel?: Record<PlayerId, IntelGrant[]>;
