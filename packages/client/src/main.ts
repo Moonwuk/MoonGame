@@ -181,8 +181,9 @@ function runMatch(getState: () => GameState, bounds: Bounds): void {
 
   let vp: Viewport = { left: 0, top: 0, right: 1, bottom: 1 };
   let cam: Cam = { scale: 1, x: 0, y: 0 };
+  let dpr = 1;
   const resize = (): void => {
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
     const w = window.innerWidth;
     const h = window.innerHeight;
     canvas.width = Math.round(w * dpr);
@@ -223,7 +224,7 @@ function runMatch(getState: () => GameState, bounds: Bounds): void {
 
   const loop = (): void => {
     const state = getState();
-    renderMap(g, state, cam, vp, bounds, { now: state.time });
+    renderMap(g, state, cam, vp, bounds, { now: state.time, dpr });
     requestAnimationFrame(loop);
   };
   requestAnimationFrame(loop);
