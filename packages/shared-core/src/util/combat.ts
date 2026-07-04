@@ -2,6 +2,7 @@ import type { HandlerContext } from '../kernel/module';
 import type { CombatantRef, Fleet, GameState, PlanetId, UnitStack } from '../state/gameState';
 import type { GameData, UnitDef } from '../data/schemas';
 import { sumUnitStat } from './stacks';
+import { effectiveStats } from './loadout';
 import { getStance, type DiplomacyCapability } from '../state/diplomacy';
 
 /**
@@ -129,11 +130,13 @@ export function applyDamage(
       if (!def) {
         continue;
       }
-      const perShip = def.stats.hp > 0 ? def.stats.hp : 1;
+      const eff = effectiveStats(def, stack, data);
+      const effHp = eff.hp ?? 0;
+      const perShip = effHp > 0 ? effHp : 1;
 
       // Ablative shield absorbs first (shields-roadmap SH-0.2); only the overflow
       // reaches the hull. A shield never kills — a ship dies only when its hull hits 0.
-      const shieldPerShip = def.stats.shield ?? 0;
+      const shieldPerShip = eff.shield ?? 0;
       if (shieldPerShip > 0) {
         let shield = stack.shieldHp ?? stack.count * shieldPerShip;
         const shieldAbsorbed = Math.min(remaining, shield);

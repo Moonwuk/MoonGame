@@ -4,6 +4,7 @@ import type { GameData } from '../data/schemas';
 import { timeScaleOf, type Context } from '../action/types';
 import { MS_PER_HOUR } from '../util/time';
 import { requireOwnedIdleFleet } from '../util/fleet';
+import { effectiveStats } from '../util/loadout';
 import { isCapturable } from '../state/sectorKind';
 import {
   applyDamageToSide,
@@ -48,13 +49,15 @@ function applyRetreatToll(fleet: Fleet, data: GameData): void {
     if (!def) {
       continue;
     }
-    const perHull = def.stats.hp > 0 ? def.stats.hp : 1;
+    const eff = effectiveStats(def, stack, data);
+    const effHull = eff.hp ?? 0;
+    const perHull = effHull > 0 ? effHull : 1;
     const maxHull = stack.count * perHull;
     const newHull = (1 - RETREAT_TOLL) * (stack.hp ?? maxHull);
     const newCount = newHull <= 0 ? 0 : Math.ceil(newHull / perHull);
     if (newCount <= 0 || newCount > stack.count) continue; // fail-secure: never grow
 
-    const perShield = def.stats.shield ?? 0;
+    const perShield = eff.shield ?? 0;
     if (perShield > 0) {
       const newShield = (1 - RETREAT_TOLL) * (stack.shieldHp ?? stack.count * perShield);
       stack.shieldHp = Math.min(newShield, newCount * perShield); // cap at surviving capacity

@@ -6,6 +6,7 @@ import { MS_PER_HOUR } from '../util/time';
 import { getStance } from '../state/diplomacy';
 import { distance } from '../state/route';
 import { applyDamageToSide, isHostile, ownFleet, removeIfWiped } from '../util/combat';
+import { effectiveStats } from '../util/loadout';
 
 /** A fleet's continuous map position at `now`: its node, its parked lane point,
  *  or its interpolated spot mid-leg (mirrors movement's own progress math). null
@@ -44,7 +45,7 @@ function artilleryPower(fleet: Fleet, data: GameData): number {
   for (const s of fleet.units) {
     const def = data.units[s.unit];
     if (def && def.traits.includes('artillery')) {
-      total += s.count * def.stats.attack;
+      total += s.count * (effectiveStats(def, s, data).attack ?? 0);
     }
   }
   return total;
@@ -58,7 +59,7 @@ function artilleryRange(fleet: Fleet, data: GameData): number {
     if (s.count <= 0) continue;
     const def = data.units[s.unit];
     if (def && def.traits.includes('artillery')) {
-      r = Math.max(r, def.stats.range ?? 0);
+      r = Math.max(r, effectiveStats(def, s, data).range ?? 0);
     }
   }
   return r;

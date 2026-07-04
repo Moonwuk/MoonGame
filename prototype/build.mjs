@@ -869,6 +869,29 @@ button.b:disabled{opacity:.32;cursor:not-allowed;color:var(--dim);border-color:v
 #setup .tpl-stats .syn{display:block;color:var(--cyan);font-size:11px;margin-top:4px;line-height:1.5;}
 #setup .tpl-stats .syn.none{color:var(--dim);}
 #setup .tpl-cost{color:var(--dim);font-size:11px;margin-top:6px;}
+/* polished live stat preview — labelled rows with base→derived + a track bar (the
+   approved loadout-menu look). Shared by the ship / hero / squadron fitting panes. */
+.lstats{border:1px solid var(--line-hi);border-radius:10px;padding:13px 14px;margin-bottom:8px;background:rgba(255,255,255,.02);}
+.lstats .lhd{font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--cyan-dim);font-weight:800;margin-bottom:11px;}
+.lstats .lsum{font-size:12px;color:var(--ink);line-height:1.7;}
+.lstats .lsum b{color:#eafffb;}
+.lstats .lsum .lpl{color:var(--amber);}
+.lstat{margin-bottom:11px;}
+.lstat:last-child{margin-bottom:0;}
+.lstat .lrow{display:flex;justify-content:space-between;align-items:baseline;font-size:12px;margin-bottom:4px;}
+.lstat .lnm{color:var(--dim);font-weight:700;}
+.lstat .lval{font-weight:800;color:#eafffb;}
+.lstat .lval .lb{color:var(--dim);font-weight:600;}
+.lstat .lval .lup{color:var(--grn);}
+.lstat .lval .ldn{color:var(--amber);}
+.lstat .ltrack{height:7px;border-radius:4px;background:rgba(255,255,255,.06);overflow:hidden;display:flex;}
+.lstat .ltrack .lbar{background:var(--cyan-dim);}
+.lstat .ltrack .ldelta{background:var(--grn);}
+.synlist{border:1px solid var(--line);border-radius:10px;padding:11px 13px;}
+.synlist .syn{display:block;color:var(--cyan);font-size:11px;line-height:1.55;margin-bottom:4px;}
+.synlist .syn:last-child{margin-bottom:0;}
+.synlist .syn em{color:var(--amber);font-style:normal;}
+.synlist .syn.none{color:var(--dim);}
 /* hero fitting — Minecraft-inventory style: equip "bays" + a module inventory grid you
    grab from (tap to pick onto the cursor, tap a bay to place; a ghost trails the pointer) */
 .fitpane .heroslots{grid-template-columns:repeat(2,1fr);}
@@ -889,8 +912,6 @@ button.b:disabled{opacity:.32;cursor:not-allowed;color:var(--dim);border-color:v
 .fitpane .mcell.held{border-color:var(--amber);box-shadow:0 0 12px rgba(255,180,58,.45);}
 .fitpane .mcell.planned{opacity:.55;}
 .fitpane .mcell .badge{position:absolute;top:3px;right:6px;font:700 10px ui-monospace,monospace;color:var(--cyan);}
-#heldghost{position:fixed;z-index:80;pointer-events:none;display:none;transform:translate(-50%,-50%);
-  font-size:26px;filter:drop-shadow(0 0 7px rgba(53,214,230,.9));}
 /* hero grade (rarity) line — colour by tier */
 .fitpane .hgradeline{font:600 12px ui-monospace,monospace;letter-spacing:.5px;margin:2px 0 10px;}
 .fitpane .hgradeline.g-common{color:#8fa6ad;}
@@ -1375,7 +1396,6 @@ const html = `<!doctype html>
 <div id="setup">
   <div class="sbox">
     <div class="stitle"><span class="dia"></span><b>SKIRMISH SETUP</b></div>
-    <div class="stabs"><button data-stab="start" class="on">Старт</button><button data-stab="div">Дивизии</button><button data-stab="hero">Герои</button><button data-stab="ship">Верфь</button></div>
     <div id="setup-start" class="spane">
       <p class="ssub">Pick your homeworld on the map, choose how many rivals join, then launch. Empty
         slots are taken by the AI — switch a slot OFF to command a smaller sector, or switch
@@ -1393,15 +1413,11 @@ const html = `<!doctype html>
         <button class="spdchip" type="button" data-spd="50">×50</button>
       </div>
     </div>
-    <div id="setup-div" class="spane" style="display:none"></div>
-    <div id="setup-hero" class="spane fitpane" style="display:none"></div>
-    <div id="setup-ship" class="spane fitpane" style="display:none"></div>
     <button id="setupgo" class="sgo" disabled>LAUNCH</button>
     <button id="setupcancel" class="scancel">Back</button>
   </div>
 </div>
 <!-- hero fitting: the module "on the cursor" — follows the pointer (heroes setup tab) -->
-<div id="heldghost"></div>
 <!-- DEV TEST MODE — content rendered by testmode.ts; delete this one line to cut the markup -->
 <div id="testmode"></div>
 <script>${js}</script>

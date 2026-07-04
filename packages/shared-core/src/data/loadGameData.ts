@@ -31,6 +31,7 @@ export function composeGameDataBundle(readJson: JsonReader): Record<string, unkn
     planetTypes: readJson('planetTypes.json'),
     technologies: readJson('technologies.json'),
     scientists: readJson('scientists.json'),
+    modules: readJson('modules.json'),
   };
 }
 

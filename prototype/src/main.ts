@@ -57,6 +57,7 @@ import {
   divisionsOf,
   templatesOf,
   mobilizeDivision,
+  setDivisionTemplate,
   loadDivision,
   unloadDivision,
   setDivisionOfficer,
@@ -94,26 +95,8 @@ import {
   type Patrol,
 } from './game';
 import { OFFICERS } from './groundcombat';
-import {
-  DEFAULT_HEROES,
-  HERO_ABILITIES,
-  HERO_ABILITY_IDS,
-  HERO_GRADES,
-  HERO_ROSTER_COUNT,
-  heroSlots,
-  heroLoadoutInfo,
-  type HeroLoadout,
-} from './heroes';
-import {
-  SHIP_HULLS,
-  SHIP_MODULES,
-  SHIP_MODULE_IDS,
-  hullSlots,
-  shipStats,
-  shipLoadoutInfo,
-  DEFAULT_SHIP_LOADOUTS,
-  type ShipLoadout,
-} from './ships';
+import { DEFAULT_HEROES, type HeroLoadout } from './heroes';
+import { DEFAULT_SHIP_LOADOUTS, type ShipLoadout } from './ships';
 import {
   buildingLevel,
   buildingMaxLevel,
@@ -437,6 +420,7 @@ let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let aimPointer: { x: number; y: number } | null = null; // last canvas pointer (for the move preview)
 let hoverObj: string | null = null; // side-panel object under the pointer (data-desc key)
 let planetTab: PlanetTab = 'buildings';
+let mobTplIdx = 0; // which division template the mobilisation panel is assembling
 const buildQueues: Record<string, PlanetBuildQueue> = {};
 const logLines: string[] = [];
 let lastAiAt = 0;
@@ -1138,11 +1122,12 @@ function divisionsHtml(planetId: string): string {
       const hp = Math.round(d.units.reduce((n, u) => n + u.hp, 0));
       const off = d.officer ? OFFICERS[d.officer]?.name : '';
       h += `<div class="asset-row" data-desc="division"><span class="bicon">⊞</span><b>${esc(d.name)}</b><span class="dim">${comp} · ❤${hp}${off ? ' · ★' + esc(off) : ''}</span></div>`;
-      // Officer attach / detach (a hero-like leader; bonuses tuned in groundcombat).
-      h += `<div class="row">`;
+      // Ground hero = the division's officer: an immutable aura-leader that buffs the
+      // division it fights with (passive; activatable skills are space heroes only).
+      h += `<div class="hint">★ Наземный герой — аура своим в бою:</div><div class="row">`;
       for (const key of Object.keys(OFFICERS)) {
         const on = d.officer === key;
-        h += btn('officer', `${d.id}|${key}`, `${on ? '● ' : ''}${esc(OFFICERS[key]!.name)}`, !on);
+        h += btn('officer', `${d.id}|${key}`, `${on ? '● ' : ''}★ ${esc(OFFICERS[key]!.name)}`, !on);
       }
       if (d.officer) h += btn('officer', `${d.id}|`, 'Снять', true);
       h += `</div>`;
@@ -1152,14 +1137,32 @@ function divisionsHtml(planetId: string): string {
   }
   const tpls = templatesOf(s, ME);
   const res = s.players[ME]?.resources ?? {};
-  h += `<div class="sec">Мобилизовать дивизию</div>`;
+  const idx = Math.max(0, Math.min(mobTplIdx, tpls.length - 1));
+  const cur = tpls[idx] ?? tpls[0]!;
+  h += `<div class="sec">Сборка дивизии</div>`;
+  h += `<div class="row">`;
   for (let i = 0; i < tpls.length; i++) {
-    const t = tpls[i]!;
-    const f = formationStats(t);
-    const cost = Object.entries(f.cost).map(([r, a]) => `${a}${TECH_CUR[r] ?? r[0]}`).join(' ') || '—';
-    const afford = Object.entries(f.cost).every(([r, a]) => (res[r] ?? 0) >= a);
-    h += btn('mobilize', String(i), `${esc(t.name)} (${f.count}) · ${cost}`, afford && f.count > 0);
+    h += btn('mobtpl', String(i), esc(tpls[i]!.name), i !== idx);
   }
+  h += `</div>`;
+  // Tap a slot to cycle its род войск (пусто → пехота → танк → пусто).
+  h += `<div class="row">`;
+  for (let i = 0; i < FORMATION_SLOTS; i++) {
+    const u = cur.slots[i] ?? null;
+    h += btn('divslot', `${idx}|${i}`, u ? `${FORM_ICON[u] ?? '▪'} ${esc(FORM_RU[u] ?? u)}` : '＋', true);
+  }
+  h += `</div>`;
+  const f = formationStats(cur);
+  const cost = Object.entries(f.cost).map(([r, a]) => `${a}${r[0]}`).join(' ') || '—';
+  const afford = Object.entries(f.cost).every(([r, a]) => (res[r] ?? 0) >= a);
+  const syn = f.synergies.map((x) => esc(x.name)).join(' · ');
+  // Live influence on characteristics as you assemble (same bar preview as ships).
+  const bar = (label: string, val: number, max: number): string =>
+    `<div class="lstat"><div class="lrow"><span class="lnm">${label}</span><span class="lval">${val}</span></div>` +
+    `<div class="ltrack"><div class="lbar" style="width:${Math.round(Math.min(100, (val / max) * 100))}%"></div></div></div>`;
+  h += `<div class="lstats"><div class="lhd">Влияние на характеристики</div>${bar('⚔ Урон в атаке', f.attack, 300)}${bar('🛡 Урон в защите', f.defense, 300)}${bar('❤ Корпус', f.hp, 600)}</div>`;
+  h += `<div class="hint">состав ${f.count}/${FORMATION_SLOTS} · ${cost}${syn ? ' · ' + syn : ''}</div>`;
+  h += btn('mobilize', String(idx), `Мобилизовать «${esc(cur.name)}»`, afford && f.count > 0);
   h += `<div class="hint">Дивизия строится по шаблону из меню. На своём мире +1 HP/юнит/день; полностью выбитая исчезает.</div>`;
   return h;
 }
@@ -5188,6 +5191,14 @@ side.addEventListener('click', (ev) => {
     enqueueBuild(selPlanet!, { kind: 'upgrade', id: arg, count: 1 });
   } else if (act === 'unit') {
     enqueueBuild(selPlanet!, { kind: 'unit', id: arg, count: 1 });
+  } else if (act === 'mobtpl') {
+    mobTplIdx = Number(arg); // switch which template the assembler shows (local, re-renders)
+  } else if (act === 'divslot') {
+    const [ti, si] = arg.split('|').map(Number);
+    const cur = templatesOf(s, ME)[ti!]?.slots[si!] ?? null;
+    const order: (string | null)[] = [null, ...FORMATION_UNITS];
+    const next = order[(order.indexOf(cur) + 1) % order.length] ?? null;
+    playerOrder(setDivisionTemplate(ME, ti!, si!, next));
   } else if (act === 'mobilize') {
     playerOrder(mobilizeDivision(ME, selPlanet!, Number(arg)));
   } else if (act === 'spyplanet') {
@@ -6259,290 +6270,31 @@ const setupSlotsEl = $('setupslots');
 const setupSpeedEl = $('setupspeed');
 const setupHintEl = $('setuphint');
 const setupGoEl = $('setupgo') as HTMLButtonElement;
-const setupDivEl = $('setup-div');
-const setupHeroEl = $('setup-hero');
-const setupShipEl = $('setup-ship');
 
-// --- division designer (main-menu "Дивизии" tab) ----------------------------
-// The player's 3 templates, composed before the match and LOCKED once it starts.
-// Persisted across openSetup() so a design survives going Back; deep-cloned from the
-// defaults so editing never mutates them.
+// The player's division templates / hero roster / ship blueprints. Pre-match loadout
+// EDITORS were removed (modules unlock via tech in-match, so freezing a loadout before
+// the match is incoherent — loadout now happens in-match: ships at build time, heroes
+// in the capital). These default rosters still seed the match via buildSetupConfig.
 const setupTemplates: FormationTemplate[] = DEFAULT_TEMPLATES.map((t) => ({
   name: t.name,
   slots: [...t.slots],
 }));
-let setupTplIdx = 0; // which of the 3 templates is open in the designer
-const FORM_ICON: Record<string, string> = { infantry: '🪖', tank: '🛡', bomber: '✈', aa: '◎' };
-const FORM_RU: Record<string, string> = { infantry: 'Пехота', tank: 'Танк', bomber: 'Бомбер', aa: 'ПВО' };
-
-function renderTemplates(): void {
-  const tabs = setupTemplates
-    .map((t, i) => `<button data-tpl="${i}" class="${i === setupTplIdx ? 'on' : ''}">${esc(t.name)}</button>`)
-    .join('');
-  const tpl = setupTemplates[setupTplIdx]!;
-  const slots = tpl.slots
-    .map((u, i) => {
-      const cls = u ? '' : 'empty';
-      const ic = u ? FORM_ICON[u] : '＋';
-      const nm = u ? FORM_RU[u] : 'пусто';
-      return `<div class="tslot ${cls}" data-slot="${i}"><span class="ic">${ic}</span><span class="nm">${esc(nm)}</span></div>`;
-    })
-    .join('');
-  const f = formationStats(tpl);
-  const syn = f.synergies.length
-    ? f.synergies.map((x) => `<span class="syn">◈ ${esc(x.name)} — ${esc(x.desc)}</span>`).join('')
-    : `<span class="syn none">◇ Нет бонусов состава — смешай рода войск.</span>`;
-  const cost = Object.entries(f.cost)
-    .map(([r, a]) => `${a}${TECH_CUR[r] ?? r[0]}`)
-    .join(' · ');
-  setupDivEl.innerHTML =
-    `<p class="ssub">Собери 3 шаблона дивизий из 6 слотов. Состав даёт суммарные статы и бонусы; во время боя шаблоны не меняются. Тапни слот, чтобы сменить юнит.</p>` +
-    `<div class="tpl-tabs">${tabs}</div>` +
-    `<div class="tpl-slots">${slots}</div>` +
-    `<div class="tpl-stats"><div class="row"><span>⚔ Атака ${f.attack}</span><span>🛡 Оборона ${f.defense}</span><span>❤ HP ${f.hp}</span><span>№ ${f.count}/${FORMATION_SLOTS}</span></div>${syn}<div class="tpl-cost">Стоимость мобилизации: ${cost || '—'}</div></div>`;
-}
-
-/** Cycle a slot through: пусто → пехота → танк → бомбер → пусто. */
-function cycleSlot(i: number): void {
-  const tpl = setupTemplates[setupTplIdx];
-  if (!tpl) return;
-  const cur = tpl.slots[i] ?? null;
-  const order: (FormationUnit | null)[] = [null, ...FORMATION_UNITS];
-  const next = order[(order.indexOf(cur) + 1) % order.length] ?? null;
-  tpl.slots[i] = next;
-  renderTemplates();
-}
-
-setupDivEl.addEventListener('click', (ev) => {
-  const t = (ev.target as Element).closest('[data-slot],[data-tpl]') as HTMLElement | null;
-  if (!t) return;
-  if (t.dataset.tpl !== undefined) {
-    setupTplIdx = Number(t.dataset.tpl);
-    renderTemplates();
-  } else if (t.dataset.slot !== undefined) {
-    cycleSlot(Number(t.dataset.slot));
-  }
-});
-// --- hero designer (main-menu "Герои" tab) ----------------------------------
-// The player's hero roster: up to 3 loadouts, each with HERO_SLOTS ability "modules"
-// + the implicit base aura. Composed before the match (in-match capital/respawn/refit
-// land in a later phase). Reuses the division designer's tab/slot/stats chrome.
+/** Unit-type → icon, used by the in-match division roster readout (panelHtml). */
+const FORM_ICON: Record<string, string> = { infantry: '🪖', tank: '🛡' };
+const FORM_RU: Record<string, string> = { infantry: 'Пехота', tank: 'Танк' };
 const setupHeroes: HeroLoadout[] = DEFAULT_HEROES.map((h) => ({ name: h.name, grade: h.grade, abilities: [...h.abilities] }));
-let setupHeroIdx = 0; // which hero is open in the designer
-let heldModule: string | null = null; // the module on the "cursor" (grab → place, Minecraft-style)
-const heldGhostEl = $('heldghost');
-
-/** Put a module on the cursor (or clear with null); reflect it in the floating ghost. */
-function setHeld(id: string | null, kind: 'hero' | 'ship' = 'hero'): void {
-  heldModule = id;
-  const icon =
-    id == null ? '' : kind === 'ship' ? (SHIP_MODULES[id]?.icon ?? '') : (HERO_ABILITIES[id]?.icon ?? '');
-  heldGhostEl.textContent = icon;
-  heldGhostEl.style.display = icon ? 'block' : 'none';
-}
-/** Move the floating ghost to the pointer (called on grab + pointermove). */
-function moveGhost(x: number, y: number): void {
-  heldGhostEl.style.left = `${x}px`;
-  heldGhostEl.style.top = `${y}px`;
-}
 
 /** The hero's display name — the главный hero shows the player's callsign (nick). */
 function heroName(h: HeroLoadout): string {
   return h.grade === 'main' ? nickInput.value.trim() || h.name : h.name;
 }
 
-function renderHeroes(): void {
-  const tabs = setupHeroes
-    .map((h, i) => `<button data-hero="${i}" class="${i === setupHeroIdx ? 'on' : ''}">${HERO_GRADES[h.grade].icon} ${esc(heroName(h))}</button>`)
-    .join('');
-  const hero = setupHeroes[setupHeroIdx]!;
-  const grade = HERO_GRADES[hero.grade];
-  const slots = heroSlots(hero.grade);
-  const holding = heldModule != null;
-  // Equip "bays" — one per grade slot; the drop targets while a module is held.
-  const bays = Array.from({ length: slots }, (_, i) => {
-    const id = hero.abilities[i] ?? null;
-    const ab = id ? HERO_ABILITIES[id] : undefined;
-    return `<div class="tslot ${ab ? '' : 'empty'} ${holding ? 'drop' : ''}" data-aslot="${i}"><span class="ic">${ab ? ab.icon : '＋'}</span><span class="nm">${esc(ab ? ab.name : 'пусто')}</span></div>`;
-  }).join('');
-  const info = heroLoadoutInfo(hero);
-  const syn = info.abilities.length
-    ? info.abilities
-        .map((a) => `<span class="syn">${a.icon} ${esc(a.name)} — ${esc(a.desc)}${a.live ? '' : ' <em>(скоро)</em>'}</span>`)
-        .join('')
-    : `<span class="syn none">◇ Слоты пусты — возьми модуль из инвентаря ниже.</span>`;
-  // Module "inventory" grid — tap a cell to grab it onto the cursor, then tap a hero slot.
-  const equipped = new Set(hero.abilities.slice(0, slots).filter(Boolean) as string[]);
-  const inv = HERO_ABILITY_IDS.map((id) => {
-    const a = HERO_ABILITIES[id]!;
-    const cls = `${equipped.has(id) ? 'equip' : ''} ${heldModule === id ? 'held' : ''} ${a.live ? '' : 'planned'}`;
-    return `<div class="mcell ${cls}" data-abil="${id}"><span class="ic">${a.icon}</span><span class="nm">${esc(a.name)}</span>${equipped.has(id) ? '<span class="badge">✓</span>' : ''}</div>`;
-  }).join('');
-  const heldA = heldModule ? HERO_ABILITIES[heldModule] : undefined;
-  const heldBar = heldA
-    ? `<div class="mheld active" data-drop="1">В руке: ${heldA.icon} <b>${esc(heldA.name)}</b> — тапни слот героя · <em>(тап сюда — убрать)</em></div>`
-    : `<div class="mheld">Возьми модуль из инвентаря и тапни слот героя. Тап по занятому слоту — снять модуль.</div>`;
-  setupHeroEl.innerHTML =
-    `<p class="ssub">${HERO_ROSTER_COUNT} героя: главный (имя = твой ник) + по одному грейду. Грейд задаёт число слотов под модули (обычный ${HERO_GRADES.common.slots} · редкий ${HERO_GRADES.rare.slots} · легендарный ${HERO_GRADES.legendary.slots} · главный ${HERO_GRADES.main.slots}) + базовая аура (+5% бой флоту). Бери модуль из инвентаря и вставляй в слот. В матче меняется в столице.</p>` +
-    `<div class="tpl-tabs">${tabs}</div>` +
-    `<div class="hgradeline g-${hero.grade}">${grade.icon} ${esc(grade.name)} · ${slots} ${slots === 1 ? 'слот' : 'слота'} под модули</div>` +
-    `<div class="tpl-slots heroslots" style="grid-template-columns:repeat(${Math.min(slots, 4)},1fr)">${bays}</div>` +
-    `<div class="tpl-stats"><div class="row"><span>★ Модули ${info.count}/${slots}</span><span>✦ Аура +5%</span></div>${syn}</div>` +
-    heldBar +
-    `<div class="hpal-h">Инвентарь модулей</div><div class="minv">${inv}</div>`;
-}
-
-/** Tap a hero slot: place the held module (swapping out any current one onto the
- *  cursor), or — empty-handed — pick the slot's module up. No duplicate module per hero. */
-function tapHeroSlot(i: number): void {
-  const hero = setupHeroes[setupHeroIdx];
-  if (!hero) return;
-  if (heldModule == null) {
-    const cur = hero.abilities[i];
-    if (cur != null) {
-      hero.abilities[i] = null;
-      setHeld(cur);
-    }
-  } else if (!hero.abilities.some((a, j) => j !== i && a === heldModule)) {
-    const prev = hero.abilities[i] ?? null;
-    hero.abilities[i] = heldModule;
-    setHeld(prev); // swap: now holding what the slot had (null = hand emptied)
-  }
-  renderHeroes();
-}
-
-setupHeroEl.addEventListener('click', (ev) => {
-  const t = (ev.target as Element).closest('[data-aslot],[data-hero],[data-abil],[data-drop]') as HTMLElement | null;
-  if (!t) return;
-  if (t.dataset.hero !== undefined) {
-    setupHeroIdx = Number(t.dataset.hero);
-    renderHeroes();
-  } else if (t.dataset.drop !== undefined) {
-    setHeld(null); // drop the held module back to the inventory
-    renderHeroes();
-  } else if (t.dataset.aslot !== undefined) {
-    tapHeroSlot(Number(t.dataset.aslot));
-  } else if (t.dataset.abil !== undefined) {
-    setHeld(heldModule === t.dataset.abil ? null : t.dataset.abil); // grab a copy (tap again = drop)
-    moveGhost(ev.clientX, ev.clientY);
-    renderHeroes();
-  }
-});
-
-// --- shipyard designer (main-menu "Верфь" tab) ------------------------------
-// The player's ship blueprints: a module loadout per hull class, frozen at session
-// start (GDD §2). Reuses the SAME Minecraft-inventory fitting chrome as heroes — but
-// ship modules STACK (no per-loadout duplicate guard), and the stat preview is derived
-// from the hull's base unit stats. Effects reach combat in a later brick (SHIP-3).
 const setupShips: ShipLoadout[] = DEFAULT_SHIP_LOADOUTS.map((l) => ({ hull: l.hull, modules: [...l.modules] }));
-let setupShipIdx = 0;
 
-function renderShips(): void {
-  const tabs = setupShips
-    .map((l, i) => `<button data-hull="${i}" class="${i === setupShipIdx ? 'on' : ''}">${SHIP_HULLS[l.hull]?.icon ?? '▦'} ${esc(SHIP_HULLS[l.hull]?.name ?? l.hull)}</button>`)
-    .join('');
-  const loadout = setupShips[setupShipIdx]!;
-  const hull = SHIP_HULLS[loadout.hull];
-  const slots = hullSlots(loadout.hull);
-  const holding = heldModule != null;
-  const bays = Array.from({ length: slots }, (_, i) => {
-    const id = loadout.modules[i] ?? null;
-    const m = id ? SHIP_MODULES[id] : undefined;
-    return `<div class="tslot ${m ? '' : 'empty'} ${holding ? 'drop' : ''}" data-mslot="${i}"><span class="ic">${m ? m.icon : '＋'}</span><span class="nm">${esc(m ? m.name : 'пусто')}</span></div>`;
-  }).join('');
-  const baseUnit = hull ? data.units[hull.base] : undefined;
-  const base = {
-    attack: baseUnit?.stats.attack ?? 0,
-    defense: baseUnit?.stats.defense ?? 0,
-    speed: baseUnit?.stats.speed ?? 0,
-    hp: baseUnit?.stats.hp ?? 0,
-  };
-  const der = shipStats(base, loadout);
-  const stat = (label: string, b: number, d: number): string =>
-    `<span>${label} ${d}${d !== b ? ` <em>(${b})</em>` : ''}</span>`;
-  const info = shipLoadoutInfo(loadout);
-  const syn = info.modules.length
-    ? info.modules
-        .map((m) => `<span class="syn">${m.icon} ${esc(m.name)} — ${esc(m.desc)}${m.live ? '' : ' <em>(скоро)</em>'}</span>`)
-        .join('')
-    : `<span class="syn none">◇ Слоты пусты — возьми модуль из инвентаря ниже.</span>`;
-  const inv = SHIP_MODULE_IDS.map((id) => {
-    const m = SHIP_MODULES[id]!;
-    const cls = `${heldModule === id ? 'held' : ''} ${m.live ? '' : 'planned'}`;
-    return `<div class="mcell ${cls}" data-smod="${id}"><span class="ic">${m.icon}</span><span class="nm">${esc(m.name)}</span></div>`;
-  }).join('');
-  const heldM = heldModule ? SHIP_MODULES[heldModule] : undefined;
-  const heldBar = heldM
-    ? `<div class="mheld active" data-drop="1">В руке: ${heldM.icon} <b>${esc(heldM.name)}</b> — тапни слот корпуса · <em>(тап сюда — убрать)</em></div>`
-    : `<div class="mheld">Возьми модуль из инвентаря и вставь в слот корпуса. Модули стэкаются. Тап по слоту — снять.</div>`;
-  setupShipEl.innerHTML =
-    `<p class="ssub">Чертёж корабля: на класс корпуса навешиваешь модули в слоты (крейсер ${hullSlots('cruiser')} · осадная ${hullSlots('siege_lance')} · скаут ${hullSlots('scout_drone')} · десантный ${hullSlots('dropship')}). Модули стэкаются и меняют статы. На старте матча чертёж замораживается. <em>(статы — превью; бой их читает скоро)</em></p>` +
-    `<div class="tpl-tabs">${tabs}</div>` +
-    `<div class="hgradeline">${hull?.icon ?? '▦'} ${esc(hull?.name ?? loadout.hull)} · ${slots} ${slots === 1 ? 'слот' : 'слота'} под модули</div>` +
-    `<div class="tpl-slots" style="display:grid;gap:8px;margin-bottom:10px;grid-template-columns:repeat(${Math.min(slots, 4)},1fr)">${bays}</div>` +
-    `<div class="tpl-stats"><div class="row">${stat('⚔ Атака', base.attack, der.attack)}${stat('🛡 Оборона', base.defense, der.defense)}${stat('» Скор', base.speed, der.speed)}${stat('❤ HP', base.hp, der.hp)}</div>${syn}</div>` +
-    heldBar +
-    `<div class="hpal-h">Инвентарь модулей</div><div class="minv">${inv}</div>`;
-}
-
-/** Tap a hull slot: place the held module (swapping out any current one), or — empty-
- *  handed — pick the slot's module up. Ship modules STACK, so no duplicate guard. */
-function tapShipSlot(i: number): void {
-  const loadout = setupShips[setupShipIdx];
-  if (!loadout) return;
-  if (heldModule == null) {
-    const cur = loadout.modules[i];
-    if (cur != null) {
-      loadout.modules[i] = null;
-      setHeld(cur, 'ship');
-    }
-  } else {
-    const prev = loadout.modules[i] ?? null;
-    loadout.modules[i] = heldModule;
-    setHeld(prev, 'ship'); // swap (null = hand emptied)
-  }
-  renderShips();
-}
-
-setupShipEl.addEventListener('click', (ev) => {
-  const t = (ev.target as Element).closest('[data-mslot],[data-hull],[data-smod],[data-drop]') as HTMLElement | null;
-  if (!t) return;
-  if (t.dataset.hull !== undefined) {
-    setupShipIdx = Number(t.dataset.hull);
-    renderShips();
-  } else if (t.dataset.drop !== undefined) {
-    setHeld(null);
-    renderShips();
-  } else if (t.dataset.mslot !== undefined) {
-    tapShipSlot(Number(t.dataset.mslot));
-  } else if (t.dataset.smod !== undefined) {
-    setHeld(heldModule === t.dataset.smod ? null : t.dataset.smod, 'ship'); // grab (tap again = drop)
-    moveGhost(ev.clientX, ev.clientY);
-    renderShips();
-  }
-});
-
-// The held module's ghost trails the pointer while carried (desktop hover; on touch it
-// sits where you grabbed it). Bound to the setup overlay — never to `document`.
-setupEl.addEventListener('pointermove', (ev) => {
-  if (heldModule != null) moveGhost(ev.clientX, ev.clientY);
-});
-
-// Setup tab switch (Старт ↔ Дивизии ↔ Герои).
-document.querySelector('#setup .stabs')?.addEventListener('click', (ev) => {
-  const t = (ev.target as Element).closest('[data-stab]') as HTMLElement | null;
-  if (!t) return;
-  const tab = t.dataset.stab;
-  document.querySelectorAll('#setup .stabs button').forEach((b) => b.classList.toggle('on', (b as HTMLElement).dataset.stab === tab));
-  $('setup-start').style.display = tab === 'start' ? '' : 'none';
-  setupDivEl.style.display = tab === 'div' ? '' : 'none';
-  setupHeroEl.style.display = tab === 'hero' ? '' : 'none';
-  setupShipEl.style.display = tab === 'ship' ? '' : 'none';
-  setHeld(null); // a held module never crosses a tab switch (hero ↔ ship pools differ)
-  if (tab === 'div') renderTemplates();
-  if (tab === 'hero') renderHeroes();
-  if (tab === 'ship') renderShips();
-});
+// Loadout is chosen in-match now (ships at build time under tech-unlocks, heroes in the
+// capital), so the pre-match Верфь / Герои / Дивизии editors and their inventory chrome
+// were removed. `setupTemplates` / `setupHeroes` / `setupShips` above keep seeding the
+// match with the default rosters via buildSetupConfig.
 
 function renderSetupMap(): void {
   const pad = 60;
@@ -6628,13 +6380,7 @@ function openSetup(from: 'welcome' | 'hub' = 'welcome'): void {
   setupSpeed = SETUP_SPEEDS.includes(savedSpeed) ? savedSpeed : 10;
   showConnect(false);
   setupEl.style.display = 'flex';
-  // Always open on the Старт tab (the division designer keeps its own state).
-  document.querySelectorAll('#setup .stabs button').forEach((b) => b.classList.toggle('on', (b as HTMLElement).dataset.stab === 'start'));
   $('setup-start').style.display = '';
-  setupDivEl.style.display = 'none';
-  setupHeroEl.style.display = 'none';
-  setupShipEl.style.display = 'none';
-  setHeld(null);
   renderSetup();
 }
 

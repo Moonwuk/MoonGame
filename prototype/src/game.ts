@@ -251,29 +251,6 @@ export const data: GameData = parseGameData({
       buildTimeHours: 4,
       upkeep: { credits: 4 },
     },
-    // Бомбардировщик — rear-line striker: big attack, paper armour; hits structures.
-    bomber: {
-      faction: 'blue',
-      stats: { attack: 26, defense: 4, speed: 60, hp: 18, cargoSize: 2 },
-      domain: 'ground',
-      traits: ['ground'],
-      signature: 3,
-      cost: { metal: 90, credits: 50 },
-      buildTimeHours: 3,
-      upkeep: { credits: 5 },
-    },
-    // ПВО — anti-air specialist: shreds bombers, weak on the ground. (Flat stats here
-    // are the designer's rough preview; the per-type matrix in groundcombat is combat law.)
-    aa: {
-      faction: 'blue',
-      stats: { attack: 6, defense: 9, speed: 44, hp: 20, cargoSize: 2 },
-      domain: 'ground',
-      traits: ['ground'],
-      signature: 2,
-      cost: { metal: 80, credits: 40 },
-      buildTimeHours: 3,
-      upkeep: { credits: 4 },
-    },
     // The player's projection hero — cruiser-tier guns but TRIPLE the hull, and the
     // +5% attack/defense aura it grants its fleet (heroModule). Seeded, not built.
     hero: {
@@ -1111,7 +1088,7 @@ export interface SetupConfig {
 // menu and frozen for the session, giving players a flexible, pre-committed doctrine.
 
 /** The unit ids a template slot may hold — the formation roster (data.units above). */
-export const FORMATION_UNITS = ['infantry', 'tank', 'bomber', 'aa'] as const;
+export const FORMATION_UNITS = ['infantry', 'tank'] as const;
 export type FormationUnit = (typeof FORMATION_UNITS)[number];
 /** Slots per template, and templates per player. */
 export const FORMATION_SLOTS = 6;
@@ -1125,9 +1102,9 @@ export interface FormationTemplate {
 
 /** The three starter templates a player gets before customising them. */
 export const DEFAULT_TEMPLATES: FormationTemplate[] = [
-  { name: 'Линия', slots: ['infantry', 'infantry', 'infantry', 'infantry', 'tank', 'bomber'] },
-  { name: 'Кулак', slots: ['tank', 'tank', 'tank', 'infantry', 'infantry', 'bomber'] },
-  { name: 'Налёт', slots: ['bomber', 'bomber', 'tank', 'infantry', 'infantry', null] },
+  { name: 'Линия', slots: ['infantry', 'infantry', 'infantry', 'infantry', 'tank', 'tank'] },
+  { name: 'Кулак', slots: ['tank', 'tank', 'tank', 'infantry', 'infantry', 'infantry'] },
+  { name: 'Клин', slots: ['tank', 'tank', 'tank', 'tank', 'infantry', null] },
 ];
 
 /** An active composition synergy (a doctrine bonus the template's mix unlocks). */
@@ -1152,7 +1129,7 @@ export interface FormationStats {
  *  (combined-arms / entrenched / armour / air-support). Pure + deterministic; used by
  *  the menu preview and (later) by mobilisation. */
 export function formationStats(tpl: FormationTemplate): FormationStats {
-  const byType: Record<FormationUnit, number> = { infantry: 0, tank: 0, bomber: 0, aa: 0 };
+  const byType: Record<FormationUnit, number> = { infantry: 0, tank: 0 };
   let baseAtk = 0;
   let baseDef = 0;
   let hp = 0;
@@ -1167,21 +1144,21 @@ export function formationStats(tpl: FormationTemplate): FormationStats {
     hp += def.stats.hp ?? 0;
     for (const [res, amt] of Object.entries(def.cost ?? {})) cost[res] = (cost[res] ?? 0) + amt;
   }
-  const count = byType.infantry + byType.tank + byType.bomber + byType.aa;
+  const count = byType.infantry + byType.tank;
   // Composition synergies — additive multipliers on attack / defense.
   let atkMul = 1;
   let defMul = 1;
   const synergies: FormationSynergy[] = [];
-  if (byType.infantry > 0 && byType.tank > 0 && byType.bomber > 0) {
+  if (byType.infantry > 0 && byType.tank > 0) {
     atkMul += 0.15;
     defMul += 0.15;
     synergies.push({
       key: 'combined',
       name: 'Комбинированные войска',
-      desc: '+15% атака и оборона — есть все три рода войск',
+      desc: '+15% атака и оборона — пехота и танки вместе',
     });
   }
-  if (byType.infantry >= 4 && byType.tank === 0 && byType.bomber === 0) {
+  if (byType.infantry >= 4 && byType.tank === 0) {
     defMul += 0.25;
     synergies.push({ key: 'entrench', name: 'Окопались', desc: '+25% оборона — чистая пехота' });
   }
@@ -1191,22 +1168,6 @@ export function formationStats(tpl: FormationTemplate): FormationStats {
       key: 'armor',
       name: 'Танковый кулак',
       desc: '+20% атака — ≥3 танков (прорыв)',
-    });
-  }
-  if (byType.bomber >= 1) {
-    atkMul += 0.1;
-    synergies.push({
-      key: 'air',
-      name: 'Авиаподдержка',
-      desc: '+10% атака и удар по структурам — есть бомбардировщик',
-    });
-  }
-  if (byType.aa >= 1) {
-    defMul += 0.1;
-    synergies.push({
-      key: 'airdef',
-      name: 'ПВО-зонтик',
-      desc: '+10% оборона и защита от авиации — есть ПВО',
     });
   }
   return {
@@ -2019,6 +1980,30 @@ export const divisionModule: GameModule = {
         planetId: p.planetId,
         template: p.template,
       });
+    });
+
+    // Assemble a division template in-match — set slot `slot` of the player's template
+    // `template` to a formation unit (or null). Templates are no longer frozen at setup:
+    // "сбор шаблона из разных юнитов" happens at mobilisation. Materialises the player's
+    // templates from the defaults on first edit (per-player, deep-copied, JSON-safe).
+    api.onAction('division.template', (action, h) => {
+      const p = action.payload as { template?: number; slot?: number; unit?: string | null };
+      if (typeof p?.template !== 'number' || typeof p?.slot !== 'number') return h.reject('E_BAD_PAYLOAD');
+      if (p.slot < 0 || p.slot >= FORMATION_SLOTS) return h.reject('E_BAD_PAYLOAD');
+      const unit = p.unit ?? null;
+      if (unit !== null && !(FORMATION_UNITS as readonly string[]).includes(unit)) {
+        return h.reject('E_BAD_PAYLOAD');
+      }
+      const ds = h.state as DivState;
+      const all = (ds.templates ??= {});
+      const mine = (all[action.playerId] ??= DEFAULT_TEMPLATES.map((t) => ({
+        name: t.name,
+        slots: [...t.slots],
+      })));
+      const tpl = mine[p.template];
+      if (!tpl) return h.reject('E_NO_TEMPLATE');
+      tpl.slots[p.slot] = unit as FormationUnit | null;
+      h.emit('division.retemplated', { template: p.template, slot: p.slot, unit });
     });
 
     /** Own-key division lookup owned by `playerId` (rejects a poisoned id / a foreign
@@ -2842,6 +2827,13 @@ export const marketCancel = (playerId: string, id: string) =>
 /** Mobilise division template `template` (0-based) on your world `planetId`. */
 export const mobilizeDivision = (playerId: string, planetId: string, template: number) =>
   act(playerId, 'division.mobilize', { planetId, template });
+/** Assemble a template: set slot `slot` of your template `template` to `unit` (null = clear). */
+export const setDivisionTemplate = (
+  playerId: string,
+  template: number,
+  slot: number,
+  unit: string | null,
+) => act(playerId, 'division.template', { template, slot, unit });
 /** Load a garrisoning division into a co-located, idle fleet (by free hold). */
 export const loadDivision = (playerId: string, divisionId: string, fleetId: string) =>
   act(playerId, 'division.load', { divisionId, fleetId });

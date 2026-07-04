@@ -64,6 +64,18 @@ export {
   type BattleIntent,
 } from './matchHud';
 export {
+  createLoadoutEditor,
+  applyLoadoutAction,
+  resolveLoadoutBuild,
+  type LoadoutModel,
+  type LoadoutSlotView,
+  type LoadoutOption,
+  type LoadoutStatLine,
+  type LoadoutEditorResult,
+  type LoadoutEditorAction,
+  type BuildIntent,
+} from './loadoutEditor';
+export {
   createWelcomeModel,
   resolveWelcomeAction,
   nextCallsign,
