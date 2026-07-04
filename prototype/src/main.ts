@@ -5092,7 +5092,8 @@ function renderTemplates(): void {
     `<p class="ssub">Собери 3 шаблона дивизий из 6 слотов. Состав даёт суммарные статы и бонусы; во время боя шаблоны не меняются. Тапни слот, чтобы сменить юнит.</p>` +
     `<div class="tpl-tabs">${tabs}</div>` +
     `<div class="tpl-slots">${slots}</div>` +
-    `<div class="tpl-stats"><div class="row"><span>⚔ Атака ${f.attack}</span><span>🛡 Оборона ${f.defense}</span><span>❤ HP ${f.hp}</span><span>№ ${f.count}/${FORMATION_SLOTS}</span></div>${syn}<div class="tpl-cost">Стоимость мобилизации: ${cost || '—'}</div></div>`;
+    `<div class="lstats"><div class="lhd">Состав дивизии — итог</div><div class="lsum">⚔ Урон в атаке <b>${f.attack}</b> · 🛡 Урон в защите <b>${f.defense}</b> · ❤ Корпус <b>${f.hp}</b><br>№ Слоты <b>${f.count}/${FORMATION_SLOTS}</b> · Мобилизация <b>${cost || '—'}</b></div></div>` +
+    `<div class="synlist">${syn}</div>`;
 }
 
 /** Cycle a slot through: пусто → пехота → танк → бомбер → пусто. */
@@ -5180,7 +5181,8 @@ function renderHeroes(): void {
     `<div class="tpl-tabs">${tabs}</div>` +
     `<div class="hgradeline g-${hero.grade}">${grade.icon} ${esc(grade.name)} · ${slots} ${slots === 1 ? 'слот' : 'слота'} под модули</div>` +
     `<div class="tpl-slots heroslots" style="grid-template-columns:repeat(${Math.min(slots, 4)},1fr)">${bays}</div>` +
-    `<div class="tpl-stats"><div class="row"><span>★ Модули ${info.count}/${slots}</span><span>✦ Аура +5%</span></div>${syn}</div>` +
+    `<div class="lstats"><div class="lhd">Способности — превью</div><div class="lsum">★ Слоты <b>${info.count}/${slots}</b> · ✦ Базовая аура <b>+5% к бою</b> флоту рядом${info.planned ? ` · <span class="lpl">${info.planned} ${info.planned === 1 ? 'скоро' : 'скоро'}</span>` : ''}</div></div>` +
+    `<div class="synlist">${syn}</div>` +
     heldBar +
     `<div class="hpal-h">Инвентарь модулей</div><div class="minv">${inv}</div>`;
 }

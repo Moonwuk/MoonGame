@@ -726,6 +726,9 @@ button.b:disabled{opacity:.32;cursor:not-allowed;color:var(--dim);border-color:v
    approved loadout-menu look). Shared by the ship / hero / squadron fitting panes. */
 #setup .lstats{border:1px solid var(--line-hi);border-radius:10px;padding:13px 14px;margin-bottom:8px;background:rgba(255,255,255,.02);}
 #setup .lstats .lhd{font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--cyan-dim);font-weight:800;margin-bottom:11px;}
+#setup .lstats .lsum{font-size:12px;color:var(--ink);line-height:1.7;}
+#setup .lstats .lsum b{color:#eafffb;}
+#setup .lstats .lsum .lpl{color:var(--amber);}
 #setup .lstat{margin-bottom:11px;}
 #setup .lstat:last-child{margin-bottom:0;}
 #setup .lstat .lrow{display:flex;justify-content:space-between;align-items:baseline;font-size:12px;margin-bottom:4px;}
