@@ -7197,7 +7197,7 @@ function frame(nowReal: number) {
     const flowTxt =
       flow !== 0 ? `<em class="${flow > 0 ? 'up' : 'dn'}">${flow > 0 ? '+' : ''}${kfmt(flow)}/ч</em>` : '';
     const dead = stock === 0 && flow === 0 ? ' dead' : '';
-    return `<span class="res${dead}" title="${name}" data-res="${key}"><i>${icon}</i><b>${kfmt(stock)}</b>${flowTxt}</span>`;
+    return `<span class="res${dead}" title="${name}" data-res="${key}"><i>${icon}</i><span class="rv"><b>${kfmt(stock)}</b>${flowTxt}</span></span>`;
   };
   const hudHtml =
     chip('¤', 'credits', 'Credits') +

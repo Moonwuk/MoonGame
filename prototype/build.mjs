@@ -72,8 +72,10 @@ body::before{content:"";position:fixed;inset:0;z-index:1;pointer-events:none;mix
   position:relative;overflow:hidden;}
 .res + .res::before{content:"";position:absolute;left:0;top:50%;transform:translateY(-50%);width:1px;height:20px;
   background:linear-gradient(180deg,transparent,rgba(53,214,230,.20),transparent);}
-/* amount owns the room (flex:0 0 auto so it's never squeezed); the flow rate clips first */
-.res em{font:9px ui-monospace,monospace;font-style:normal;margin-left:2px;white-space:nowrap;
+/* amount + flow share one "value line" (.rv); the amount owns the room (flex:0 0 auto),
+   the flow rate clips first. On phones the chip stacks the icon OVER this value line. */
+.rv{display:flex;align-items:baseline;justify-content:center;gap:3px;min-width:0;overflow:hidden;flex:0 1 auto;}
+.res em{font:9px ui-monospace,monospace;font-style:normal;white-space:nowrap;
   flex:0 1 auto;min-width:0;overflow:hidden;}
 .res em.up{color:var(--grn,#5ff0a8);}
 .res em.dn{color:var(--red,#ff5a4d);}
@@ -644,8 +646,12 @@ button.b:disabled{opacity:.32;cursor:not-allowed;color:var(--dim);border-color:v
   #crestmark{width:30px;height:30px;font-size:16px;}
   #devline{top:44px;}
   /* the chips get the full bar now (donate moved under it) — tighten just a touch */
-  .res{padding:0 6px;gap:4px;}
-  .res i{width:18px;height:18px;font-size:11px;}
+  /* APK / phones: stack the icon OVER the number so each value gets the full chip width */
+  .res{flex-direction:column;gap:1px;padding:0 3px;}
+  .res i{width:20px;height:20px;font-size:12px;}
+  .res b{font-size:13px;}
+  /* the value line sizes to its content on the stacked layout so the flow rate shows */
+  .rv{flex:none;gap:2px;overflow:visible;}
   #devline .dl-donate{font-size:11px;padding:2px 8px;}
 
   #side{right:0;left:0;bottom:0;top:auto;width:auto;max-height:50vh;z-index:28;clip-path:none;
@@ -690,9 +696,6 @@ button.b:disabled{opacity:.32;cursor:not-allowed;color:var(--dim);border-color:v
   #cmdbar button{min-width:56px;height:52px;}
   #cmdbar button .ci{font-size:20px;}
   body.sheet-open #cmdbar{bottom:calc(50vh + 8px);}
-}
-@media (max-width:430px){
-  .res .rv em{display:none;}
 }
 /* connect overlay — entry screen (single-player vs join a live session) */
 #connect{position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;
