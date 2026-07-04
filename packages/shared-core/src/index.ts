@@ -38,6 +38,7 @@ export {
   type BattleId,
   type ResourceId,
   type UnitId,
+  type ModuleId,
   type BuildingId,
   type TechnologyId,
   type TraitId,
@@ -140,8 +141,18 @@ export {
   TechnologyUnlocksSchema,
   ResourceBagSchema,
   UnitStatsSchema,
+  ModuleDefSchema,
+  ModuleEffectsSchema,
+  ModuleAllowedSchema,
+  ShipSlotsSchema,
+  ShipSlotTypeSchema,
+  SHIP_SLOT_TYPES,
   type GameData,
   type UnitDef,
+  type ModuleDef,
+  type ModuleEffects,
+  type ShipSlots,
+  type ShipSlotType,
   type FactionDef,
   type FactionLoadout,
   type FactionPassives,
@@ -165,6 +176,15 @@ export {
 export { deepClone, deepFreeze } from './util/clone';
 export { MS_PER_HOUR, MS_PER_DAY } from './util/time';
 export { findHealthyStack, addUnits, sumUnitStat } from './util/stacks';
+export {
+  effectiveStats,
+  slotUsage,
+  moduleAllowed,
+  canEquip,
+  loadoutCost,
+  hullSlotTypes,
+  type SlotCounts,
+} from './util/loadout';
 export { requireOwnedIdleFleet, type IdleFleet } from './util/fleet';
 
 // Base modules (plugins) — opt-in via the manifest passed to createKernel.

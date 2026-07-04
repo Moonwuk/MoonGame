@@ -55,6 +55,7 @@ export function loadShippedData(): GameData {
     planetTypes: readJson('planetTypes.json'),
     technologies: readJson('technologies.json'),
     scientists: readJson('scientists.json'),
+    modules: readJson('modules.json'),
   });
 }
 

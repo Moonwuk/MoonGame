@@ -16,6 +16,7 @@ export type FleetId = string;
 export type BattleId = string;
 export type ResourceId = string;
 export type UnitId = string;
+export type ModuleId = string;
 export type BuildingId = string;
 export type TechnologyId = string;
 export type TraitId = string;
@@ -34,6 +35,11 @@ export interface UnitStack {
    *  damage before `hp`; a ship still dies only when its HULL (`hp`) hits 0.
    *  Undefined = full shield (shields-roadmap SH-0.1). */
   shieldHp?: number;
+  /** Installed ship modules (the loadout), chosen at BUILD time and LOCKED after
+   *  — there is no refit action. Ids → `data.modules`; effect applies ×count.
+   *  Part of the stack's merge identity: stacks with different loadouts never
+   *  merge (ship-modules-roadmap.md SM-0.3). Absent = no modules. */
+  modules?: ModuleId[];
 }
 
 /** A constructed building on a planet. Buildings are leveled (1..maxLevel) and

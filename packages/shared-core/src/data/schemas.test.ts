@@ -26,6 +26,7 @@ function loadShippedBundle(): Record<string, unknown> {
     planetTypes: readJson('planetTypes.json'),
     technologies: readJson('technologies.json'),
     scientists: readJson('scientists.json'),
+    modules: readJson('modules.json'),
   };
 }
 
@@ -54,6 +55,33 @@ describe('game data schema (docs/architecture.md §2)', () => {
     expect(data.technologies.orbital_logistics?.unlocks.units).toContain('dropship');
     expect(data.technologies.siege_doctrine?.prerequisites).toEqual(['orbital_logistics']);
     expect(data.technologies.industrial_automation?.effects.productionBonus).toBeCloseTo(0.1);
+    // ship modules: typed hull slots + a data-driven module catalog.
+    expect(data.units.cruiser?.slots).toEqual({ weapon: 1, defense: 1, utility: 1 });
+    expect(data.units.scout_drone?.slots).toEqual({ weapon: 0, defense: 0, utility: 0 }); // default
+    expect(data.modules.cargo_bay?.effects.stats.cargoCapacity).toBe(6);
+    expect(data.modules.cargo_bay?.tag).toBe('horizontal');
+    expect(data.modules.shield_booster?.slot).toBe('defense');
+    expect(data.modules.targeting_array?.tag).toBe('vertical');
+  });
+
+  it('rejects a module that expands its own slot capacity (anti self-buff)', () => {
+    const res = safeParseGameData({
+      ...loadShippedBundle(),
+      modules: {
+        bad: { name: 'x', slot: 'utility', tag: 'horizontal', effects: { stats: { moduleSlots: 1 } } },
+      },
+    });
+    expect(res.success).toBe(false);
+  });
+
+  it('rejects a soulbound vertical (combat) module (anti pay-to-win)', () => {
+    const res = safeParseGameData({
+      ...loadShippedBundle(),
+      modules: {
+        bad: { name: 'x', slot: 'weapon', tag: 'vertical', soulbound: true, effects: { stats: { attack: 5 } } },
+      },
+    });
+    expect(res.success).toBe(false);
   });
 
   it('ships producers for every economy resource (ECON-3: energy + microelectronics)', () => {
@@ -101,6 +129,9 @@ describe('game data schema (docs/architecture.md §2)', () => {
     for (const [id, def] of Object.entries(data.units)) {
       check(def.cost, `unit ${id} cost`);
       check(def.upkeep, `unit ${id} upkeep`);
+    }
+    for (const [id, def] of Object.entries(data.modules)) {
+      check(def.cost, `module ${id} cost`);
     }
     for (const [id, def] of Object.entries(data.technologies)) {
       check(def.cost, `technology ${id} cost`);
