@@ -86,6 +86,25 @@ export function canEquip(
   return { ok: true };
 }
 
+/** Validate a whole loadout for a hull: every module installs legally on top of
+ *  the ones before it (existence, no duplicate, a free slot of its category, and
+ *  the `allowed` predicate). Returns the first failure's stable code — the same
+ *  gate the build action uses so a client and the server agree on legality. */
+export function validateLoadout(
+  unit: string,
+  def: UnitDef,
+  modules: readonly string[],
+  data: GameData,
+): { ok: true } | { ok: false; code: string } {
+  const acc: string[] = [];
+  for (const id of modules) {
+    const check = canEquip(unit, def, acc, id, data);
+    if (!check.ok) return check;
+    acc.push(id);
+  }
+  return { ok: true };
+}
+
 /** Total resource cost of a loadout (Σ module costs). Unknown ids are skipped. */
 export function loadoutCost(modules: readonly string[], data: GameData): ResourceBag {
   const bag: ResourceBag = {};

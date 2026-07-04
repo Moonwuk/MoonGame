@@ -12,6 +12,7 @@ import type { GameData, UnitDef } from '../data/schemas';
 import { timeScaleOf, type Context } from '../action/types';
 import { MS_PER_HOUR } from '../util/time';
 import { sumUnitStat } from '../util/stacks';
+import { effectiveStats } from '../util/loadout';
 import { requireOwnedIdleFleet } from '../util/fleet';
 import { isCapturable } from '../state/sectorKind';
 import { getStance } from '../state/diplomacy';
@@ -133,11 +134,13 @@ function applyDamage(
       if (!def) {
         continue;
       }
-      const perShip = def.stats.hp > 0 ? def.stats.hp : 1;
+      const eff = effectiveStats(def, stack, data);
+      const effHp = eff.hp ?? 0;
+      const perShip = effHp > 0 ? effHp : 1;
 
       // Ablative shield absorbs first (shields-roadmap SH-0.2); only the overflow
       // reaches the hull. A shield never kills — a ship dies only when its hull hits 0.
-      const shieldPerShip = def.stats.shield ?? 0;
+      const shieldPerShip = eff.shield ?? 0;
       if (shieldPerShip > 0) {
         let shield = stack.shieldHp ?? stack.count * shieldPerShip;
         const shieldAbsorbed = Math.min(remaining, shield);
@@ -227,13 +230,15 @@ function applyRetreatToll(fleet: Fleet, data: GameData): void {
       survivors.push(stack);
       continue;
     }
-    const perHull = def.stats.hp > 0 ? def.stats.hp : 1;
+    const eff = effectiveStats(def, stack, data);
+    const effHull = eff.hp ?? 0;
+    const perHull = effHull > 0 ? effHull : 1;
     const maxHull = stack.count * perHull;
     const newHull = Math.max(0, (stack.hp ?? maxHull) - RETREAT_TOLL * maxHull);
     const newCount = newHull <= 0 ? 0 : Math.ceil(newHull / perHull);
     if (newCount <= 0) continue; // this stack didn't survive the withdrawal
 
-    const perShield = def.stats.shield ?? 0;
+    const perShield = eff.shield ?? 0;
     if (perShield > 0) {
       const maxShield = stack.count * perShield;
       const newShield = Math.max(0, (stack.shieldHp ?? maxShield) - RETREAT_TOLL * maxShield);
@@ -797,7 +802,7 @@ function artilleryPower(fleet: Fleet, data: GameData): number {
   for (const s of fleet.units) {
     const def = data.units[s.unit];
     if (def && def.traits.includes('artillery')) {
-      total += s.count * def.stats.attack;
+      total += s.count * (effectiveStats(def, s, data).attack ?? 0);
     }
   }
   return total;
@@ -811,7 +816,7 @@ function artilleryRange(fleet: Fleet, data: GameData): number {
     if (s.count <= 0) continue;
     const def = data.units[s.unit];
     if (def && def.traits.includes('artillery')) {
-      r = Math.max(r, def.stats.range ?? 0);
+      r = Math.max(r, effectiveStats(def, s, data).range ?? 0);
     }
   }
   return r;

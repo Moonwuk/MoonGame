@@ -36,7 +36,10 @@ export interface LoadoutOption {
 
 /** One row of the live stat preview: base hull stat → with-modules value. */
 export interface LoadoutStatLine {
+  /** Canonical stat key (e.g. `attack`, `defense`). */
   stat: string;
+  /** Localised display label (e.g. "Урон в атаке" / "Урон в защите"). */
+  label: string;
   base: number;
   effective: number;
   delta: number;
@@ -69,7 +72,8 @@ export interface LoadoutModel {
 export type LoadoutEditorResult = ({ ok: true } & LoadoutModel) | { ok: false; code: string };
 
 /** Stats worth previewing for a ship, in display order. A line shows only when the
- *  base is non-zero or a module changes it (keeps the panel free of dead rows). */
+ *  base is non-zero or a module changes it (keeps the panel free of dead rows) —
+ *  except the two combat numbers, which always show. */
 const PREVIEW_STATS = [
   'attack',
   'defense',
@@ -79,6 +83,21 @@ const PREVIEW_STATS = [
   'cargoCapacity',
   'radarRange',
 ] as const;
+
+/** Russian display labels. `attack` and `defense` are the ship's two combat
+ *  numbers — its damage when ATTACKING and its return-fire when DEFENDING. */
+const STAT_LABELS: Record<string, string> = {
+  attack: 'Урон в атаке',
+  defense: 'Урон в защите',
+  hp: 'Корпус',
+  shield: 'Щит',
+  speed: 'Скорость',
+  cargoCapacity: 'Трюм',
+  radarRange: 'Радар',
+};
+
+/** Always shown, even at 0 — a ship's attack and defence are its combat identity. */
+const ALWAYS_SHOWN = new Set<string>(['attack', 'defense']);
 
 function scaleBag(bag: ResourceBag, n: number): ResourceBag {
   const out: ResourceBag = {};
@@ -145,7 +164,9 @@ function buildModel(
   for (const stat of PREVIEW_STATS) {
     const b = base[stat] ?? 0;
     const e = eff[stat] ?? 0;
-    if (b !== 0 || e !== b) preview.push({ stat, base: b, effective: e, delta: e - b });
+    if (ALWAYS_SHOWN.has(stat) || b !== 0 || e !== b) {
+      preview.push({ stat, label: STAT_LABELS[stat] ?? stat, base: b, effective: e, delta: e - b });
+    }
   }
 
   const hullCost = scaleBag(def.cost, count);

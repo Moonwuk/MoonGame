@@ -181,6 +181,7 @@ export {
   slotUsage,
   moduleAllowed,
   canEquip,
+  validateLoadout,
   loadoutCost,
   hullSlotTypes,
   type SlotCounts,

@@ -4,10 +4,13 @@ import {
   effectiveStats,
   slotUsage,
   canEquip,
+  validateLoadout,
   loadoutCost,
   moduleAllowed,
   hullSlotTypes,
 } from './loadout';
+import { sumUnitStat, addUnits } from './stacks';
+import type { UnitStack } from '../state/gameState';
 
 const data: GameData = parseGameData({
   version: '0.1.0',
@@ -96,5 +99,51 @@ describe('slot usage, allow rules, and canEquip', () => {
   it('sums the resource cost of a loadout', () => {
     expect(loadoutCost(['targeting', 'cargo'], data)).toEqual({ metal: 105 });
     expect(loadoutCost([], data)).toEqual({});
+  });
+});
+
+describe('validateLoadout — the whole-loadout gate the build action uses', () => {
+  it('accepts a legal loadout and reports the first illegal module', () => {
+    expect(validateLoadout('cruiser', cruiser, ['targeting', 'plating', 'cargo'], data)).toEqual({
+      ok: true,
+    });
+    expect(validateLoadout('cruiser', cruiser, ['targeting', 'targeting2'], data)).toEqual({
+      ok: false,
+      code: 'E_NO_SLOT', // second weapon module, only one weapon slot
+    });
+    expect(validateLoadout('cruiser', cruiser, ['ghost'], data)).toEqual({
+      ok: false,
+      code: 'E_UNKNOWN_MODULE',
+    });
+  });
+});
+
+describe('sumUnitStat reflects installed modules (MOD-4 routing)', () => {
+  it('adds module deltas ×count; bare stacks are unchanged', () => {
+    expect(sumUnitStat([{ unit: 'cruiser', count: 2 }], data, 'cargoCapacity')).toBe(4); // 2 × base 2
+    expect(sumUnitStat([{ unit: 'cruiser', count: 2, modules: ['cargo'] }], data, 'cargoCapacity')).toBe(16); // 2 × (2 + 6)
+    expect(sumUnitStat([{ unit: 'cruiser', count: 1, modules: ['targeting'] }], data, 'attack')).toBe(14); // 10 + 4
+  });
+});
+
+describe('loadout-aware stack identity (addUnits merge)', () => {
+  it('merges same unit + same loadout, keeps different loadouts apart', () => {
+    const stacks: UnitStack[] = [];
+    addUnits(stacks, 'cruiser', 1, ['targeting']);
+    addUnits(stacks, 'cruiser', 2, ['targeting']); // same loadout → merges to 3
+    addUnits(stacks, 'cruiser', 1, ['cargo']); // different loadout → separate
+    addUnits(stacks, 'cruiser', 1); // bare hull → separate
+    expect(stacks).toHaveLength(3);
+    expect(stacks.find((s) => s.modules?.includes('targeting'))?.count).toBe(3);
+    expect(stacks.find((s) => s.modules?.includes('cargo'))?.count).toBe(1);
+    expect(stacks.find((s) => s.modules === undefined)?.count).toBe(1);
+  });
+
+  it('treats loadout as a set — order does not split a stack', () => {
+    const stacks: UnitStack[] = [];
+    addUnits(stacks, 'cruiser', 1, ['targeting', 'cargo']);
+    addUnits(stacks, 'cruiser', 1, ['cargo', 'targeting']); // same set, different order → merges
+    expect(stacks).toHaveLength(1);
+    expect(stacks[0]?.count).toBe(2);
   });
 });

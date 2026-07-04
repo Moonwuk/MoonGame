@@ -54,7 +54,15 @@ describe('loadout editor — model', () => {
   it('previews base stats with no modules', () => {
     const m = ok(createLoadoutEditor('cruiser', data, rich));
     const attack = m.preview.find((p) => p.stat === 'attack');
-    expect(attack).toEqual({ stat: 'attack', base: 10, effective: 10, delta: 0 });
+    expect(attack).toEqual({ stat: 'attack', label: 'Урон в атаке', base: 10, effective: 10, delta: 0 });
+    // both combat numbers show: damage when ATTACKING and when DEFENDING.
+    expect(m.preview.find((p) => p.stat === 'defense')).toEqual({
+      stat: 'defense',
+      label: 'Урон в защите',
+      base: 8,
+      effective: 8,
+      delta: 0,
+    });
   });
 
   it('rejects an unknown hull, fail-secure', () => {
@@ -70,6 +78,7 @@ describe('loadout editor — equip / unequip', () => {
     expect(m1.slots.find((s) => s.type === 'weapon')?.moduleId).toBe('targeting');
     expect(m1.preview.find((p) => p.stat === 'attack')).toEqual({
       stat: 'attack',
+      label: 'Урон в атаке',
       base: 10,
       effective: 14,
       delta: 4,
