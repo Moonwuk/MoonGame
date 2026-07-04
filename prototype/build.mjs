@@ -197,6 +197,19 @@ body.sheet-open #cmdbar{bottom:calc(34vh + 12px);}
 .pc-close{margin-top:10px;width:100%;padding:9px;cursor:pointer;border-radius:6px;border:1px solid var(--cyan-dim);
   background:rgba(53,214,230,.1);color:var(--cyan);font:600 12px ui-monospace,monospace;letter-spacing:1px;}
 
+/* settings overlay (hub → «Ещё» → Настройки) — client-only display prefs */
+#settings{position:fixed;inset:0;z-index:47;display:none;align-items:center;justify-content:center;padding:18px;
+  background:rgba(1,5,9,.55);-webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px);}
+#settings.show{display:flex;}
+#settings .setbox{width:min(380px,92vw);max-height:86vh;overflow:auto;background:var(--glass);border:1px solid var(--cyan);
+  border-radius:10px;padding:16px 18px 14px;box-shadow:0 0 40px rgba(0,0,0,.6),inset 0 0 0 1px rgba(53,214,230,.06);}
+.set-row{display:flex;flex-direction:column;gap:9px;padding:6px 0 2px;}
+.set-lbl{display:flex;flex-direction:column;gap:3px;font-size:12px;color:var(--ink);}
+.set-lbl .set-sub{font-size:10px;color:var(--dim);letter-spacing:.2px;}
+.set-ctl{display:flex;align-items:center;gap:10px;}
+.set-ctl input[type=range]{flex:1;accent-color:var(--cyan);height:22px;cursor:pointer;}
+.set-val{min-width:42px;text-align:right;font-variant-numeric:tabular-nums;color:var(--cyan);font-weight:700;}
+
 /* war prompt — confirm before a move declares war on a player you're at peace with */
 #warprompt{position:fixed;inset:0;z-index:48;display:none;align-items:center;justify-content:center;padding:18px;
   background:rgba(20,2,1,.6);-webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px);}
@@ -971,7 +984,7 @@ button.b:disabled{opacity:.32;cursor:not-allowed;color:var(--dim);border-color:v
 /* --- short viewports (landscape phones, split-screen): overlays scroll instead of
    clipping off-screen; the welcome card compacts and stacks its chip/footer in-flow --- */
 @media (max-height:680px){
-  #connect,#setup,#codex,#playercard,#warprompt,#diplo,#splitdlg,#pingmenu{
+  #connect,#setup,#codex,#playercard,#settings,#warprompt,#diplo,#splitdlg,#pingmenu{
     align-items:flex-start;overflow-y:auto;-webkit-overflow-scrolling:touch;}
   #connect{padding:14px 18px;}
   #connect .cwrap{display:flex;flex-direction:column;margin:auto;}
@@ -1198,6 +1211,7 @@ const html = `<!doctype html>
 <div id="cmdbar"></div>
 <div id="codex"></div>
 <div id="playercard"></div>
+<div id="settings"></div>
 <div id="warprompt"></div>
 <div id="diplo"></div>
 <div id="pingpop"></div>
@@ -1305,6 +1319,7 @@ const html = `<!doctype html>
     </div>
     <div class="hub-panel" id="hp-more" style="display:none">
       <div class="hub-grid">
+        <button class="hub-tile" id="hub-settings" type="button"><span class="ht-ic">⚙</span>Настройки</button>
         <button class="hub-tile" data-more="Аккаунт" type="button"><span class="ht-ic">◉</span>Аккаунт</button>
         <button class="hub-tile" data-more="Сообщество" type="button"><span class="ht-ic">◍</span>Сообщество</button>
         <button class="hub-tile" data-more="Поддержка" type="button"><span class="ht-ic">⚠</span>Поддержка</button>

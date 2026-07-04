@@ -1,10 +1,12 @@
 import { randomUUID } from 'node:crypto';
+import rateLimit from '@fastify/rate-limit';
 import { createDevMatch, loadShippedData } from './scenario';
 import { createMultiplayerServer } from './wsServer';
 import { startClockDriver, type ClockDriverHandle } from './clockDriver';
 import { createStores, snapshotOf } from './persistence';
 import { configFromEnv } from './serverConfig';
 import { registerMatchApi, type MatchApiDeps } from './matchApi';
+import { registerAuthApi } from './authApi';
 import { LazyRoomRegistry, type LoadedMatch } from './roomRegistry';
 import type { RoomObservation } from './matchRoom';
 import type { MatchSnapshot, StoredReceipt } from './store';
@@ -22,17 +24,20 @@ import type { MatchSnapshot, StoredReceipt } from './store';
  *   HOST=0.0.0.0 PORT=9000 pnpm dev:server       # reachable from other LAN devices
  *   AUTH_JWT_SECRET=… GATE=1  pnpm dev:server    # authenticated handshake + validated envelopes
  *
- * Still a dev harness for match CREATION: the `dev` match is seeded on boot. A real
- * authenticated create/list/join API is SV-2.4.
+ * With AUTH_JWT_SECRET set the server also exposes login+password accounts (SE-1.x):
+ * `POST /auth/register` / `POST /auth/login` mint a session token, and the create/join
+ * API requires it (`Authorization: Bearer`) — the session's login is the seat identity.
+ * The `dev` match is still seeded on boot for continuity.
  */
 const host = process.env.HOST ?? '127.0.0.1';
 const port = Number(process.env.PORT ?? 8787);
 const bootTime = Date.now();
 
 // Security composition from the environment (all switches OFF by default → dev harness):
-// AUTH_JWT_SECRET (authenticated handshake + token minting), ALLOWED_ORIGINS (CSWSH),
-// GATE=1 (validated action.v1 envelopes). See serverConfig.ts.
-const { auth, allowedOrigins, signToken, gateFactory } = configFromEnv(process.env);
+// AUTH_JWT_SECRET (authenticated handshake + token minting + login/password accounts),
+// ALLOWED_ORIGINS (CSWSH), GATE=1 (validated action.v1 envelopes). See serverConfig.ts.
+const { auth, allowedOrigins, signToken, signSession, verifySession, gateFactory } =
+  configFromEnv(process.env);
 
 const data = loadShippedData();
 const stores = await createStores();
@@ -117,14 +122,24 @@ const matchApi: MatchApiDeps = {
     matchCount += 1;
     return { matchId, seats: Object.keys(seed.state.players) };
   },
-  join: async (matchId, nick) => {
+  join: async (matchId, nick, accountId) => {
     const snap = await stores.store.load(matchId);
     if (!snap) return { error: 'E_NO_MATCH' };
     if (!signToken) return { error: 'E_AUTH_DISABLED' }; // no token auth configured
     const seat = await accountStore.resolveSeat(matchId, nick, Object.keys(snap.state.players));
     if (!seat) return { error: 'E_MATCH_FULL' };
-    return { playerId: seat.playerId, token: await signToken(matchId, seat.playerId) };
+    return { playerId: seat.playerId, token: await signToken(matchId, seat.playerId, accountId) };
   },
+  // Identity gate (SE-1.x): create/join require a session from /auth/login — the
+  // session's login IS the seat nick, so nobody claims a seat as somebody else.
+  identify: verifySession
+    ? async (request) => {
+        const header = request.headers.authorization;
+        if (typeof header !== 'string' || !header.startsWith('Bearer ')) return null;
+        const verified = await verifySession(header.slice('Bearer '.length).trim());
+        return verified.ok ? verified.claim : null;
+      }
+    : undefined,
 };
 
 if (auth && !allowedOrigins) {
@@ -139,14 +154,32 @@ const server = createMultiplayerServer({
   host,
   port,
   logger: true, // structured pino logs for boot/shutdown (dev harness → prod entrypoint)
+  // Behind a TLS-terminating proxy (Caddy), set TRUST_PROXY=1 so request.ip (and the
+  // auth API's per-IP rate limit) sees the client, not the proxy.
+  trustProxy: process.env.TRUST_PROXY === '1',
   // /ready is red while the durable store is unreachable, so a load balancer stops
   // routing new traffic without failing liveness (/health).
   ready: () => stores.store.ping?.() ?? Promise.resolve(true),
   auth,
   allowedOrigins,
   accountStore, // dev ?nick= WS login (when auth is off)
-  // Only expose create/join when auth is on (it mints tokens); no auth ⇒ use ?player=.
-  httpRoutes: auth ? (app) => registerMatchApi(app, matchApi) : undefined,
+  // Only expose the account + match APIs when auth is on (they mint tokens);
+  // no auth ⇒ the insecure dev ?player= handshake only.
+  httpRoutes:
+    auth && signSession
+      ? (app) => {
+          // The account + match surface sits behind @fastify/rate-limit, registered in an
+          // ENCAPSULATED scope so the coarse per-IP backstop covers only these write
+          // routes — liveness probes (/health, /ready) on the parent app stay unthrottled
+          // for load balancers. The route modules keep their own tighter, uniform-401-
+          // preserving per-endpoint budgets on top (defence in depth on the auth path).
+          void app.register(async (scope) => {
+            await scope.register(rateLimit, { max: 100, timeWindow: '1 minute' });
+            registerAuthApi(scope, { users: stores.userStore, signSession });
+            registerMatchApi(scope, matchApi);
+          });
+        }
+      : undefined,
 });
 
 const wsBase = await server.listen(); // ws://host:port/matches (multi-match → the base prefix)
@@ -162,8 +195,9 @@ process.stdout.write(
     `  health : ${httpUrl}/health`,
     ...(auth
       ? [
-          `  join   : POST ${httpUrl}/matches  ·  GET ${httpUrl}/matches/dev/join?nick=<you>`,
-          `           (dev-grade: unauthenticated, seat claimed by nick — not an authz boundary)`,
+          `  account: POST ${httpUrl}/auth/register  ·  POST ${httpUrl}/auth/login  {login, password}`,
+          `  join   : POST ${httpUrl}/matches  ·  GET ${httpUrl}/matches/dev/join  (Authorization: Bearer <session>)`,
+          `           (the session's login is your nick; the seat is claimed for YOUR account)`,
         ]
       : [`  dev    : ${wsBase}/dev?player=green  ·  ${wsBase}/dev?player=red`]),
     host === '0.0.0.0'
