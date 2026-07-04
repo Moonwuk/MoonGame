@@ -1115,27 +1115,27 @@ const html = `<!doctype html>
 <!-- slim left rail: only the wired tools (each opens its window). More icons land here as
      features get wired. -->
 <nav id="rail">
-  <button id="rail-diplo" title="Дипломатия">⬡</button>
-  <button id="rail-msgs" title="Сообщения">✉<b id="msgbadge" class="railbadge" style="display:none"></b></button>
-  <button id="rail-tech" title="Технологии">⚛</button>
-  <button id="rail-market" title="Рынок">⇄</button>
-  <button id="railcorp" title="Корпорация">⬢</button>
-  <button id="rail-chat" title="Чат" class="desk-only">🗨</button>
-  <button id="rail-log" title="Сводки">≡<span class="badge" id="alertbadge" style="display:none">0</span></button>
+  <button id="rail-diplo" title="Дипломатия" data-i18n-title>⬡</button>
+  <button id="rail-msgs" title="Сообщения" data-i18n-title>✉<b id="msgbadge" class="railbadge" style="display:none"></b></button>
+  <button id="rail-tech" title="Технологии" data-i18n-title>⚛</button>
+  <button id="rail-market" title="Рынок" data-i18n-title>⇄</button>
+  <button id="railcorp" title="Корпорация" data-i18n-title>⬢</button>
+  <button id="rail-chat" title="Чат" data-i18n-title class="desk-only">🗨</button>
+  <button id="rail-log" title="Сводки" data-i18n-title>≡<span class="badge" id="alertbadge" style="display:none">0</span></button>
 </nav>
 <!-- floating chat window (desktop only) — content rendered by renderChat() in main.ts -->
 <div id="chatwin" class="desk-only"></div>
-<div id="logwin"><div class="lwbox"><div class="lw-head"><b>СВОДКИ</b><button class="lw-close">✕</button></div><div id="log"></div></div></div>
+<div id="logwin"><div class="lwbox"><div class="lw-head"><b data-i18n>СВОДКИ</b><button class="lw-close">✕</button></div><div id="log"></div></div></div>
 <!-- technologies window — content rendered by renderTech() in main.ts -->
-<div id="tech"><div class="twbox"><div class="lw-head"><b>ТЕХНОЛОГИИ</b><button class="tw-close">✕</button></div><div id="techbody"></div></div></div>
+<div id="tech"><div class="twbox"><div class="lw-head"><b data-i18n>ТЕХНОЛОГИИ</b><button class="tw-close">✕</button></div><div id="techbody"></div></div></div>
 <!-- session market — whole box rendered by renderMarket() in main.ts -->
 <div id="market"></div>
 <aside id="side"></aside>
 <div id="toasts"></div>
 <div id="speedbar" class="spd">
-  <button id="spd-pause" data-speed="0">‖</button><button id="spd-play" data-speed="1" class="on">▶</button><button id="spd-fast" data-speed="3">▶▶</button><span class="spddiv"></span><button class="spdmini" data-mult="1" title="реальное время">×1</button><button class="spdmini" data-mult="10">×10</button><button class="spdmini" data-mult="50">×50</button>
-  <span class="sep" id="restart-sep" style="display:none"></span><button id="restart" title="Перезапуск — к выбору ботов" style="display:none">⟳</button>
-  <span class="sep"></span><button id="tomenu" title="Выход в меню">⌂</button>
+  <button id="spd-pause" data-speed="0">‖</button><button id="spd-play" data-speed="1" class="on">▶</button><button id="spd-fast" data-speed="3">▶▶</button><span class="spddiv"></span><button class="spdmini" data-mult="1" title="реальное время" data-i18n-title>×1</button><button class="spdmini" data-mult="10">×10</button><button class="spdmini" data-mult="50">×50</button>
+  <span class="sep" id="restart-sep" style="display:none"></span><button id="restart" title="Перезапуск — к выбору ботов" data-i18n-title style="display:none">⟳</button>
+  <span class="sep"></span><button id="tomenu" title="Выход в меню" data-i18n-title>⌂</button>
 </div>
 <div id="cmdbar"></div>
 <div id="codex"></div>
@@ -1155,36 +1155,36 @@ const html = `<!doctype html>
         <div class="ccrest">
           <div class="ring"><span class="dia"></span></div>
           <div class="wm">VOID DOMINION</div>
-          <div class="wtag">Грань пустоты</div>
+          <div class="wtag" data-i18n>Грань пустоты</div>
         </div>
-        <button id="cnew" class="cnew" type="button">Новый командир</button>
-        <div class="cdiv">войти через</div>
+        <button id="cnew" class="cnew" type="button" data-i18n>Новый командир</button>
+        <div class="cdiv" data-i18n>войти через</div>
         <div class="csocial">
-          <button id="cgoogle" class="csoc" type="button" aria-label="Войти через Google" title="Войти через Google">G</button>
-          <button id="capple" class="csoc" type="button" aria-label="Войти через Apple" title="Войти через Apple"><svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M16.4 12.9c0-2.3 1.9-3.4 2-3.4-1.1-1.6-2.8-1.8-3.4-1.8-1.5-.1-2.8.8-3.5.8s-1.8-.8-3-.8c-1.5 0-2.9.9-3.7 2.3-1.6 2.7-.4 6.8 1.1 9 .7 1.1 1.6 2.3 2.8 2.2 1.1 0 1.5-.7 2.9-.7s1.7.7 2.9.7c1.2 0 2-1.1 2.7-2.1.8-1.2 1.2-2.4 1.2-2.4s-2.3-.9-2.3-3zM14.3 6.3c.6-.8 1-1.8.9-2.9-.9 0-2 .6-2.6 1.3-.6.7-1.1 1.7-.9 2.7 1 .1 2-.5 2.6-1.1z"/></svg></button>
+          <button id="cgoogle" class="csoc" type="button" aria-label="Войти через Google" title="Войти через Google" data-i18n-title data-i18n-aria>G</button>
+          <button id="capple" class="csoc" type="button" aria-label="Войти через Apple" title="Войти через Apple" data-i18n-title data-i18n-aria><svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M16.4 12.9c0-2.3 1.9-3.4 2-3.4-1.1-1.6-2.8-1.8-3.4-1.8-1.5-.1-2.8.8-3.5.8s-1.8-.8-3-.8c-1.5 0-2.9.9-3.7 2.3-1.6 2.7-.4 6.8 1.1 9 .7 1.1 1.6 2.3 2.8 2.2 1.1 0 1.5-.7 2.9-.7s1.7.7 2.9.7c1.2 0 2-1.1 2.7-2.1.8-1.2 1.2-2.4 1.2-2.4s-2.3-.9-2.3-3zM14.3 6.3c.6-.8 1-1.8.9-2.9-.9 0-2 .6-2.6 1.3-.6.7-1.1 1.7-.9 2.7 1 .1 2-.5 2.6-1.1z"/></svg></button>
         </div>
         <div class="cstack">
-          <button id="clogin" class="cbtn ghost" type="button">Вход по позывному</button>
-          <button id="csolo" class="cbtn ghost" type="button">Одиночная игра</button>
+          <button id="clogin" class="cbtn ghost" type="button" data-i18n>Вход по позывному</button>
+          <button id="csolo" class="cbtn ghost" type="button" data-i18n>Одиночная игра</button>
         </div>
       </div>
       <div id="cbrowse" style="display:none">
-        <button id="cback" class="cback" type="button">‹ назад</button>
-        <div class="ctitle"><span class="dia"></span><b>МАТЧИ</b></div>
-        <p class="csub">Выбери матч из списка и войди, или обнови список.</p>
-        <label class="cfield">Сервер
+        <button id="cback" class="cback" type="button" data-i18n>‹ назад</button>
+        <div class="ctitle"><span class="dia"></span><b data-i18n>МАТЧИ</b></div>
+        <p class="csub" data-i18n>Выбери матч из списка и войди, или обнови список.</p>
+        <label class="cfield"><span data-i18n>Сервер</span>
           <input id="csrv" type="text" inputmode="url" autocapitalize="off" autocomplete="off" spellcheck="false" placeholder="wss://… or ws://host:8788">
         </label>
-        <label class="cfield">Позывной
-          <input id="cnick" type="text" autocapitalize="off" autocomplete="off" spellcheck="false" maxlength="24" placeholder="позывной">
+        <label class="cfield"><span data-i18n>Позывной</span>
+          <input id="cnick" type="text" autocapitalize="off" autocomplete="off" spellcheck="false" maxlength="24" placeholder="позывной" data-i18n-ph>
         </label>
         <div class="crow">
-          <button id="cgo" class="cbtn" type="button">Обновить список</button>
+          <button id="cgo" class="cbtn" type="button" data-i18n>Обновить список</button>
         </div>
         <div class="mtabs">
-          <button class="mtab active" data-tab="available">Доступные</button>
-          <button class="mtab" data-tab="active">Активные</button>
-          <button class="mtab" data-tab="archived">Архив</button>
+          <button class="mtab active" data-tab="available" data-i18n>Доступные</button>
+          <button class="mtab" data-tab="active" data-i18n>Активные</button>
+          <button class="mtab" data-tab="archived" data-i18n>Архив</button>
         </div>
         <div id="mlist" class="mlist"></div>
       </div>
@@ -1192,22 +1192,22 @@ const html = `<!doctype html>
     </div>
     <!-- in-app APK update (APK only; dormant in the browser — driven by updater.ts) -->
     <div id="updbar">
-      <div class="ub-t">Доступна новая сборка <b id="ub-ver"></b></div>
+      <div class="ub-t"><span data-i18n>Доступна новая сборка</span> <b id="ub-ver"></b></div>
       <div class="ub-row">
-        <a id="ub-go" class="ub-go" href="#" rel="noopener">Обновить</a>
-        <button id="ub-later" class="ub-later" type="button">Позже</button>
+        <a id="ub-go" class="ub-go" href="#" rel="noopener" data-i18n>Обновить</a>
+        <button id="ub-later" class="ub-later" type="button" data-i18n>Позже</button>
       </div>
     </div>
-    <button id="cupd" class="cupd" type="button" style="display:none">Проверить обновления</button>
+    <button id="cupd" class="cupd" type="button" style="display:none" data-i18n>Проверить обновления</button>
     <div id="cver" class="cver"></div>
     <!-- DEV TEST MODE — remove this button (and the #testmode block + CSS + main.ts hook) to cut the feature -->
-    <button id="ctest" class="cbtn ghost tm-open">🧪 Тесты · режим разработчика</button>
+    <button id="ctest" class="cbtn ghost tm-open" data-i18n>🧪 Тесты · режим разработчика</button>
     <!-- /DEV TEST MODE -->
     <div class="cfoot">
-      <a id="cl-imprint">Выходные данные</a>
-      <a id="cl-terms">Условия</a>
-      <a id="cl-privacy">Политика конфиденциальности</a>
-      <a id="cl-support">Поддержка</a>
+      <a id="cl-imprint" data-i18n>Выходные данные</a>
+      <a id="cl-terms" data-i18n>Условия</a>
+      <a id="cl-privacy" data-i18n>Политика конфиденциальности</a>
+      <a id="cl-support" data-i18n>Поддержка</a>
     </div>
   </div>
 </div>
@@ -1220,49 +1220,49 @@ const html = `<!doctype html>
     <div class="hub-av">◆</div>
     <div class="hub-who">
       <div class="hub-name" id="hub-name">Командир</div>
-      <div class="hub-st">в сети</div>
+      <div class="hub-st" data-i18n>в сети</div>
     </div>
-    <button class="hub-msg" id="hub-msg" type="button" aria-label="Сообщения">✉</button>
+    <button class="hub-msg" id="hub-msg" type="button" aria-label="Сообщения" data-i18n-aria>✉</button>
   </div>
   <div class="hub-body">
     <div class="hub-panel" id="hp-home">
-      <button id="hub-play" class="hub-play" type="button">ИГРАТЬ СЕЙЧАС</button>
-      <button id="hub-solo" class="hub-solo" type="button">Одиночная игра</button>
-      <div class="hub-sec">Сводка</div>
+      <button id="hub-play" class="hub-play" type="button" data-i18n>ИГРАТЬ СЕЙЧАС</button>
+      <button id="hub-solo" class="hub-solo" type="button" data-i18n>Одиночная игра</button>
+      <div class="hub-sec" data-i18n>Сводка</div>
       <div class="hub-card">
         <div class="hc-ic">◷</div>
-        <div><div class="hc-t">Нет матчей, ждущих приказа</div><div class="hc-s">Войди в матч на вкладке «Игры» — здесь появятся ходы, требующие внимания.</div></div>
+        <div><div class="hc-t" data-i18n>Нет матчей, ждущих приказа</div><div class="hc-s" data-i18n>Войди в матч на вкладке «Игры» — здесь появятся ходы, требующие внимания.</div></div>
       </div>
       <div class="hub-card">
         <div class="hc-ic">✦</div>
-        <div><div class="hc-t">Сезон ещё не начат</div><div class="hc-s">Рейтинги и альянсы откроются со стартом мета-слоя.</div></div>
+        <div><div class="hc-t" data-i18n>Сезон ещё не начат</div><div class="hc-s" data-i18n>Рейтинги и альянсы откроются со стартом мета-слоя.</div></div>
       </div>
     </div>
     <div class="hub-panel" id="hp-rank" style="display:none">
-      <div class="hub-empty"><span class="he-ic">▤</span>Рейтинги — скоро<br><span style="font-size:11px;color:var(--cyan-dim)">сезонный рейтинг по местам в матчах</span></div>
+      <div class="hub-empty"><span class="he-ic">▤</span><span data-i18n>Рейтинги — скоро</span><br><span style="font-size:11px;color:var(--cyan-dim)" data-i18n>сезонный рейтинг по местам в матчах</span></div>
     </div>
     <div class="hub-panel" id="hp-ally" style="display:none">
-      <div class="hub-empty"><span class="he-ic">⚑</span>Альянсы — скоро<br><span style="font-size:11px;color:var(--cyan-dim)">корпорации · общие AvA-битвы · влияние</span></div>
-      <button id="ccorp" class="hub-solo" type="button">⬢ Кабинет корпорации (макет)</button>
+      <div class="hub-empty"><span class="he-ic">⚑</span><span data-i18n>Альянсы — скоро</span><br><span style="font-size:11px;color:var(--cyan-dim)" data-i18n>корпорации · общие AvA-битвы · влияние</span></div>
+      <button id="ccorp" class="hub-solo" type="button">⬢ <span data-i18n>Кабинет корпорации (макет)</span></button>
     </div>
     <div class="hub-panel" id="hp-more" style="display:none">
       <div class="hub-grid">
-        <button class="hub-tile" data-more="Аккаунт" type="button"><span class="ht-ic">◉</span>Аккаунт</button>
-        <button class="hub-tile" data-more="Сообщество" type="button"><span class="ht-ic">◍</span>Сообщество</button>
-        <button class="hub-tile" data-more="Поддержка" type="button"><span class="ht-ic">⚠</span>Поддержка</button>
-        <button class="hub-tile" data-more="Уведомления" type="button"><span class="ht-ic">◔</span>Уведомления</button>
-        <button class="hub-tile" data-more="Чат" type="button"><span class="ht-ic">▭</span>Чат</button>
-        <button class="hub-tile wide" id="hub-logout" type="button"><span class="ht-ic">↩</span>Сменить командира</button>
+        <button class="hub-tile" data-more="Аккаунт" type="button"><span class="ht-ic">◉</span><span data-i18n>Аккаунт</span></button>
+        <button class="hub-tile" data-more="Сообщество" type="button"><span class="ht-ic">◍</span><span data-i18n>Сообщество</span></button>
+        <button class="hub-tile" data-more="Поддержка" type="button"><span class="ht-ic">⚠</span><span data-i18n>Поддержка</span></button>
+        <button class="hub-tile" data-more="Уведомления" type="button"><span class="ht-ic">◔</span><span data-i18n>Уведомления</span></button>
+        <button class="hub-tile" data-more="Чат" type="button"><span class="ht-ic">▭</span><span data-i18n>Чат</span></button>
+        <button class="hub-tile wide" id="hub-logout" type="button"><span class="ht-ic">↩</span><span data-i18n>Сменить командира</span></button>
       </div>
     </div>
   </div>
   <div class="hub-note" id="hub-note"></div>
   <nav class="hub-nav">
-    <button class="hub-tab active" data-hub="home" type="button"><span class="hn-ic">⌂</span>Домой</button>
-    <button class="hub-tab" data-hub="games" type="button"><span class="hn-ic">▶</span>Игры</button>
-    <button class="hub-tab" data-hub="rank" type="button"><span class="hn-ic">▤</span>Рейтинг</button>
-    <button class="hub-tab" data-hub="ally" type="button"><span class="hn-ic">⚑</span>Альянсы</button>
-    <button class="hub-tab" data-hub="more" type="button"><span class="hn-ic">≡</span>Ещё</button>
+    <button class="hub-tab active" data-hub="home" type="button"><span class="hn-ic">⌂</span><span data-i18n>Домой</span></button>
+    <button class="hub-tab" data-hub="games" type="button"><span class="hn-ic">▶</span><span data-i18n>Игры</span></button>
+    <button class="hub-tab" data-hub="rank" type="button"><span class="hn-ic">▤</span><span data-i18n>Рейтинг</span></button>
+    <button class="hub-tab" data-hub="ally" type="button"><span class="hn-ic">⚑</span><span data-i18n>Альянсы</span></button>
+    <button class="hub-tab" data-hub="more" type="button"><span class="hn-ic">≡</span><span data-i18n>Ещё</span></button>
   </nav>
 </div>
 <div id="corp">
@@ -1274,25 +1274,23 @@ const html = `<!doctype html>
 </div>
 <div id="lobby">
   <div class="lbox">
-    <div class="ltitle"><span class="dia"></span><b>LOBBY</b></div>
-    <p class="lsub">Waiting in the staging sector. The host starts the match when ready.</p>
+    <div class="ltitle"><span class="dia"></span><b data-i18n>ЛОББИ</b></div>
+    <p class="lsub" data-i18n>Ожидание в секторе сбора. Хост начнёт матч, когда будет готов.</p>
     <div id="lroster" class="lroster"></div>
     <div id="lactions"></div>
   </div>
 </div>
 <div id="setup">
   <div class="sbox">
-    <div class="stitle"><span class="dia"></span><b>SKIRMISH SETUP</b></div>
-    <div class="stabs"><button data-stab="start" class="on">Старт</button><button data-stab="div">Дивизии</button><button data-stab="hero">Герои</button><button data-stab="ship">Верфь</button></div>
+    <div class="stitle"><span class="dia"></span><b data-i18n>НАСТРОЙКА СХВАТКИ</b></div>
+    <div class="stabs"><button data-stab="start" class="on" data-i18n>Старт</button><button data-stab="div" data-i18n>Дивизии</button><button data-stab="hero" data-i18n>Герои</button><button data-stab="ship" data-i18n>Верфь</button></div>
     <div id="setup-start" class="spane">
-      <p class="ssub">Pick your homeworld on the map, choose how many rivals join, then launch. Empty
-        slots are taken by the AI — switch a slot OFF to command a smaller sector, or switch
-        them all OFF for a peaceful solo sandbox to explore the interface.</p>
+      <p class="ssub" data-i18n>Выберите свой домашний мир на карте, задайте число соперников-ботов и запускайте. Пустые места займут боты — выключите место, чтобы командовать меньшим сектором, или выключите все ради мирной одиночной песочницы для знакомства с интерфейсом.</p>
       <svg id="setupmap" class="smap" preserveAspectRatio="xMidYMid meet"></svg>
-      <p class="smaphint" id="setuphint">Tap a glowing world to choose your start</p>
+      <p class="smaphint" id="setuphint" data-i18n>Тапните светящийся мир, чтобы выбрать старт</p>
       <div id="setupslots" class="sslots"></div>
-      <div class="sspeedlabel">Скорость времени</div>
-      <p class="sspeedhint">×1 — реальное время (час пути = час жизни, мир живёт и офлайн). Для быстрой партии выбери ×10–×50.</p>
+      <div class="sspeedlabel" data-i18n>Скорость времени</div>
+      <p class="sspeedhint" data-i18n>×1 — реальное время (час пути = час жизни, мир живёт и офлайн). Для быстрой партии выбери ×10–×50.</p>
       <div id="setupspeed" class="sspeed">
         <button class="spdchip" type="button" data-spd="1">×1</button>
         <button class="spdchip" type="button" data-spd="2">×2</button>
@@ -1304,8 +1302,8 @@ const html = `<!doctype html>
     <div id="setup-div" class="spane" style="display:none"></div>
     <div id="setup-hero" class="spane fitpane" style="display:none"></div>
     <div id="setup-ship" class="spane fitpane" style="display:none"></div>
-    <button id="setupgo" class="sgo" disabled>LAUNCH</button>
-    <button id="setupcancel" class="scancel">Back</button>
+    <button id="setupgo" class="sgo" disabled data-i18n>ЗАПУСК</button>
+    <button id="setupcancel" class="scancel" data-i18n>Назад</button>
   </div>
 </div>
 <!-- hero fitting: the module "on the cursor" — follows the pointer (heroes setup tab) -->
