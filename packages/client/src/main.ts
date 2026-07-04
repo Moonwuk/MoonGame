@@ -13,6 +13,9 @@ import { createInitialState } from '@void/shared-core';
 import { theme } from './theme';
 import { createWelcomeModel, resolveWelcomeAction, nextCallsign } from './welcomeScreen';
 import type { WelcomeModel, WelcomeOutcome, AuthProviderId } from './welcomeScreen';
+import { clampCam, zoomAt, type Cam, type Viewport, type Bounds } from './camera';
+import { renderMap } from './mapRender';
+import { shippedGameData, skirmishState } from './gameData';
 
 /** Bind the typed theme tokens to CSS custom properties (docs/main-menu.md §5.4 — one
  *  TS engine → one look). The stylesheet in index.html reads these vars. */
@@ -109,9 +112,12 @@ function wire(model: WelcomeModel): void {
       case 'newPlayer':
         setStatus(statusText(resolveWelcomeAction({ kind: 'newPlayer' }, model)));
         break;
-      case 'singlePlayer':
-        setStatus(statusText(resolveWelcomeAction({ kind: 'singlePlayer' }, model)));
+      case 'singlePlayer': {
+        const outcome = resolveWelcomeAction({ kind: 'singlePlayer' }, model);
+        setStatus(statusText(outcome));
+        if (outcome.ok && outcome.route === 'single') startMatch();
         break;
+      }
       case 'signIn': {
         const provider = target.dataset.provider;
         if (provider) {
@@ -140,6 +146,85 @@ function showEngine(): void {
   if (!el) return;
   const state = createInitialState({ seed: 'welcome', version: { data: '0.1.0', manifest: '1' } });
   el.textContent = `движок готов · t=${state.time}`;
+}
+
+let matchStarted = false;
+
+/** Single-player: build a real GameState from the shipped skirmish map (via the shared
+ *  loader + buildStateFromMap) and draw it on the map canvas — the first time the Stage-4
+ *  client shows the actual game, not just the menu. Pan (drag) and zoom (wheel) go through
+ *  the shared camera. Static for now; server snapshots + a sim loop arrive in CP1.x. */
+function startMatch(): void {
+  if (matchStarted) return;
+  const canvas = document.getElementById('map') as HTMLCanvasElement | null;
+  const g = canvas?.getContext('2d') ?? null;
+  if (!canvas || !g) return;
+  matchStarted = true;
+
+  const state = skirmishState(shippedGameData());
+  const app = document.getElementById('app');
+  if (app) app.hidden = true;
+  canvas.hidden = false;
+
+  let minX = Infinity,
+    minY = Infinity,
+    maxX = -Infinity,
+    maxY = -Infinity;
+  for (const p of Object.values(state.planets)) {
+    minX = Math.min(minX, p.position.x);
+    minY = Math.min(minY, p.position.y);
+    maxX = Math.max(maxX, p.position.x);
+    maxY = Math.max(maxY, p.position.y);
+  }
+  const bounds: Bounds = { minX, minY, maxX, maxY };
+  let vp: Viewport = { left: 0, top: 0, right: 1, bottom: 1 };
+  let cam: Cam = { scale: 1, x: 0, y: 0 };
+
+  const resize = (): void => {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    canvas.width = Math.round(w * dpr);
+    canvas.height = Math.round(h * dpr);
+    canvas.style.width = `${w}px`;
+    canvas.style.height = `${h}px`;
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    vp = { left: 0, top: 0, right: w, bottom: h };
+    cam = clampCam(cam, vp, bounds);
+  };
+  resize();
+  window.addEventListener('resize', resize);
+
+  canvas.addEventListener(
+    'wheel',
+    (e) => {
+      e.preventDefault();
+      const r = canvas.getBoundingClientRect();
+      cam = zoomAt(cam, e.clientX - r.left, e.clientY - r.top, e.deltaY < 0 ? 1.12 : 1 / 1.12, vp, bounds);
+    },
+    { passive: false },
+  );
+  let drag: { x: number; y: number } | null = null;
+  canvas.addEventListener('pointerdown', (e) => {
+    drag = { x: e.clientX, y: e.clientY };
+    canvas.setPointerCapture(e.pointerId);
+  });
+  canvas.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    cam = clampCam({ scale: cam.scale, x: cam.x + (e.clientX - drag.x), y: cam.y + (e.clientY - drag.y) }, vp, bounds);
+    drag = { x: e.clientX, y: e.clientY };
+  });
+  const endDrag = (): void => {
+    drag = null;
+  };
+  canvas.addEventListener('pointerup', endDrag);
+  canvas.addEventListener('pointercancel', endDrag);
+
+  const loop = (): void => {
+    renderMap(g, state, cam, vp, bounds, { now: state.time });
+    requestAnimationFrame(loop);
+  };
+  requestAnimationFrame(loop);
 }
 
 applyTheme();

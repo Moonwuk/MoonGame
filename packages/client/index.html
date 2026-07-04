@@ -173,9 +173,21 @@
         color: var(--dim);
         letter-spacing: 1px;
       }
+      /* Match view: a full-viewport map canvas (shown when a match starts; the welcome
+         card is hidden). touch-action:none so drag-pan / pinch aren't stolen by scroll. */
+      #map {
+        position: fixed;
+        inset: 0;
+        display: block;
+        touch-action: none;
+      }
+      #map[hidden] {
+        display: none;
+      }
     </style>
   </head>
   <body>
+    <canvas id="map" hidden></canvas>
     <div id="app"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>
