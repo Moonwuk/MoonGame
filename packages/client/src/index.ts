@@ -32,6 +32,17 @@ export {
 } from './camera';
 export { rgba, blitGlow, blitSphere } from './holoDraw';
 export {
+  BOUNDARY,
+  clampPowerWeights,
+  clipHalfPlane,
+  clipHalfPlaneTagged,
+  computePowerCells,
+  drawTerritory,
+  type TerritorySeed,
+  type TerritoryCell,
+  type TerritoryPalette,
+} from './territory';
+export {
   createStatusBarModel,
   createSelectionModel,
   type StatusResource,
