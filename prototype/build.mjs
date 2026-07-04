@@ -765,8 +765,6 @@ button.b:disabled{opacity:.32;cursor:not-allowed;color:var(--dim);border-color:v
 .fitpane .mcell.held{border-color:var(--amber);box-shadow:0 0 12px rgba(255,180,58,.45);}
 .fitpane .mcell.planned{opacity:.55;}
 .fitpane .mcell .badge{position:absolute;top:3px;right:6px;font:700 10px ui-monospace,monospace;color:var(--cyan);}
-#heldghost{position:fixed;z-index:80;pointer-events:none;display:none;transform:translate(-50%,-50%);
-  font-size:26px;filter:drop-shadow(0 0 7px rgba(53,214,230,.9));}
 /* hero grade (rarity) line — colour by tier */
 .fitpane .hgradeline{font:600 12px ui-monospace,monospace;letter-spacing:.5px;margin:2px 0 10px;}
 .fitpane .hgradeline.g-common{color:#8fa6ad;}
@@ -1121,7 +1119,6 @@ const html = `<!doctype html>
 <div id="setup">
   <div class="sbox">
     <div class="stitle"><span class="dia"></span><b>SKIRMISH SETUP</b></div>
-    <div class="stabs"><button data-stab="start" class="on">Старт</button><button data-stab="div">Дивизии</button><button data-stab="hero">Герои</button><button data-stab="ship">Верфь</button></div>
     <div id="setup-start" class="spane">
       <p class="ssub">Pick your homeworld on the map, choose how many rivals join, then launch. Empty
         slots are taken by the AI — switch a slot OFF to command a smaller sector, or switch
@@ -1137,15 +1134,11 @@ const html = `<!doctype html>
         <button class="spdchip" type="button" data-spd="10">×10</button>
       </div>
     </div>
-    <div id="setup-div" class="spane" style="display:none"></div>
-    <div id="setup-hero" class="spane fitpane" style="display:none"></div>
-    <div id="setup-ship" class="spane fitpane" style="display:none"></div>
     <button id="setupgo" class="sgo" disabled>LAUNCH</button>
     <button id="setupcancel" class="scancel">Back</button>
   </div>
 </div>
 <!-- hero fitting: the module "on the cursor" — follows the pointer (heroes setup tab) -->
-<div id="heldghost"></div>
 <!-- DEV TEST MODE — content rendered by testmode.ts; delete this one line to cut the markup -->
 <div id="testmode"></div>
 <script>${js}</script>
