@@ -29,6 +29,9 @@ import {
   victoryModule,
   technologyModule,
   espionageModule,
+  stewardModule,
+  stewardActive,
+  STEWARD_POSTURES,
   getStance,
   isBotPair,
   setStance,
@@ -48,6 +51,7 @@ import {
   type Context,
   type DomainEvent,
   type Battle,
+  type StewardPosture,
 } from '../../packages/shared-core/src/index';
 import { canAfford, payCost } from '../../packages/shared-core/src/util/treasury';
 import { sumUnitStat } from '../../packages/shared-core/src/util/stacks';
@@ -123,6 +127,30 @@ export const data: GameData = parseGameData({
       researchTimeHours: 10,
       prerequisites: ['industrial_automation'],
       effects: { productionBonus: 0.05 },
+    },
+    // «Хранитель» — the automation pillar. Strong, so it's gated behind choosing the
+    // command scientist (Куратор) AND a mid-session day-gate (day 15). Unlocks the
+    // `steward` ability, which `stewardModule` requires before `steward.delegate` works.
+    ai_stewardship: {
+      name: 'Steward Protocol',
+      description:
+        'Автоматизация командования: доверенному ИИ можно передать место, пока вы офлайн (спите) — он держит оборону и возвращает управление к сроку. Сильная — потому открывается выбором учёного-Куратора и лишь к середине сессии (день 15).',
+      branch: 'command',
+      tier: 3,
+      cost: { credits: 400, metal: 260 },
+      researchTimeHours: 14,
+      dayGate: 15,
+      conditions: [{ type: 'has_scientist', branch: 'command' }],
+      unlocks: { abilities: ['steward'] },
+    },
+  },
+  // Research leaders (scientistModule). The command-branch «Куратор» gates the Steward.
+  scientists: {
+    overseer: {
+      name: 'Куратор',
+      description:
+        'Лидер ветки командования (C2): доктрины автоматизации и делегирования. Открывает «Протокол Хранитель» — передачу места ИИ на время сна.',
+      branch: 'command',
     },
   },
   units: {
@@ -1274,6 +1302,10 @@ export function newGame(setup: SetupConfig = DEFAULT_SETUP): GameState {
       { credits: 260, metal: 320, food: 120, energy: 90, microelectronics: 40 },
       seat.ai,
     );
+    // Every human seat starts as the command leader «Куратор», so the Steward line is
+    // reachable (its `has_scientist {branch:'command'}` gate is satisfied). A full
+    // scientist-choice UI is a follow-up; the day-15 + research gate is still enforced.
+    if (!seat.ai) players[seat.id]!.scientist = { id: 'overseer', level: 1 };
     fleets[`${seat.id}-1`] = fleet(
       `${seat.id}-1`,
       seat.id,
@@ -2303,6 +2335,7 @@ export const MODULES: GameModule[] = [
   captureOnArrivalModule, // walk-in capture now a kernel rule (was client-side seizeSector)
   constructionModule,
   technologyModule, // session research: branch/day-gated techs → effect bonuses + content unlocks
+  stewardModule, // «Хранитель»: delegate the seat to the AI while you sleep (gated by the Steward tech)
   armyModule,
   victoryModule, // terminal match state from authoritative state (domination / elimination / score / timeout)
   fleetLaunchModule,
@@ -2411,6 +2444,17 @@ export const engageFleet = (playerId: string, fleetId: string, targetId: string)
 /** Begin researching a session technology (one active at a time — technologyModule). */
 export const researchTech = (playerId: string, technology: string) =>
   act(playerId, 'technology.research', { technology });
+/** «Хранитель»: hand this seat to the AI until game-time `until`, running `posture`
+ *  (v1: 'defend'). Rejected (E_STEWARD_LOCKED) until the Steward tech is researched. */
+export const delegateSteward = (
+  playerId: string,
+  until: number,
+  posture: StewardPosture = 'defend',
+) => act(playerId, 'steward.delegate', { posture, until });
+/** Take the seat back early (a safe no-op if nothing was delegated). */
+export const recallSteward = (playerId: string) => act(playerId, 'steward.recall', {});
+// Re-export the Steward reads so the netserver + UI import them from the `./game` façade.
+export { stewardActive, STEWARD_POSTURES };
 /** Declare war on (or otherwise re-stance) another commander. */
 export const declareWar = (playerId: string, target: string, stance: DiplomaticStance = 'war') =>
   act(playerId, 'diplomacy.declare', { target, stance });
@@ -2825,7 +2869,11 @@ export function canTraverse(state: GameState, mover: string, owner: string | nul
  *  Read-only: it builds and returns the actions; the caller applies them — the
  *  client to its local sim, the server through the authoritative room. Drives
  *  empty seats the same way in solo and multiplayer (a seat with no human). */
-export function aiOrders(state: GameState, ai: string): Action[] {
+export function aiOrders(
+  state: GameState,
+  ai: string,
+  posture: StewardPosture | 'expand' = 'expand',
+): Action[] {
   const out: Action[] = [];
   if (!state.players[ai]) return out; // seat not in play / eliminated
   const isShipUnit = (u: string): boolean => !data.units[u]?.traits.includes('ground');
@@ -2834,7 +2882,11 @@ export function aiOrders(state: GameState, ai: string): Action[] {
     Math.hypot(a.x - b.x, a.y - b.y);
   // Send each idle AI fleet toward the nearest capturable world it can reach — only
   // neutral worlds or territory of someone it's at WAR with (peace = off-limits).
-  for (const f of Object.values(state.fleets)) {
+  // Steward «Оборона» (a delegated human seat, posture 'defend') HOLDS: it skips this
+  // offensive sweep entirely and only builds / reinforces / trades below — repelling an
+  // attacker is automatic in combat. "Autopilot keeps you alive; active play wins."
+  const expandFleets: Fleet[] = posture === 'defend' ? [] : Object.values(state.fleets);
+  for (const f of expandFleets) {
     if (f.owner !== ai || f.location == null || f.movement || f.battleId) continue;
     const here = state.planets[f.location];
     if (!here) continue;

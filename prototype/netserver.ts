@@ -32,7 +32,7 @@ import {
   type ReceiptStore,
   type RoomObservation,
 } from '../packages/server/src/index';
-import { newGame, kernel, data, aiOrders, HOUR, serverQueueActions, orderPop, orderHold, orderBlock } from './src/game';
+import { newGame, kernel, data, aiOrders, stewardActive, HOUR, serverQueueActions, orderPop, orderHold, orderBlock } from './src/game';
 const { Pool } = pgPkg;
 
 // --- M0 playtest log: append every room event (join/leave/lobby/action/end) to a
@@ -263,8 +263,13 @@ function runServerAI(): void {
   if (now - aiLastAt < 2 * HOUR) return;
   aiLastAt = now;
   for (const seat of Object.keys(room.state.players)) {
-    if (humans.has(seat)) continue; // a human commands this seat
-    for (const action of aiOrders(room.state, seat)) room.submitAction(seat, action);
+    // «Хранитель»: a delegated seat is played by the AI on its posture (defend) even while
+    // its owner is connected but asleep; an unclaimed/empty seat gets the full expansion AI.
+    const posture = stewardActive(room.state, seat, now);
+    if (humans.has(seat) && !posture) continue; // a human is actively commanding this seat
+    for (const action of aiOrders(room.state, seat, posture ?? 'expand')) {
+      room.submitAction(seat, action);
+    }
   }
 }
 
