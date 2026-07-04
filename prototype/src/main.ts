@@ -87,6 +87,9 @@ import {
   FAVOUR_BASE,
   FAVOUR_EMBARGO,
   FAVOUR_WAR,
+  delegateSteward,
+  recallSteward,
+  stewardActive,
   type QStep,
   type Patrol,
 } from './game';
@@ -1906,6 +1909,34 @@ function handleEvents(events: DomainEvent[]) {
           note(`⚛ изучено: ${data.technologies[p.technology as string]?.name ?? (p.technology as string)}`);
         if (techWin.classList.contains('show')) renderTech();
         break;
+      // «Хранитель» lifecycle: snapshot at delegation, diff on expiry (the morning report).
+      case 'steward.delegated':
+        if (p.playerId === ME) {
+          stewSnapshot = stewMetrics();
+          note('😴 Хранитель принял командование (Оборона) — держит рубежи, пока вы спите.');
+          if (stewWin.classList.contains('show')) renderSteward();
+        }
+        break;
+      case 'steward.recalled':
+        if (p.playerId === ME) {
+          stewSnapshot = null;
+          note('🎮 Вы вернули командование себе.');
+          if (stewWin.classList.contains('show')) renderSteward();
+        }
+        break;
+      case 'steward.expired':
+        if (p.playerId === ME) {
+          const now = stewMetrics();
+          const base = stewSnapshot;
+          stewSnapshot = null;
+          const sign = (n: number) => (n >= 0 ? `+${n}` : `${n}`);
+          const diff = base
+            ? ` Пока вы спали: планет ${base.planets}→${now.planets}, металл ${sign(now.metal - base.metal)}, кредиты ${sign(now.credits - base.credits)}.`
+            : '';
+          note(`🌅 Хранитель вернул вам управление (была «Оборона»).${diff}`);
+          if (stewWin.classList.contains('show')) renderSteward();
+        }
+        break;
       // Both espionage events are addressed to the ACTOR (`owner`); in NET play the
       // server's fog filter already withholds them from the victim — mirror it here.
       case 'intel.stolen': {
@@ -2052,6 +2083,12 @@ function runAI() {
   // server uses to drive unfilled multiplayer seats). Apply them in sequence.
   for (const ai of AI_PLAYERS) {
     for (const a of aiOrders(s, ai)) apply(order(s, a, s.time));
+  }
+  // «Хранитель»: while your own seat is delegated, the local AI plays it too — on its
+  // posture (defend), so solo delegation actually holds the line, not just shows a timer.
+  const myPosture = stewardActive(s, ME, s.time);
+  if (myPosture && !AI_PLAYERS.has(ME)) {
+    for (const a of aiOrders(s, ME, myPosture)) apply(order(s, a, s.time));
   }
 }
 
@@ -5754,6 +5791,7 @@ const TECH_BRANCHES: Array<{ key: string; label: string }> = [
   { key: 'ground', label: 'Земля' },
   { key: 'squadron', label: 'Эскадрильи' },
   { key: 'missile', label: 'Ракеты' },
+  { key: 'command', label: 'Командование' }, // automation / C2 — «Хранитель» lives here
 ];
 const techCost = (c: Record<string, number>): string =>
   Object.entries(c).map(([k, v]) => `${TECH_CUR[k] ?? k} ${v}`).join(' · ');
@@ -5836,6 +5874,88 @@ techWin.addEventListener('click', (e) => {
     playerOrder(researchTech(ME, id));
     renderTech();
   }
+});
+
+// --- steward («Хранитель»): hand the seat to the AI while you sleep ----------
+// Delegate control to a defensive AI until a game-time deadline; it holds the line and
+// returns control on time (stewardModule). Gated by the Steward tech (researched via the
+// «Командование» branch, day 15, scientist Куратор). A "morning report" note fires on expiry.
+const stewWin = $('steward');
+let lastStewAt = 0;
+const STEW_DURATIONS = [4, 8, 12]; // game-hours a single delegation can run
+// Snapshot of my standing at delegation time, diffed on expiry for the morning report.
+let stewSnapshot: { planets: number; metal: number; credits: number } | null = null;
+function stewMetrics(): { planets: number; metal: number; credits: number } {
+  let planets = 0;
+  for (const pl of Object.values(s.planets)) if (pl.owner === ME) planets += 1;
+  const r = (s.players[ME]?.resources ?? {}) as Record<string, number>;
+  return { planets, metal: Math.round(r.metal ?? 0), credits: Math.round(r.credits ?? 0) };
+}
+function stewFmtDur(ms: number): string {
+  const mins = Math.max(0, Math.round(ms / 60000));
+  const h = Math.floor(mins / 60);
+  return h > 0 ? `${h}ч ${mins % 60}м` : `${mins}м`;
+}
+function stewardTechDone(): boolean {
+  return s.players[ME]?.technologies?.completed.includes('ai_stewardship') ?? false;
+}
+function renderSteward(): void {
+  const body = $('stewardbody');
+  const posture = stewardActive(s, ME, s.time); // null unless a live delegation
+  const cur = s.players[ME]?.steward;
+  let html = '';
+  if (posture && cur) {
+    html +=
+      `<div class="st-status on">🤖 <b>Хранитель ведёт оборону.</b><br>` +
+      `Управление вернётся через <b>${stewFmtDur(cur.until - s.time)}</b>.<br>` +
+      `Пока вы спите: держит рубежи и отбивает атаки, застраивает очередь и торгует — без наступлений.</div>` +
+      `<div class="st-row"><button class="st-btn warn" data-stew="recall">Вернуть управление</button></div>` +
+      `<div class="st-note">«Автопилот держит вас в игре — побеждает активная игра.» Оборонительная поза не ходит в атаку и не ведёт дипломатию.</div>`;
+  } else if (!stewardTechDone()) {
+    const day = Math.floor((s.time - (s.startedAt ?? 0)) / DAY);
+    html +=
+      `<div class="st-status locked">🔒 <b>«Протокол Хранитель» ещё не изучен.</b><br>` +
+      `Ветка <b>Командование</b>, открывается с <b>дня 15</b> учёному <b>Куратор</b> (сейчас день ${day}).<br>` +
+      `Изучите его в окне технологий — затем сможете передать место ИИ на время сна.</div>` +
+      `<div class="st-row"><button class="st-btn" data-stew="tech">Открыть технологии</button></div>`;
+  } else {
+    html +=
+      `<div class="st-status">😴 <b>Хранитель готов.</b><br>` +
+      `Передайте место доверенному ИИ (поза «Оборона»), пока вы офлайн — он удержит рубежи и вернёт управление к сроку.</div>` +
+      `<div class="st-h">Передать на</div><div class="st-row">` +
+      STEW_DURATIONS.map(
+        (h) => `<button class="st-btn" data-stew="go" data-h="${h}">${h} ч</button>`,
+      ).join('') +
+      `</div>` +
+      `<div class="st-note">Поза «Оборона»: держит и отбивает, застраивает очередь, торгует — без наступлений и дипломатии. Управление вернётся автоматически, с утренней сводкой.</div>`;
+  }
+  body.innerHTML = html;
+}
+document.getElementById('rail-steward')?.addEventListener('click', () => {
+  stewWin.classList.add('show');
+  renderSteward();
+});
+stewWin.addEventListener('click', (e) => {
+  const tg = e.target as HTMLElement;
+  if (tg.id === 'steward' || tg.classList.contains('tw-close')) {
+    stewWin.classList.remove('show');
+    return;
+  }
+  const btn = tg.closest('[data-stew]') as HTMLElement | null;
+  if (!btn) return;
+  const kind = btn.dataset.stew;
+  if (kind === 'go') {
+    const h = Number(btn.dataset.h) || 8;
+    playerOrder(delegateSteward(ME, s.time + h * HOUR));
+  } else if (kind === 'recall') {
+    playerOrder(recallSteward(ME));
+  } else if (kind === 'tech') {
+    stewWin.classList.remove('show');
+    techWin.classList.add('show');
+    renderTech();
+    return;
+  }
+  renderSteward();
 });
 
 // --- session market: a two-sided order book, one tab per tradeable good -------
@@ -7318,6 +7438,11 @@ function frame(nowReal: number) {
   if (techWin.classList.contains('show') && nowReal - lastTechAt > 500) {
     lastTechAt = nowReal;
     renderTech();
+  }
+  // Keep the steward window live while open (countdown to control returning), throttled.
+  if (stewWin.classList.contains('show') && nowReal - lastStewAt > 500) {
+    lastStewAt = nowReal;
+    renderSteward();
   }
   requestAnimationFrame(frame);
 }

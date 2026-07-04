@@ -9,13 +9,15 @@
  * This is intentionally thin: map rendering, the network transport and the PWA install
  * layer are later bricks (CP0.2 / CP1.x). No forked copy of the core or its data.
  */
-import { createInitialState } from '@void/shared-core';
+import { createInitialState, type GameState } from '@void/shared-core';
 import { theme } from './theme';
 import { createWelcomeModel, resolveWelcomeAction, nextCallsign } from './welcomeScreen';
 import type { WelcomeModel, WelcomeOutcome, AuthProviderId } from './welcomeScreen';
 import { clampCam, zoomAt, type Cam, type Viewport, type Bounds } from './camera';
 import { renderMap } from './mapRender';
 import { shippedGameData, skirmishState } from './gameData';
+import { openLiveMatch } from './net';
+import { nearestPlanet, myFleetAt, moveAction } from './matchInput';
 
 /** Bind the typed theme tokens to CSS custom properties (docs/main-menu.md §5.4 — one
  *  TS engine → one look). The stylesheet in index.html reads these vars. */
@@ -150,22 +152,9 @@ function showEngine(): void {
 
 let matchStarted = false;
 
-/** Single-player: build a real GameState from the shipped skirmish map (via the shared
- *  loader + buildStateFromMap) and draw it on the map canvas — the first time the Stage-4
- *  client shows the actual game, not just the menu. Pan (drag) and zoom (wheel) go through
- *  the shared camera. Static for now; server snapshots + a sim loop arrive in CP1.x. */
-function startMatch(): void {
-  if (matchStarted) return;
-  const canvas = document.getElementById('map') as HTMLCanvasElement | null;
-  const g = canvas?.getContext('2d') ?? null;
-  if (!canvas || !g) return;
-  matchStarted = true;
-
-  const state = skirmishState(shippedGameData());
-  const app = document.getElementById('app');
-  if (app) app.hidden = true;
-  canvas.hidden = false;
-
+/** Map-space bounding box of a state's planets — the camera's world extent. Guards an
+ *  empty map (no planets yet) so the camera math stays finite. */
+function boundsOf(state: GameState): Bounds {
   let minX = Infinity,
     minY = Infinity,
     maxX = -Infinity,
@@ -176,12 +165,34 @@ function startMatch(): void {
     maxX = Math.max(maxX, p.position.x);
     maxY = Math.max(maxY, p.position.y);
   }
-  const bounds: Bounds = { minX, minY, maxX, maxY };
+  if (!Number.isFinite(minX)) return { minX: 0, minY: 0, maxX: 1, maxY: 1 };
+  return { minX, minY, maxX, maxY };
+}
+
+/** Optional interaction hooks for the live match: a tap picks a planet, and the current
+ *  selection is ringed. Single-player passes none (view-only). */
+interface MatchInteract {
+  onPickPlanet?: (id: string | null) => void;
+  getSelected?: () => string | null;
+}
+
+/** Shared map runner: reveals the canvas, wires the shared-camera pan (drag) / zoom
+ *  (wheel), and draws `getState()` every frame. A tap (little movement) picks a planet for
+ *  the interaction layer. Single-player passes a fixed local state and no interaction; a
+ *  live match passes the latest server snapshot + tap→order hooks. */
+function runMatch(getState: () => GameState, bounds: Bounds, interact?: MatchInteract): void {
+  const canvas = document.getElementById('map') as HTMLCanvasElement | null;
+  const g = canvas?.getContext('2d') ?? null;
+  if (!canvas || !g) return;
+  const app = document.getElementById('app');
+  if (app) app.hidden = true;
+  canvas.hidden = false;
+
   let vp: Viewport = { left: 0, top: 0, right: 1, bottom: 1 };
   let cam: Cam = { scale: 1, x: 0, y: 0 };
-
+  let dpr = 1;
   const resize = (): void => {
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
     const w = window.innerWidth;
     const h = window.innerHeight;
     canvas.width = Math.round(w * dpr);
@@ -204,27 +215,141 @@ function startMatch(): void {
     },
     { passive: false },
   );
+  // Drag pans; a tap (little total movement) picks the planet under the pointer.
   let drag: { x: number; y: number } | null = null;
+  let down: { x: number; y: number } | null = null;
+  let movedPx = 0;
   canvas.addEventListener('pointerdown', (e) => {
+    const r = canvas.getBoundingClientRect();
     drag = { x: e.clientX, y: e.clientY };
+    down = { x: e.clientX - r.left, y: e.clientY - r.top };
+    movedPx = 0;
     canvas.setPointerCapture(e.pointerId);
   });
   canvas.addEventListener('pointermove', (e) => {
     if (!drag) return;
+    movedPx += Math.abs(e.clientX - drag.x) + Math.abs(e.clientY - drag.y);
     cam = clampCam({ scale: cam.scale, x: cam.x + (e.clientX - drag.x), y: cam.y + (e.clientY - drag.y) }, vp, bounds);
     drag = { x: e.clientX, y: e.clientY };
   });
-  const endDrag = (): void => {
+  canvas.addEventListener('pointerup', () => {
+    if (down && movedPx < 6 && interact?.onPickPlanet) {
+      interact.onPickPlanet(nearestPlanet(getState(), down.x, down.y, cam, vp, bounds));
+    }
     drag = null;
-  };
-  canvas.addEventListener('pointerup', endDrag);
-  canvas.addEventListener('pointercancel', endDrag);
+    down = null;
+  });
+  canvas.addEventListener('pointercancel', () => {
+    drag = null;
+    down = null;
+  });
 
   const loop = (): void => {
-    renderMap(g, state, cam, vp, bounds, { now: state.time });
+    const state = getState();
+    renderMap(g, state, cam, vp, bounds, {
+      now: state.time,
+      dpr,
+      selected: interact?.getSelected?.() ?? null,
+    });
     requestAnimationFrame(loop);
   };
   requestAnimationFrame(loop);
+}
+
+/** Single-player: build a real GameState from the shipped skirmish map (via the shared
+ *  loader + buildStateFromMap) and draw it — the first time the client shows the actual
+ *  game, not just the menu. Static; the live server path is {@link connectLive}. */
+function startMatch(): void {
+  if (matchStarted) return;
+  matchStarted = true;
+  const state = skirmishState(shippedGameData());
+  runMatch(() => state, boundsOf(state));
+}
+
+/** A small fixed overlay for the live-match connection status + a one-line hint (the
+ *  welcome-screen #status is hidden once the map canvas takes over). */
+function setNetStatus(text: string): void {
+  let el = document.getElementById('netstatus');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'netstatus';
+    el.style.cssText =
+      'position:fixed;left:10px;top:10px;z-index:10;max-width:76vw;padding:6px 10px;border-radius:8px;' +
+      'font:12px ui-monospace,monospace;color:var(--ink,#bfeee6);pointer-events:none;' +
+      'background:rgba(3,14,18,.82);border:1px solid var(--line-hi,#1d6b70);';
+    document.body.appendChild(el);
+  }
+  el.textContent = text;
+}
+
+/** CP1.1: connect to a live match over WebSocket, render the server's authoritative
+ *  snapshots, AND send orders back — the closed online loop. World extent comes from the
+ *  first snapshot; deltas patch the state and the loop always draws the latest. Tap your
+ *  fleet's planet to select it, tap another planet to order a move (the server validates,
+ *  applies and broadcasts the result). A manual-start lobby WE host is auto-started
+ *  (dev/first-cut — a real lobby-wait UI is a later CP). */
+function connectLive(url: string): void {
+  if (matchStarted) return;
+  let live: GameState | null = null;
+  let running = false;
+  let started = false;
+  let me: string | null = null;
+  let selectedFleet: string | null = null;
+  let seq = 1;
+  const hint = (): void => {
+    if (me) setNetStatus(`● Онлайн · вы ${me} · ${selectedFleet ? 'тапните цель' : 'тапните свой флот'}`);
+  };
+  setNetStatus('⇄ Подключение к матчу…');
+  const { client } = openLiveMatch(url, {
+    onStatus: (s) => {
+      if (s === 'connecting') setNetStatus('⇄ Подключение к матчу…');
+      else if (s === 'closed') setNetStatus('✖ Соединение закрыто');
+    },
+    onError: (code) => setNetStatus(`✖ ${code}`),
+    onSnapshot: (snap) => {
+      live = snap.state;
+      if (snap.playerId) me = snap.playerId;
+      if (!started && snap.lobby && !snap.lobby.started && snap.lobby.host === snap.playerId) {
+        started = true;
+        client.start(); // host of an unstarted lobby → run the world
+      }
+      const waiting = snap.lobby ? !snap.lobby.started : !!snap.waiting;
+      if (waiting) setNetStatus(`⏳ Ожидание игроков…${me ? ` · вы ${me}` : ''}`);
+      else hint();
+      if (!running) {
+        running = true;
+        matchStarted = true;
+        const first = live;
+        runMatch(() => live ?? first, boundsOf(first), {
+          getSelected: () =>
+            selectedFleet && live ? (live.fleets[selectedFleet]?.location ?? null) : null,
+          onPickPlanet: (planetId) => {
+            if (!planetId || !live || !me) {
+              selectedFleet = null;
+              hint();
+              return;
+            }
+            if (selectedFleet) {
+              // second tap → order the selected fleet to move there (server-authoritative)
+              const f = live.fleets[selectedFleet];
+              if (f && f.location && f.location !== planetId) {
+                client.sendAction(moveAction(me, seq++, selectedFleet, planetId));
+                setNetStatus(`▸ Приказ: ${selectedFleet} → ${planetId}`);
+                selectedFleet = null;
+                return;
+              }
+              selectedFleet = null;
+              hint();
+              return;
+            }
+            // first tap → select one of my fleets at this planet (if any)
+            selectedFleet = myFleetAt(live, planetId, me);
+            hint();
+          },
+        });
+      }
+    },
+  });
 }
 
 applyTheme();
@@ -232,3 +357,8 @@ const welcome = createWelcomeModel();
 render(welcome);
 wire(welcome);
 showEngine();
+
+// CP1.1 deep-link: `?join=<url-encoded ws url>` connects straight to a live match (a shared
+// invite, or the dev proto-server). The ws url is encoded so its own ?query survives.
+const joinUrl = new URLSearchParams(location.search).get('join');
+if (joinUrl) connectLive(joinUrl);

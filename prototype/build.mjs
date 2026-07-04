@@ -516,15 +516,25 @@ button.b:disabled{opacity:.32;cursor:not-allowed;color:var(--dim);border-color:v
   font:11px/1.6 ui-monospace,Menlo,monospace;color:#73b6a2;scrollbar-width:thin;}
 #log div::before{content:"> ";color:var(--grn-dim);}
 
-/* technologies window (modal, mirrors #logwin) */
-#tech{position:fixed;inset:0;z-index:47;display:none;align-items:center;justify-content:center;padding:16px;
+/* technologies + steward windows (modal, mirror #logwin) */
+#tech,#steward{position:fixed;inset:0;z-index:47;display:none;align-items:center;justify-content:center;padding:16px;
   background:rgba(1,5,9,.55);-webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px);}
-#tech.show{display:flex;}
-#tech .twbox{display:flex;flex-direction:column;width:min(460px,94vw);max-height:82vh;overflow:hidden;
+#tech.show,#steward.show{display:flex;}
+#tech .twbox,#steward .twbox{display:flex;flex-direction:column;width:min(460px,94vw);max-height:82vh;overflow:hidden;
   background:var(--glass);border:1px solid var(--cyan);border-radius:10px;
   box-shadow:0 0 40px rgba(0,0,0,.6),inset 0 0 0 1px rgba(53,214,230,.06);}
 .tw-close{width:28px;height:28px;border-radius:6px;border:1px solid var(--line);background:transparent;color:var(--dim);cursor:pointer;}
-#techbody{flex:1;min-height:0;overflow:auto;touch-action:pan-y;padding:12px 14px;}
+#techbody,#stewardbody{flex:1;min-height:0;overflow:auto;touch-action:pan-y;padding:12px 14px;}
+/* Steward («Хранитель») delegate panel */
+#stewardbody .st-status{padding:11px 13px;border:1px solid var(--cyan-dim);border-radius:9px;background:rgba(53,214,230,.08);font-size:12px;color:var(--cyan);line-height:1.55;}
+#stewardbody .st-status.locked{border-color:var(--line);background:rgba(255,255,255,.03);color:var(--dim);}
+#stewardbody .st-status.on{border-color:#7df0d0;background:rgba(125,240,208,.10);color:#9ff0da;}
+#stewardbody .st-h{font-size:11px;letter-spacing:2px;text-transform:uppercase;color:var(--cyan-dim);margin:14px 0 8px;}
+#stewardbody .st-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;}
+#stewardbody .st-btn{flex:1;min-width:92px;padding:9px 10px;border-radius:8px;border:1px solid var(--cyan);background:rgba(53,214,230,.10);color:var(--cyan);cursor:pointer;font-size:12px;}
+#stewardbody .st-btn:disabled{opacity:.4;cursor:not-allowed;}
+#stewardbody .st-btn.warn{border-color:#e2a15a;color:#e2a15a;background:rgba(226,161,90,.10);}
+#stewardbody .st-note{margin-top:12px;font-size:11px;color:var(--dim);line-height:1.55;}
 .tw-active{margin:0 0 14px;padding:10px 12px;border:1px solid var(--cyan-dim);border-radius:9px;background:rgba(53,214,230,.08);}
 .tw-active .tw-an{font-size:12px;color:var(--cyan);letter-spacing:.5px;}
 .tw-active .tw-bar{margin-top:8px;height:6px;border-radius:4px;background:rgba(53,214,230,.14);overflow:hidden;}
@@ -1187,6 +1197,7 @@ const html = `<!doctype html>
     <button id="rail-diplo" title="Дипломатия">⬡</button>
     <button id="rail-msgs" title="Сообщения">✉<b id="msgbadge" class="railbadge" style="display:none"></b></button>
     <button id="rail-tech" title="Технологии">⚛</button>
+    <button id="rail-steward" title="Хранитель — передать ИИ на сон">😴</button>
     <button id="rail-market" title="Рынок">⇄</button>
     <button id="railcorp" title="Корпорация">⬢</button>
     <button id="rail-chat" title="Чат" class="desk-only">🗨</button>
@@ -1199,6 +1210,8 @@ const html = `<!doctype html>
 <div id="logwin"><div class="lwbox"><div class="lw-head"><b>СВОДКИ</b><button class="lw-close">✕</button></div><div id="log"></div></div></div>
 <!-- technologies window — content rendered by renderTech() in main.ts -->
 <div id="tech"><div class="twbox"><div class="lw-head"><b>ТЕХНОЛОГИИ</b><button class="tw-close">✕</button></div><div id="techbody"></div></div></div>
+<!-- steward («Хранитель») window — content rendered by renderSteward() in main.ts -->
+<div id="steward"><div class="twbox"><div class="lw-head"><b>ХРАНИТЕЛЬ · ИИ НА СОН</b><button class="tw-close">✕</button></div><div id="stewardbody"></div></div></div>
 <!-- session market — whole box rendered by renderMarket() in main.ts -->
 <div id="market"></div>
 <aside id="side"></aside>

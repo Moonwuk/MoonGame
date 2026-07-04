@@ -256,9 +256,10 @@ export const TechnologyEffectsSchema = z.object({
   radarRangeBonus: z.number().default(0),
 });
 
-/** The four tech-tree branches (UI tabs), shared by technologies, scientists and the
- *  `has_scientist` gate. */
-const BranchSchema = z.enum(['ground', 'space', 'squadron', 'missile']);
+/** The five tech-tree branches (UI tabs), shared by technologies, scientists and the
+ *  `has_scientist` gate. `command` is the automation / command-and-control branch (AI
+ *  delegation "Steward", and later order chains and standing postures). */
+const BranchSchema = z.enum(['ground', 'space', 'squadron', 'missile', 'command']);
 
 /** Shared "at least N" threshold for a condition (default 1 = mere existence). This
  *  single `min` knob is the main data lever for tuning a gate without touching code. */
