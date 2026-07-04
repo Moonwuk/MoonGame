@@ -112,6 +112,14 @@ export class PostgresMatchStore implements MatchStore {
       [snapshot.matchId, snapshot.dataVersion, snapshot.seq, snapshot.status, snapshot.state],
     );
   }
+
+  async ongoingMatchIds(): Promise<string[]> {
+    // Uses matches_status_idx — never touches the JSONB `state`.
+    const r = await this.pool.query<{ id: string }>(
+      `SELECT id FROM matches WHERE status = 'ongoing'`,
+    );
+    return r.rows.map((row) => row.id);
+  }
 }
 
 export class PostgresAccountStore implements AccountStore {

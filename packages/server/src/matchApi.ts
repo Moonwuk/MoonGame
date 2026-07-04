@@ -130,6 +130,41 @@ export function registerMatchApi(app: FastifyInstance, deps: MatchApiDeps): void
   });
 }
 
+/** One open match as the feed reports it. */
+export interface OpenMatch {
+  matchId: string;
+  seated: number;
+  capacity: number;
+}
+
+export interface OpenMatchesFeedDeps {
+  /** Every ongoing match id (durable — from the store, so hibernated matches count too). */
+  listOngoing(): Promise<string[]>;
+  /** Occupied seat count for a match. */
+  occupiedSeats(matchId: string): Promise<number>;
+  /** Seats per match — a match at this occupancy is full and omitted from the feed. */
+  capacity: number;
+}
+
+/**
+ * SV-2.5 — the open-matches feed: `GET /matches/open` lists every ongoing match that
+ * still has a free seat, straight from the durable store (so it survives restarts and
+ * shows hibernated matches, not only the rooms live in memory). Public and read-only —
+ * browsing precedes login; joining still needs a session (SE-1.x). Distinct from the
+ * prototype browser's 3-tab `GET /matches`, so both can coexist.
+ */
+export function registerOpenMatchesFeed(app: FastifyInstance, deps: OpenMatchesFeedDeps): void {
+  app.get('/matches/open', async () => {
+    const ids = await deps.listOngoing();
+    const open: OpenMatch[] = [];
+    for (const matchId of ids) {
+      const seated = await deps.occupiedSeats(matchId);
+      if (seated < deps.capacity) open.push({ matchId, seated, capacity: deps.capacity });
+    }
+    return { open };
+  });
+}
+
 /**
  * The match-browser read-model + archive intents (docs/main-menu.md §2), served beside
  * the create/join API. A server projection — the client only reads it (A10/fog rule);

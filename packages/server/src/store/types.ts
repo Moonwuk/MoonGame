@@ -19,6 +19,11 @@ export interface MatchStore {
   /** Upsert the snapshot. Optimistic by `seq`: a save with an older `seq` than the
    *  stored one is a no-op, so a late write can't clobber fresher state. */
   save(snapshot: MatchSnapshot): Promise<void>;
+  /** Ids of every match still `ongoing` (not ended). Cheap — reads the normalized
+   *  `status` column (never the JSONB blob), so the match factory and the open-matches
+   *  feed can enumerate joinable matches without loading each snapshot. Restart-safe:
+   *  it reflects what is durably in the store, not just the rooms live in memory. */
+  ongoingMatchIds(): Promise<string[]>;
   /** Cheap reachability check for the `/ready` probe (SV-0.1): true if the backing
    *  store is reachable (a `SELECT 1` for Postgres). Absent ⇒ assumed reachable
    *  (in-memory has no dependency to be down). */
