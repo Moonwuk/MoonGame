@@ -5251,8 +5251,22 @@ function renderShips(): void {
     hp: baseUnit?.stats.hp ?? 0,
   };
   const der = shipStats(base, loadout);
-  const stat = (label: string, b: number, d: number): string =>
-    `<span>${label} ${d}${d !== b ? ` <em>(${b})</em>` : ''}</span>`;
+  const lstat = (label: string, b: number, d: number): string => {
+    const max = Math.max(b, d, 1) * 1.5;
+    const dl = d - b;
+    const baseW = Math.round((Math.min(b, d) / max) * 100);
+    const deltaW = Math.round((Math.abs(dl) / max) * 100);
+    const val =
+      dl !== 0
+        ? `<span class="lb">${b} →</span> ${d} <span class="${dl > 0 ? 'lup' : 'ldn'}">${dl > 0 ? '+' : ''}${dl}</span>`
+        : `${d}`;
+    return (
+      `<div class="lstat"><div class="lrow"><span class="lnm">${label}</span><span class="lval">${val}</span></div>` +
+      `<div class="ltrack"><div class="lbar" style="width:${baseW}%"></div>` +
+      (dl > 0 ? `<div class="ldelta" style="width:${deltaW}%"></div>` : '') +
+      `</div></div>`
+    );
+  };
   const info = shipLoadoutInfo(loadout);
   const syn = info.modules.length
     ? info.modules
@@ -5273,7 +5287,8 @@ function renderShips(): void {
     `<div class="tpl-tabs">${tabs}</div>` +
     `<div class="hgradeline">${hull?.icon ?? '▦'} ${esc(hull?.name ?? loadout.hull)} · ${slots} ${slots === 1 ? 'слот' : 'слота'} под модули</div>` +
     `<div class="tpl-slots" style="display:grid;gap:8px;margin-bottom:10px;grid-template-columns:repeat(${Math.min(slots, 4)},1fr)">${bays}</div>` +
-    `<div class="tpl-stats"><div class="row">${stat('⚔ Атака', base.attack, der.attack)}${stat('🛡 Оборона', base.defense, der.defense)}${stat('» Скор', base.speed, der.speed)}${stat('❤ HP', base.hp, der.hp)}</div>${syn}</div>` +
+    `<div class="lstats"><div class="lhd">Итог с модулями — превью</div>${lstat('Урон в атаке', base.attack, der.attack)}${lstat('Урон в защите', base.defense, der.defense)}${lstat('Скорость', base.speed, der.speed)}${lstat('Корпус', base.hp, der.hp)}</div>` +
+    `<div class="synlist">${syn}</div>` +
     heldBar +
     `<div class="hpal-h">Инвентарь модулей</div><div class="minv">${inv}</div>`;
 }
