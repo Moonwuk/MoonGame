@@ -47,6 +47,9 @@ importers:
 
   packages/client:
     dependencies:
+      '@void/action-layer':
+        specifier: workspace:*
+        version: link:../action-layer
       '@void/shared-core':
         specifier: workspace:*
         version: link:../shared-core
