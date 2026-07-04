@@ -63,30 +63,46 @@ body::before{content:"";position:fixed;inset:0;z-index:1;pointer-events:none;mix
 .who{line-height:1.1;min-width:0;}
 .who b{display:block;color:#eafffb;font-weight:700;font-size:12px;letter-spacing:2px;white-space:nowrap;}
 .who span{color:var(--cyan-dim);font-size:9px;letter-spacing:2.5px;white-space:nowrap;}
-/* the six currencies always fit the bar — no scroll. Chips share the width and shrink
-   together (flex:1 1 0; min-width:0) so the row scales down instead of overflowing. */
-#purse{display:flex;align-items:center;flex:1 1 auto;min-width:0;overflow:hidden;height:100%;margin:0 4px;
-  border-left:1px solid var(--line);border-right:1px solid var(--line);}
-.res{display:flex;align-items:center;justify-content:center;gap:4px;padding:0 4px;height:100%;flex:1 1 0;min-width:0;}
-.res em{font:9px ui-monospace,monospace;font-style:normal;margin-left:3px;}
+/* the five currencies always fit the bar — no scroll. Chips share the width and shrink
+   together (flex:1 1 0; min-width:0) so the row scales down instead of overflowing. Each
+   chip = a small coin-icon + tabular amount + flow, divided by a faint hairline. */
+#purse{display:flex;align-items:center;flex:1 1 auto;min-width:0;overflow:hidden;height:100%;margin:0 2px 0 4px;
+  border-left:1px solid var(--line);}
+.res{display:flex;align-items:center;justify-content:center;gap:5px;padding:0 7px;height:100%;flex:1 1 0;min-width:0;
+  position:relative;overflow:hidden;}
+.res + .res::before{content:"";position:absolute;left:0;top:50%;transform:translateY(-50%);width:1px;height:20px;
+  background:linear-gradient(180deg,transparent,rgba(53,214,230,.20),transparent);}
+/* amount owns the room (flex:0 0 auto so it's never squeezed); the flow rate clips first */
+.res em{font:9px ui-monospace,monospace;font-style:normal;margin-left:2px;white-space:nowrap;
+  flex:0 1 auto;min-width:0;overflow:hidden;}
 .res em.up{color:var(--grn,#5ff0a8);}
 .res em.dn{color:var(--red,#ff5a4d);}
-.res.dead{opacity:.38;}
-.res i{flex:0 0 auto;text-align:center;font-style:normal;font-size:13px;line-height:1;
-  color:var(--cyan);font-variant-emoji:text;text-shadow:0 0 6px rgba(53,214,230,.4);}
+.res.dead{opacity:.34;}
+.res i{flex:0 0 auto;width:20px;height:20px;display:grid;place-items:center;border-radius:6px;
+  font-style:normal;font-size:12px;line-height:1;color:var(--cyan);font-variant-emoji:text;
+  background:rgba(53,214,230,.08);box-shadow:inset 0 0 0 1px rgba(53,214,230,.14);
+  text-shadow:0 0 6px rgba(53,214,230,.35);}
+.res.dead i{background:rgba(120,140,150,.05);box-shadow:inset 0 0 0 1px rgba(120,140,150,.14);
+  color:var(--dim);text-shadow:none;}
 .res b{color:#eafffb;font-weight:700;font-size:12px;font-variant-numeric:tabular-nums;
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-/* donate/premium currency (Суверены): gold accent — moved out of the resource bar onto
-   the status line right under it (#devline .dl-donate), pushed to the right end. Rendered
-   as an enlarged, glowing gold pill with a slow pulse so it actually draws the eye. */
-#devline .dl-donate{margin-left:auto;flex:0 0 auto;display:flex;align-items:center;gap:6px;
-  padding:3px 11px;border-radius:13px;color:#fff2cf;font-weight:800;font-size:16px;line-height:1;
-  letter-spacing:.4px;font-variant-numeric:tabular-nums;
-  background:linear-gradient(180deg,rgba(255,206,92,.22),rgba(240,170,40,.12));
-  border:1px solid rgba(255,208,96,.6);
-  box-shadow:0 0 14px rgba(255,198,72,.4),inset 0 0 7px rgba(255,214,120,.18);
-  animation:donatePulse 2.6s ease-in-out infinite;}
-#devline .dl-donate i{color:#ffd45e;text-shadow:0 0 10px rgba(255,212,94,.85);font-style:normal;font-size:20px;}
+  white-space:nowrap;flex:0 0 auto;}
+/* top-bar right cluster: the donate currency (Суверены ◆, gold pill) + the player's
+   chosen emblem, tucked into the right corner so the resource chips own the middle. */
+.topend{display:flex;align-items:center;gap:8px;height:100%;padding:0 10px 0 9px;flex:0 0 auto;
+  border-left:1px solid var(--line);}
+#donate{display:flex;align-items:center;gap:5px;padding:3px 9px;border-radius:11px;
+  color:#fff2cf;font-weight:800;font-size:13px;line-height:1;letter-spacing:.3px;font-variant-numeric:tabular-nums;
+  background:linear-gradient(180deg,rgba(255,206,92,.20),rgba(240,170,40,.10));border:1px solid rgba(255,208,96,.55);
+  box-shadow:0 0 12px rgba(255,198,72,.32),inset 0 0 6px rgba(255,214,120,.16);
+  animation:donatePulse 2.8s ease-in-out infinite;white-space:nowrap;}
+#donate i{color:#ffd45e;text-shadow:0 0 9px rgba(255,212,94,.85);font-style:normal;font-size:15px;}
+/* player emblem — a console crest the player picks in the main menu (hub). Tap → dossier. */
+#crestmark{width:34px;height:34px;border-radius:9px;flex:0 0 auto;cursor:pointer;padding:0;
+  display:grid;place-items:center;font-size:18px;color:var(--cyan);font-variant-emoji:text;
+  background:rgba(3,12,16,.7);border:1px solid var(--line-hi);
+  box-shadow:inset 0 0 10px rgba(53,214,230,.14),0 0 10px rgba(53,214,230,.12);
+  text-shadow:0 0 8px rgba(53,214,230,.5);}
+#crestmark:hover,#crestmark:active{background:rgba(53,214,230,.16);}
 @keyframes donatePulse{
   0%,100%{box-shadow:0 0 10px rgba(255,198,72,.30),inset 0 0 7px rgba(255,214,120,.16);}
   50%{box-shadow:0 0 22px rgba(255,205,90,.7),inset 0 0 9px rgba(255,220,130,.30);}}
@@ -346,15 +362,22 @@ body.sheet-open #cmdbar{bottom:calc(34vh + 12px);}
 #devline .dstat{flex:0 0 auto;}
 #devline .dstat.win{color:var(--up);font-weight:700;}
 
-/* slim icon rail in the bottom-left corner (just the wired tools); each icon opens a
-   window. column-reverse + bottom anchor → it grows UPWARD as more tools get wired,
-   with the primary icon nearest the thumb. Short, so the map around it stays tappable. */
-#rail{position:fixed;left:8px;bottom:14px;top:auto;width:42px;z-index:26;display:flex;flex-direction:column-reverse;gap:4px;
-  padding:4px;background:rgba(3,12,16,.72);border:1px solid var(--line-hi);border-radius:9px;
-  box-shadow:0 0 16px rgba(0,0,0,.45);-webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px);}
-#rail button{position:relative;width:34px;height:34px;background:transparent;border:0;cursor:pointer;
-  font-size:17px;color:var(--cyan-dim);border-radius:6px;font-variant-emoji:text;}
-#rail button:hover,#rail button:active{color:var(--cyan);background:rgba(53,214,230,.12);text-shadow:0 0 8px rgba(53,214,230,.6);}
+/* left-corner tool rail — collapsed to a single hamburger by default; tapping it expands
+   the wired tools UPWARD (primary icon nearest the thumb). The tools live in their own
+   panel that sizes to its buttons, so nothing overflows the rail. */
+#rail{position:fixed;left:10px;bottom:14px;top:auto;z-index:26;display:flex;flex-direction:column;
+  align-items:flex-start;gap:8px;}
+#railtools{display:none;flex-direction:column;gap:5px;padding:6px;background:rgba(3,12,16,.82);
+  border:1px solid var(--line-hi);border-radius:12px;box-shadow:0 0 16px rgba(0,0,0,.5);
+  -webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px);}
+#rail.open #railtools{display:flex;}
+#railtools button{position:relative;width:38px;height:38px;background:transparent;border:0;cursor:pointer;
+  font-size:18px;color:var(--cyan-dim);border-radius:8px;font-variant-emoji:text;display:grid;place-items:center;}
+#railtools button:hover,#railtools button:active{color:var(--cyan);background:rgba(53,214,230,.12);text-shadow:0 0 8px rgba(53,214,230,.6);}
+#railtoggle{width:44px;height:44px;display:grid;place-items:center;cursor:pointer;font-size:20px;font-variant-emoji:text;
+  color:var(--cyan);background:rgba(3,12,16,.85);border:1px solid var(--line-hi);border-radius:12px;
+  box-shadow:0 0 16px rgba(0,0,0,.5);-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px);}
+#railtoggle:hover,#rail.open #railtoggle{background:rgba(53,214,230,.16);text-shadow:0 0 8px rgba(53,214,230,.6);}
 #rail .railbadge{position:absolute;top:2px;right:2px;min-width:14px;height:14px;border-radius:7px;
   background:var(--amber,#f0b429);color:#08131a;font:700 9px ui-monospace,monospace;
   display:grid;place-items:center;padding:0 3px;}
@@ -616,8 +639,17 @@ button.b:disabled{opacity:.32;cursor:not-allowed;color:var(--dim);border-color:v
 @media (max-width:720px), ((hover: none) and (pointer: coarse) and (max-height: 520px)){
   #top{height:44px;}
   .who{display:none;}
-  .crest{padding:0 10px;}
+  /* the left crest is empty on phones (title hidden) — drop it so the resource chips get
+     the width; the top-right emblem is the identity tap-target here. */
+  .crest{display:none;}
   #devline{top:44px;}
+  /* tighten the right cluster + chips so five currencies + donate + emblem all fit */
+  .topend{gap:6px;padding:0 8px 0 7px;}
+  #donate{font-size:12px;padding:2px 7px;gap:4px;}
+  #donate i{font-size:13px;}
+  #crestmark{width:30px;height:30px;font-size:16px;}
+  .res{padding:0 5px;gap:4px;}
+  .res i{width:18px;height:18px;font-size:11px;}
 
   #side{right:0;left:0;bottom:0;top:auto;width:auto;max-height:50vh;z-index:28;clip-path:none;
     border-left:0;border-right:0;border-top:1px solid var(--cyan);}
@@ -644,7 +676,8 @@ button.b:disabled{opacity:.32;cursor:not-allowed;color:var(--dim);border-color:v
   #banner{font-size:16px;padding:14px 20px;letter-spacing:2px;}
   /* finger-first targets: everything tappable grows to the 44px rule (hud-inmatch.md) */
   button.b{padding:9px 12px;font-size:12px;min-height:44px;}
-  #rail button{width:46px;height:46px;}
+  #railtools button{width:46px;height:46px;}
+  #railtoggle{width:50px;height:50px;font-size:22px;}
   .spd button{min-width:38px;height:40px;font-size:12px;}
   .spd .spdmini{min-width:34px;}
   .pclose{width:44px;height:44px;font-size:14px;}
@@ -967,7 +1000,28 @@ button.b:disabled{opacity:.32;cursor:not-allowed;color:var(--dim);border-color:v
   text-shadow:0 0 14px rgba(53,214,230,.45);}
 #hub .hub-id{flex:0 0 auto;display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--line);}
 #hub .hub-av{width:42px;height:42px;border-radius:50%;border:1px solid var(--line-hi);background:rgba(3,12,16,.8);
-  display:grid;place-items:center;color:var(--cyan);font-size:17px;flex:0 0 auto;box-shadow:inset 0 0 10px rgba(53,214,230,.1);}
+  display:grid;place-items:center;color:var(--cyan);font-size:17px;flex:0 0 auto;box-shadow:inset 0 0 10px rgba(53,214,230,.1);
+  cursor:pointer;position:relative;font-variant-emoji:text;}
+#hub .hub-av:hover{border-color:var(--cyan);box-shadow:inset 0 0 12px rgba(53,214,230,.22),0 0 12px rgba(53,214,230,.2);}
+/* a tiny pencil badge hints the avatar is editable (pick your emblem) */
+#hub .hub-av::after{content:"✎";position:absolute;right:-3px;bottom:-3px;width:16px;height:16px;border-radius:50%;
+  background:var(--cyan);color:#04141c;font-size:9px;display:grid;place-items:center;box-shadow:0 0 8px rgba(53,214,230,.6);}
+/* emblem picker — a small console modal opened from the hub avatar */
+#emblempick{position:fixed;inset:0;z-index:60;display:none;align-items:center;justify-content:center;
+  background:rgba(1,5,9,.72);-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px);padding:20px;}
+#emblempick.show{display:flex;}
+#emblempick .ep-box{width:min(340px,92vw);background:var(--glass);border:1px solid var(--line-hi);border-radius:14px;
+  box-shadow:0 0 30px rgba(0,0,0,.6),inset 0 0 30px rgba(53,214,230,.05);overflow:hidden;}
+#emblempick .ep-head{display:flex;align-items:center;justify-content:space-between;padding:13px 15px;
+  border-bottom:1px solid var(--line);color:var(--cyan);letter-spacing:2px;font:700 13px ui-monospace,monospace;}
+#emblempick .ep-head button{background:transparent;border:0;color:var(--dim);font-size:16px;cursor:pointer;}
+#emblempick .ep-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;padding:16px;}
+#emblempick .ep-cell{aspect-ratio:1;display:grid;place-items:center;font-size:24px;cursor:pointer;font-variant-emoji:text;
+  color:var(--cyan);background:rgba(3,12,16,.6);border:1px solid var(--line-hi);border-radius:10px;
+  text-shadow:0 0 8px rgba(53,214,230,.4);transition:background .12s,border-color .12s;}
+#emblempick .ep-cell:hover{background:rgba(53,214,230,.12);}
+#emblempick .ep-cell.sel{border-color:var(--cyan);background:rgba(53,214,230,.18);
+  box-shadow:inset 0 0 12px rgba(53,214,230,.25),0 0 10px rgba(53,214,230,.3);}
 #hub .hub-who{flex:1;min-width:0;}
 #hub .hub-name{font-size:15px;color:#eafffb;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 #hub .hub-st{font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:var(--cyan-dim);margin-top:3px;}
@@ -1110,18 +1164,25 @@ const html = `<!doctype html>
     <div class="who"><b>VOID DOMINION</b><span>SECTOR COMMAND</span></div>
   </div>
   <div id="purse"></div>
+  <div class="topend">
+    <span id="donate" title="Суверены — донат-валюта"><i>◆</i>0</span>
+    <button id="crestmark" title="Ваш профиль" type="button">◆</button>
+  </div>
 </header>
 <div id="devline"></div>
 <!-- slim left rail: only the wired tools (each opens its window). More icons land here as
      features get wired. -->
 <nav id="rail">
-  <button id="rail-diplo" title="Дипломатия">⬡</button>
-  <button id="rail-msgs" title="Сообщения">✉<b id="msgbadge" class="railbadge" style="display:none"></b></button>
-  <button id="rail-tech" title="Технологии">⚛</button>
-  <button id="rail-market" title="Рынок">⇄</button>
-  <button id="railcorp" title="Корпорация">⬢</button>
-  <button id="rail-chat" title="Чат" class="desk-only">🗨</button>
-  <button id="rail-log" title="Сводки">≡<span class="badge" id="alertbadge" style="display:none">0</span></button>
+  <div id="railtools">
+    <button id="rail-diplo" title="Дипломатия">⬡</button>
+    <button id="rail-msgs" title="Сообщения">✉<b id="msgbadge" class="railbadge" style="display:none"></b></button>
+    <button id="rail-tech" title="Технологии">⚛</button>
+    <button id="rail-market" title="Рынок">⇄</button>
+    <button id="railcorp" title="Корпорация">⬢</button>
+    <button id="rail-chat" title="Чат" class="desk-only">🗨</button>
+    <button id="rail-log" title="Сводки">≡<span class="badge" id="alertbadge" style="display:none">0</span></button>
+  </div>
+  <button id="railtoggle" title="Инструменты" type="button" aria-expanded="false"><span id="railglyph">☰</span><span class="badge" id="railalert" style="display:none">0</span></button>
 </nav>
 <!-- floating chat window (desktop only) — content rendered by renderChat() in main.ts -->
 <div id="chatwin" class="desk-only"></div>
@@ -1217,7 +1278,7 @@ const html = `<!doctype html>
     <div class="hub-bt">VOID DOMINION</div>
   </div>
   <div class="hub-id">
-    <div class="hub-av">◆</div>
+    <div class="hub-av" id="hubav" title="Сменить эмблему">◆</div>
     <div class="hub-who">
       <div class="hub-name" id="hub-name">Командир</div>
       <div class="hub-st">в сети</div>
@@ -1264,6 +1325,12 @@ const html = `<!doctype html>
     <button class="hub-tab" data-hub="ally" type="button"><span class="hn-ic">⚑</span>Альянсы</button>
     <button class="hub-tab" data-hub="more" type="button"><span class="hn-ic">≡</span>Ещё</button>
   </nav>
+</div>
+<div id="emblempick">
+  <div class="ep-box">
+    <div class="ep-head"><b>ВЫБОР ЭМБЛЕМЫ</b><button id="ep-close" type="button" aria-label="Закрыть">✕</button></div>
+    <div class="ep-grid" id="ep-grid"></div>
+  </div>
 </div>
 <div id="corp">
   <div class="corpbox">

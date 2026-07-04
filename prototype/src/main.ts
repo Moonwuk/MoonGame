@@ -472,6 +472,7 @@ let lastClockText = '';
 let lastObjDescHtml = '';
 let lastLogHtml = '';
 let lastAlertText = '';
+let lastRailAlert = '';
 // --- fog of war (renderer projection; always on) -----------------------------
 // Client-side projection just for the renderer — NOT the real security boundary
 // (that is `visibleState` in shared-core). Fog is always on: ships are near-blind,
@@ -494,6 +495,37 @@ const restartSep = $('restart-sep');
 const alertBadge = $('alertbadge');
 const cmdbar = $('cmdbar');
 const splitdlg = $('splitdlg');
+// top-bar right cluster + collapsible rail
+const railEl = $('rail');
+const railToggle = $('railtoggle');
+const railGlyph = $('railglyph');
+const railAlert = $('railalert');
+const donateEl = $('donate');
+const crestMark = $('crestmark');
+
+// Player emblem — a cosmetic console crest the player picks in the main menu (hub) and
+// wears in the in-match top-bar corner. Client-side only (localStorage) — never match
+// state, never sent to the server. Falls back to the first glyph if unset/unknown.
+const EMBLEMS = ['◆', '◇', '⬡', '⬢', '✦', '✧', '★', '⚛', '◉', '⌖', '❖', '⟡'];
+function playerEmblem(): string {
+  const e = (typeof localStorage !== 'undefined' && localStorage.getItem('void.emblem')) || '';
+  return EMBLEMS.includes(e) ? e : EMBLEMS[0]!;
+}
+function applyEmblem(): void {
+  const g = playerEmblem();
+  const hubAv = document.getElementById('hubav');
+  if (hubAv) hubAv.textContent = g;
+  crestMark.textContent = g;
+}
+function setPlayerEmblem(g: string): void {
+  if (!EMBLEMS.includes(g)) return;
+  try {
+    localStorage.setItem('void.emblem', g);
+  } catch {
+    /* private mode — keep the in-memory choice only */
+  }
+  applyEmblem();
+}
 
 // --- viewport, galaxy backdrop & map projection ------------------------------
 
@@ -7134,8 +7166,7 @@ function frame(nowReal: number) {
   const need = Math.max(0, SCORE_LIMIT - score);
   const statusHtml =
     `<span id="clock">Day ${d} · ${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}</span>` +
-    `<span class="dstat${need === 0 ? ' win' : ''}">✦ ${score}/${SCORE_LIMIT}${need === 0 ? ' · ★ WIN' : ' · ' + need + ' to win'}</span>` +
-    `<span class="dl-donate" title="Суверены — donate currency"><i>◆</i>${kfmt(SOVEREIGNS)}</span>`;
+    `<span class="dstat${need === 0 ? ' win' : ''}">✦ ${score}/${SCORE_LIMIT}${need === 0 ? ' · ★ WIN' : ' · ' + need + ' to win'}</span>`;
   if (statusHtml !== lastClockText) {
     devlineEl.innerHTML = statusHtml;
     lastClockText = statusHtml;
@@ -7196,6 +7227,15 @@ function frame(nowReal: number) {
     alertBadge.textContent = alertText;
     lastAlertText = alertText;
   }
+  // collapsed rail mirrors unread/battle attention onto the hamburger, so notifications
+  // still surface while the tool panel (with its per-tool badges) is closed.
+  const attn = battles + unreadMsgs;
+  const railAlertText = attn > 0 && !railEl.classList.contains('open') ? String(attn) : '';
+  if (railAlertText !== lastRailAlert) {
+    railAlert.style.display = railAlertText ? 'grid' : 'none';
+    if (railAlertText) railAlert.textContent = railAlertText;
+    lastRailAlert = railAlertText;
+  }
   const logHtml = logLines.map((l) => `<div>${esc(l)}</div>`).join('');
   if (logHtml !== lastLogHtml) {
     logEl.innerHTML = logHtml;
@@ -7252,6 +7292,49 @@ if (codexEl) {
 // Player card: tap the top-left crest to open your session dossier (faction, worlds,
 // fleets, score, treasury); tap the backdrop or CLOSE to dismiss.
 document.querySelector('.crest')?.addEventListener('click', () => openPlayerCard());
+// the top-bar emblem opens the same dossier as the left crest
+crestMark.addEventListener('click', () => openPlayerCard());
+
+// top-bar right cluster: fill the donate readout once (constant placeholder in the
+// prototype) and mirror the chosen emblem into the top bar + hub avatar.
+donateEl.innerHTML = `<i>◆</i>${kfmt(SOVEREIGNS)}`;
+applyEmblem();
+
+// collapsible rail — the hamburger toggles the tool panel; picking a tool closes it.
+function setRailOpen(open: boolean): void {
+  railEl.classList.toggle('open', open);
+  railGlyph.textContent = open ? '✕' : '☰';
+  railToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+}
+railToggle.addEventListener('click', () => setRailOpen(!railEl.classList.contains('open')));
+document.getElementById('railtools')?.addEventListener('click', () => setRailOpen(false));
+
+// emblem picker — the hub avatar opens a glyph grid; picking one persists + applies it.
+const emblemPick = document.getElementById('emblempick');
+const epGrid = document.getElementById('ep-grid');
+function openEmblemPick(): void {
+  if (!emblemPick || !epGrid) return;
+  const cur = playerEmblem();
+  epGrid.innerHTML = EMBLEMS.map(
+    (g) => `<button type="button" class="ep-cell${g === cur ? ' sel' : ''}" data-emblem="${g}">${g}</button>`,
+  ).join('');
+  emblemPick.classList.add('show');
+}
+document.getElementById('hubav')?.addEventListener('click', openEmblemPick);
+document.getElementById('ep-close')?.addEventListener('click', () => emblemPick?.classList.remove('show'));
+emblemPick?.addEventListener('click', (e) => {
+  const t = e.target as HTMLElement;
+  if (t.id === 'emblempick') {
+    emblemPick.classList.remove('show'); // backdrop tap closes
+    return;
+  }
+  const cell = t.closest('.ep-cell') as HTMLElement | null;
+  if (cell?.dataset.emblem) {
+    setPlayerEmblem(cell.dataset.emblem);
+    emblemPick.classList.remove('show');
+  }
+});
+
 const playerCardEl = document.getElementById('playercard');
 if (playerCardEl) {
   playerCardEl.addEventListener('click', (e) => {
