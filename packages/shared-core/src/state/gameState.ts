@@ -62,6 +62,19 @@ export interface Player {
    *  (supplied at match creation). Drives the `research.slots` hook and
    *  `has_scientist` unlock gates. Absent = no leader chosen. */
   scientist?: { id: string; level: number };
+  /** Steward delegation ("hand the seat to the AI while I sleep"): while set and the
+   *  world clock is before `until`, the server AI plays this seat with `posture`. The
+   *  server-side driver reads it via `stewardActive`; it auto-expires on the clock
+   *  crossing `until` (stewardModule). Absent = the player commands the seat. */
+  steward?: StewardState;
+}
+
+/** A live Steward delegation on a player (see `Player.steward`). */
+export interface StewardState {
+  /** Behaviour profile the AI follows (see `STEWARD_POSTURES`). */
+  posture: string;
+  /** Game-time (ms) the delegation lapses at — control returns to the player then. */
+  until: number;
 }
 
 export interface ActiveResearch {

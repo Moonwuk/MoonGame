@@ -31,6 +31,7 @@ export {
   type BuildingInstance,
   type ActiveResearch,
   type PlayerTechnologyState,
+  type StewardState,
   type ResourceBag,
   type PlayerId,
   type PlanetId,
@@ -200,6 +201,12 @@ export { armyModule } from './modules/army';
 export { victoryModule } from './modules/victory';
 export { visibilityModule } from './modules/visibility';
 export { heroModule } from './modules/hero';
+export {
+  stewardModule,
+  stewardActive,
+  STEWARD_POSTURES,
+  type StewardPosture,
+} from './modules/steward';
 export { marketModule } from './modules/market';
 export { espionageModule } from './modules/espionage';
 export { diplomacyModule } from './modules/diplomacy';
