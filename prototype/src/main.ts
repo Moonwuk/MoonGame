@@ -631,6 +631,24 @@ let sweepArms: SweepArm[] = [];
 let sweepAng = 0;
 let sweepOn = false;
 let sweepPrevAng = -1; // previous frame's arm angle, for "did the arm cross X" tests
+// Player display preference (client-only, localStorage): the sweep's VISUAL opacity 0..1.
+// 0 hides the wedge + arm entirely; any value only dims the CHROME — the radar MECHANIC
+// (contact snapshots + blip afterglow) is computed before the visual gate, so it is
+// unaffected at every setting. Absent key ⇒ full (1); a stored 0 must NOT be read as absent.
+let sweepOpacity = ((): number => {
+  const raw = typeof localStorage !== 'undefined' ? localStorage.getItem('void.sweepOpacity') : null;
+  if (raw === null) return 1;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 && n <= 1 ? n : 1;
+})();
+function setSweepOpacity(v: number): void {
+  sweepOpacity = Math.min(1, Math.max(0, v));
+  try {
+    localStorage.setItem('void.sweepOpacity', String(sweepOpacity));
+  } catch {
+    /* private-mode / storage-full: keep the in-memory value, just don't persist */
+  }
+}
 const SWEEP_DIV = 1600; // sweep angular rate: ang = now / SWEEP_DIV
 const SWEEP_PERIOD = TAU * SWEEP_DIV; // ms for a full rotation (~10s) — the radar refresh tick
 /** Radar contacts as PAINTED BY THE SWEEP: a signature is refreshed only as the arm
@@ -687,15 +705,21 @@ function drawScanSweep(now: number) {
   sweepAng = (now / SWEEP_DIV) % TAU;
   sweepOn = sweepArms.length > 0;
   if (!sweepOn) return;
+  // Visual gate (player preference). Everything above — arms, angle, sweepOn — is the
+  // MECHANIC and always runs; only the chrome below is skipped/dimmed. At 0 the sweep is
+  // invisible yet still snapshots contacts and lights blips exactly as before.
+  const op = sweepOpacity;
+  if (op <= 0) return;
   cx.save();
   cx.globalCompositeOperation = 'lighter';
   for (const a of sweepArms) {
     if (!visible(a, a.r + 40)) continue; // draw-cull; the arm still paints contacts
     // subtle trailing wedge, clipped to this source's reach — reads as a slow
-    // rotating radar sweep (fades over ~0.4 turn behind the leading edge)
+    // rotating radar sweep (fades over ~0.4 turn behind the leading edge). Alpha is
+    // scaled by the player's opacity preference so it can be dimmed toward invisible.
     const grd = cx.createConicGradient(sweepAng, a.x, a.y);
-    grd.addColorStop(0, 'rgba(53,214,230,0.05)');
-    grd.addColorStop(0.16, 'rgba(53,214,230,0.012)');
+    grd.addColorStop(0, `rgba(53,214,230,${0.05 * op})`);
+    grd.addColorStop(0.16, `rgba(53,214,230,${0.012 * op})`);
     grd.addColorStop(0.4, 'rgba(53,214,230,0)');
     grd.addColorStop(1, 'rgba(53,214,230,0)');
     cx.save();
@@ -706,7 +730,7 @@ function drawScanSweep(now: number) {
     cx.fillRect(a.x - a.r, a.y - a.r, a.r * 2, a.r * 2);
     cx.restore();
     // the leading edge — the visible radar arm itself
-    cx.strokeStyle = 'rgba(53,214,230,0.26)';
+    cx.strokeStyle = `rgba(53,214,230,${0.26 * op})`;
     cx.lineWidth = 1;
     cx.beginPath();
     cx.moveTo(a.x, a.y);
@@ -6248,6 +6272,38 @@ for (const t of Array.from(document.querySelectorAll('#hp-more .hub-tile[data-mo
     hubNote.textContent = `${(t as HTMLElement).dataset.more} — скоро`;
   });
 }
+
+// --- settings overlay (hub → «Ещё» → Настройки) -----------------------------
+// Client-only display preferences (localStorage), never sent to the server. One control
+// for now: the radar sweep's visual opacity — 0% hides the rotating arm, anything between
+// just dims it. Purely cosmetic; the radar mechanic (contact detection) is unaffected.
+const settingsEl = $('settings');
+function renderSettings(): void {
+  const pct = Math.round(sweepOpacity * 100);
+  settingsEl.innerHTML =
+    `<div class="setbox">` +
+    `<div class="pc-head"><span class="pc-dia" style="background:var(--cyan)"></span><b>НАСТРОЙКИ</b><span class="pc-tag">интерфейс</span></div>` +
+    `<div class="set-row">` +
+    `<div class="set-lbl">Радарная развёртка<span class="set-sub">вращающийся луч на карте — только вид, не влияет на обнаружение</span></div>` +
+    `<div class="set-ctl"><input id="set-sweep" type="range" min="0" max="100" step="5" value="${pct}" aria-label="Прозрачность радарной развёртки"><span id="set-sweep-val" class="set-val">${pct}%</span></div>` +
+    `</div>` +
+    `<button class="pc-close" id="set-close" type="button">ГОТОВО</button>` +
+    `</div>`;
+  const slider = document.getElementById('set-sweep') as HTMLInputElement | null;
+  const val = document.getElementById('set-sweep-val');
+  slider?.addEventListener('input', () => {
+    setSweepOpacity(Number(slider.value) / 100);
+    if (val) val.textContent = `${Math.round(sweepOpacity * 100)}%`; // 0% reads as hidden
+  });
+  document.getElementById('set-close')?.addEventListener('click', () => settingsEl.classList.remove('show'));
+}
+$('hub-settings').addEventListener('click', () => {
+  renderSettings();
+  settingsEl.classList.add('show');
+});
+settingsEl.addEventListener('click', (e) => {
+  if (e.target === settingsEl) settingsEl.classList.remove('show'); // tap the backdrop → close
+});
 
 // First-run gate: a returning commander (a saved callsign) skips the identity card
 // and boots straight into the hub — the raw "Новый командир / войти" screen is only
