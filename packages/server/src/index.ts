@@ -28,11 +28,15 @@ export {
 export {
   registerBrowserApi,
   registerMatchApi,
+  registerOpenMatchesFeed,
   type CreatedMatch,
   type JoinFailure,
   type JoinResult,
   type MatchApiDeps,
+  type OpenMatch,
+  type OpenMatchesFeedDeps,
 } from './matchApi';
+export { MatchKeeper, type MatchKeeperOptions } from './matchFactory';
 export { InMemoryEphemeralStore, type EphemeralStore } from './ephemeral';
 export {
   hmacSecret,

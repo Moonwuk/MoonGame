@@ -30,6 +30,12 @@ export class MemoryMatchStore implements MatchStore {
     return Promise.resolve();
   }
 
+  ongoingMatchIds(): Promise<string[]> {
+    const ids: string[] = [];
+    for (const snap of this.snaps.values()) if (snap.status !== 'ended') ids.push(snap.matchId);
+    return Promise.resolve(ids);
+  }
+
   ping(): Promise<boolean> {
     return Promise.resolve(true); // no external dependency to be down
   }

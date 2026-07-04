@@ -5,8 +5,9 @@ import { createMultiplayerServer } from './wsServer';
 import { startClockDriver, type ClockDriverHandle } from './clockDriver';
 import { createStores, snapshotOf } from './persistence';
 import { configFromEnv } from './serverConfig';
-import { registerMatchApi, type MatchApiDeps } from './matchApi';
+import { registerMatchApi, registerOpenMatchesFeed, type MatchApiDeps } from './matchApi';
 import { registerAuthApi } from './authApi';
+import { MatchKeeper } from './matchFactory';
 import { LazyRoomRegistry, type LoadedMatch } from './roomRegistry';
 import type { RoomObservation } from './matchRoom';
 import type { MatchSnapshot, StoredReceipt } from './store';
@@ -149,6 +150,29 @@ if (auth && !allowedOrigins) {
   );
 }
 
+// Match factory (SV-2.5): keep OPEN_MATCHES joinable matches available so the feed is
+// never empty — when one fills or ends, seed another. The open count is read from the
+// durable store, so a restart reconciles instead of over-creating. OPEN_MATCHES=0 off.
+const OPEN_MATCHES = Number(process.env.OPEN_MATCHES ?? '3') || 0;
+const MATCH_CAPACITY = 2; // createDevMatch seats green/red — a match is full at 2
+const keeper =
+  OPEN_MATCHES > 0
+    ? new MatchKeeper({
+        target: OPEN_MATCHES,
+        max: MAX_MATCHES,
+        capacity: MATCH_CAPACITY,
+        listOngoing: () => stores.store.ongoingMatchIds(),
+        occupiedSeats: (id) => accountStore.occupiedSeats(id),
+        create: async () => {
+          await matchApi.createMatch();
+        },
+        onError: (err) =>
+          process.stderr.write(
+            `match factory: seed failed — ${err instanceof Error ? err.message : String(err)}\n`,
+          ),
+      })
+    : null;
+
 const server = createMultiplayerServer({
   registry,
   host,
@@ -163,33 +187,43 @@ const server = createMultiplayerServer({
   auth,
   allowedOrigins,
   accountStore, // dev ?nick= WS login (when auth is off)
-  // Only expose the account + match APIs when auth is on (they mint tokens);
-  // no auth ⇒ the insecure dev ?player= handshake only.
-  httpRoutes:
-    auth && signSession
-      ? (app) => {
-          // The account + match surface sits behind @fastify/rate-limit, registered in an
-          // ENCAPSULATED scope so the coarse per-IP backstop covers only these write
-          // routes — liveness probes (/health, /ready) on the parent app stay unthrottled
-          // for load balancers. The route modules keep their own tighter, uniform-401-
-          // preserving per-endpoint budgets on top (defence in depth on the auth path).
-          void app.register(async (scope) => {
-            await scope.register(rateLimit, { max: 100, timeWindow: '1 minute' });
-            registerAuthApi(scope, { users: stores.userStore, signSession });
-            registerMatchApi(scope, matchApi);
-          });
-        }
-      : undefined,
+  httpRoutes: (app) => {
+    // The open-matches feed is PUBLIC and read-only — browsing joinable matches precedes
+    // login and works with or without auth. Joining still needs a session (SE-1.x).
+    registerOpenMatchesFeed(app, {
+      listOngoing: () => stores.store.ongoingMatchIds(),
+      occupiedSeats: (id) => accountStore.occupiedSeats(id),
+      capacity: MATCH_CAPACITY,
+    });
+    // The account + match WRITE surface only when auth is on (it mints tokens); no auth ⇒
+    // the insecure dev ?player= handshake only. It sits behind @fastify/rate-limit in an
+    // ENCAPSULATED scope so the coarse per-IP backstop covers only these write routes —
+    // liveness probes (/health, /ready) and the feed on the parent app stay unthrottled
+    // for load balancers. The route modules keep their own tighter, uniform-401-preserving
+    // per-endpoint budgets on top (defence in depth on the auth path).
+    if (auth && signSession) {
+      void app.register(async (scope) => {
+        await scope.register(rateLimit, { max: 100, timeWindow: '1 minute' });
+        registerAuthApi(scope, { users: stores.userStore, signSession });
+        registerMatchApi(scope, matchApi);
+      });
+    }
+  },
 });
 
 const wsBase = await server.listen(); // ws://host:port/matches (multi-match → the base prefix)
 const httpUrl = wsBase.replace(/^ws/, 'http').replace(/\/matches.*$/, '');
+
+// Start the factory once the server is up: seed toward OPEN_MATCHES now, then reconcile
+// on an interval (a slow, cheap safety net; joins fill matches between ticks).
+keeper?.start(30_000);
 
 process.stdout.write(
   [
     'Void Dominion — server (real core, multi-match)',
     `  state  : ${stores.kind}${stores.kind === 'memory' ? ' (restart loses matches — set DATABASE_URL for durability)' : ' (durable — matches resume on restart)'}`,
     `  matches: lazy registry (load on connect, hibernate when idle, wake for events)`,
+    `  factory: ${keeper ? `keeps ${OPEN_MATCHES} open match(es) available · GET ${httpUrl}/matches/open` : 'off (OPEN_MATCHES=0)'}`,
     `  auth   : ${auth ? 'on (join token required — connect with ?token=<jwt>)' : 'off (insecure dev ?player=/?nick=)'}`,
     `  gate   : ${gateFactory ? 'ON (clients MUST send action.v1 envelopes echoing welcome.sessionId)' : 'off (bare actions)'}`,
     `  health : ${httpUrl}/health`,
@@ -211,6 +245,7 @@ let shuttingDown = false;
 const shutdown = (): void => {
   if (shuttingDown) return; // SIGINT + SIGTERM can both arrive
   shuttingDown = true;
+  keeper?.stop(); // stop reconciling before we drain
   // server.close() drains sockets and awaits registry.shutdown() (persist + stop every
   // live match's driver), so there is no separate driver to stop here.
   void server
