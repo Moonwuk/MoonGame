@@ -30,6 +30,7 @@ export {
   centerOn,
   inView,
 } from './camera';
+export { rgba, blitGlow, blitSphere } from './holoDraw';
 export {
   createStatusBarModel,
   createSelectionModel,
