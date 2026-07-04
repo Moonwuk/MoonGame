@@ -1794,6 +1794,30 @@ export const divisionModule: GameModule = {
       h.emit('division.mobilized', { id, owner: action.playerId, planetId: p.planetId, template: p.template });
     });
 
+    // Assemble a division template in-match — set slot `slot` of the player's template
+    // `template` to a formation unit (or null). Templates are no longer frozen at setup:
+    // "сбор шаблона из разных юнитов" happens at mobilisation. Materialises the player's
+    // templates from the defaults on first edit (per-player, deep-copied, JSON-safe).
+    api.onAction('division.template', (action, h) => {
+      const p = action.payload as { template?: number; slot?: number; unit?: string | null };
+      if (typeof p?.template !== 'number' || typeof p?.slot !== 'number') return h.reject('E_BAD_PAYLOAD');
+      if (p.slot < 0 || p.slot >= FORMATION_SLOTS) return h.reject('E_BAD_PAYLOAD');
+      const unit = p.unit ?? null;
+      if (unit !== null && !(FORMATION_UNITS as readonly string[]).includes(unit)) {
+        return h.reject('E_BAD_PAYLOAD');
+      }
+      const ds = h.state as DivState;
+      const all = (ds.templates ??= {});
+      const mine = (all[action.playerId] ??= DEFAULT_TEMPLATES.map((t) => ({
+        name: t.name,
+        slots: [...t.slots],
+      })));
+      const tpl = mine[p.template];
+      if (!tpl) return h.reject('E_NO_TEMPLATE');
+      tpl.slots[p.slot] = unit as FormationUnit | null;
+      h.emit('division.retemplated', { template: p.template, slot: p.slot, unit });
+    });
+
     /** Own-key division lookup owned by `playerId` (rejects a poisoned id / a foreign
      *  or missing division — fail-secure, mirroring the artillery `ownFleet` guard). */
     const ownDivision = (h: HandlerContext, id: unknown, playerId: string): Division => {
@@ -2055,6 +2079,13 @@ export const marketCancel = (playerId: string, id: string) =>
 /** Mobilise division template `template` (0-based) on your world `planetId`. */
 export const mobilizeDivision = (playerId: string, planetId: string, template: number) =>
   act(playerId, 'division.mobilize', { planetId, template });
+/** Assemble a template: set slot `slot` of your template `template` to `unit` (null = clear). */
+export const setDivisionTemplate = (
+  playerId: string,
+  template: number,
+  slot: number,
+  unit: string | null,
+) => act(playerId, 'division.template', { template, slot, unit });
 /** Load a garrisoning division into a co-located, idle fleet (by free hold). */
 export const loadDivision = (playerId: string, divisionId: string, fleetId: string) =>
   act(playerId, 'division.load', { divisionId, fleetId });

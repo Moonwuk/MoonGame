@@ -4,6 +4,8 @@ import {
   order,
   advance,
   mobilizeDivision,
+  setDivisionTemplate,
+  templatesOf,
   loadDivision,
   unloadDivision,
   setDivisionOfficer,
@@ -64,6 +66,32 @@ function ownedWorld(s: GameState, owner: string): string {
   w.garrison = [];
   return w.id;
 }
+
+describe('divisions — in-match template assembly (сбор шаблона)', () => {
+  it('edits a template slot in-match and the edit rides into the mobilised division', () => {
+    let s = richGame();
+    // Линия = [inf,inf,inf,inf,tank,bomber]; retool slot 5 (bomber) → tank.
+    s = order(s, setDivisionTemplate('p1', 0, 5, 'tank'), 0).state;
+    expect(templatesOf(s, 'p1')[0]!.slots[5]).toBe('tank');
+    const r = order(s, mobilizeDivision('p1', HOME, 0), s.time);
+    expect(r.error).toBeUndefined();
+    const div = Object.values(divisionsOf(r.state)).find((d) => d.owner === 'p1')!;
+    expect(div.max.tank).toBe(2); // slot 4 tank + slot 5 (now tank)
+    expect(div.max.bomber ?? 0).toBe(0); // the bomber slot is gone
+  });
+
+  it('editing is per-player and does not touch the shared defaults', () => {
+    const s = order(richGame(), setDivisionTemplate('p1', 1, 0, null), 0).state;
+    expect(templatesOf(s, 'p1')[1]!.slots[0]).toBe(null);
+    expect(templatesOf(s, 'p2')[1]!.slots[0]).not.toBe(null); // p2 still on the defaults
+  });
+
+  it('rejects a bad slot, unknown unit, or missing template', () => {
+    expect(order(richGame(), setDivisionTemplate('p1', 0, 9, 'tank'), 0).error).toBe('E_BAD_PAYLOAD');
+    expect(order(richGame(), setDivisionTemplate('p1', 0, 0, 'jetpack'), 0).error).toBe('E_BAD_PAYLOAD');
+    expect(order(richGame(), setDivisionTemplate('p1', 9, 0, 'tank'), 0).error).toBe('E_NO_TEMPLATE');
+  });
+});
 
 describe('divisions — mobilisation', () => {
   it('mobilises a full-strength division on an owned world and charges the cost', () => {

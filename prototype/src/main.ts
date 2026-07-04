@@ -43,10 +43,13 @@ import {
   canTraverse,
   START_CANDIDATES,
   DEFAULT_TEMPLATES,
+  FORMATION_UNITS,
+  FORMATION_SLOTS,
   formationStats,
   divisionsOf,
   templatesOf,
   mobilizeDivision,
+  setDivisionTemplate,
   loadDivision,
   unloadDivision,
   setDivisionOfficer,
@@ -57,6 +60,7 @@ import {
   fleetCargoFree,
   clampPowerWeights,
   type FormationTemplate,
+  type FormationUnit,
   type SetupConfig,
   type SeatConfig,
   type StepOut,
@@ -433,6 +437,7 @@ let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let aimPointer: { x: number; y: number } | null = null; // last canvas pointer (for the move preview)
 let hoverObj: string | null = null; // side-panel object under the pointer (data-desc key)
 let planetTab: PlanetTab = 'buildings';
+let mobTplIdx = 0; // which division template the mobilisation panel is assembling
 const buildQueues: Record<string, PlanetBuildQueue> = {};
 const logLines: string[] = [];
 let lastAiAt = 0;
@@ -1035,11 +1040,12 @@ function divisionsHtml(planetId: string): string {
       const hp = Math.round(d.units.reduce((n, u) => n + u.hp, 0));
       const off = d.officer ? OFFICERS[d.officer]?.name : '';
       h += `<div class="asset-row" data-desc="division"><span class="bicon">⊞</span><b>${esc(d.name)}</b><span class="dim">${comp} · ❤${hp}${off ? ' · ★' + esc(off) : ''}</span></div>`;
-      // Officer attach / detach (a hero-like leader; bonuses tuned in groundcombat).
-      h += `<div class="row">`;
+      // Ground hero = the division's officer: an immutable aura-leader that buffs the
+      // division it fights with (passive; activatable skills are space heroes only).
+      h += `<div class="hint">★ Наземный герой — аура своим в бою:</div><div class="row">`;
       for (const key of Object.keys(OFFICERS)) {
         const on = d.officer === key;
-        h += btn('officer', `${d.id}|${key}`, `${on ? '● ' : ''}${esc(OFFICERS[key]!.name)}`, !on);
+        h += btn('officer', `${d.id}|${key}`, `${on ? '● ' : ''}★ ${esc(OFFICERS[key]!.name)}`, !on);
       }
       if (d.officer) h += btn('officer', `${d.id}|`, 'Снять', true);
       h += `</div>`;
@@ -1049,14 +1055,27 @@ function divisionsHtml(planetId: string): string {
   }
   const tpls = templatesOf(s, ME);
   const res = s.players[ME]?.resources ?? {};
-  h += `<div class="sec">Мобилизовать дивизию</div>`;
+  const idx = Math.max(0, Math.min(mobTplIdx, tpls.length - 1));
+  const cur = tpls[idx] ?? tpls[0]!;
+  h += `<div class="sec">Сборка дивизии</div>`;
+  h += `<div class="row">`;
   for (let i = 0; i < tpls.length; i++) {
-    const t = tpls[i]!;
-    const f = formationStats(t);
-    const cost = Object.entries(f.cost).map(([r, a]) => `${a}${r[0]}`).join(' ') || '—';
-    const afford = Object.entries(f.cost).every(([r, a]) => (res[r] ?? 0) >= a);
-    h += btn('mobilize', String(i), `${esc(t.name)} (${f.count}) · ${cost}`, afford && f.count > 0);
+    h += btn('mobtpl', String(i), esc(tpls[i]!.name), i !== idx);
   }
+  h += `</div>`;
+  // Tap a slot to cycle its род войск (пусто → пехота → танк → бомбер → ПВО → пусто).
+  h += `<div class="row">`;
+  for (let i = 0; i < FORMATION_SLOTS; i++) {
+    const u = cur.slots[i] ?? null;
+    h += btn('divslot', `${idx}|${i}`, u ? `${FORM_ICON[u] ?? '▪'} ${esc(FORM_RU[u] ?? u)}` : '＋', true);
+  }
+  h += `</div>`;
+  const f = formationStats(cur);
+  const cost = Object.entries(f.cost).map(([r, a]) => `${a}${r[0]}`).join(' ') || '—';
+  const afford = Object.entries(f.cost).every(([r, a]) => (res[r] ?? 0) >= a);
+  const syn = f.synergies.map((x) => esc(x.name)).join(' · ');
+  h += `<div class="hint">⚔${f.attack} · 🛡${f.defense} · ❤${f.hp} · состав ${f.count}/${FORMATION_SLOTS} · ${cost}${syn ? ' · ' + syn : ''}</div>`;
+  h += btn('mobilize', String(idx), `Мобилизовать «${esc(cur.name)}»`, afford && f.count > 0);
   h += `<div class="hint">Дивизия строится по шаблону из меню. На своём мире +1 HP/юнит/день; полностью выбитая исчезает.</div>`;
   return h;
 }
@@ -4328,6 +4347,14 @@ side.addEventListener('click', (ev) => {
     enqueueBuild(selPlanet!, { kind: 'upgrade', id: arg, count: 1 });
   } else if (act === 'unit') {
     enqueueBuild(selPlanet!, { kind: 'unit', id: arg, count: 1 });
+  } else if (act === 'mobtpl') {
+    mobTplIdx = Number(arg); // switch which template the assembler shows (local, re-renders)
+  } else if (act === 'divslot') {
+    const [ti, si] = arg.split('|').map(Number);
+    const cur = templatesOf(s, ME)[ti!]?.slots[si!] ?? null;
+    const order: (string | null)[] = [null, ...FORMATION_UNITS];
+    const next = order[(order.indexOf(cur) + 1) % order.length] ?? null;
+    playerOrder(setDivisionTemplate(ME, ti!, si!, next));
   } else if (act === 'mobilize') {
     playerOrder(mobilizeDivision(ME, selPlanet!, Number(arg)));
   } else if (act === 'capital') {
@@ -5042,6 +5069,7 @@ const setupTemplates: FormationTemplate[] = DEFAULT_TEMPLATES.map((t) => ({
 }));
 /** Unit-type → icon, used by the in-match division roster readout (panelHtml). */
 const FORM_ICON: Record<string, string> = { infantry: '🪖', tank: '🛡', bomber: '✈', aa: '◎' };
+const FORM_RU: Record<string, string> = { infantry: 'Пехота', tank: 'Танк', bomber: 'Бомбер', aa: 'ПВО' };
 const setupHeroes: HeroLoadout[] = DEFAULT_HEROES.map((h) => ({ name: h.name, grade: h.grade, abilities: [...h.abilities] }));
 
 /** The hero's display name — the главный hero shows the player's callsign (nick). */
