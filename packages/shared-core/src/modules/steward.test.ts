@@ -7,8 +7,10 @@ import { stewardActive, stewardModule } from './steward';
 
 const HOUR = 3_600_000;
 
-// The Steward is pure state + time — no units, buildings or economy involved, so the
-// game data can be as bare as the schema allows.
+// The Steward is pure state + time — no units, buildings or economy involved. The one
+// content it DOES read is the tech that unlocks its ability: `steward.delegate` is gated on
+// a completed technology whose `unlocks.abilities` includes 'steward' (the tech's own
+// day-gate / has_scientist gate is the technology module's concern, tested there).
 const data: GameData = parseGameData({
   version: '0.1.0',
   resources: ['metal'],
@@ -18,14 +20,26 @@ const data: GameData = parseGameData({
   events: {},
   planetTypes: {},
   sectorKinds: {},
+  technologies: {
+    ai_stewardship: { name: 'Steward Protocol', branch: 'command', unlocks: { abilities: ['steward'] } },
+  },
 });
 
 function ctx(now: number): Context {
   return { now, data };
 }
 
-function player(id: string): Player {
-  return { id, name: id, faction: 'x', status: 'active', resources: {} };
+// A seated player; `unlocked` (default true) gives them the researched Steward tech so
+// `steward.delegate` clears its authorization gate.
+function player(id: string, unlocked = true): Player {
+  return {
+    id,
+    name: id,
+    faction: 'x',
+    status: 'active',
+    resources: {},
+    technologies: { completed: unlocked ? ['ai_stewardship'] : [] },
+  };
 }
 
 function baseState(): GameState {
@@ -65,7 +79,17 @@ describe('steward module', () => {
     });
   });
 
+  it('locks delegation until the Steward ability is researched', () => {
+    // A seated player who has NOT researched the tech (ability not unlocked) cannot delegate.
+    const notResearched: GameState = { ...baseState(), players: { p1: player('p1', false) } };
+    expect(kernel.applyAction(notResearched, delegate('p1', 'defend', 8 * HOUR), ctx(0))).toEqual({
+      ok: false,
+      code: 'E_STEWARD_LOCKED',
+    });
+  });
+
   it('rejects an unknown seat, an unlisted posture and a non-future deadline', () => {
+    // No such seat → fails before the ability gate.
     expect(kernel.applyAction(baseState(), delegate('ghost', 'defend', 8 * HOUR), ctx(0))).toEqual({
       ok: false,
       code: 'E_NO_PLAYER',
