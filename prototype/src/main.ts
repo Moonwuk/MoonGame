@@ -3353,32 +3353,166 @@ function render(now: number) {
       cx.restore();
     }
 
-    // holographic volume: a lit sphere inside the ring — subtle at the far view (nodes
-    // pack together there), blooming to full once you zoom into a region
-    blitSphere(col, c.x, c.y, R, clamp(0.3 + (cam.scale - 1) * 0.7, 0.3, 1));
+    if (n.sector === 'planet') {
+      // Planet: holographic volume — a lit sphere inside the ring, subtle at far view,
+      // blooming to full once you zoom into a region
+      blitSphere(col, c.x, c.y, R, clamp(0.3 + (cam.scale - 1) * 0.7, 0.3, 1));
 
-    // wireframe body + bright core (glow comes from the cached aura/bloom discs,
-    // not shadowBlur — shadowBlur per node per frame is a major CPU cost)
-    blitGlow(col, c.x, c.y, R + 7, showOwner ? 0.22 : 0.12); // tight bloom at the ring
-    cx.strokeStyle = col;
-    cx.lineWidth = 2;
-    cx.beginPath();
-    cx.arc(c.x, c.y, R, 0, TAU);
-    cx.stroke();
-    cx.fillStyle = rgba(col, 0.72 + 0.28 * ownerPulse);
-    cx.beginPath();
-    cx.arc(c.x, c.y, 2.6 + 1.2 * ownerPulse, 0, TAU);
-    cx.fill();
+      // wireframe body + bright core (glow comes from the cached aura/bloom discs,
+      // not shadowBlur — shadowBlur per node per frame is a major CPU cost)
+      blitGlow(col, c.x, c.y, R + 7, showOwner ? 0.22 : 0.12);
+      cx.strokeStyle = col;
+      cx.lineWidth = 2;
+      cx.beginPath();
+      cx.arc(c.x, c.y, R, 0, TAU);
+      cx.stroke();
+      cx.fillStyle = rgba(col, 0.72 + 0.28 * ownerPulse);
+      cx.beginPath();
+      cx.arc(c.x, c.y, 2.6 + 1.2 * ownerPulse, 0, TAU);
+      cx.fill();
 
-    // N/E/S/W crosshair ticks
-    cx.strokeStyle = rgba(col, 0.7);
-    cx.lineWidth = 1.2;
-    cx.beginPath();
-    for (const [dx, dy] of CARDINAL) {
-      cx.moveTo(c.x + dx * (R - 3), c.y + dy * (R - 3));
-      cx.lineTo(c.x + dx * (R + 5), c.y + dy * (R + 5));
+      // N/E/S/W crosshair ticks
+      cx.strokeStyle = rgba(col, 0.7);
+      cx.lineWidth = 1.2;
+      cx.beginPath();
+      for (const [dx, dy] of CARDINAL) {
+        cx.moveTo(c.x + dx * (R - 3), c.y + dy * (R - 3));
+        cx.lineTo(c.x + dx * (R + 5), c.y + dy * (R + 5));
+      }
+      cx.stroke();
+    } else if (n.sector === 'nebula' || n.sector === 'dense_nebula') {
+      // Nebula: soft diamond (rotated square) with diffuse glow
+      const kc = SECTOR_TYPES[SECTOR_OF[n.id]]?.color ?? col;
+      const dr = R * 0.85;
+      blitGlow(kc, c.x, c.y, R + 7, showOwner ? 0.2 : 0.1);
+      cx.save();
+      cx.strokeStyle = rgba(kc, 0.7);
+      cx.fillStyle = rgba(kc, 0.12 + 0.08 * ownerPulse);
+      cx.lineWidth = 1.6;
+      cx.beginPath();
+      cx.moveTo(c.x, c.y - dr);
+      cx.lineTo(c.x + dr, c.y);
+      cx.lineTo(c.x, c.y + dr);
+      cx.lineTo(c.x - dr, c.y);
+      cx.closePath();
+      cx.fill();
+      cx.stroke();
+      // inner diamond (scanline effect)
+      cx.strokeStyle = rgba(kc, 0.3);
+      cx.lineWidth = 1;
+      const ir = dr * 0.55;
+      cx.beginPath();
+      cx.moveTo(c.x, c.y - ir);
+      cx.lineTo(c.x + ir, c.y);
+      cx.lineTo(c.x, c.y + ir);
+      cx.lineTo(c.x - ir, c.y);
+      cx.closePath();
+      cx.stroke();
+      // core dot
+      cx.fillStyle = rgba(kc, 0.7 + 0.3 * ownerPulse);
+      cx.beginPath();
+      cx.arc(c.x, c.y, 2, 0, TAU);
+      cx.fill();
+      cx.restore();
+    } else if (n.sector === 'ion_storm' || n.sector === 'solar_flare') {
+      // Storm: spiky burst (6-pointed star)
+      const kc = SECTOR_TYPES[SECTOR_OF[n.id]]?.color ?? col;
+      const outerR = R * 0.9;
+      const innerR = R * 0.4;
+      const spikes = n.sector === 'ion_storm' ? 5 : 8;
+      blitGlow(kc, c.x, c.y, R + 7, showOwner ? 0.22 : 0.1);
+      cx.save();
+      cx.strokeStyle = rgba(kc, 0.75);
+      cx.fillStyle = rgba(kc, 0.1 + 0.06 * ownerPulse);
+      cx.lineWidth = 1.4;
+      cx.beginPath();
+      for (let i = 0; i < spikes * 2; i++) {
+        const a = (i / (spikes * 2)) * TAU - Math.PI / 2;
+        const rr = i % 2 === 0 ? outerR : innerR;
+        if (i === 0) cx.moveTo(c.x + Math.cos(a) * rr, c.y + Math.sin(a) * rr);
+        else cx.lineTo(c.x + Math.cos(a) * rr, c.y + Math.sin(a) * rr);
+      }
+      cx.closePath();
+      cx.fill();
+      cx.stroke();
+      // core dot
+      cx.fillStyle = rgba(kc, 0.7 + 0.3 * ownerPulse);
+      cx.beginPath();
+      cx.arc(c.x, c.y, 2, 0, TAU);
+      cx.fill();
+      cx.restore();
+    } else if (n.sector === 'graveyard') {
+      // Derelict Graveyard: scattered debris fragments around a dim hub
+      const kc = SECTOR_TYPES[SECTOR_OF[n.id]]?.color ?? col;
+      blitGlow(kc, c.x, c.y, R + 5, showOwner ? 0.16 : 0.06);
+      cx.save();
+      cx.strokeStyle = rgba(kc, 0.5);
+      cx.lineWidth = 1.2;
+      // scattered wreck fragments — short dashes at fixed angles
+      const frags = [0, 0.7, 1.5, 2.3, 3.1, 4.0, 4.9, 5.6];
+      for (const a of frags) {
+        const r0 = 5 + 2 * Math.sin(a * 3.7);
+        const r1 = 9 + 3 * Math.sin(a * 2.1 + 1);
+        cx.beginPath();
+        cx.moveTo(c.x + Math.cos(a) * r0, c.y + Math.sin(a) * r0);
+        cx.lineTo(c.x + Math.cos(a) * r1, c.y + Math.sin(a) * r1);
+        cx.stroke();
+      }
+      // dim centre hub
+      cx.fillStyle = rgba(kc, 0.5 + 0.2 * ownerPulse);
+      cx.beginPath();
+      cx.arc(c.x, c.y, 3, 0, TAU);
+      cx.fill();
+      cx.strokeStyle = rgba(kc, 0.4);
+      cx.beginPath();
+      cx.arc(c.x, c.y, 7, 0, TAU);
+      cx.stroke();
+      cx.restore();
+    } else if (n.sector === 'dead_world') {
+      // Dead World: broken/dashed circle with an X through it
+      const kc = SECTOR_TYPES[SECTOR_OF[n.id]]?.color ?? col;
+      blitGlow(kc, c.x, c.y, R + 5, showOwner ? 0.16 : 0.08);
+      cx.save();
+      cx.setLineDash([4, 4]);
+      cx.strokeStyle = rgba(kc, 0.6);
+      cx.lineWidth = 1.6;
+      cx.beginPath();
+      cx.arc(c.x, c.y, R * 0.8, 0, TAU);
+      cx.stroke();
+      cx.setLineDash([]);
+      // cross through the centre (the "dead" mark)
+      const xr = R * 0.45;
+      cx.strokeStyle = rgba(kc, 0.45);
+      cx.lineWidth = 1.3;
+      cx.beginPath();
+      cx.moveTo(c.x - xr, c.y - xr);
+      cx.lineTo(c.x + xr, c.y + xr);
+      cx.moveTo(c.x + xr, c.y - xr);
+      cx.lineTo(c.x - xr, c.y + xr);
+      cx.stroke();
+      // dim core dot
+      cx.fillStyle = rgba(kc, 0.5 + 0.2 * ownerPulse);
+      cx.beginPath();
+      cx.arc(c.x, c.y, 2, 0, TAU);
+      cx.fill();
+      cx.restore();
+    } else {
+      // Fallback for any other non-planet type: small hexagon marker
+      const kc = SECTOR_TYPES[SECTOR_OF[n.id]]?.color ?? col;
+      blitGlow(kc, c.x, c.y, R + 5, showOwner ? 0.14 : 0.06);
+      cx.save();
+      cx.strokeStyle = rgba(kc, 0.55);
+      cx.fillStyle = rgba(kc, 0.08);
+      cx.lineWidth = 1.4;
+      poly(c.x, c.y, R * 0.7, 6, Math.PI / 6);
+      cx.fill();
+      cx.stroke();
+      cx.fillStyle = rgba(kc, 0.5 + 0.2 * ownerPulse);
+      cx.beginPath();
+      cx.arc(c.x, c.y, 2, 0, TAU);
+      cx.fill();
+      cx.restore();
     }
-    cx.stroke();
 
     if (selPlanet === n.id) targetBrackets(c.x, c.y, R + 10, now);
 
