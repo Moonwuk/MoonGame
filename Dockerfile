@@ -28,7 +28,7 @@
 # The dates live in these comments, not inline: a `#` after FROM's args would be parsed
 # as extra arguments (Dockerfile comments only count at line start) and break the build.
 # node:22-slim digest refreshed 2026-07.
-FROM node:22-slim@sha256:813a7480f28fdadac1f7f5c824bcdad435b5bc1322a5968bbbdef8d058f9dff4 AS build
+FROM node:26-slim@sha256:a1d9d671994fc2d26e297ac56b4b1522a8bc7fa71c43b14cd1b1fe6c5116f7dc AS build
 WORKDIR /app
 RUN corepack enable
 
