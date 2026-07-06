@@ -1,25 +1,37 @@
 {
   "mine_t1": {
     "name": "Metal Extractor I",
-    "cost": { "metal": 100 },
+    "cost": {
+      "metal": 100
+    },
     "buildTimeHours": 6,
-    "produces": { "metal": 20 },
+    "produces": {
+      "metal": 20
+    },
     "hp": 15,
     "scoreValue": 8,
     "traits": []
   },
   "mine_t2": {
     "name": "Metal Extractor II",
-    "cost": { "metal": 300, "credits": 120 },
+    "cost": {
+      "metal": 300,
+      "credits": 120
+    },
     "buildTimeHours": 18,
-    "produces": { "metal": 55 },
+    "produces": {
+      "metal": 55
+    },
     "hp": 25,
     "scoreValue": 8,
     "traits": []
   },
   "shipyard": {
     "name": "Orbital Shipyard",
-    "cost": { "metal": 400, "credits": 200 },
+    "cost": {
+      "metal": 400,
+      "credits": 200
+    },
     "buildTimeHours": 24,
     "produces": {},
     "hp": 30,
@@ -29,16 +41,24 @@
   },
   "biomass_pit": {
     "name": "Biomass Pit",
-    "cost": { "metal": 150 },
+    "cost": {
+      "metal": 150
+    },
     "buildTimeHours": 8,
-    "produces": { "food": 30 },
+    "produces": {
+      "food": 30
+    },
     "hp": 15,
     "scoreValue": 8,
-    "traits": ["infected"]
+    "traits": [
+      "infected"
+    ]
   },
   "barracks": {
     "name": "Barracks",
-    "cost": { "metal": 120 },
+    "cost": {
+      "metal": 120
+    },
     "buildTimeHours": 8,
     "hp": 20,
     "scoreValue": 6,
@@ -46,7 +66,10 @@
   },
   "spaceport": {
     "name": "Spaceport",
-    "cost": { "metal": 200, "credits": 80 },
+    "cost": {
+      "metal": 200,
+      "credits": 80
+    },
     "buildTimeHours": 12,
     "hp": 25,
     "shipRepair": 0.05,
@@ -55,7 +78,10 @@
   },
   "radar": {
     "name": "Sensor Array I",
-    "cost": { "metal": 120, "credits": 40 },
+    "cost": {
+      "metal": 120,
+      "credits": 40
+    },
     "buildTimeHours": 6,
     "produces": {},
     "hp": 18,
@@ -63,36 +89,59 @@
     "scoreValue": 6,
     "upgrades": [
       {
-        "cost": { "metal": 220, "credits": 90 },
+        "cost": {
+          "metal": 220,
+          "credits": 90
+        },
         "buildTimeHours": 10,
         "hp": 26,
-        "radarRange": 500
+        "radarRange": 500,
+        "upkeep": {
+          "energy": 16
+        }
       },
       {
-        "cost": { "metal": 360, "credits": 160 },
+        "cost": {
+          "metal": 360,
+          "credits": 160
+        },
         "buildTimeHours": 14,
         "hp": 34,
-        "radarRange": 700
+        "radarRange": 700,
+        "upkeep": {
+          "energy": 24
+        }
       }
     ],
-    "traits": []
+    "traits": [],
+    "upkeep": {
+      "energy": 10
+    }
   },
   "fort": {
     "name": "Fortress",
-    "cost": { "metal": 150 },
+    "cost": {
+      "metal": 150
+    },
     "buildTimeHours": 10,
     "hp": 35,
     "defenseBonus": 0.35,
     "scoreValue": 20,
     "upgrades": [
       {
-        "cost": { "metal": 300, "credits": 100 },
+        "cost": {
+          "metal": 300,
+          "credits": 100
+        },
         "buildTimeHours": 16,
         "hp": 50,
         "defenseBonus": 0.5
       },
       {
-        "cost": { "metal": 500, "credits": 200 },
+        "cost": {
+          "metal": 500,
+          "credits": 200
+        },
         "buildTimeHours": 24,
         "hp": 65,
         "defenseBonus": 0.65
@@ -102,31 +151,52 @@
   },
   "orbital_aa": {
     "name": "Orbital AA Battery",
-    "cost": { "metal": 140, "credits": 50 },
+    "cost": {
+      "metal": 140,
+      "credits": 50
+    },
     "buildTimeHours": 8,
     "hp": 30,
     "aaDamage": 14,
     "scoreValue": 6,
-    "traits": []
+    "traits": [],
+    "upkeep": {
+      "energy": 8
+    }
   },
   "metal_station": {
     "name": "Salvage Metal Rig I",
-    "cost": { "metal": 80, "credits": 30 },
+    "cost": {
+      "metal": 80,
+      "credits": 30
+    },
     "buildTimeHours": 8,
-    "produces": { "metal": 30 },
+    "produces": {
+      "metal": 30
+    },
     "hp": 20,
     "scoreValue": 6,
     "upgrades": [
       {
-        "cost": { "metal": 220, "credits": 90 },
+        "cost": {
+          "metal": 220,
+          "credits": 90
+        },
         "buildTimeHours": 14,
-        "produces": { "metal": 60 },
+        "produces": {
+          "metal": 60
+        },
         "hp": 30
       },
       {
-        "cost": { "metal": 380, "credits": 170 },
+        "cost": {
+          "metal": 380,
+          "credits": 170
+        },
         "buildTimeHours": 20,
-        "produces": { "metal": 100 },
+        "produces": {
+          "metal": 100
+        },
         "hp": 40
       }
     ],
@@ -134,53 +204,107 @@
   },
   "power_plant": {
     "name": "Fusion Reactor I",
-    "cost": { "metal": 110, "credits": 30 },
+    "cost": {
+      "metal": 110,
+      "credits": 30
+    },
     "buildTimeHours": 6,
-    "produces": { "energy": 25 },
+    "produces": {
+      "energy": 25
+    },
     "hp": 16,
     "scoreValue": 8,
     "upgrades": [
       {
-        "cost": { "metal": 280, "credits": 110 },
+        "cost": {
+          "metal": 280,
+          "credits": 110
+        },
         "buildTimeHours": 16,
-        "produces": { "energy": 60 },
-        "hp": 26
+        "produces": {
+          "energy": 60
+        },
+        "hp": 26,
+        "upkeep": {
+          "credits": 12
+        }
       },
       {
-        "cost": { "metal": 460, "credits": 210 },
+        "cost": {
+          "metal": 460,
+          "credits": 210
+        },
         "buildTimeHours": 22,
-        "produces": { "energy": 110 },
-        "hp": 36
+        "produces": {
+          "energy": 110
+        },
+        "hp": 36,
+        "upkeep": {
+          "credits": 20
+        }
       }
     ],
-    "traits": []
+    "traits": [],
+    "upkeep": {
+      "credits": 6
+    }
   },
   "fabricator": {
     "name": "Microelectronics Fab I",
-    "cost": { "metal": 200, "credits": 120, "energy": 60 },
+    "cost": {
+      "metal": 200,
+      "credits": 120,
+      "energy": 60
+    },
     "buildTimeHours": 14,
-    "produces": { "microelectronics": 8 },
+    "produces": {
+      "microelectronics": 8
+    },
     "hp": 22,
     "scoreValue": 14,
     "upgrades": [
       {
-        "cost": { "metal": 360, "credits": 220, "energy": 140 },
+        "cost": {
+          "metal": 360,
+          "credits": 220,
+          "energy": 140
+        },
         "buildTimeHours": 20,
-        "produces": { "microelectronics": 18 },
-        "hp": 32
+        "produces": {
+          "microelectronics": 18
+        },
+        "hp": 32,
+        "upkeep": {
+          "energy": 55
+        }
       },
       {
-        "cost": { "metal": 560, "credits": 360, "energy": 260 },
+        "cost": {
+          "metal": 560,
+          "credits": 360,
+          "energy": 260
+        },
         "buildTimeHours": 28,
-        "produces": { "microelectronics": 32 },
-        "hp": 44
+        "produces": {
+          "microelectronics": 32
+        },
+        "hp": 44,
+        "upkeep": {
+          "energy": 90
+        }
       }
     ],
-    "traits": []
+    "traits": [],
+    "upkeep": {
+      "energy": 30
+    }
   },
   "hospital": {
     "name": "Field Hospital",
-    "cost": { "metal": 160, "credits": 60 },
+    "cost": {
+      "metal": 160,
+      "credits": 60
+    },
     "buildTimeHours": 8,
     "hp": 20,
     "healRate": 0.15,

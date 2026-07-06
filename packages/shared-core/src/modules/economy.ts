@@ -6,18 +6,29 @@ import { bombardedPlanets } from '../state/orbit';
 import { timeScaleOf } from '../action/types';
 import { MS_PER_HOUR, MS_PER_DAY } from '../util/time';
 
-/** Base hourly production of a planet = the sum of its buildings' `produces`,
- *  each at its current level. */
-function baseProduction(planet: Planet, data: GameData): ResourceBag {
+/** Output multiplier for a building whose upkeep resource is in arrears: the lights
+ *  dim, they don't go out — half rate keeps a starved economy limping (and honest)
+ *  instead of dead-spiralling to zero. */
+export const BROWNOUT = 0.5;
+
+/** Base hourly production of a planet = the sum of its buildings' `produces`, each at
+ *  its current level. A building whose upkeep names a resource the OWNER failed to pay
+ *  last settlement (`Player.arrears`) runs at `BROWNOUT` of its output. */
+function baseProduction(planet: Planet, data: GameData, arrears?: readonly string[]): ResourceBag {
   const out: Record<string, number> = {};
   for (const building of planet.buildings) {
     const def = data.buildings[building.type];
     if (!def) {
       continue;
     }
-    const produces = buildingLevel(def, building.level).produces;
-    for (const res of Object.keys(produces)) {
-      out[res] = (out[res] ?? 0) + (produces[res] ?? 0);
+    const level = buildingLevel(def, building.level);
+    const starved =
+      arrears !== undefined &&
+      arrears.length > 0 &&
+      Object.keys(level.upkeep).some((res) => (level.upkeep[res] ?? 0) > 0 && arrears.includes(res));
+    const mult = starved ? BROWNOUT : 1;
+    for (const res of Object.keys(level.produces)) {
+      out[res] = (out[res] ?? 0) + (level.produces[res] ?? 0) * mult;
     }
   }
   return out;
@@ -49,8 +60,29 @@ function upkeepByOwner(state: GameState, data: GameData): Map<string, ResourceBa
     if (fleet.landing) addStacks(fleet.owner, fleet.landing);
   }
   for (const planet of Object.values(state.planets)) {
-    if (planet.owner !== null) {
-      addStacks(planet.owner, planet.garrison);
+    if (planet.owner === null) {
+      continue;
+    }
+    addStacks(planet.owner, planet.garrison);
+    // Standing buildings bill their owner daily too (destroyed ones are gone from
+    // the array, so nothing dead is ever billed).
+    for (const building of planet.buildings) {
+      const def = data.buildings[building.type];
+      if (!def) {
+        continue;
+      }
+      const upkeep = buildingLevel(def, building.level).upkeep;
+      let bag = out.get(planet.owner);
+      for (const res of Object.keys(upkeep)) {
+        const perDay = upkeep[res] ?? 0;
+        if (perDay === 0) {
+          continue;
+        }
+        if (!bag) {
+          out.set(planet.owner, (bag = {}));
+        }
+        bag[res] = (bag[res] ?? 0) + perDay;
+      }
     }
   }
   return out;
@@ -96,9 +128,13 @@ export const economyModule: GameModule = {
         if (bombarded.has(planetId)) {
           continue; // production frozen while the world is bombarded (GDD §7.4)
         }
-        const rate = h.hook<ResourceBag>('economy.production', baseProduction(planet, data), {
-          planetId,
-        });
+        const rate = h.hook<ResourceBag>(
+          'economy.production',
+          // Arrears from the LAST settlement dim this span's output (state-carried,
+          // so the formula stays continuous and deterministic across any span split).
+          baseProduction(planet, data, player.arrears),
+          { planetId },
+        );
         for (const res of Object.keys(rate)) {
           const perHour = rate[res] ?? 0;
           if (perHour !== 0) {
@@ -110,15 +146,30 @@ export const economyModule: GameModule = {
       const upkeepPerOwner = upkeepByOwner(h.state, data);
       for (const playerId of Object.keys(h.state.players)) {
         const player = h.state.players[playerId];
-        const upkeep = upkeepPerOwner.get(playerId);
-        if (!player || !upkeep) {
+        if (!player) {
           continue;
         }
-        for (const res of Object.keys(upkeep)) {
-          const perDay = upkeep[res] ?? 0;
-          if (perDay !== 0) {
-            player.resources[res] = Math.max(0, (player.resources[res] ?? 0) - perDay * days);
+        const upkeep = upkeepPerOwner.get(playerId);
+        // Settle the bill and record what went UNPAID: a resource whose drain pinned
+        // the treasury at zero with a remainder owed enters arrears — next span its
+        // consumers run at BROWNOUT until the debt is coverable again.
+        const short: string[] = [];
+        for (const res of Object.keys(upkeep ?? {})) {
+          const perDay = upkeep![res] ?? 0;
+          if (perDay === 0) {
+            continue;
           }
+          const have = player.resources[res] ?? 0;
+          const owed = perDay * days;
+          player.resources[res] = Math.max(0, have - owed);
+          if (have < owed) {
+            short.push(res);
+          }
+        }
+        if (short.length > 0) {
+          player.arrears = short.sort();
+        } else if (player.arrears !== undefined) {
+          delete player.arrears; // bills paid in full — the brownout lifts
         }
       }
     });

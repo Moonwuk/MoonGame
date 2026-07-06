@@ -62,6 +62,12 @@ export interface Player {
   ai?: boolean;
   /** The player's treasury — production accrues here, upkeep/costs drain it. */
   resources: ResourceBag;
+  /** Resources whose upkeep went UNPAID at the last settlement (treasury pinned at
+   *  zero with a remainder owed). While a resource is in arrears, buildings whose
+   *  upkeep consumes it run at half output (economy.ts BROWNOUT) — a brownout, not
+   *  a shutdown. Sorted for determinism; absent = all bills paid. Private to the
+   *  owner (stripped from other players' views like the treasury itself). */
+  arrears?: string[];
   technologies?: PlayerTechnologyState;
   /** Chosen research leaders (a council of up to 2), snapshotted at match start and
    *  immutable (GDD §2/§5.2): each `id` into `data.scientists`, `level` from the account

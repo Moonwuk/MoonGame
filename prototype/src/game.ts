@@ -15,6 +15,7 @@ import {
   isCapturable,
   isBombarded,
   economyModule,
+  BROWNOUT,
   movementModule,
   heroModule,
   combatModule,
@@ -36,6 +37,7 @@ import {
   isBotPair,
   setStance,
   pairKey,
+  identifiedNodes,
   timeScaleOf,
   type DiplomaticStance,
   type GameData,
@@ -104,7 +106,7 @@ export const data: GameData = parseGameData({
       description: 'Осадные расчёты дальнего боя: +8% к урону.',
       branch: 'space',
       tier: 2,
-      cost: { credits: 260, metal: 220 },
+      cost: { credits: 260, metal: 220, microelectronics: 40 },
       researchTimeHours: 10,
       prerequisites: ['orbital_logistics'],
       effects: { combatDamageBonus: 0.08 },
@@ -236,7 +238,7 @@ export const data: GameData = parseGameData({
       },
       traits: ['squadron'],
       signature: 2,
-      cost: { metal: 90, credits: 40 },
+      cost: { metal: 90, credits: 40, microelectronics: 10 },
       buildTimeHours: 2,
       upkeep: { credits: 4 },
     },
@@ -265,7 +267,7 @@ export const data: GameData = parseGameData({
       signature: 1,
       cost: { metal: 35 },
       buildTimeHours: 2,
-      upkeep: { credits: 2 },
+      upkeep: { credits: 2, food: 1 },
     },
     // Танк — heavy front line: high attack and hull, but pricey and bulky to lift.
     tank: {
@@ -276,7 +278,7 @@ export const data: GameData = parseGameData({
       signature: 2,
       cost: { metal: 120, credits: 30 },
       buildTimeHours: 4,
-      upkeep: { credits: 4 },
+      upkeep: { credits: 4, food: 2 },
     },
     // The player's projection hero — cruiser-tier guns but TRIPLE the hull, and the
     // +5% attack/defense aura it grants its fleet (heroModule). Seeded, not built.
@@ -315,8 +317,68 @@ export const data: GameData = parseGameData({
       cost: { metal: 110 },
       buildTimeHours: 4,
       produces: { credits: 8 },
+      upkeep: { energy: 8 }, // refined credit production runs on grid power
       hp: 20,
       scoreValue: 3,
+    },
+    // --- the resource loop's missing three: food, energy, microelectronics ----------
+    // Together with the mine they close all five session resources into one economy:
+    // reactors feed the powered buildings (refinery/radar/AA/rig/fab), farms feed the
+    // ground army (units' food upkeep), fabs turn power+food into the high-tech good.
+    // Missing a resource doesn't kill a building — it BROWNOUTS its consumers to half
+    // output until the bill is coverable again (economy.ts arrears).
+    farm: {
+      name: 'Hydroponics Farm',
+      cost: { metal: 90 },
+      buildTimeHours: 3,
+      produces: { food: 10 },
+      upkeep: { energy: 6 },
+      hp: 18,
+      scoreValue: 3,
+      upgrades: [
+        { cost: { metal: 160, credits: 40 }, buildTimeHours: 4, produces: { food: 16 }, upkeep: { energy: 10 }, hp: 24 },
+        { cost: { metal: 260, credits: 90 }, buildTimeHours: 6, produces: { food: 24 }, upkeep: { energy: 16 }, hp: 30 },
+      ],
+    },
+    power_plant: {
+      name: 'Fusion Plant',
+      cost: { metal: 110, credits: 30 },
+      buildTimeHours: 4,
+      produces: { energy: 14 },
+      upkeep: { credits: 6 },
+      hp: 20,
+      scoreValue: 4,
+      upgrades: [
+        { cost: { metal: 240, credits: 100 }, buildTimeHours: 6, produces: { energy: 26 }, upkeep: { credits: 12 }, hp: 28 },
+        { cost: { metal: 400, credits: 190 }, buildTimeHours: 8, produces: { energy: 42 }, upkeep: { credits: 20 }, hp: 36 },
+      ],
+    },
+    // Bootstrap chain on purpose: the fab's UPGRADES cost the very good it produces —
+    // the first one runs on imports (market) or patience, the rest compound.
+    fabricator: {
+      name: 'Microelectronics Fab',
+      cost: { metal: 180, credits: 100 },
+      buildTimeHours: 6,
+      produces: { microelectronics: 5 },
+      upkeep: { energy: 30, food: 8 },
+      hp: 22,
+      scoreValue: 6,
+      upgrades: [
+        {
+          cost: { metal: 320, credits: 200, microelectronics: 30 },
+          buildTimeHours: 8,
+          produces: { microelectronics: 11 },
+          upkeep: { energy: 55, food: 14 },
+          hp: 32,
+        },
+        {
+          cost: { metal: 520, credits: 340, microelectronics: 80 },
+          buildTimeHours: 10,
+          produces: { microelectronics: 19 },
+          upkeep: { energy: 90, food: 22 },
+          hp: 42,
+        },
+      ],
     },
     // tax office — a one-time civic upgrade (no levels): lifts the whole credit take
     // of the inhabited world it sits on by +25% (taxModule). Cannot stack.
@@ -334,11 +396,12 @@ export const data: GameData = parseGameData({
       cost: { metal: 80, credits: 30 },
       buildTimeHours: 4,
       produces: { metal: 30 },
+      upkeep: { energy: 8 },
       hp: 20,
       scoreValue: 5,
       upgrades: [
-        { cost: { metal: 220, credits: 90 }, buildTimeHours: 6, produces: { metal: 60 }, hp: 30 },
-        { cost: { metal: 380, credits: 170 }, buildTimeHours: 8, produces: { metal: 100 }, hp: 40 },
+        { cost: { metal: 220, credits: 90 }, buildTimeHours: 6, produces: { metal: 60 }, upkeep: { energy: 14 }, hp: 30 },
+        { cost: { metal: 380, credits: 170 }, buildTimeHours: 8, produces: { metal: 100 }, upkeep: { energy: 22 }, hp: 40 },
       ],
     },
     barracks: { name: 'Barracks', cost: { metal: 70 }, buildTimeHours: 3, hp: 25, scoreValue: 2 },
@@ -356,10 +419,11 @@ export const data: GameData = parseGameData({
       // border to the next ring of worlds — on the current map neighbours sit ~205 out
       // (auto-identified, 1 hop) and the next ring ~349, so L1 (400) reaches past 349.
       radarRange: 400,
+      upkeep: { energy: 6 },
       scoreValue: 2,
       upgrades: [
-        { cost: { metal: 180, credits: 80 }, buildTimeHours: 5, hp: 28, radarRange: 550 },
-        { cost: { metal: 300, credits: 140 }, buildTimeHours: 7, hp: 38, radarRange: 700 },
+        { cost: { metal: 180, credits: 80 }, buildTimeHours: 5, hp: 28, radarRange: 550, upkeep: { energy: 10 } },
+        { cost: { metal: 300, credits: 140 }, buildTimeHours: 7, hp: 38, radarRange: 700, upkeep: { energy: 16 } },
       ],
     },
     // space fortress — only built in an asteroid field; turns the junction into a
@@ -382,6 +446,7 @@ export const data: GameData = parseGameData({
       buildTimeHours: 5,
       hp: 30,
       aaDamage: 12,
+      upkeep: { energy: 6 },
       scoreValue: 3,
     },
     fort: {
@@ -1379,9 +1444,11 @@ export function newGame(setup: SetupConfig = DEFAULT_SETUP): GameState {
 }
 
 /** Net per-hour income for a player: production from owned, un-bombarded worlds
- *  minus unit/garrison upkeep (daily ÷ 24). Drives the HUD's `+/h` deltas. */
+ *  (brownout-dimmed like the core) minus unit/garrison AND building upkeep
+ *  (daily ÷ 24). Drives the HUD's `+/h` deltas. */
 export function netIncome(state: GameState, playerId: string): Record<string, number> {
   const out: Record<string, number> = {};
+  const arrears = state.players[playerId]?.arrears ?? [];
   const inhabited = inhabitedWorldCount(state, playerId); // for the diminishing civic tax
   for (const p of Object.values(state.planets)) {
     if (p.owner !== playerId || isBombarded(state, p.id)) continue;
@@ -1392,12 +1459,18 @@ export function netIncome(state: GameState, playerId: string): Record<string, nu
     for (const b of p.buildings) {
       const def = data.buildings[b.type];
       if (!def) continue;
-      const produces = buildingLevel(def, b.level).produces;
-      for (const res of Object.keys(produces)) {
-        const v = (produces[res] ?? 0) * mult;
+      const level = buildingLevel(def, b.level);
+      // Mirror the core's brownout: a building starved of an arrears resource shows
+      // its dimmed output, so the top-bar flow matches what actually accrues.
+      const starved = arrears.length > 0 && Object.keys(level.upkeep).some((r) => (level.upkeep[r] ?? 0) > 0 && arrears.includes(r));
+      const bMult = mult * (starved ? BROWNOUT : 1);
+      for (const res of Object.keys(level.produces)) {
+        const v = (level.produces[res] ?? 0) * bMult;
         if (res === 'credits') credits += v;
         else out[res] = (out[res] ?? 0) + v;
       }
+      // …and its running cost (daily → hourly), same drain the settlement applies.
+      for (const res of Object.keys(level.upkeep)) out[res] = (out[res] ?? 0) - (level.upkeep[res] ?? 0) / 24;
     }
     if (isInhabited(p)) {
       credits += civicTax(inhabited);
@@ -1681,6 +1754,17 @@ type DivState = GameState & {
   /** CC-server: per-fleet command-chain, now AUTHORITATIVE STATE (was a client-only plan)
    *  so the server drives it and it runs offline in multiplayer. fleetId → queued steps. */
   orders?: Record<string, QStep[]>;
+  /** CC-6: seats with an active subscription (convenience-only perks — never combat
+   *  power, docs/main-menu.md). Stamped by the meta-layer at match creation / renewal;
+   *  nothing inside a match grants it. */
+  subscribers?: Record<string, true>;
+  /** CC-2 standing order, AUTHORITATIVE (was a client-only Set): fleets that auto-storm
+   *  the enemy world they arrive at. Driven server-side (serverAutoAssaultActions). */
+  autoAssault?: Record<string, true>;
+  /** CC-4 standing patrols, AUTHORITATIVE (was a client-only Map): fleetId → patrol
+   *  (center/radius/sortie + the next rearm-round due time). Driven server-side
+   *  (serverPatrolActions), so «дежурный вылет» works in NET and offline. */
+  patrols?: Record<string, Patrol & { rearmAt?: number }>;
 };
 export function divisionsOf(state: GameState): Record<string, Division> {
   const s = state as DivState;
@@ -2237,18 +2321,39 @@ export const orderQueueModule: GameModule = {
       return f;
     };
     api.onAction('order.enqueue', (action, h) => {
-      const p = action.payload as { fleetId?: unknown; step?: unknown };
+      // One enqueue = one player ORDER = 1..MAX_ORDER_STEPS compiled steps sharing a
+      // group stamp (CC-6): a one-tap capture arrives as [move, assault] and costs one
+      // slot of the order limit, exactly like a plain move.
+      const p = action.payload as { fleetId?: unknown; steps?: unknown };
       const f = ownedFleet(h, action.playerId, p?.fleetId);
       if (typeof f === 'string') return h.reject(f);
-      if (!isQStep(p.step)) return h.reject('E_BAD_PAYLOAD');
+      const raw = p.steps;
+      if (!Array.isArray(raw) || raw.length === 0 || raw.length > MAX_ORDER_STEPS) {
+        return h.reject('E_BAD_PAYLOAD');
+      }
+      if (!raw.every(isQStep)) return h.reject('E_BAD_PAYLOAD');
+      const isRepeat = raw.some((st) => st.kind === 'repeat');
+      // The 🔁 marker is a lone plan property, never part of a step pattern.
+      if (isRepeat && raw.length > 1) return h.reject('E_BAD_PAYLOAD');
       const orders = ((h.state as DivState).orders ??= {});
       const q = (orders[f.id] ??= []);
-      if (q.length >= MAX_CHAIN_STEPS) return h.reject('E_QUEUE_FULL'); // bounded plans (CC-5.1)
-      // Runtime stamps (wait countdown, driver verdict) are never client-supplied.
-      const step = { ...p.step } as QStep & { until?: number };
-      delete step.until;
-      delete step.blocked;
-      q.push(step);
+      if (q.length + raw.length > MAX_CHAIN_STEPS) return h.reject('E_QUEUE_FULL'); // absolute step bound (CC-5.1)
+      if (isRepeat) {
+        if (q.some((st) => st.kind === 'repeat')) return h.reject('E_LIMIT'); // one 🔁 per chain
+      } else {
+        // The player-facing limit counts ORDERS; a subscription raises the base via the hook.
+        const limit = h.hook<number>('order.chainLimit', CHAIN_ORDERS_BASE, { playerId: action.playerId });
+        if (chainOrderCount(q) >= limit) return h.reject('E_QUEUE_FULL');
+      }
+      // Runtime stamps (wait countdown, driver verdict, group) are never client-supplied.
+      const group = nextChainGroup(q);
+      for (const st of raw) {
+        const step = { ...st } as QStep & { until?: number };
+        delete step.until;
+        delete step.blocked;
+        step.group = group;
+        q.push(step);
+      }
     });
     api.onAction('order.clear', (action, h) => {
       const p = action.payload as { fleetId?: unknown };
@@ -2269,7 +2374,9 @@ export const orderQueueModule: GameModule = {
       }
     });
     api.onAction('order.remove', (action, h) => {
-      // Edit one step of the plan (a mis-tap on step 3 of 6 must not cost the plan).
+      // Edit one ORDER of the plan (a mis-tap on order 3 of 5 must not cost the plan).
+      // The index addresses any step of the order; the whole group goes — half a
+      // capture (a move without its assault) is not something a player ever asked for.
       const p = action.payload as { fleetId?: unknown; index?: unknown };
       const f = ownedFleet(h, action.playerId, p?.fleetId);
       if (typeof f === 'string') return h.reject(f);
@@ -2278,8 +2385,10 @@ export const orderQueueModule: GameModule = {
       const orders = (h.state as DivState).orders;
       const q = orders?.[f.id];
       if (!q || i >= q.length) return h.reject('E_NO_STEP');
-      q.splice(i, 1);
-      if (q.length === 0) delete orders![f.id];
+      const group = q[i]!.group;
+      if (group === undefined) q.splice(i, 1); // legacy ungrouped step = its own order
+      else orders![f.id] = q.filter((st) => st.group !== group);
+      if (orders![f.id]!.length === 0) delete orders![f.id];
     });
     api.onAction('order.block', (action, h) => {
       // The DRIVER's verdict on a failed head step: pause the chain with its reason
@@ -2337,6 +2446,120 @@ export const orderQueueModule: GameModule = {
   },
 };
 
+/** Is this seat subscribed? (read by the client for its local plan limit + upsell row). */
+export function isSubscriber(state: GameState, playerId: string): boolean {
+  return (state as DivState).subscribers?.[playerId] === true;
+}
+
+// CC-6: subscription perks — convenience only, NEVER combat power (docs/main-menu.md).
+// A separate module so the queue logic stays subscription-blind: it asks the
+// `order.chainLimit` hook and this module (or its future meta-layer replacement)
+// answers. No module present → base limit, never a crash (designed degradation).
+export const subscriptionModule: GameModule = {
+  id: 'subscription',
+  version: '0.1.0',
+  setup(api) {
+    api.hook<number>('order.chainLimit', (base, args, h) => {
+      const playerId = (args as { playerId?: string }).playerId;
+      return playerId !== undefined && isSubscriber(h.state, playerId) ? CHAIN_ORDERS_PREMIUM : base;
+    });
+  },
+};
+
+// --- CC-server: standing orders (CC-2 auto-storm / CC-4 дежурный вылет) -------------
+// Promoted from client-only Set/Map to AUTHORITATIVE state so the server drives them —
+// like the order chains, they run in NET and while the owner is offline. The module only
+// STORES the standing order; the host driver (netserver.runServerStanding, mirroring
+// runServerQueues) reads the pure decision cores below and issues the orders through the
+// same authoritative room. Single-player keeps its local frame-loop drivers.
+export const standingOrdersModule: GameModule = {
+  id: 'standing-orders',
+  version: '0.1.0',
+  setup(api) {
+    const ownedFleet = (h: HandlerContext, playerId: string, fleetId: unknown): Fleet | string => {
+      if (typeof fleetId !== 'string') return 'E_BAD_PAYLOAD';
+      const f = h.state.fleets[fleetId];
+      if (!f) return 'E_NO_FLEET';
+      if (f.owner !== playerId) return 'E_FORBIDDEN';
+      return f;
+    };
+    api.onAction('order.auto', (action, h) => {
+      // CC-2: toggle the auto-storm stance on an owned fleet. Pure flag — the driver
+      // decides WHEN it fires (parked over a capturable enemy world, orbit clear).
+      const p = action.payload as { fleetId?: unknown; on?: unknown };
+      const f = ownedFleet(h, action.playerId, p?.fleetId);
+      if (typeof f === 'string') return h.reject(f);
+      if (typeof p.on !== 'boolean') return h.reject('E_BAD_PAYLOAD');
+      const st = h.state as DivState;
+      if (p.on) (st.autoAssault ??= {})[f.id] = true;
+      else if (st.autoAssault) {
+        delete st.autoAssault[f.id];
+        if (Object.keys(st.autoAssault).length === 0) delete st.autoAssault;
+      }
+    });
+    api.onAction('order.scramble', (action, h) => {
+      // CC-4: stand (or stand down) a reactive patrol on an owned squadron fleet. The
+      // SERVER computes the patrol — center from the fleet's node, radius from its wing,
+      // a fresh sortie budget — nothing about it is client-supplied.
+      const p = action.payload as { fleetId?: unknown; on?: unknown };
+      const f = ownedFleet(h, action.playerId, p?.fleetId);
+      if (typeof f === 'string') return h.reject(f);
+      if (typeof p.on !== 'boolean') return h.reject('E_BAD_PAYLOAD');
+      const st = h.state as DivState;
+      if (!p.on) {
+        if (st.patrols) {
+          delete st.patrols[f.id];
+          if (Object.keys(st.patrols).length === 0) delete st.patrols;
+        }
+        return;
+      }
+      if (!fleetHasSquadron(f)) return h.reject('E_NO_SHIPS');
+      const pos = f.location !== null ? h.state.planets[f.location]?.position : undefined;
+      if (!pos || !fleetIdle(f)) return h.reject('E_CONDITIONS_UNMET'); // patrols stand from a parked node
+      (st.patrols ??= {})[f.id] = {
+        center: { x: pos.x, y: pos.y },
+        radius: squadronStrikeRange(f),
+        sortie: freshSortie(sortieSpec(f).maxFuel),
+        rearmAt: h.ctx.now + HOUR, // rearm cadence: one round per game-hour from now
+      };
+    });
+    api.onAction('patrol.stamp', (action, h) => {
+      // The DRIVER's runtime stamp (burned fuel / ticked rearm / next cadence mark) —
+      // same trust shape as order.hold. Bounds-checked against the wing's own spec so
+      // a forged stamp can't mint fuel or park a patrol in an impossible state.
+      const p = action.payload as { fleetId?: unknown; sortie?: unknown; rearmAt?: unknown };
+      const f = ownedFleet(h, action.playerId, p?.fleetId);
+      if (typeof f === 'string') return h.reject(f);
+      const patrol = (h.state as DivState).patrols?.[f.id];
+      if (!patrol) return h.reject('E_NO_TARGET');
+      const s = p.sortie as { fuel?: unknown; rearming?: unknown } | undefined;
+      const spec = sortieSpec(f);
+      if (
+        typeof s?.fuel !== 'number' || !Number.isInteger(s.fuel) || s.fuel < 0 || s.fuel > spec.maxFuel ||
+        typeof s.rearming !== 'number' || !Number.isInteger(s.rearming) || s.rearming < 0 || s.rearming > spec.rearmRounds
+      ) {
+        return h.reject('E_BAD_PAYLOAD');
+      }
+      if (p.rearmAt !== undefined && (typeof p.rearmAt !== 'number' || !Number.isFinite(p.rearmAt) || p.rearmAt < 0)) {
+        return h.reject('E_BAD_PAYLOAD');
+      }
+      patrol.sortie = { fuel: s.fuel, rearming: s.rearming };
+      if (p.rearmAt !== undefined) patrol.rearmAt = p.rearmAt;
+    });
+    // Housekeeping: standing orders of dead fleets must not live in state (and every
+    // snapshot) forever. Same deterministic sweep as the order chains'.
+    api.on('time.advanced', (_ev, h) => {
+      const st = h.state as DivState;
+      for (const key of ['autoAssault', 'patrols'] as const) {
+        const map = st[key];
+        if (!map) continue;
+        for (const fid of Object.keys(map)) if (!h.state.fleets[fid]) delete map[fid];
+        if (Object.keys(map).length === 0) delete st[key];
+      }
+    });
+  },
+};
+
 export const MODULES: GameModule[] = [
   sectorModule,
   planetTypeModule,
@@ -2365,6 +2588,8 @@ export const MODULES: GameModule[] = [
   divisionModule, // ground divisions: mobilise from a template + daily restoration
   capitalModule, // designatable capital (hero respawn / module re-fit anchor)
   orderQueueModule, // CC-server: authoritative per-fleet command-chain (server-driven, offline-safe)
+  subscriptionModule, // CC-6: raises the order limit for subscribed seats (order.chainLimit hook)
+  standingOrdersModule, // CC-2/CC-4 standing orders (auto-storm / дежурный вылет), server-driven
 ];
 
 export const kernel = createKernel(MODULES);
@@ -2501,12 +2726,47 @@ export type QStep = (
   | { kind: 'bombard' } // start bombarding the world here (enters orbit first when needed)
   | { kind: 'wait'; hours: number; until?: number } // hold N game-hours, then continue (delayed order)
   | { kind: 'repeat' } // 🔁 loop marker: finished steps rotate to the tail — patrol until cleared
-) & { blocked?: string }; // set by the DRIVER when the step's order was rejected: the chain
-// pauses on the failed step with its E_* reason instead of silently skipping (CC-4.1 minimum)
+) & {
+  blocked?: string; // set by the DRIVER when the step's order was rejected: the chain
+  // pauses on the failed step with its E_* reason instead of silently skipping (CC-4.1 minimum)
+  /** The player ORDER this step belongs to (CC-6). One order may compile to several
+   *  steps (a one-tap capture = move + assault) — the chain LIMIT counts orders, not
+   *  steps, so an auto-generated pattern still costs one slot. Stamped by the server
+   *  on enqueue (never client-supplied); monotonic per fleet chain. */
+  group?: number;
+};
 
-/** Chain bounds (CC-5.1): steps per fleet and the longest single `wait` (game-hours). */
+/** Chain bounds (CC-5.1 / CC-6). The player-facing limit counts ORDERS (step groups):
+ *  `CHAIN_ORDERS_BASE` for everyone, `CHAIN_ORDERS_PREMIUM` once a subscription raises it
+ *  via the `order.chainLimit` hook. `MAX_ORDER_STEPS` bounds one order's compiled steps
+ *  (fail-secure payload cap); `MAX_CHAIN_STEPS` stays as the absolute per-fleet step
+ *  bound, and `MAX_WAIT_HOURS` bounds the longest single `wait` (game-hours). */
+export const CHAIN_ORDERS_BASE = 3;
+export const CHAIN_ORDERS_PREMIUM = 5;
+export const MAX_ORDER_STEPS = 4;
 export const MAX_CHAIN_STEPS = 32;
 export const MAX_WAIT_HOURS = 24 * 30;
+
+/** How many ORDERS a chain holds: distinct `group` stamps, skipping the 🔁 repeat marker
+ *  (a plan property, not an action — it must not eat a slot or a 3-order patrol dies).
+ *  Steps from before the group stamp each count as their own order (legacy chains). */
+export function chainOrderCount(steps: QStep[]): number {
+  const groups = new Set<number>();
+  let legacy = 0;
+  for (const st of steps) {
+    if (st.kind === 'repeat') continue;
+    if (st.group === undefined) legacy++;
+    else groups.add(st.group);
+  }
+  return groups.size + legacy;
+}
+
+/** The next order-group stamp for a chain (monotonic — survives removals in the middle). */
+export function nextChainGroup(steps: QStep[]): number {
+  let max = 0;
+  for (const st of steps) if (st.group !== undefined && st.group > max) max = st.group;
+  return max + 1;
+}
 
 /** A fleet may run its next queued step only when idle — not in transit, not locked in
  *  a battle. (A fleet parked on a lane counts as idle; its next move routes from there.) */
@@ -2646,6 +2906,11 @@ export function tickRearm(s: SortieState, maxFuel: number): SortieState {
 // launch / carrier node — the same distance model as radarRange. A carrier outside the
 // target's radius can't strike it. Pure.
 
+/** Does this fleet carry a launchable strike wing (squadron-trait ships)? */
+export function fleetHasSquadron(f: Fleet | undefined): boolean {
+  return !!f && f.units.some((u) => u.count > 0 && (data.units[u.unit]?.traits.includes('squadron') ?? false));
+}
+
 /** The wing's strike radius (map units) — the longest `strikeRange` among its live
  *  squadron ships. 0 = carries no strike wing. */
 export function squadronStrikeRange(fleet: Fleet): number {
@@ -2733,6 +2998,102 @@ export function scrambleOrder(
   return { action, sortie: spendSortie(patrol.sortie, rearmRounds) };
 }
 
+/** One tick of the SERVER-SIDE auto-storm driver (CC-2): every fleet flagged in
+ *  `state.autoAssault` that sits over someone else's capturable world with the orbit
+ *  clear gets its storm orders. Mirrors the client autoEngage() conditions exactly.
+ *  Pure — the host applies the actions; a rejection is simply skipped (a standing
+ *  stance has no chain to block). */
+export function serverAutoAssaultActions(
+  state: GameState,
+): Array<{ fleetId: string; owner: string; actions: Action[] }> {
+  const flagged = (state as DivState).autoAssault ?? {};
+  const out: Array<{ fleetId: string; owner: string; actions: Action[] }> = [];
+  for (const fid of Object.keys(flagged)) {
+    const f = state.fleets[fid];
+    if (!f || f.location === null || !fleetIdle(f)) continue;
+    const here = state.planets[f.location];
+    if (!here || !isCapturable(data, here) || here.owner === f.owner) continue;
+    const enemyHere = Object.values(state.fleets).some(
+      (g) => g.owner !== f.owner && g.location === f.location && g.units.some((u) => u.count > 0),
+    );
+    if (enemyHere) continue; // let the orbital battle settle first
+    out.push({ fleetId: fid, owner: f.owner, actions: stepActions(f.owner, fid, { kind: 'assault' }, f) });
+  }
+  return out;
+}
+
+/** One tick of the SERVER-SIDE patrol driver (CC-4): tick each standing patrol's rearm
+ *  on its game-hour cadence, then — if the wing is parked and flight-ready — scramble at
+ *  the nearest identified, at-war contact inside the radius (the same pure scrambleOrder
+ *  the solo driver uses; vision comes from the owner's identify coverage, so the server
+ *  never lets a patrol see through the fog its owner has). Pure — the host applies the
+ *  strike `actions` and persists `patch` via patrol.stamp; `drop` retires a patrol whose
+ *  fleet lost its wing. */
+export function serverPatrolActions(
+  state: GameState,
+  now: number,
+): Array<{
+  fleetId: string;
+  owner: string;
+  actions: Action[];
+  patch?: { sortie: SortieState; rearmAt?: number };
+  drop?: boolean;
+}> {
+  const patrols = (state as DivState).patrols ?? {};
+  const out: Array<{
+    fleetId: string;
+    owner: string;
+    actions: Action[];
+    patch?: { sortie: SortieState; rearmAt?: number };
+    drop?: boolean;
+  }> = [];
+  const identify = new Map<string, Set<string>>(); // owner → identified nodes (hoisted per owner)
+  for (const [fid, p] of Object.entries(patrols)) {
+    const f = state.fleets[fid];
+    if (!f || !fleetHasSquadron(f)) {
+      out.push({ fleetId: fid, owner: f?.owner ?? '', actions: [], drop: true });
+      continue;
+    }
+    const spec = sortieSpec(f);
+    // Rearm cadence: one round per game-hour past `rearmAt` (absolute stamps — no
+    // wall-clock drift, works however rarely the offline room wakes).
+    let sortie = p.sortie;
+    let rearmAt = p.rearmAt ?? now + HOUR;
+    while (now >= rearmAt) {
+      sortie = tickRearm(sortie, spec.maxFuel);
+      rearmAt += HOUR;
+    }
+    let actions: Action[] = [];
+    if (fleetIdle(f)) {
+      let seen = identify.get(f.owner);
+      if (!seen) {
+        seen = identifiedNodes(state, f.owner, data);
+        identify.set(f.owner, seen);
+      }
+      const targets: Array<{ id: string; location: string; pos: { x: number; y: number } }> = [];
+      for (const g of Object.values(state.fleets)) {
+        if (g.owner === f.owner || !g.location || g.movement || !g.units.some((u) => u.count > 0)) continue;
+        if (getStance(state, f.owner, g.owner) !== 'war') continue; // declared enemies only — never auto-war
+        if (!seen.has(g.location)) continue; // identified contacts only — fog-honest
+        const pos = state.planets[g.location]?.position;
+        if (pos) targets.push({ id: g.id, location: g.location, pos });
+      }
+      const res = scrambleOrder(f.owner, f, { ...p, sortie }, targets, spec.rearmRounds);
+      sortie = res.sortie;
+      if (res.action) actions = [res.action];
+    }
+    const changed =
+      sortie.fuel !== p.sortie.fuel || sortie.rearming !== p.sortie.rearming || rearmAt !== p.rearmAt;
+    out.push({
+      fleetId: fid,
+      owner: f.owner,
+      actions,
+      patch: changed ? { sortie, rearmAt } : undefined,
+    });
+  }
+  return out;
+}
+
 /**
  * Actions to re-embark the liftable garrison of the fleet's CURRENT world back into its
  * cargo — the "auto-load after capture" step. After a defended assault the storming
@@ -2774,9 +3135,11 @@ export function unloadHereActions(state: GameState, me: string, fleet: Fleet): A
 
 // --- CC-server: authoritative order-chain — actions + the server-side driver core -------
 
-/** Append one step to a fleet's authoritative order chain (CC-server). */
-export const orderEnqueue = (playerId: string, fleetId: string, step: QStep) =>
-  act(playerId, 'order.enqueue', { fleetId, step });
+/** Append one player ORDER to a fleet's authoritative chain (CC-server / CC-6): a single
+ *  step or an auto-compiled pattern (capture = [move, assault]) — either way ONE slot of
+ *  the order limit; the server stamps all its steps with one group. */
+export const orderEnqueue = (playerId: string, fleetId: string, steps: QStep | QStep[]) =>
+  act(playerId, 'order.enqueue', { fleetId, steps: Array.isArray(steps) ? steps : [steps] });
 /** Drop a fleet's whole order chain. */
 export const orderClear = (playerId: string, fleetId: string) =>
   act(playerId, 'order.clear', { fleetId });
@@ -2795,6 +3158,16 @@ export const orderRetry = (playerId: string, fleetId: string) =>
 /** Stamp the head 'wait' step's resume time (set once when the step reaches the head). */
 export const orderHold = (playerId: string, fleetId: string, until: number) =>
   act(playerId, 'order.hold', { fleetId, until });
+/** Toggle the CC-2 auto-storm stance on an owned fleet (authoritative standing order). */
+export const orderAuto = (playerId: string, fleetId: string, on: boolean) =>
+  act(playerId, 'order.auto', { fleetId, on });
+/** Stand (or stand down) a CC-4 reactive patrol on an owned squadron fleet — the server
+ *  computes the patrol itself (center / radius / fresh sortie). */
+export const orderScramble = (playerId: string, fleetId: string, on: boolean) =>
+  act(playerId, 'order.scramble', { fleetId, on });
+/** The patrol driver's runtime stamp: burned fuel / ticked rearm / next cadence mark. */
+export const patrolStamp = (playerId: string, fleetId: string, sortie: SortieState, rearmAt?: number) =>
+  act(playerId, 'patrol.stamp', rearmAt === undefined ? { fleetId, sortie } : { fleetId, sortie, rearmAt });
 
 /** One tick of the SERVER-SIDE order-chain driver (CC-server): for every fleet whose
  *  authoritative chain is at the head and the fleet is IDLE, the actions to issue plus how
@@ -2939,6 +3312,22 @@ export function aiOrders(
     Object.values(state.planets).find((p) => p.owner === ai);
   const pl = state.players[ai];
   if (base && pl) {
+    // Keep the lights on first: a bot whose energy/food NET flow is negative (or already
+    // in arrears) raises a plant/farm before anything else — brownouts halve its economy.
+    const flow = netIncome(state, ai);
+    const has = (b: string): boolean =>
+      Object.values(state.planets).some((p) => p.owner === ai && p.buildings.some((x) => x.type === b));
+    for (const [need, b] of [
+      ['energy', 'power_plant'],
+      ['food', 'farm'],
+    ] as const) {
+      if ((flow[need] ?? 0) >= 0 && !(pl.arrears ?? []).includes(need)) continue;
+      if (has(b)) continue;
+      const cost = data.buildings[b]?.cost ?? {};
+      if (Object.keys(cost).every((r) => (pl.resources[r] ?? 0) >= (cost[r] ?? 0) + 60)) {
+        out.push(buildBuilding(ai, base.id, b));
+      }
+    }
     if ((pl.resources.metal ?? 0) > 220 && (pl.resources.credits ?? 0) > 120) {
       out.push(buildUnit(ai, base.id, 'cruiser', 1));
     }
@@ -2960,8 +3349,9 @@ export function aiOrders(
       lots.some((l) => l.owner === ai && l.side === side && l.resource === resource);
     for (const good of ['food', 'energy', 'microelectronics']) {
       const have = pl.resources[good] ?? 0;
-      if (have >= 40 && !hasLot('sell', good))
-        out.push(marketList(ai, 'sell', good, Math.floor(have / 2), 2));
+      const reserve = good === 'microelectronics' ? 40 : 120; // the working stock it keeps
+      if (have >= reserve + 40 && !hasLot('sell', good))
+        out.push(marketList(ai, 'sell', good, Math.floor((have - reserve) / 2), 2));
     }
     if (
       (pl.resources.metal ?? 0) < 80 &&

@@ -32,7 +32,22 @@ import {
   type ReceiptStore,
   type RoomObservation,
 } from '../packages/server/src/index';
-import { newGame, kernel, data, aiOrders, stewardActive, HOUR, serverQueueActions, orderPop, orderHold, orderBlock } from './src/game';
+import {
+  newGame,
+  kernel,
+  data,
+  aiOrders,
+  stewardActive,
+  HOUR,
+  serverQueueActions,
+  serverAutoAssaultActions,
+  serverPatrolActions,
+  orderPop,
+  orderHold,
+  orderBlock,
+  orderScramble,
+  patrolStamp,
+} from './src/game';
 const { Pool } = pgPkg;
 
 // --- M0 playtest log: append every room event (join/leave/lobby/action/end) to a
@@ -304,6 +319,26 @@ function runServerQueues(): void {
   }
 }
 
+// CC-2 / CC-4: drive the authoritative STANDING orders (auto-storm + дежурный вылет)
+// server-side, same shape as runServerQueues — the pure decisions live in game.ts
+// (serverAutoAssaultActions / serverPatrolActions, tested); this just applies them
+// through the authoritative room. A rejected storm is simply skipped (a standing
+// stance has no chain to block); patrol runtime state persists via patrol.stamp.
+function runServerStanding(): void {
+  if (!room.isStarted) return;
+  for (const a of serverAutoAssaultActions(room.state)) {
+    for (const act of a.actions) if (!room.submitAction(a.owner, act).ok) break;
+  }
+  for (const p of serverPatrolActions(room.state, room.state.time)) {
+    if (p.drop) {
+      if (p.owner) room.submitAction(p.owner, orderScramble(p.owner, p.fleetId, false));
+      continue;
+    }
+    if (p.patch) room.submitAction(p.owner, patrolStamp(p.owner, p.fleetId, p.patch.sortie, p.patch.rearmAt));
+    for (const act of p.actions) room.submitAction(p.owner, act);
+  }
+}
+
 function onWake(): void {
   wakeTimer = null;
   const progressed = room.tick(); // fire whatever is now due (no-op if a capped timer fired early)
@@ -318,6 +353,7 @@ function onWake(): void {
     wakeStalls = 0;
     runServerAI(); // drive any empty seat once the clock has moved
     runServerQueues(); // CC-server: advance each fleet's authoritative order chain
+    runServerStanding(); // CC-2/CC-4: standing orders (auto-storm / дежурный вылет)
   }
   scheduleSave(); // persist the advanced world
   if (stalled && ++wakeStalls >= WAKE_STALL_LIMIT) {
