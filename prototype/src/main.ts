@@ -193,7 +193,7 @@ const LOCK = '#7df0d0'; // selection / targeting reticle accent
 const TAU = Math.PI * 2;
 const TOP = 50; // top-bar height
 const RAIL = 50; // left-rail width
-const BUILDABLE = ['mine', 'refinery', 'tax_office', 'barracks', 'radar', 'fort', 'orbital_aa'];
+const BUILDABLE = ['mine', 'refinery', 'farm', 'power_plant', 'fabricator', 'tax_office', 'barracks', 'radar', 'fort', 'orbital_aa'];
 // `orbital_aa` (orbital ПВО — anti-ship near-orbit emplacement) is a defensive BUILDING:
 // the player builds it like a fort. It fires on hostile fleets over the world (core
 // `aaStrengthAt` sums building AA) but does NOT block ground capture — only ground troops
@@ -203,6 +203,9 @@ const BUILD_ICON: Record<string, string> = {
   mine: '⬢',
   refinery: '◇',
   tax_office: '⛁',
+  farm: '❖',
+  power_plant: '↯',
+  fabricator: '▦',
   barracks: '▤',
   fort: '⬡',
   starfort: '✦',
@@ -4601,6 +4604,21 @@ function buildingDossier(id: string, level: number): Dossier | null {
         name,
         body: t('Налоговая управа имперского образца: сама ничего не добывает, но ставит на учёт население мира и поднимает его кредитный сбор на {b}. Возводится один раз — бюрократию не масштабируют, её терпят.', { b: hl(pct(TAX_OFFICE_BONUS)) }),
       };
+    case 'farm':
+      return {
+        name,
+        body: t('Ярусы гидропонных оранжерей под спектральными лампами: {f} пищи в час. Пехота, танкисты и рабочие фабрик едят каждый день — армия без ферм тратит запасы, а не пополняет их.', { f: hl(lv.produces.food ?? 0) }),
+      };
+    case 'power_plant':
+      return {
+        name,
+        body: t('Термоядерный реактор планетарной сети: {e} энергии в час. Энергия — кровь застройки: перерабатывающие комплексы, радары, ПКО и фабрики тянут ток каждый день, а при дефиците проседают до половины мощности.', { e: hl(lv.produces.energy ?? 0) }),
+      };
+    case 'fabricator':
+      return {
+        name,
+        body: t('Чистые цеха литографии: {m} микроэлектроники в час. Прожорлива к энергии и людям, зато её продукция ведёт эскадрильи и открывает осадные доктрины. Апгрейды окупаются собственной продукцией.', { m: hl(lv.produces.microelectronics ?? 0) }),
+      };
     default:
       return { name, body: t('Планетарное сооружение.') };
   }
@@ -4681,6 +4699,11 @@ function codexHtml(kind: string, id: string): string {
       .map(([r, n]) => t('{n} {r}/ч', { n: n ?? 0, r: tData(r) }))
       .join(', ');
     if (prod) rows.push(cxRow(t('Производит'), prod));
+    const keep = Object.entries(lv.upkeep ?? {})
+      .filter(([, n]) => (n ?? 0) > 0)
+      .map(([r, n]) => t('{n} {r}/день', { n: n ?? 0, r: tData(r) }))
+      .join(', ');
+    if (keep) rows.push(cxRow(t('Содержание'), keep));
     if ((lv.defenseBonus ?? 0) > 0.01) rows.push(cxRow(t('Оборона гарнизона'), `+${Math.round((lv.defenseBonus ?? 0) * 100)}%`));
     if ((lv.aaDamage ?? 0) > 0) rows.push(cxRow(t('ПВО'), String(lv.aaDamage)));
     if ((lv.radarRange ?? 0) > 0) rows.push(cxRow(t('Радиус радара'), String(lv.radarRange)));
@@ -6868,13 +6891,14 @@ purse.addEventListener('click', (ev) => {
   const key = el.dataset.res!;
   const stock = Math.round(s.players[ME]?.resources?.[key] ?? 0);
   const flow = Math.round(netIncome(s, ME)[key] ?? 0);
+  const short = (s.players[ME]?.arrears ?? []).includes(key);
   note(
-    t('{ic} {name}: {stock} в казне · {flow}/ч (производство минус содержание войск)', {
+    t('{ic} {name}: {stock} в казне · {flow}/ч (производство минус содержание войск и зданий)', {
       ic: TECH_CUR[key] ?? '',
       name: el.title,
       stock: kfmt(stock),
       flow: (flow >= 0 ? '+' : '') + kfmt(flow),
-    }),
+    }) + (short ? ' ' + t('⚠ ДЕФИЦИТ — здания-потребители работают на 50%') : ''),
   );
 });
 
@@ -7581,13 +7605,19 @@ function frame(nowReal: number) {
   // finally shown to the player. A resource with no stock AND no flow is dimmed —
   // it plays no part in the current match yet.
   const inc = netIncome(s, ME);
+  const myArrears = s.players[ME]?.arrears ?? [];
   const chip = (icon: string, key: string, name: string) => {
     const stock = r[key] ?? 0;
-    const flow = Math.round(inc[key] ?? 0);
+    const raw = inc[key] ?? 0;
+    // Building/army upkeep makes sub-1/h drains common — one decimal keeps a slow
+    // bleed visible instead of rounding it to a lying zero.
+    const flow = Math.abs(raw) >= 1 ? Math.round(raw) : Math.round(raw * 10) / 10;
     const flowTxt =
-      flow !== 0 ? `<em class="${flow > 0 ? 'up' : 'dn'}">${flow > 0 ? '+' : ''}${kfmt(flow)}/ч</em>` : '';
+      flow !== 0 ? `<em class="${flow > 0 ? 'up' : 'dn'}">${flow > 0 ? '+' : ''}${Math.abs(flow) >= 1 ? kfmt(flow) : flow}/ч</em>` : '';
     const dead = stock === 0 && flow === 0 ? ' dead' : '';
-    return `<span class="res${dead}" title="${tData(name)}" data-res="${key}"><i>${icon}</i><b>${kfmt(stock)}</b>${flowTxt}</span>`;
+    // Unpaid upkeep on this resource → the chip flags the brownout (tap it for words).
+    const short = myArrears.includes(key) ? ' short' : '';
+    return `<span class="res${dead}${short}" title="${tData(name)}" data-res="${key}"><i>${icon}</i><b>${kfmt(stock)}</b>${short ? '<em class="dn">⚠</em>' : flowTxt}</span>`;
   };
   const hudHtml =
     chip('¤', 'credits', 'Credits') +

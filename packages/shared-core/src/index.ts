@@ -186,7 +186,7 @@ export { findHealthyStack, addUnits, sumUnitStat } from './util/stacks';
 export { requireOwnedIdleFleet, type IdleFleet } from './util/fleet';
 
 // Base modules (plugins) — opt-in via the manifest passed to createKernel.
-export { economyModule } from './modules/economy';
+export { economyModule, BROWNOUT } from './modules/economy';
 export { movementModule } from './modules/movement';
 export { combatModule } from './modules/combat';
 export { captureOnArrivalModule } from './modules/captureOnArrival';

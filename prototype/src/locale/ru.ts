@@ -20,6 +20,9 @@ export const ru: Record<string, string> = {
   // --- buildings (data.buildings[*].name) --------------------------------------
   'data:Metal Mine': 'Металлодобыча',
   'data:Credit Refinery': 'Кредитный НПЗ',
+  'data:Hydroponics Farm': 'Гидропонная ферма',
+  'data:Fusion Plant': 'Термоядерная станция',
+  'data:Microelectronics Fab': 'Фабрика микроэлектроники',
   'data:Tax Office': 'Налоговая управа',
   'data:Salvage Metal Rig': 'Утилизационная станция',
   'data:Barracks': 'Казармы',

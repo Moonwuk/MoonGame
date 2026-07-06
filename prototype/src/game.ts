@@ -15,6 +15,7 @@ import {
   isCapturable,
   isBombarded,
   economyModule,
+  BROWNOUT,
   movementModule,
   heroModule,
   combatModule,
@@ -98,7 +99,7 @@ export const data: GameData = parseGameData({
       description: 'Осадные расчёты дальнего боя: +8% к урону.',
       branch: 'space',
       tier: 2,
-      cost: { credits: 260, metal: 220 },
+      cost: { credits: 260, metal: 220, microelectronics: 40 },
       researchTimeHours: 10,
       prerequisites: ['orbital_logistics'],
       effects: { combatDamageBonus: 0.08 },
@@ -171,7 +172,7 @@ export const data: GameData = parseGameData({
       stats: { attack: 14, defense: 3, speed: 92, hp: 10, strikeRange: 180, fuel: 3, rearmRounds: 2 },
       traits: ['squadron'],
       signature: 2,
-      cost: { metal: 90, credits: 40 },
+      cost: { metal: 90, credits: 40, microelectronics: 10 },
       buildTimeHours: 2,
       upkeep: { credits: 4 },
     },
@@ -200,7 +201,7 @@ export const data: GameData = parseGameData({
       signature: 1,
       cost: { metal: 35 },
       buildTimeHours: 2,
-      upkeep: { credits: 2 },
+      upkeep: { credits: 2, food: 1 },
     },
     // Танк — heavy front line: high attack and hull, but pricey and bulky to lift.
     tank: {
@@ -211,7 +212,7 @@ export const data: GameData = parseGameData({
       signature: 2,
       cost: { metal: 120, credits: 30 },
       buildTimeHours: 4,
-      upkeep: { credits: 4 },
+      upkeep: { credits: 4, food: 2 },
     },
     // Бомбардировщик — rear-line striker: big attack, paper armour; hits structures.
     bomber: {
@@ -222,7 +223,7 @@ export const data: GameData = parseGameData({
       signature: 3,
       cost: { metal: 90, credits: 50 },
       buildTimeHours: 3,
-      upkeep: { credits: 5 },
+      upkeep: { credits: 5, food: 2 },
     },
     // ПВО — anti-air specialist: shreds bombers, weak on the ground. (Flat stats here
     // are the designer's rough preview; the per-type matrix in groundcombat is combat law.)
@@ -234,7 +235,7 @@ export const data: GameData = parseGameData({
       signature: 2,
       cost: { metal: 80, credits: 40 },
       buildTimeHours: 3,
-      upkeep: { credits: 4 },
+      upkeep: { credits: 4, food: 1 },
     },
     // The player's projection hero — cruiser-tier guns but TRIPLE the hull, and the
     // +5% attack/defense aura it grants its fleet (heroModule). Seeded, not built.
@@ -273,8 +274,68 @@ export const data: GameData = parseGameData({
       cost: { metal: 110 },
       buildTimeHours: 4,
       produces: { credits: 8 },
+      upkeep: { energy: 8 }, // refined credit production runs on grid power
       hp: 20,
       scoreValue: 3,
+    },
+    // --- the resource loop's missing three: food, energy, microelectronics ----------
+    // Together with the mine they close all five session resources into one economy:
+    // reactors feed the powered buildings (refinery/radar/AA/rig/fab), farms feed the
+    // ground army (units' food upkeep), fabs turn power+food into the high-tech good.
+    // Missing a resource doesn't kill a building — it BROWNOUTS its consumers to half
+    // output until the bill is coverable again (economy.ts arrears).
+    farm: {
+      name: 'Hydroponics Farm',
+      cost: { metal: 90 },
+      buildTimeHours: 3,
+      produces: { food: 10 },
+      upkeep: { energy: 6 },
+      hp: 18,
+      scoreValue: 3,
+      upgrades: [
+        { cost: { metal: 160, credits: 40 }, buildTimeHours: 4, produces: { food: 16 }, upkeep: { energy: 10 }, hp: 24 },
+        { cost: { metal: 260, credits: 90 }, buildTimeHours: 6, produces: { food: 24 }, upkeep: { energy: 16 }, hp: 30 },
+      ],
+    },
+    power_plant: {
+      name: 'Fusion Plant',
+      cost: { metal: 110, credits: 30 },
+      buildTimeHours: 4,
+      produces: { energy: 14 },
+      upkeep: { credits: 6 },
+      hp: 20,
+      scoreValue: 4,
+      upgrades: [
+        { cost: { metal: 240, credits: 100 }, buildTimeHours: 6, produces: { energy: 26 }, upkeep: { credits: 12 }, hp: 28 },
+        { cost: { metal: 400, credits: 190 }, buildTimeHours: 8, produces: { energy: 42 }, upkeep: { credits: 20 }, hp: 36 },
+      ],
+    },
+    // Bootstrap chain on purpose: the fab's UPGRADES cost the very good it produces —
+    // the first one runs on imports (market) or patience, the rest compound.
+    fabricator: {
+      name: 'Microelectronics Fab',
+      cost: { metal: 180, credits: 100 },
+      buildTimeHours: 6,
+      produces: { microelectronics: 5 },
+      upkeep: { energy: 30, food: 8 },
+      hp: 22,
+      scoreValue: 6,
+      upgrades: [
+        {
+          cost: { metal: 320, credits: 200, microelectronics: 30 },
+          buildTimeHours: 8,
+          produces: { microelectronics: 11 },
+          upkeep: { energy: 55, food: 14 },
+          hp: 32,
+        },
+        {
+          cost: { metal: 520, credits: 340, microelectronics: 80 },
+          buildTimeHours: 10,
+          produces: { microelectronics: 19 },
+          upkeep: { energy: 90, food: 22 },
+          hp: 42,
+        },
+      ],
     },
     // tax office — a one-time civic upgrade (no levels): lifts the whole credit take
     // of the inhabited world it sits on by +25% (taxModule). Cannot stack.
@@ -292,11 +353,12 @@ export const data: GameData = parseGameData({
       cost: { metal: 80, credits: 30 },
       buildTimeHours: 4,
       produces: { metal: 30 },
+      upkeep: { energy: 8 },
       hp: 20,
       scoreValue: 5,
       upgrades: [
-        { cost: { metal: 220, credits: 90 }, buildTimeHours: 6, produces: { metal: 60 }, hp: 30 },
-        { cost: { metal: 380, credits: 170 }, buildTimeHours: 8, produces: { metal: 100 }, hp: 40 },
+        { cost: { metal: 220, credits: 90 }, buildTimeHours: 6, produces: { metal: 60 }, upkeep: { energy: 14 }, hp: 30 },
+        { cost: { metal: 380, credits: 170 }, buildTimeHours: 8, produces: { metal: 100 }, upkeep: { energy: 22 }, hp: 40 },
       ],
     },
     barracks: { name: 'Barracks', cost: { metal: 70 }, buildTimeHours: 3, hp: 25, scoreValue: 2 },
@@ -314,10 +376,11 @@ export const data: GameData = parseGameData({
       // border to the next ring of worlds — on the current map neighbours sit ~205 out
       // (auto-identified, 1 hop) and the next ring ~349, so L1 (400) reaches past 349.
       radarRange: 400,
+      upkeep: { energy: 6 },
       scoreValue: 2,
       upgrades: [
-        { cost: { metal: 180, credits: 80 }, buildTimeHours: 5, hp: 28, radarRange: 550 },
-        { cost: { metal: 300, credits: 140 }, buildTimeHours: 7, hp: 38, radarRange: 700 },
+        { cost: { metal: 180, credits: 80 }, buildTimeHours: 5, hp: 28, radarRange: 550, upkeep: { energy: 10 } },
+        { cost: { metal: 300, credits: 140 }, buildTimeHours: 7, hp: 38, radarRange: 700, upkeep: { energy: 16 } },
       ],
     },
     // space fortress — only built in an asteroid field; turns the junction into a
@@ -340,6 +403,7 @@ export const data: GameData = parseGameData({
       buildTimeHours: 5,
       hp: 30,
       aaDamage: 12,
+      upkeep: { energy: 6 },
       scoreValue: 3,
     },
     fort: {
@@ -1243,9 +1307,11 @@ export function newGame(setup: SetupConfig = DEFAULT_SETUP): GameState {
 }
 
 /** Net per-hour income for a player: production from owned, un-bombarded worlds
- *  minus unit/garrison upkeep (daily ÷ 24). Drives the HUD's `+/h` deltas. */
+ *  (brownout-dimmed like the core) minus unit/garrison AND building upkeep
+ *  (daily ÷ 24). Drives the HUD's `+/h` deltas. */
 export function netIncome(state: GameState, playerId: string): Record<string, number> {
   const out: Record<string, number> = {};
+  const arrears = state.players[playerId]?.arrears ?? [];
   const inhabited = inhabitedWorldCount(state, playerId); // for the diminishing civic tax
   for (const p of Object.values(state.planets)) {
     if (p.owner !== playerId || isBombarded(state, p.id)) continue;
@@ -1256,12 +1322,18 @@ export function netIncome(state: GameState, playerId: string): Record<string, nu
     for (const b of p.buildings) {
       const def = data.buildings[b.type];
       if (!def) continue;
-      const produces = buildingLevel(def, b.level).produces;
-      for (const res of Object.keys(produces)) {
-        const v = (produces[res] ?? 0) * mult;
+      const level = buildingLevel(def, b.level);
+      // Mirror the core's brownout: a building starved of an arrears resource shows
+      // its dimmed output, so the top-bar flow matches what actually accrues.
+      const starved = arrears.length > 0 && Object.keys(level.upkeep).some((r) => (level.upkeep[r] ?? 0) > 0 && arrears.includes(r));
+      const bMult = mult * (starved ? BROWNOUT : 1);
+      for (const res of Object.keys(level.produces)) {
+        const v = (level.produces[res] ?? 0) * bMult;
         if (res === 'credits') credits += v;
         else out[res] = (out[res] ?? 0) + v;
       }
+      // …and its running cost (daily → hourly), same drain the settlement applies.
+      for (const res of Object.keys(level.upkeep)) out[res] = (out[res] ?? 0) - (level.upkeep[res] ?? 0) / 24;
     }
     if (isInhabited(p)) {
       credits += civicTax(inhabited);
@@ -2974,6 +3046,22 @@ export function aiOrders(state: GameState, ai: string): Action[] {
     Object.values(state.planets).find((p) => p.owner === ai);
   const pl = state.players[ai];
   if (base && pl) {
+    // Keep the lights on first: a bot whose energy/food NET flow is negative (or already
+    // in arrears) raises a plant/farm before anything else — brownouts halve its economy.
+    const flow = netIncome(state, ai);
+    const has = (b: string): boolean =>
+      Object.values(state.planets).some((p) => p.owner === ai && p.buildings.some((x) => x.type === b));
+    for (const [need, b] of [
+      ['energy', 'power_plant'],
+      ['food', 'farm'],
+    ] as const) {
+      if ((flow[need] ?? 0) >= 0 && !(pl.arrears ?? []).includes(need)) continue;
+      if (has(b)) continue;
+      const cost = data.buildings[b]?.cost ?? {};
+      if (Object.keys(cost).every((r) => (pl.resources[r] ?? 0) >= (cost[r] ?? 0) + 60)) {
+        out.push(buildBuilding(ai, base.id, b));
+      }
+    }
     if ((pl.resources.metal ?? 0) > 220 && (pl.resources.credits ?? 0) > 120) {
       out.push(buildUnit(ai, base.id, 'cruiser', 1));
     }
@@ -2995,7 +3083,9 @@ export function aiOrders(state: GameState, ai: string): Action[] {
       lots.some((l) => l.owner === ai && l.side === side && l.resource === resource);
     for (const good of ['food', 'energy', 'microelectronics']) {
       const have = pl.resources[good] ?? 0;
-      if (have >= 40 && !hasLot('sell', good)) out.push(marketList(ai, 'sell', good, Math.floor(have / 2), 2));
+      const reserve = good === 'microelectronics' ? 40 : 120; // the working stock it keeps
+      if (have >= reserve + 40 && !hasLot('sell', good))
+        out.push(marketList(ai, 'sell', good, Math.floor((have - reserve) / 2), 2));
     }
     if ((pl.resources.metal ?? 0) < 80 && (pl.resources.credits ?? 0) > 300 && !hasLot('buy', 'metal')) {
       out.push(marketList(ai, 'buy', 'metal', 30, 3));

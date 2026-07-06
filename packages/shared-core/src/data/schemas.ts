@@ -140,6 +140,10 @@ export const BuildingLevelSchema = z.object({
   cost: ResourceBagSchema.default({}),
   buildTimeHours: z.number().nonnegative().default(0),
   produces: ResourceBagSchema.default({}),
+  /** Daily running cost of the standing building (per day, like unit upkeep). When the
+   *  owner can't pay a resource of it (treasury pinned at zero — arrears), buildings
+   *  consuming THAT resource produce at half rate until the debt clears (economy.ts). */
+  upkeep: ResourceBagSchema.default({}),
   /** Structural HP at this level. */
   hp: z.number().nonnegative().default(0),
   /** Ground-defense bonus this level grants the garrison (0.01 = +1%). */
@@ -163,6 +167,8 @@ export const BuildingDefSchema = z.object({
   cost: ResourceBagSchema.default({}),
   buildTimeHours: z.number().nonnegative().default(0),
   produces: ResourceBagSchema.default({}),
+  /** Daily running cost of the standing building (see BuildingLevelSchema.upkeep). */
+  upkeep: ResourceBagSchema.default({}),
   /** Structural HP — bombarded from orbit and stormed on the ground (GDD §7.4);
    *  a destroyed building stops granting its defense bonus. */
   hp: z.number().nonnegative().default(0),
@@ -411,8 +417,8 @@ export type GameData = z.infer<typeof GameDataSchema>;
  *  levels 2..N come from `upgrades`. Out-of-range levels fall back to level 1. */
 export function buildingLevel(def: BuildingDef, level: number): BuildingLevel {
   if (level <= 1) {
-    const { cost, buildTimeHours, produces, hp, defenseBonus, radarRange, healRate, shipRepair, aaDamage } = def;
-    return { cost, buildTimeHours, produces, hp, defenseBonus, radarRange, healRate, shipRepair, aaDamage };
+    const { cost, buildTimeHours, produces, upkeep, hp, defenseBonus, radarRange, healRate, shipRepair, aaDamage } = def;
+    return { cost, buildTimeHours, produces, upkeep, hp, defenseBonus, radarRange, healRate, shipRepair, aaDamage };
   }
   return def.upgrades[level - 2] ?? buildingLevel(def, 1);
 }

@@ -165,3 +165,79 @@ describe('economy module — daily upkeep', () => {
     expect(r.state.players.p1?.resources.credits).toBe(0); // max(0, 5 − 8)
   });
 });
+
+describe('economy module — building upkeep + arrears brownout (building economy)', () => {
+  const data3 = parseGameData({
+    version: '0.1.0',
+    resources: ['metal', 'credits', 'energy'],
+    units: {},
+    factions: {},
+    buildings: {
+      mine: { name: 'Mine', produces: { metal: 10 }, buildTimeHours: 0 },
+      // A powered producer: consumes energy daily, halves under an energy arrears.
+      refinery: { name: 'Refinery', produces: { credits: 8 }, upkeep: { energy: 24 }, buildTimeHours: 0 },
+      reactor: { name: 'Reactor', produces: { energy: 5 }, upkeep: { credits: 24 }, buildTimeHours: 0 },
+    },
+    events: {},
+  });
+  const ctx3 = (now: number): Context => ({ now, data: data3 });
+
+  it('bills standing buildings daily, drained like unit upkeep', () => {
+    const kernel = createKernel([economyModule]);
+    const st = stateWith({
+      players: [player('p1', { energy: 100 })],
+      planets: [planet('a', 'p1', ['refinery'])],
+    });
+    const r = okAdvance(kernel.advanceTo(st, ctx3(DAY)));
+    // 24 energy/day drained; 8 credits/h × 24h produced at FULL rate (bills covered).
+    expect(r.state.players.p1?.resources.energy).toBeCloseTo(76, 5);
+    expect(r.state.players.p1?.resources.credits).toBeCloseTo(192, 5);
+    expect(r.state.players.p1?.arrears).toBeUndefined();
+  });
+
+  it('an unpayable bill pins the treasury at zero and records the arrears', () => {
+    const kernel = createKernel([economyModule]);
+    const st = stateWith({
+      players: [player('p1', { energy: 10 })], // owes 24/day — cannot cover it
+      planets: [planet('a', 'p1', ['refinery'])],
+    });
+    const r = okAdvance(kernel.advanceTo(st, ctx3(DAY)));
+    expect(r.state.players.p1?.resources.energy).toBe(0);
+    expect(r.state.players.p1?.arrears).toEqual(['energy']);
+  });
+
+  it('arrears brown out ONLY the consumers of the short resource, at half output', () => {
+    const kernel = createKernel([economyModule]);
+    const st = stateWith({
+      players: [player('p1', { energy: 0 })],
+      planets: [planet('a', 'p1', ['refinery', 'mine'])],
+    });
+    st.players.p1!.arrears = ['energy']; // carried from the last settlement
+    const r = okAdvance(kernel.advanceTo(st, ctx3(2 * HOUR)));
+    expect(r.state.players.p1?.resources.credits).toBeCloseTo(8, 5); // 8/h × 2h × 0.5
+    expect(r.state.players.p1?.resources.metal).toBeCloseTo(20, 5); // the mine is untouched
+  });
+
+  it('the brownout lifts once the bill is paid in full again', () => {
+    const kernel = createKernel([economyModule]);
+    const st = stateWith({
+      players: [player('p1', { energy: 500 })],
+      planets: [planet('a', 'p1', ['refinery'])],
+    });
+    st.players.p1!.arrears = ['energy'];
+    const r = okAdvance(kernel.advanceTo(st, ctx3(DAY)));
+    expect(r.state.players.p1?.arrears).toBeUndefined(); // debt cleared → flag gone
+  });
+
+  it('a production chain settles both sides: the reactor pays credits, feeds the fab', () => {
+    const kernel = createKernel([economyModule]);
+    const st = stateWith({
+      players: [player('p1', { credits: 100, energy: 0 })],
+      planets: [planet('a', 'p1', ['reactor', 'refinery'])],
+    });
+    const r = okAdvance(kernel.advanceTo(st, ctx3(DAY)));
+    // reactor made 120 energy, refinery burned 24 → net 96; both bills covered.
+    expect(r.state.players.p1?.resources.energy).toBeCloseTo(96, 5);
+    expect(r.state.players.p1?.arrears).toBeUndefined();
+  });
+});

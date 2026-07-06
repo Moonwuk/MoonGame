@@ -100,13 +100,21 @@ describe('session market — two-sided order book', () => {
   });
 
   it('a bot lists its surplus goods for sale (and the embargo blocks a soured buyer)', () => {
-    let s = newGame(); // p2 = AI, seeded food 120 / energy 90 / microelectronics 40
+    let s = newGame(); // p2 = AI
+    // The building economy taught the bot a working RESERVE (120 food) — its seeded
+    // stock is exactly that, so at start it sells NOTHING…
+    const atStart = aiOrders(s, 'p2').filter(
+      (a) => a.type === 'market.list' && (a.payload as { side?: string }).side === 'sell',
+    );
+    expect(atStart.find((a) => (a.payload as { resource?: string }).resource === 'food')).toBeUndefined();
+    // …and lists only the surplus ABOVE the reserve once it is flush.
+    s.players.p2!.resources.food = 220;
     const sells = aiOrders(s, 'p2').filter(
       (a) => a.type === 'market.list' && (a.payload as { side?: string }).side === 'sell',
     );
     const food = sells.find((a) => (a.payload as { resource?: string }).resource === 'food');
     expect(food).toBeDefined();
-    expect((food!.payload as { amount: number }).amount).toBe(60); // half of 120
+    expect((food!.payload as { amount: number }).amount).toBe(50); // (220 − 120) / 2
 
     // Apply the bot's sell orders, then a soured player can't fill them.
     for (const a of sells) s = ok(order(s, a, 0));

@@ -11,8 +11,6 @@ export const en: Record<string, string> = {
   '{a} объявил войну {b}': '{a} declared war on {b}',
   '{b} — улучшение': '{b} — upgrade',
   '{f} флот(ов) · {s} кораблей · {tr} десанта': '{f} fleet(s) · {s} ships · {tr} troops',
-  '{ic} {name}: {stock} в казне · {flow}/ч (производство минус содержание войск)':
-    '{ic} {name}: {stock} in the treasury · {flow}/h (production minus upkeep)',
   '{n} (улучшаемо)': '{n} (upgradeable)',
   '{n} / уровень': '{n} / level',
   '{n} {r}/день': '{n} {r}/day',
@@ -719,6 +717,15 @@ export const en: Record<string, string> = {
   'войти через': 'or sign in with',
   'корпорации · общие AvA-битвы · влияние': 'corporations · shared AvA battles · influence',
   'сезонный рейтинг по местам в матчах': 'a seasonal rank from match placements',
+  '{ic} {name}: {stock} в казне · {flow}/ч (производство минус содержание войск и зданий)':
+    '{ic} {name}: {stock} in the treasury · {flow}/h (production minus army and building upkeep)',
+  '⚠ ДЕФИЦИТ — здания-потребители работают на 50%': '⚠ SHORTAGE — consuming buildings run at 50%',
+  'Ярусы гидропонных оранжерей под спектральными лампами: {f} пищи в час. Пехота, танкисты и рабочие фабрик едят каждый день — армия без ферм тратит запасы, а не пополняет их.':
+    'Tiers of hydroponic greenhouses under spectral lamps: {f} food per hour. Infantry, tank crews and fab workers eat every day — an army without farms drains its stores instead of refilling them.',
+  'Термоядерный реактор планетарной сети: {e} энергии в час. Энергия — кровь застройки: перерабатывающие комплексы, радары, ПКО и фабрики тянут ток каждый день, а при дефиците проседают до половины мощности.':
+    "A fusion reactor on the planetary grid: {e} energy per hour. Energy is the lifeblood of your buildings: refineries, radars, AA and fabs draw current every day — and brown out to half output when it runs short.",
+  'Чистые цеха литографии: {m} микроэлектроники в час. Прожорлива к энергии и людям, зато её продукция ведёт эскадрильи и открывает осадные доктрины. Апгрейды окупаются собственной продукцией.':
+    'Clean lithography halls: {m} microelectronics per hour. Hungry for power and people, but its output guides strike wings and unlocks siege doctrines. Upgrades pay for themselves in their own product.',
   '‹ назад': '‹ back',
   '🧪 Тесты · режим разработчика': '🧪 Tests · developer mode',
 
