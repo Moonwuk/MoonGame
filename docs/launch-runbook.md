@@ -50,12 +50,15 @@ TIME_SCALE=200 HOST=0.0.0.0 PORT=8788 pnpm host
   (даёт публичный `https://…trycloudflare.com`, WSS в комплекте). Диагностика сети: `pnpm doctor`.
 - **Свой домен** — реверс-прокси с TLS перед портом 8788 (Caddy/Nginx).
   Готового `deploy/Caddyfile` ещё нет — кирпич HTTPS-2.1 в `docs/https-roadmap.md`.
-- **Клиент из веба** — тот же HTML публикуется на GitHub Pages при каждом пуше в
-  `main`: `https://moonwuk.github.io/Nygame/` (workflow `pages.yml`). Игрок открывает
-  Pages, в браузере матчей вводит адрес ТВОЕГО сервера (поле «Сервер», поддерживает
-  `ws://`/`wss://`) и позывной. С https-страницы работает только `wss://` — то есть
-  вариант с туннелем/доменом.
-- **Android APK** — собирает workflow `android.yml` (Actions → Android APK → artifacts).
+- **Клиент из веба (GitHub Pages)** — workflow `pages.yml` задуман публиковать HTML на
+  `https://moonwuk.github.io/Nygame/`, но **деплой не проходит**: все раны падают за
+  ~2 с без раннера (окружение `github-pages` недоступно — включить Pages в
+  Settings → Pages, для приватного репозитория нужен платный план). Пока клиента
+  из веба нет — но он и не обязателен: сервер раздаёт игру сам на `/`.
+- **Android APK** — workflow `android.yml`: артефакт на каждом ране + rolling-релиз
+  `alpha` со стабильной ссылкой (сборки с `main`); в APK встроен автоапдейтер,
+  сверяющий versionCode с релизом. В приложении игрок вводит адрес сервера на
+  экране подключения.
 
 ## 3. Как выглядит вход для игрока
 
