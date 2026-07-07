@@ -465,6 +465,16 @@ const aaShots: Array<{
   at: number;
   close: boolean; // ближняя ПВО (гарнизон, залп раз в 15 мин) — рисуется легче
 }> = [];
+// Siege (artillery) volleys to visualize: map-space endpoints captured at event
+// time, drawn as a ballistic ARC with a stagger of shell particles and an impact
+// burst — so a standoff bombardment visibly points at WHO is being hit.
+const siegeShots: Array<{
+  from: { x: number; y: number };
+  to: { x: number; y: number };
+  at: number; // performance.now() at event time
+  seed: number; // stable per-volley variation (spark angles, shell jitter)
+}> = [];
+let siegeSeed = 0;
 // Casualties per contested location (owner → unit → count), accumulated from
 // unit.died while a battle runs and paid out as a result note on battle.resolved.
 const battleLosses = new Map<string, Record<string, Record<string, number>>>();
@@ -2129,6 +2139,26 @@ function handleEvents(events: DomainEvent[]) {
         while (aaShots.length > 40) aaShots.shift();
         break;
       }
+      case 'artillery.fired': {
+        // Standoff bombardment: arc from the shooter to its victim. Endpoints are
+        // captured NOW — the victim may already be wiped from the state (the core
+        // emits after damage), so fall back to the `near` node anchor it sent.
+        const shooter = s.fleets[p.fleetId as string];
+        const from = shooter && fleetPos(shooter);
+        if (!from) break;
+        const anchorNode = (id: string | null | undefined) =>
+          id ? (s.planets[id]?.position ?? null) : null;
+        const victim = s.fleets[p.target as string];
+        const to = (victim && fleetPos(victim)) ?? anchorNode(p.near as string);
+        if (!to) break;
+        // Fog: show the exchange only if either end sits on a node we can see.
+        const shooterNode = shooter.location ?? shooter.edge?.from;
+        const nearNode = (p.near as string) ?? '';
+        if (!(shooterNode && known(shooterNode)) && !known(nearNode)) break;
+        siegeShots.push({ from: { ...from }, to: { x: to.x, y: to.y }, at: performance.now(), seed: siegeSeed++ });
+        while (siegeShots.length > 24) siegeShots.shift();
+        break;
+      }
       case 'market.bought':
         if (p.seller === ME || p.buyer === ME)
           note(
@@ -3244,6 +3274,108 @@ function render(now: number) {
       cx.beginPath();
       cx.arc(b.x, b.y, (shot.close ? 1.5 : 2) + (age / 700) * (shot.close ? 3 : 5), 0, TAU);
       cx.fill();
+    }
+    cx.restore();
+  }
+
+  // Siege bombardment (artillery.fired): a ballistic ARC from the shooter to its
+  // victim with a stagger of shell particles and impact bursts — the map answers
+  // «who is shelling whom» at a glance. Endpoints are map-space; projected each
+  // frame so the volley tracks pan/zoom.
+  if (siegeShots.length) {
+    const nowMs = performance.now();
+    const SHELLS = 3; // shells per volley, launched in a stagger
+    const FLIGHT = 780; // ms a shell spends on the arc
+    const STAGGER = 130; // ms between shell launches
+    const BURST = 520; // ms an impact burst lives
+    const LIFE = FLIGHT + STAGGER * (SHELLS - 1) + BURST;
+    cx.save();
+    for (let i = siegeShots.length - 1; i >= 0; i--) {
+      const shot = siegeShots[i]!;
+      const age = nowMs - shot.at;
+      if (age > LIFE) {
+        siegeShots.splice(i, 1);
+        continue;
+      }
+      const a = world(shot.from);
+      const b = world(shot.to);
+      if (!visible(a, 200) && !visible(b, 200)) continue;
+      // Ballistic lob: the mid-point lifts straight up in screen space, scaled by
+      // the span — long-range fire arches higher, point-blank stays flat-ish.
+      const dist = Math.hypot(b.x - a.x, b.y - a.y);
+      const lift = Math.min(64, Math.max(16, dist * 0.24));
+      const c = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 - lift };
+      const q = (t: number) => ({
+        x: (1 - t) * (1 - t) * a.x + 2 * (1 - t) * t * c.x + t * t * b.x,
+        y: (1 - t) * (1 - t) * a.y + 2 * (1 - t) * t * c.y + t * t * b.y,
+      });
+      // 1) the traced arc — a faint amber dashed path up to the lead shell.
+      const lead = Math.min(1, age / FLIGHT);
+      const pathFade = Math.max(0, 1 - age / LIFE);
+      cx.strokeStyle = rgba('#ffb066', 0.34 * pathFade);
+      cx.lineWidth = 1;
+      cx.setLineDash([4, 5]);
+      cx.lineDashOffset = -age / 16;
+      cx.beginPath();
+      cx.moveTo(a.x, a.y);
+      const STEPS = 18;
+      for (let sgm = 1; sgm <= Math.ceil(STEPS * lead); sgm++) {
+        const pt = q(Math.min(lead, sgm / STEPS));
+        cx.lineTo(pt.x, pt.y);
+      }
+      cx.stroke();
+      cx.setLineDash([]);
+      // 2) the shells — bright tracer dots with a short glowing tail.
+      cx.shadowColor = '#ffb066';
+      for (let sh = 0; sh < SHELLS; sh++) {
+        const t = (age - sh * STAGGER) / FLIGHT;
+        if (t <= 0 || t >= 1) continue;
+        const pt = q(t);
+        const tail = q(Math.max(0, t - 0.06));
+        cx.strokeStyle = rgba('#ffd29b', 0.85);
+        cx.lineWidth = 1.6;
+        cx.shadowBlur = 7;
+        cx.beginPath();
+        cx.moveTo(tail.x, tail.y);
+        cx.lineTo(pt.x, pt.y);
+        cx.stroke();
+        cx.fillStyle = rgba('#fff1dc', 0.95);
+        cx.beginPath();
+        cx.arc(pt.x, pt.y, 1.7, 0, TAU);
+        cx.fill();
+      }
+      cx.shadowBlur = 0;
+      // 3) impacts — each landed shell pops an expanding ring + sparks on stable
+      // per-volley angles (seeded — no per-frame randomness, replays stay clean).
+      for (let sh = 0; sh < SHELLS; sh++) {
+        const landed = age - (sh * STAGGER + FLIGHT);
+        if (landed < 0 || landed > BURST) continue;
+        const k = landed / BURST;
+        const burstFade = 1 - k;
+        // Hot core flash first — the «попал!» read — then the expanding ring.
+        if (k < 0.45) {
+          cx.fillStyle = rgba('#fff1dc', 0.9 * (1 - k / 0.45));
+          cx.shadowColor = '#ff8a3d';
+          cx.shadowBlur = 10;
+          cx.beginPath();
+          cx.arc(b.x, b.y, 3.2 - k * 3, 0, TAU);
+          cx.fill();
+          cx.shadowBlur = 0;
+        }
+        cx.strokeStyle = rgba('#ff8a3d', 0.75 * burstFade);
+        cx.lineWidth = 1.6;
+        cx.beginPath();
+        cx.arc(b.x, b.y, 2 + k * 14, 0, TAU);
+        cx.stroke();
+        cx.fillStyle = rgba('#ffd29b', 0.85 * burstFade);
+        for (let spk = 0; spk < 5; spk++) {
+          const ang = ((shot.seed * 7 + sh * 5 + spk) % 12) * (TAU / 12) + 0.35;
+          const r = 4 + k * 14;
+          cx.beginPath();
+          cx.arc(b.x + Math.cos(ang) * r, b.y + Math.sin(ang) * r * 0.8, 1.3, 0, TAU);
+          cx.fill();
+        }
+      }
     }
     cx.restore();
   }
@@ -7423,6 +7555,19 @@ function renderLobby(): void {
 // --- loop --------------------------------------------------------------------
 
 const fpsEl = $('fps');
+// Dev FX lab (DEV_UI only): push a demo siege volley between two nodes without
+// staging a real standoff duel — for design review and the FX screenshot tests.
+if (DEV_UI && typeof window !== 'undefined') {
+  (window as unknown as { __vdFx?: object }).__vdFx = {
+    pushSiege(fromId: string, toId: string): boolean {
+      const a = s.planets[fromId]?.position;
+      const b = s.planets[toId]?.position;
+      if (!a || !b) return false;
+      siegeShots.push({ from: { ...a }, to: { ...b }, at: performance.now(), seed: siegeSeed++ });
+      return true;
+    },
+  };
+}
 let fpsEma = 60; // smoothed frames-per-second readout
 let lastFpsText = '';
 let lastTechAt = 0; // throttle for live re-rendering the tech window while it's open
