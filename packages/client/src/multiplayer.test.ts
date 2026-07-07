@@ -181,6 +181,28 @@ describe('MultiplayerClient', () => {
     client.receive(JSON.stringify({ type: 'ping.removed', matchId: 'm', pingId: 'ping:p2:4' }));
     expect(removed[1]).toEqual(['ping:p2:4', 'cleared']);
   });
+
+  it('sends chat.send wire messages (dm carries `to`) and dispatches chat.msg', () => {
+    const socket = new FakeSocket();
+    const heard: unknown[] = [];
+    const client = new MultiplayerClient(socket, { onChatMessage: (m) => heard.push(m) });
+    client.sendChat('session', 'gl hf');
+    expect(JSON.parse(socket.sent[0] ?? '{}')).toEqual({
+      type: 'chat.send',
+      channel: 'session',
+      text: 'gl hf',
+    });
+    client.sendChat('dm', 'you first', 'p2');
+    expect(JSON.parse(socket.sent[1] ?? '{}')).toEqual({
+      type: 'chat.send',
+      channel: 'dm',
+      to: 'p2',
+      text: 'you first',
+    });
+    const message = { id: 'chat:p2:0', from: 'p2', channel: 'dm', to: 'p1', text: 'after you', at: 5 };
+    client.receive(JSON.stringify({ type: 'chat.msg', matchId: 'm', message }));
+    expect(heard).toEqual([message]);
+  });
 });
 
 // SV-1.1 bridge — on a GATED room the client wraps intents in `action.v1` envelopes so

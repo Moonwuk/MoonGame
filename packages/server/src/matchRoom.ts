@@ -8,11 +8,14 @@ import type {
   PlayerId,
   SignatureContact,
 } from '@void/shared-core';
-import { diffState, hashState, identifiedNodes, visibleView } from '@void/shared-core';
+import { diffState, getStance, hashState, identifiedNodes, visibleView } from '@void/shared-core';
 import type { AcceptedAction, ActionGate } from '@void/action-layer';
 import {
   parseClientMessage,
   serializeServerMessage,
+  CHAT_TEXT_MAX,
+  type ChatMessage,
+  type ClientChatSendMessage,
   type ClientPingPlaceMessage,
   type LobbyInfo,
   type Ping,
@@ -204,6 +207,13 @@ const PING_RATE_WINDOW_MS = 2_000;
 const PING_RATE_MAX = 4;
 const PING_LABEL_MAX = 40;
 
+/** Session-chat tuning (ephemeral relay, same family as pings). The rate limit runs
+ *  on WALL clock (flood protection must keep working while the lobby clock is
+ *  frozen); the visible back-log is a bounded ring replayed to a (re)joining peer. */
+const CHAT_RATE_WINDOW_MS = 4_000;
+const CHAT_RATE_MAX = 6;
+const CHAT_HISTORY_MAX = 100;
+
 /** Idempotency-receipt + action-rate bounds (DoS / memory; audit F-03/F-04). */
 const RECEIPTS_MAX_DEFAULT = 10_000;
 const ACTION_RATE_MAX_DEFAULT = 20;
@@ -262,6 +272,13 @@ export class MatchRoom {
   private pingSeq = 0;
   /** Per-player placement timestamps, for the (local, single-process) rate limit. */
   private readonly pingTimes = new Map<PlayerId, number[]>();
+  private chatSeq = 0;
+  /** Per-player chat timestamps (WALL clock), for the chat rate limit. */
+  private readonly chatTimes = new Map<PlayerId, number[]>();
+  /** Bounded session-chat back-log, replayed to a (re)joining peer. Room-local and
+   *  ephemeral by design (dies with hibernation, like pings); a Redis-backed
+   *  EphemeralStore is the seam that would carry it across processes/restarts. */
+  private readonly chatHistory: ChatMessage[] = [];
   /** Cap on retained idempotency receipts (FIFO eviction past it — bounds memory). */
   private readonly maxReceipts: number;
   /** Per-player action rate limit (local, single-process; → ephemeral store at >1 proc). */
@@ -453,6 +470,7 @@ export class MatchRoom {
       ...this.lobbyField(),
     });
     void this.sendVisiblePings(playerId, peer); // existing ally markers, on join (best-effort)
+    this.sendVisibleChat(playerId, peer); // the visible chat back-log, on join
     // Tell already-present peers the wait ended (waitForPlayers) or the lobby
     // roster changed (manualStart, pre-start), so their lobby screen updates.
     if (flipped || (this.manualStart && !this.started)) this.broadcastState([]);
@@ -534,6 +552,10 @@ export class MatchRoom {
     }
     if (message.type === 'ping.clear') {
       await this.handlePingClear(playerId, message.pingId);
+      return;
+    }
+    if (message.type === 'chat.send') {
+      this.handleChatSend(playerId, peer, message);
       return;
     }
     if (message.type === 'action.v1') {
@@ -1159,12 +1181,15 @@ export class MatchRoom {
 
   // --- ally pings (ephemeral, server-side; never part of the deterministic core) ---
 
-  /** Same player, or the same static team. The single swap-point for a future real
-   *  diplomacy relation (read `this.stateValue` instead of `this.teams`). */
+  /** Same player, the same static team, or a LIVE in-state alliance (the diplomacy
+   *  relation this predicate was always meant to read). Evaluated at delivery time,
+   *  so ally-only traffic (pings, coalition chat) follows the current stance map:
+   *  a new ally starts seeing it, an ex-ally stops. */
   private areAllied(a: PlayerId, b: PlayerId): boolean {
     if (a === b) return true;
     const ta = this.teams[a];
-    return ta !== undefined && ta === this.teams[b];
+    if (ta !== undefined && ta === this.teams[b]) return true;
+    return getStance(this.stateValue, a, b) === 'alliance';
   }
 
   /** A ping is visible to its owner and the owner's allies; never to enemies. The
@@ -1287,6 +1312,78 @@ export class MatchRoom {
     for (const { value: ping } of await this.ephemeral.entries<Ping>(this.pingPrefix)) {
       if (this.canSeePing(playerId, ping)) {
         this.send(peer, { type: 'ping.added', matchId: this.id, ping });
+      }
+    }
+  }
+
+  // --- session chat (ephemeral relay; never part of the deterministic core) -----
+
+  /** `session` reaches every seat; `dm` exactly the two parties; `coalition` the
+   *  sender's CURRENT allies. Enforced HERE (server-side), like fog: a peer outside
+   *  the channel is never sent the message at all. */
+  private canSeeChat(recipient: PlayerId, message: ChatMessage): boolean {
+    if (message.channel === 'session') return true;
+    if (message.channel === 'dm') return recipient === message.from || recipient === message.to;
+    return this.areAllied(recipient, message.from);
+  }
+
+  private handleChatSend(
+    playerId: PlayerId,
+    peer: RoomPeer,
+    message: ClientChatSendMessage,
+  ): void {
+    if (!this.hasPlayer(playerId)) {
+      this.send(peer, { type: 'error', matchId: this.id, code: 'E_FORBIDDEN' });
+      return;
+    }
+    // Rate limit on WALL clock — the lobby freeze stops the match clock, not the
+    // need for flood protection (people talk in the lobby; a frozen window would
+    // never expire and lock everyone out after CHAT_RATE_MAX lines).
+    const wall = this.now();
+    const recent = (this.chatTimes.get(playerId) ?? []).filter(
+      (t) => wall - t < CHAT_RATE_WINDOW_MS,
+    );
+    if (recent.length >= CHAT_RATE_MAX) {
+      this.send(peer, { type: 'error', matchId: this.id, code: 'E_CHAT_RATE' });
+      return;
+    }
+    const text = message.text.trim().slice(0, CHAT_TEXT_MAX);
+    if (!text) {
+      this.send(peer, { type: 'error', matchId: this.id, code: 'E_CHAT_TEXT' });
+      return;
+    }
+    const msg: ChatMessage = {
+      id: `chat:${playerId}:${this.chatSeq++}`,
+      from: playerId,
+      channel: message.channel,
+      text,
+      at: this.clock(), // display stamp in match time, like Ping.createdAt
+    };
+    if (message.channel === 'dm') {
+      // A DM must name a real, other seat — the sender is a recipient implicitly.
+      if (message.to === undefined || message.to === playerId || !this.hasPlayer(message.to)) {
+        this.send(peer, { type: 'error', matchId: this.id, code: 'E_CHAT_TARGET' });
+        return;
+      }
+      msg.to = message.to;
+    }
+    recent.push(wall);
+    this.chatTimes.set(playerId, recent);
+    this.chatHistory.push(msg);
+    if (this.chatHistory.length > CHAT_HISTORY_MAX) this.chatHistory.shift();
+    for (const [pid, peers] of this.peers) {
+      if (!this.canSeeChat(pid, msg)) continue;
+      for (const p of peers) this.send(p, { type: 'chat.msg', matchId: this.id, message: msg });
+    }
+  }
+
+  /** On join: replay the visible back-log so a (re)connecting player has the talk.
+   *  Channel visibility is re-evaluated NOW — a fresh ally reads coalition history,
+   *  an ex-ally no longer does. The client dedupes by message id. */
+  private sendVisibleChat(playerId: PlayerId, peer: RoomPeer): void {
+    for (const msg of this.chatHistory) {
+      if (this.canSeeChat(playerId, msg)) {
+        this.send(peer, { type: 'chat.msg', matchId: this.id, message: msg });
       }
     }
   }

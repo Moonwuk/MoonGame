@@ -52,6 +52,22 @@ export interface MultiplayerPing {
 /** A ping to place — the server fills in id/createdAt/expiresAt. */
 export type PingDraft = Pick<MultiplayerPing, 'kind' | 'target' | 'to' | 'payload' | 'label'>;
 
+// Session chat — mirrors the server's wire shape. Ephemeral relay (never part of
+// GameState): the server stamps id/at, clamps the text and decides recipients
+// (`session` = everyone, `coalition` = live allies, `dm` = the two parties).
+export type ChatChannel = 'session' | 'coalition' | 'dm';
+export interface MultiplayerChatMessage {
+  /** `chat:<from>:<seq>` (server-assigned) — dedupe key across live + join replay. */
+  id: string;
+  from: PlayerId;
+  channel: ChatChannel;
+  /** DM addressee (present iff `channel === 'dm'`). */
+  to?: PlayerId;
+  text: string;
+  /** Match-clock stamp. */
+  at: number;
+}
+
 export interface MultiplayerClientHandlers {
   onStatus?(status: MultiplayerStatus): void;
   onSnapshot?(snapshot: MultiplayerSnapshot): void;
@@ -69,6 +85,8 @@ export interface MultiplayerClientHandlers {
    *  captures…) — the server only sends what this player may see. Fired AFTER
    *  `onSnapshot`, so a handler reading the current state sees the post-delta world. */
   onEvents?(events: DomainEvent[]): void;
+  /** A chat message we may read — live, or replayed on join (dedupe by `id`). */
+  onChatMessage?(message: MultiplayerChatMessage): void;
 }
 
 interface InboundBase {
@@ -91,6 +109,7 @@ interface InboundBase {
   pingId?: string;
   reason?: 'cleared' | 'expired';
   events?: DomainEvent[];
+  message?: MultiplayerChatMessage;
 }
 
 function decode(raw: string): InboundBase | null {
@@ -177,6 +196,18 @@ export class MultiplayerClient {
     );
   }
 
+  /** Say something. The server stamps id/at, clamps the text, picks the recipients
+   *  and echoes the message back to us via `onChatMessage` — render from the echo. */
+  sendChat(channel: ChatChannel, text: string, to?: PlayerId): void {
+    this.socket.send(
+      JSON.stringify(
+        channel === 'dm' && to !== undefined
+          ? { type: 'chat.send', channel, to, text }
+          : { type: 'chat.send', channel, text },
+      ),
+    );
+  }
+
   receive(raw: string): void {
     const message = decode(raw);
     if (!message) {
@@ -246,6 +277,10 @@ export class MultiplayerClient {
     }
     if (message.type === 'ping.removed' && message.pingId) {
       this.handlers.onPingRemoved?.(message.pingId, message.reason ?? 'cleared');
+      return;
+    }
+    if (message.type === 'chat.msg' && message.message) {
+      this.handlers.onChatMessage?.(message.message);
       return;
     }
     if (message.type === 'rejection' && message.actionId && message.code) {

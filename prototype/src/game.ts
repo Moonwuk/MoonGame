@@ -34,6 +34,10 @@ import {
   stewardActive,
   STEWARD_POSTURES,
   getStance,
+  getOffer,
+  setOffer,
+  clearOffers,
+  STANCE_RANK,
   isBotPair,
   setStance,
   pairKey,
@@ -1330,6 +1334,11 @@ export function formationStats(tpl: FormationTemplate): FormationStats {
 export const FAVOUR_BASE = 60; // starting favour toward every seat
 export const FAVOUR_EMBARGO = 35; // below → the bot embargoes you on the market (future)
 export const FAVOUR_WAR = 15; // below → the bot itself declares war (the extreme case)
+// = FAVOUR_WAR: a bot too calm to start a war won't refuse to end one. One war
+// declaration (60→30) leaves a ~3-day window to sue for peace before war decay
+// (5/day) drops the meter below the line — then the bot fights to the end.
+export const FAVOUR_PEACE_ACCEPT = 15;
+export const FAVOUR_PACT_ACCEPT = 55; // an offered PACT needs real goodwill
 export const FAVOUR_WAR_DECLARED_HIT = 30; // drop when a seat declares WAR on the bot
 export const FAVOUR_SPY_CAUGHT_HIT = 20; // drop when the bot catches that seat's spy red-handed
 export const FAVOUR_WAR_DECAY_PER_DAY = 5; // sustained war keeps eroding favour
@@ -1573,14 +1582,36 @@ export const diplomacyModule: GameModule = {
         return h.reject('E_BAD_TARGET');
       }
       if (!h.state.players[p.target]) return h.reject('E_NO_PLAYER');
+      const me = action.playerId;
       const stance: DiplomaticStance = p.stance ?? 'war';
       // A coalition is between humans only — a bot is never a valid alliance party
       // (server-side rule; the menu greys the option out too).
-      if (stance === 'alliance' && isBotPair(h.state, action.playerId, p.target)) {
+      if (stance === 'alliance' && isBotPair(h.state, me, p.target)) {
         return h.reject('E_BOT_ALLIANCE');
       }
-      setStance(h.state, action.playerId, p.target, stance);
-      h.emit('diplomacy.changed', { a: action.playerId, b: p.target, stance });
+      const current = getStance(h.state, me, p.target);
+      if (stance === current) return h.reject('E_ALREADY');
+      // ESCALATION (toward war) is unilateral — you can't be kept in a friendship —
+      // and voids any negotiation in flight for the pair (core D2 semantics).
+      if (STANCE_RANK[stance] < STANCE_RANK[current]) {
+        clearOffers(h.state, me, p.target);
+        setStance(h.state, me, p.target, stance);
+        h.emit('diplomacy.changed', { a: me, b: p.target, stance });
+        return;
+      }
+      // SOFTENING needs consent (core D3): a matching counter-offer commits the pair;
+      // otherwise this declaration RECORDS an offer (stance unchanged) — the other
+      // side sees it (state.diplomacyOffers rides the delta, fogged to the pair)
+      // and answers with the same declaration to accept.
+      if (getOffer(h.state, p.target, me) === stance) {
+        clearOffers(h.state, me, p.target);
+        setStance(h.state, me, p.target, stance);
+        h.emit('diplomacy.changed', { a: me, b: p.target, stance });
+        return;
+      }
+      if (getOffer(h.state, me, p.target) === stance) return h.reject('E_ALREADY_OFFERED');
+      setOffer(h.state, me, p.target, stance);
+      h.emit('diplomacy.offered', { from: me, to: p.target, stance });
     });
   },
 };
@@ -1595,6 +1626,30 @@ export const botDiplomacyModule: GameModule = {
   id: 'bot-diplomacy',
   version: '0.1.0',
   setup(api) {
+    // A bot ANSWERS negotiations by the favour meter: an offered peace/pact from a
+    // seat it doesn't resent is accepted on the spot (the bot files the matching
+    // declaration — the same consent path a human would take); a soured bot turns
+    // it down and the offer is wiped so the seat can retry once favour recovers —
+    // only humans may leave an offer pending. Alliances stay human-only
+    // (E_BOT_ALLIANCE upstream).
+    api.on('diplomacy.offered', (event, h) => {
+      const { from, to, stance } = event.payload as {
+        from: string;
+        to: string;
+        stance: DiplomaticStance;
+      };
+      const meter = (h.state as DivState).approval?.[to];
+      if (!meter || meter[from] === undefined) return; // `to` isn't a tracked bot vs `from`
+      const need = stance === 'peace' ? FAVOUR_PEACE_ACCEPT : stance === 'pact' ? FAVOUR_PACT_ACCEPT : null;
+      if (need !== null && botFavour(h.state, to, from) >= need) {
+        clearOffers(h.state, to, from);
+        setStance(h.state, to, from, stance);
+        h.emit('diplomacy.changed', { a: to, b: from, stance });
+        return;
+      }
+      clearOffers(h.state, from, to);
+      h.emit('diplomacy.declined', { from, to, stance });
+    });
     // A seat declaring WAR on a bot sours that bot's favour toward the declarer.
     api.on('diplomacy.changed', (event, h) => {
       const { a, b, stance } = event.payload as { a: string; b: string; stance: DiplomaticStance };
