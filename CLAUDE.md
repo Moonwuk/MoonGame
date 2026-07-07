@@ -33,7 +33,9 @@ Monorepo (pnpm workspaces):
   Capacitor iOS), not React Native — see `docs/cross-platform-roadmap.md` (decision record). Holds
   the `MultiplayerClient` transport adapter plus framework-agnostic view-models + theme tokens
   (`welcomeScreen.ts` — welcome screen; `matchHud.ts` — status bar / fleet selection / battle
-  panel; `theme.ts`); the rendered app shell is still a placeholder. `mobile/` is the thin
+  panel; `theme.ts`); the app shell is a working Vite scaffold (welcome + live map over the
+  shared render kit + `?join=` deep-link speaking `action.v1`) — the full in-match HUD is
+  still ahead, so the players' playable client remains `prototype/`. `mobile/` is the thin
   Capacitor wrapper (APK).
 - `data/` — game content as JSON. `docs/` — design docs.
 
