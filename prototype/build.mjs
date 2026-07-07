@@ -199,7 +199,7 @@ body.sheet-open #cmdbar{bottom:calc(34vh + 12px);}
   background:rgba(53,214,230,.1);color:var(--cyan);font:600 12px ui-monospace,monospace;letter-spacing:1px;}
 
 /* settings overlay (hub → «Ещё» → Настройки) — client-only display prefs */
-#settings{position:fixed;inset:0;z-index:47;display:none;align-items:center;justify-content:center;padding:18px;
+#settings{position:fixed;inset:0;z-index:59;display:none;align-items:center;justify-content:center;padding:18px;
   background:rgba(1,5,9,.55);-webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px);}
 #settings.show{display:flex;}
 #settings .setbox{width:min(380px,92vw);max-height:86vh;overflow:auto;background:var(--glass);border:1px solid var(--cyan);
@@ -1296,6 +1296,7 @@ button.b:disabled{opacity:.32;cursor:not-allowed;color:var(--dim);border-color:v
 const html = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<link rel="icon" href="data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="6" fill="#061318"/><rect x="9" y="9" width="14" height="14" rx="2" transform="rotate(45 16 16)" fill="none" stroke="#35d6e6" stroke-width="2.5"/></svg>')}">
 <title>Void Dominion — Sector Command</title><style>${css}</style></head>
 <body>
 <canvas id="map"></canvas>
