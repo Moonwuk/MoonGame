@@ -24,7 +24,10 @@ export type ServerErrorCode =
   | 'E_PING_TARGET'
   | 'E_PING_UNSEEN'
   | 'E_PING_BUILD'
-  | 'E_PING_RATE';
+  | 'E_PING_RATE'
+  | 'E_CHAT_RATE'
+  | 'E_CHAT_TARGET'
+  | 'E_CHAT_TEXT';
 
 /**
  * Ally ping — a tactical marker one player drops to propose a plan to allies
@@ -58,6 +61,30 @@ export interface Ping {
   label?: string;
   createdAt: number;
   expiresAt: number;
+}
+
+/**
+ * Chat message — ephemeral session talk relayed by the room (like pings, never part
+ * of the deterministic GameState). `session` reaches every seat, `coalition` the
+ * sender's live allies, `dm` exactly the sender + `to`. The room stamps `id`/`at`
+ * and clamps `text`; recipients are decided SERVER-side, like fog — a peer outside
+ * the channel is never sent the message at all.
+ */
+export type ChatChannel = 'session' | 'coalition' | 'dm';
+export const CHAT_CHANNELS: readonly ChatChannel[] = ['session', 'coalition', 'dm'];
+export const CHAT_TEXT_MAX = 240;
+
+export interface ChatMessage {
+  /** `chat:<from>:<seq>` (server-assigned). */
+  id: string;
+  from: PlayerId;
+  channel: ChatChannel;
+  /** DM addressee (present iff `channel === 'dm'`). */
+  to?: PlayerId;
+  /** Trimmed and clamped to CHAT_TEXT_MAX by the server. */
+  text: string;
+  /** Match-clock stamp (the same clock as `Ping.createdAt` / `serverTime`). */
+  at: number;
 }
 
 export interface ClientActionMessage {
@@ -103,13 +130,23 @@ export interface ClientPingClearMessage {
   pingId?: string;
 }
 
+/** Say something. The server stamps id / at, clamps the text and picks recipients. */
+export interface ClientChatSendMessage {
+  type: 'chat.send';
+  channel: ChatChannel;
+  /** DM addressee — required for (and only meaningful on) the `dm` channel. */
+  to?: PlayerId;
+  text: string;
+}
+
 export type ClientMessage =
   | ClientActionMessage
   | ClientActionEnvelopeMessage
   | ClientPingMessage
   | ClientStartMessage
   | ClientPingPlaceMessage
-  | ClientPingClearMessage;
+  | ClientPingClearMessage
+  | ClientChatSendMessage;
 
 /** Roster shown on the pre-match lobby screen (manual-start mode). */
 export interface LobbyInfo {
@@ -209,6 +246,13 @@ export interface ServerPingRemovedMessage {
   reason: 'cleared' | 'expired';
 }
 
+/** A chat message this recipient may read (live, or replayed on join). */
+export interface ServerChatMessage {
+  type: 'chat.msg';
+  matchId: string;
+  message: ChatMessage;
+}
+
 export type ServerMessage =
   | ServerWelcomeMessage
   | ServerStateMessage
@@ -217,7 +261,8 @@ export type ServerMessage =
   | ServerPongMessage
   | ServerErrorMessage
   | ServerPingAddedMessage
-  | ServerPingRemovedMessage;
+  | ServerPingRemovedMessage
+  | ServerChatMessage;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -242,6 +287,16 @@ function isPingAnchor(value: unknown): value is PingAnchor {
   const hasPoint =
     isRecord(p) && Number.isFinite(p.x as number) && Number.isFinite(p.y as number);
   return hasNode !== hasPoint; // exactly one
+}
+
+/** A well-formed chat.send: a known channel + a string text (+ an optional string
+ *  addressee). Semantic rules (dm needs a real `to`, non-empty text after trim) are
+ *  the room's job — they answer with specific E_CHAT_* codes, not E_BAD_MESSAGE. */
+function isChatSend(value: Record<string, unknown>): boolean {
+  if (!CHAT_CHANNELS.includes(value.channel as ChatChannel)) return false;
+  if (typeof value.text !== 'string') return false;
+  if (value.to !== undefined && typeof value.to !== 'string') return false;
+  return true;
 }
 
 function isPingDraft(value: unknown): value is ClientPingPlaceMessage['ping'] {
@@ -288,6 +343,15 @@ export function parseClientMessage(raw: string): ClientMessage | null {
     return typeof decoded.pingId === 'string'
       ? { type: 'ping.clear', pingId: decoded.pingId }
       : { type: 'ping.clear' };
+  }
+  if (decoded.type === 'chat.send' && isChatSend(decoded)) {
+    const message: ClientChatSendMessage = {
+      type: 'chat.send',
+      channel: decoded.channel as ChatChannel,
+      text: decoded.text as string,
+    };
+    if (typeof decoded.to === 'string') message.to = decoded.to;
+    return message;
   }
   return null;
 }

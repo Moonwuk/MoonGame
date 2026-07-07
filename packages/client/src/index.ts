@@ -8,6 +8,8 @@ export {
   type PingDraft,
   type PingAnchor,
   type PingKind,
+  type ChatChannel,
+  type MultiplayerChatMessage,
 } from './multiplayer';
 
 export { openLiveMatch, type LiveMatch } from './net';

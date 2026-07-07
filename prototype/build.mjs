@@ -287,6 +287,8 @@ body.sheet-open #cmdbar{bottom:calc(34vh + 12px);}
 .dp-act{padding:6px 10px;border-radius:6px;border:1px solid var(--line);background:transparent;color:var(--dim);
   font:700 11px ui-monospace,monospace;cursor:pointer;}
 .dp-act.on{color:var(--sc);border-color:var(--sc);background:rgba(53,214,230,.08);}
+.dp-act.offer{color:var(--sc);border-color:var(--sc);animation:sppulse 1.6s ease-in-out infinite;}
+.dp-act.pend{opacity:.55;}
 .dp-spy{padding:6px 10px;border-radius:6px;border:1px solid var(--amber-dim,#8a6a2f);background:transparent;
   color:var(--amber);font:700 11px ui-monospace,monospace;cursor:pointer;}
 .dp-spy:hover{border-color:var(--amber);background:rgba(255,180,58,.1);}

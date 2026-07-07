@@ -109,11 +109,12 @@ import {
   estimateTravelHours,
   fleetBaseSpeed,
   getStance,
+  getOffer,
   pairHas,
   hashState,
   planRoute,
 } from '../../packages/shared-core/src/index';
-import { MultiplayerClient, type MultiplayerPing, createBattleModel, type BattleSideView } from '../../packages/client/src/index';
+import { MultiplayerClient, type MultiplayerPing, type MultiplayerChatMessage, createBattleModel, type BattleSideView } from '../../packages/client/src/index';
 import {
   worldToScreen as camWorldToScreen,
   zoomAt as camZoomAt,
@@ -366,6 +367,7 @@ type SessionMsg = {
   sys: boolean;
   ping?: string;
   pingId?: string;
+  chatId?: string; // net only: server-assigned chat id — dedupes live echo vs join replay
   realAt?: number; // wall-clock ms at creation, for the chat's "real time" stamp
 };
 const COALITION = 'coalition';
@@ -1728,6 +1730,10 @@ const ERR_RU: Record<string, string> = {
   E_BOT_ALLIANCE: 'боты не вступают в коалиции',
   E_CONSENT_REQUIRED: 'нужно согласие второй стороны',
   E_ALREADY_OFFERED: 'предложение уже отправлено',
+  E_ALREADY: 'уже действует',
+  E_CHAT_RATE: 'не так быстро — подождите пару секунд',
+  E_CHAT_TARGET: 'адресат не найден',
+  E_CHAT_TEXT: 'пустое сообщение',
   E_NO_HERO: 'герой не найден',
   E_INTERNAL: 'внутренняя ошибка',
 };
@@ -2108,6 +2114,33 @@ function handleEvents(events: DomainEvent[]) {
             a,
           );
           note(`${na} → ${nb}: ${stanceRu(st)}`);
+        }
+        if (diploOpen && diploTab === 'diplo') renderDiplo();
+        break;
+      }
+      case 'diplomacy.offered': {
+        const from = p.from as string;
+        const to = p.to as string;
+        const st = p.stance as DiplomaticStance;
+        if (to === ME) {
+          note(t('🕊 {who} предлагает: {stance} — ответьте тем же в Дипломатии', { who: NAME[from] ?? from, stance: stanceRu(st) }));
+          pushMsg(from, t('Предложение: {stance}', { stance: stanceRu(st) }), true, from);
+          unreadMsgs++;
+        } else if (from === ME && !isAiSeat(to)) {
+          // A bot answers inside the same order (accept/decline follows in this very
+          // batch) — the "sent" line is only worth showing when a human must reply.
+          note(t('⏳ {who}: предложение отправлено — {stance}', { who: NAME[to] ?? to, stance: stanceRu(st) }));
+        }
+        if (diploOpen && diploTab === 'diplo') renderDiplo();
+        break;
+      }
+      case 'diplomacy.declined': {
+        const from = p.from as string;
+        const to = p.to as string;
+        const st = p.stance as DiplomaticStance;
+        if (from === ME) {
+          pushMsg(to, t('{who} отклонил предложение: {stance}', { who: NAME[to] ?? to, stance: stanceRu(st) }), true, to);
+          note(t('✖ {who} отклонил: {stance}', { who: NAME[to] ?? to, stance: stanceRu(st) }));
         }
         if (diploOpen && diploTab === 'diplo') renderDiplo();
         break;
@@ -5030,30 +5063,18 @@ function fmtStamp(at: number, opts?: StampOpts): string {
   return parts.join(' ');
 }
 
-/** Deterministic AI verdict on a proposal to warm relations, by relative strength
- *  (provinces). A side that's winning won't de-escalate; a weaker/even one takes it. */
-function aiAcceptsStance(target: string, to: DiplomaticStance): boolean {
-  const mine = worldsOf(ME);
-  const theirs = worldsOf(target);
-  switch (to) {
-    case 'war':
-      return true; // war never needs consent
-    case 'peace':
-      return mine >= theirs; // sue for peace works unless they're ahead
-    case 'pact':
-      return mine * 4 >= theirs * 3; // mine ≥ 0.75× theirs — a respectable partner
-    case 'alliance':
-      return false; // боты не вступают в коалиции — правило, не сила
-  }
-}
-
 /** Append a line to the session log (bounded). Patches the feed if it's on screen. */
 /** Unread social events (war declarations, stance shifts) — badge on the ✉ rail. */
 let unreadMsgs = 0;
-/** Snapshots carry no domain events, so a NET client would never hear a war being
- *  declared on it. Diff the stance map of consecutive snapshots for pairs with ME
- *  and surface the change through the normal note/DM path. */
-function diffNetDiplomacy(prev: GameState, next: GameState): void {
+/** Diplomacy events don't pass the server's fog filter (their payload names no
+ *  location a client owns), so a NET client would never hear a war being declared
+ *  on it or a peace being offered. Diff the stance map AND the offer ledger of
+ *  consecutive snapshots for pairs with ME and surface changes through the normal
+ *  note/DM path. (The offer ledger rides the delta already fogged to the pair.)
+ *  Returns true when something shifted — the CALLER re-renders the roster after
+ *  it assigns the new state (rendering here would paint from the old `s`). */
+function diffNetDiplomacy(prev: GameState, next: GameState): boolean {
+  let shifted = false;
   const keys = new Set([...Object.keys(prev.diplomacy ?? {}), ...Object.keys(next.diplomacy ?? {})]);
   for (const key of keys) {
     if (!pairHas(key, ME)) continue;
@@ -5067,7 +5088,29 @@ function diffNetDiplomacy(prev: GameState, next: GameState): void {
     else note(t('🕊 {who}: отношения → {stance}', { who, stance: stanceRu(after) }));
     pushMsg(other, t('Стойка изменена: {stance}', { stance: stanceRu(after) }), true, other);
     unreadMsgs++;
+    shifted = true;
   }
+  const offKeys = new Set([
+    ...Object.keys(prev.diplomacyOffers ?? {}),
+    ...Object.keys(next.diplomacyOffers ?? {}),
+  ]);
+  for (const key of offKeys) {
+    const before = prev.diplomacyOffers?.[key];
+    const after = next.diplomacyOffers?.[key];
+    if (before === after || !after) continue; // withdrawals ride the stance toast above
+    const [from, to] = key.split('>');
+    if (to === ME) {
+      const who = NAME[from!] ?? from!;
+      note(t('🕊 {who} предлагает: {stance} — ответьте тем же в Дипломатии', { who, stance: stanceRu(after) }));
+      pushMsg(from!, t('Предложение: {stance}', { stance: stanceRu(after) }), true, from!);
+      unreadMsgs++;
+      shifted = true;
+    } else if (from === ME) {
+      note(t('⏳ {who}: предложение отправлено — {stance}', { who: NAME[to!] ?? to!, stance: stanceRu(after) }));
+      shifted = true;
+    }
+  }
+  return shifted;
 }
 
 function pushMsg(to: string, text: string, sys: boolean, from = ME, ping?: string): void {
@@ -5077,30 +5120,38 @@ function pushMsg(to: string, text: string, sys: boolean, from = ME, ping?: strin
   if (chatOpen && !chatMin) renderChatFeed();
 }
 
-/** Player-driven stance change toward `target`. War (and any cooling-off) is
- *  unilateral; warming the relation up a rank asks the target — an AI decides by
- *  strength, a (net) human can't negotiate here yet. */
+/** Route an outgoing chat line for conversation key `key` (a group channel const or
+ *  a seat id = DM). NET: the server relays it and echoes a `chat.msg` back — the echo
+ *  is what appends the line (see onChatMessage), so everyone renders the same
+ *  server-stamped message. Solo: append locally. */
+function dispatchChat(key: string, text: string): void {
+  if (NET && netClient) {
+    if (key === CH_GLOBAL) {
+      note(t('глобальный канал появится вместе с глобальным сервером'));
+      return;
+    }
+    if (key === CH_SESSION) netClient.sendChat('session', text);
+    else if (key === COALITION) netClient.sendChat('coalition', text);
+    else netClient.sendChat('dm', text, key);
+    return;
+  }
+  pushMsg(key, text, false);
+}
+
+/** Player-driven stance change toward `target`. Escalation (toward war) is
+ *  unilateral; warming the relation up files an OFFER the target must answer with
+ *  the same declaration (consent — game.ts diplomacyModule). A bot answers on the
+ *  spot by its favour meter; a human sees the offer in their roster (NET: the offer
+ *  ledger rides the fogged delta) and taps the highlighted stance to accept. */
 function proposeStance(target: string, to: DiplomaticStance): void {
   if (target === ME || !s.players[target]) return;
-  const from = getStance(s, ME, target);
-  if (from === to) return;
-  if (STANCE_RANK[to] > STANCE_RANK[from]) {
-    if (to === 'alliance' && isAiSeat(target)) {
-      note(t('Боты не вступают в коалиции'));
-      return;
-    }
-    if (!isAiSeat(target)) {
-      note(t('переговоры с другими игроками — позже (нужен сервер)'));
-      return;
-    }
-    if (!aiAcceptsStance(target, to)) {
-      pushMsg(target, t('{who} отклонил предложение: {stance}', { who: NAME[target] ?? target, stance: stanceRu(to) }), true, target);
-      note(t('✖ {who} отклонил: {stance}', { who: NAME[target] ?? target, stance: stanceRu(to) }));
-      return;
-    }
+  if (getStance(s, ME, target) === to) return;
+  if (to === 'alliance' && isAiSeat(target)) {
+    note(t('Боты не вступают в коалиции'));
+    return;
   }
-  // diplomacy.declare sets the stance and emits diplomacy.changed → the log line + note
-  // are appended uniformly in handleEvents (the same path the AI's declarations take).
+  // diplomacy.declare escalates / files the offer / commits a matching counter-offer;
+  // feedback comes back uniformly via handleEvents (solo) or the snapshot diff (NET).
   playerOrder(declareWar(ME, target, to));
 }
 
@@ -5212,7 +5263,20 @@ function diploRowsHtml(): string {
         ? `<div class="dp-actions">` +
           STANCES.map((sk) => {
             const barred = sk === 'alliance' && isAiSeat(id); // боты не вступают в коалиции
-            return `<button class="dp-act${sk === st ? ' on' : ''}" data-stance="${sk}" data-seat="${id}" style="--sc:${STANCE_COLOR[sk]}"${barred ? ` disabled title="${t('Боты не вступают в коалиции')}"` : ''}>${stanceRu(sk)}</button>`;
+            // Consent affordances: THEIR pending offer of this stance → tapping accepts
+            // (✓, pulsing); MY pending offer → sent, waiting on them (⏳, disabled).
+            const theirs = !barred && getOffer(s, id, ME) === sk;
+            const mine = !barred && !theirs && getOffer(s, ME, id) === sk;
+            const cls = `dp-act${sk === st ? ' on' : ''}${theirs ? ' offer' : ''}${mine ? ' pend' : ''}`;
+            const label = theirs ? `✓ ${stanceRu(sk)}` : mine ? `⏳ ${stanceRu(sk)}` : stanceRu(sk);
+            const title = barred
+              ? t('Боты не вступают в коалиции')
+              : theirs
+                ? t('{who} предлагает — нажмите, чтобы принять', { who: NAME[id] ?? id })
+                : mine
+                  ? t('предложение уже отправлено')
+                  : '';
+            return `<button class="${cls}" data-stance="${sk}" data-seat="${id}" style="--sc:${STANCE_COLOR[sk]}"${barred || mine ? ' disabled' : ''}${title ? ` title="${esc(title)}"` : ''}>${label}</button>`;
           }).join('') +
           `<button class="dp-spy" data-spy="treasury" data-seat="${id}" title="${t('Украсть данные казны · {c}¤ · шанс ~60% · окно 24ч (плата сгорает и при провале)', { c: SPY_COST })}">🕵 ${t('казна')}</button>` +
           `<button class="dp-spy" data-spy="fleets" data-seat="${id}" title="${t('Украсть данные о флотах · {c}¤ · шанс ~60% · окно 24ч (плата сгорает и при провале)', { c: SPY_COST })}">🕵 ${t('флоты')}</button>` +
@@ -5310,11 +5374,9 @@ function convoThreadHtml(): string {
   const pingBtn = isCoal
     ? `<button class="dp-ping" title="${t('Отметить выбранную провинцию пингом')}">📍</button>`
     : '';
-  // NET: the text composer is a placebo (messages never leave this browser) — show
-  // the truth and keep the one thing that IS networked, the 📍 ping.
-  const compose = NET
-    ? `<div class="dp-compose dp-off">${pingBtn}<span class="dp-offtxt">${t('Сетевой чат ещё не подключён — используйте пинги 📍')}</span></div>`
-    : `<div class="dp-compose">${pingBtn}<input id="dp-text" maxlength="160" placeholder="${t('Сообщение…')}" autocomplete="off"><button class="dp-send">▶</button></div>`;
+  // The composer is networked (chat.send relay): dispatchChat routes it — NET sends
+  // to the server (rendered from the echo), solo appends locally.
+  const compose = `<div class="dp-compose">${pingBtn}<input id="dp-text" maxlength="160" placeholder="${t('Сообщение…')}" autocomplete="off"><button class="dp-send">▶</button></div>`;
   return (
     `<div class="dp-thread">` +
     `<div class="dp-thhead">${title}</div>` +
@@ -7273,8 +7335,11 @@ function connect(): void {
           pingTimer = setInterval(() => client.ping(performance.now()), 2000);
           client.ping(performance.now()); // seed an RTT reading immediately
         }
-        if (admitted && s !== snap.state) diffNetDiplomacy(s, snap.state);
+        const diploShift = admitted && s !== snap.state && diffNetDiplomacy(s, snap.state);
         s = snap.state;
+        // Re-render the open roster only NOW — the new state is in place, so the
+        // stance chips and offer affordances (✓ accept / ⏳ pending) paint fresh.
+        if (diploShift && diploOpen && diploTab === 'diplo') renderDiplo();
         if (snap.playerId) ME = snap.playerId;
         // Desync check (M0): the server tags each snapshot with hashState(view); we
         // hash our just-reconstructed view and compare. Mismatch ⇒ the client and
@@ -7329,8 +7394,41 @@ function connect(): void {
         closePingPop();
         if (diploOpen && diploTab === 'msgs') renderDiploFeed();
       },
+      // Server-relayed chat (recipients decided server-side, like fog). Our own lines
+      // render from this echo too; the id dedupes a live line vs the join replay.
+      onChatMessage: (m: MultiplayerChatMessage) => {
+        if (sock !== netSock) return;
+        if (sessionMessages.some((x) => x.chatId === m.id)) return;
+        // Group lines carry the channel key in `to`; a DM keeps its true addressee —
+        // convoMessages derives the thread from (from, to) like the solo path.
+        const to =
+          m.channel === 'session'
+            ? CH_SESSION
+            : m.channel === 'coalition'
+              ? COALITION
+              : (m.to ?? m.from);
+        sessionMessages.push({
+          at: m.at,
+          from: m.from,
+          to,
+          text: m.text,
+          sys: false,
+          chatId: m.id,
+          realAt: Date.now(),
+        });
+        if (sessionMessages.length > 300) sessionMessages.shift();
+        if (m.from !== ME) unreadMsgs++;
+        if (diploOpen && diploTab === 'msgs') renderDiploFeed();
+        if (chatOpen && !chatMin) renderChatFeed();
+      },
       onError: (code) => {
         if (sock !== netSock) return; // ignore errors from a superseded socket
+        // In-match relay refusals (chat flood/target/…) belong in a toast — the
+        // connect overlay's status line is hidden once we're admitted.
+        if (admitted && code.startsWith('E_CHAT')) {
+          note('✖ ' + errText(code));
+          return;
+        }
         if (!admitted && code === 'E_SLOT_TAKEN') {
           statusEl.textContent = 'that name is already playing (another tab or device?)';
         } else if (!admitted && code === 'E_UNKNOWN_PLAYER') {
@@ -8221,11 +8319,10 @@ function closeChat(): void {
   renderChat();
 }
 function sendChatMsg(): void {
-  if (NET) return note(t('сетевой чат ещё не подключён — используйте пинги 📍'));
   const input = document.getElementById('cw-text') as HTMLInputElement | null;
   const text = input?.value.trim();
   if (!text) return;
-  pushMsg(chatTab, text, false); // local sessions only — the net relay is a next brick
+  dispatchChat(chatTab, text); // NET: server relay + echo; solo: local append
   if (input) {
     input.value = '';
     input.focus?.();
@@ -8405,11 +8502,10 @@ function toggleSet<T>(set: Set<T>, v: T): void {
   else set.add(v);
 }
 function sendDiploMsg(): void {
-  if (NET) return note(t('сетевой чат ещё не подключён — используйте пинги 📍'));
   const input = document.getElementById('dp-text') as HTMLInputElement | null;
   const text = input?.value.trim();
   if (!text) return;
-  pushMsg(convoOpen, text, false); // local sessions only — the net relay is a next brick
+  dispatchChat(convoOpen, text); // NET: server relay + echo; solo: local append
   if (input) {
     input.value = '';
     input.focus();
