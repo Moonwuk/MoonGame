@@ -814,25 +814,40 @@ function world(p: { x: number; y: number }): { x: number; y: number } {
 function visible(c: { x: number; y: number }, pad = 80): boolean {
   return c.x >= -pad && c.x <= VW + pad && c.y >= -pad && c.y <= VH + pad;
 }
+/** Extra pan slack while the selection panel (#side) covers the play area: let the
+ *  camera overshoot the map border by the covered strip, so worlds hidden behind the
+ *  open panel can be dragged into the clear part of the screen. The panel is a
+ *  full-width bottom sheet on phones (→ slack below) and a right-hand column on wide
+ *  screens (→ slack on the right); measure its live rect so both layouts just work. */
+function panelSlack(): { right?: number; bottom?: number } {
+  const el = typeof document !== 'undefined' ? document.getElementById('side') : null;
+  if (!el || getComputedStyle(el).display === 'none') return {};
+  const r = el.getBoundingClientRect();
+  if (r.height <= 0 || r.width <= 0) return {};
+  if (r.width >= VW * 0.7) return { bottom: Math.max(0, VH - r.top) }; // bottom sheet
+  return { right: Math.max(0, VW - r.left) }; // right-hand column
+}
+
 function zoomAt(fx: number, fy: number, factor: number) {
   // Zoom anchored on the focal point (cursor / pinch centre) — camera.ts clamps scale + pan.
-  const n = camZoomAt(cam, fx, fy, factor, insets(), mapBounds());
+  const n = camZoomAt(cam, fx, fy, factor, insets(), mapBounds(), panelSlack());
   cam.scale = n.scale;
   cam.x = n.x;
   cam.y = n.y;
 }
 
 /** Keep the map filling the play area with SLACK at the edges (module: PAN_SLACK) so the
- *  outermost provinces don't jam against the border. Delegates to the shared camera. */
+ *  outermost provinces don't jam against the border. Delegates to the shared camera;
+ *  an open panel widens the range (panelSlack) so it never traps the view. */
 function clampCam(): void {
-  const n = camClampCam(cam, insets(), mapBounds());
+  const n = camClampCam(cam, insets(), mapBounds(), panelSlack());
   cam.x = n.x;
   cam.y = n.y;
 }
 
 /** Put map-point `p` at the centre of the play area at `scale` (clamped + bounded). */
 function centerOn(p: { x: number; y: number }, scale: number): void {
-  const n = camCenterOn(cam, p, scale, insets(), mapBounds());
+  const n = camCenterOn(cam, p, scale, insets(), mapBounds(), panelSlack());
   cam.scale = n.scale;
   cam.x = n.x;
   cam.y = n.y;
