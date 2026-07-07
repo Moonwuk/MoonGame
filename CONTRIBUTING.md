@@ -104,7 +104,7 @@
    (или через организацию/команду). Для Claude он ставит Claude GitHub App у себя.
 2. **Branch protection** на `main` (Settings → Branches → Add rule, паттерн `main`):
    - Require a pull request before merging → Require approvals: **1**.
-   - Require status checks to pass → отметить `build` и `audit`.
+   - Require status checks to pass → отметить `check` (job из `ci.yml` — lint · typecheck · test · audit).
    - Require branches to be up to date before merging.
    - Запретить обход правил и прямой push в `main`.
 3. **`CODEOWNERS`.** Заполни GitHub-ник'ами по зонам (см. `.github/CODEOWNERS`),
