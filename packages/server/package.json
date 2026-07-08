@@ -9,7 +9,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@fastify/rate-limit": "^11.0.0",
+    "@fastify/rate-limit": "^11.1.0",
     "@void/action-layer": "workspace:*",
     "@void/shared-core": "workspace:*",
     "fastify": "^5.9.0",
