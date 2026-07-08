@@ -63,7 +63,7 @@ jobs:
           echo "{\"check\":\"$CHECK_OUTCOME\"}" > check-status.json
           ok=true; [ -s pnpm-audit.json ] || ok=false
           echo "{\"key\":\"audit\",\"ok\":$ok}" > status-audit.json
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: report-check
           path: |
@@ -94,7 +94,7 @@ jobs:
           ok=true; case $rc in 125 | 126 | 127) ok=false ;; esac
           [ -s semgrep.sarif ] || ok=false
           echo "{\"key\":\"semgrep\",\"ok\":$ok,\"exit\":$rc}" > status-semgrep.json
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: report-semgrep
           path: |
@@ -137,7 +137,7 @@ jobs:
           ok=false
           if [ "$CQA_OUTCOME" = "success" ]; then ok=true; fi
           echo "{\"key\":\"codeql\",\"ok\":$ok}" > status-codeql.json
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: report-codeql
@@ -168,7 +168,7 @@ jobs:
           ok=true; case $rc in 125 | 126 | 127) ok=false ;; esac
           [ -s gitleaks.sarif ] || ok=false
           echo "{\"key\":\"gitleaks\",\"ok\":$ok,\"exit\":$rc}" > status-gitleaks.json
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: report-gitleaks
           path: |
@@ -202,7 +202,7 @@ jobs:
           set -e
           ok=true; case $rc in 125 | 126 | 127) ok=false ;; esac
           echo "{\"key\":\"trufflehog\",\"ok\":$ok,\"exit\":$rc}" > status-trufflehog.json
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: report-trufflehog
           path: |
@@ -232,7 +232,7 @@ jobs:
           ok=true; case $rc in 125 | 126 | 127) ok=false ;; esac
           [ -s osv.sarif ] || ok=false
           echo "{\"key\":\"osv\",\"ok\":$ok,\"exit\":$rc}" > status-osv.json
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: report-osv
           path: |
@@ -267,7 +267,7 @@ jobs:
           ok=true; case $rc in 125 | 126 | 127) ok=false ;; esac
           [ -s trivy.sarif ] || ok=false
           echo "{\"key\":\"trivy-fs\",\"ok\":$ok,\"exit\":$rc}" > status-trivy-fs.json
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: report-trivy-fs
           path: |
@@ -307,7 +307,7 @@ jobs:
           ok=true; case $rc in 125 | 126 | 127) ok=false ;; esac
           [ -s trivy-image.sarif ] || ok=false
           echo "{\"key\":\"trivy-image\",\"ok\":$ok,\"exit\":$rc}" > status-trivy-image.json
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: report-trivy-image
           path: |
@@ -342,7 +342,7 @@ jobs:
           ok=true; case $rc in 125 | 126 | 127) ok=false ;; esac
           [ -s sbom.cdx.json ] || ok=false
           echo "{\"key\":\"sbom\",\"ok\":$ok,\"exit\":$rc}" > status-sbom.json
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: report-sbom
           path: |
@@ -373,7 +373,7 @@ jobs:
           ok=true; case $rc in 125 | 126 | 127) ok=false ;; esac
           [ -s zizmor.sarif ] || ok=false
           echo "{\"key\":\"zizmor\",\"ok\":$ok,\"exit\":$rc}" > status-zizmor.json
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: report-zizmor
           path: |
@@ -421,7 +421,7 @@ jobs:
         with:
           sarif_file: scorecard.sarif
           category: scorecard
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: report-scorecard
@@ -469,7 +469,7 @@ jobs:
           GITHUB_RUN_ID: ${{ github.run_id }}
       - name: job summary
         run: cat security-report.md >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: security-report
           path: |
