@@ -21,7 +21,10 @@
     "type": "aura",
     "cooldownHours": 18,
     "range": 300,
-    "params": { "combatBonus": 0.1, "durationHours": 2 }
+    "params": {
+      "combatBonus": 0.1,
+      "durationHours": 2
+    }
   },
   "scan": {
     "name": "Разведка",
@@ -29,7 +32,9 @@
     "type": "reveal",
     "cooldownHours": 10,
     "range": 400,
-    "params": { "durationHours": 3 }
+    "params": {
+      "durationHours": 3
+    }
   },
   "recall": {
     "name": "Отзыв",
@@ -45,6 +50,25 @@
     "type": "aura",
     "cooldownHours": 20,
     "range": 300,
-    "params": { "defenseBonus": 0.15, "durationHours": 2 }
+    "params": {
+      "defenseBonus": 0.15,
+      "durationHours": 2
+    }
+  },
+  "boarding_translocation": {
+    "name": "Абордажная транслокация",
+    "description": "Герой формируется прямо на борту одного из своих флотов — где бы тот ни был. Пассивный навык: расширяет точки развёртывания.",
+    "type": "spawn_fleet",
+    "cooldownHours": 0,
+    "range": 0,
+    "params": {}
+  },
+  "diplomatic_landing": {
+    "name": "Дипломатическая высадка",
+    "description": "Союзные миры принимают героя как своего: корабль может подняться и на планете союзника. Пассивный навык: расширяет точки развёртывания.",
+    "type": "spawn_allied",
+    "cooldownHours": 0,
+    "range": 0,
+    "params": {}
   }
 }

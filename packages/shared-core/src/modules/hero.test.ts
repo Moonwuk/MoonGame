@@ -48,6 +48,9 @@ const data: GameData = parseGameData({
     annihilate: { name: 'Аннигиляция', type: 'annihilate', cooldownHours: 48, range: 500 },
     burst: { name: 'Burst', type: 'test_burst', cooldownHours: 10, cost: { metal: 50 } },
     ghost: { name: 'Ghost', type: 'unwired_type' },
+    // HERO-8 spawn-gate markers: carried (not cast) abilities widening hero.spawn.
+    boarding: { name: 'Boarding', type: 'spawn_fleet' },
+    landing: { name: 'Landing', type: 'spawn_allied' },
     warp: {
       name: 'Warp',
       type: 'temp_lane',
@@ -690,6 +693,47 @@ describe('hero — manual spawn (HERO-3)', () => {
     expect(
       errCode(kernel.applyAction(st, act('hero.spawn', 'p1', { heroId: SECOND }), ctx(0))),
     ).toBe('E_BAD_PAYLOAD');
+  });
+
+  it('HERO-8: the spawn_fleet marker lets the hero board an OWN fleet (and only an own one)', () => {
+    const st = rosterWorld();
+    st.fleets.raid = fleet('raid', 'p1', 'C'); // scout ×1, parked at p2's C
+    st.fleets.foe = fleet('foe', 'p2', 'C');
+    // Without the marker a fleet target is not a legal spawn class.
+    expect(errCode(kernel.applyAction(st, spawn(SECOND, 'raid'), ctx(0)))).toBe('E_BAD_SPAWN');
+    // With it the hero forms ABOARD: its ship joins the host's stack, the hero
+    // commands the host, and heroNode now reads the host's node.
+    st.heroes![SECOND]!.abilities = ['boarding'];
+    const r = okApply(kernel.applyAction(st, spawn(SECOND, 'raid'), ctx(0)));
+    const hero = r.state.heroes![SECOND]!;
+    expect(hero.fleetId).toBe('raid');
+    expect(hero.location).toBe('C');
+    expect(r.state.fleets.raid?.units).toEqual([
+      { unit: 'scout', count: 1 },
+      { unit: 'hero', count: 1 },
+    ]);
+    expect(r.events.some((e) => e.type === 'hero.spawned' && (e.payload as { aboard?: boolean }).aboard)).toBe(true);
+    // A foreign fleet stays off-limits even with the marker; an unknown id is E_NO_PLANET.
+    expect(errCode(kernel.applyAction(st, spawn(SECOND, 'foe'), ctx(0)))).toBe('E_BAD_SPAWN');
+    expect(errCode(kernel.applyAction(st, spawn(SECOND, 'nowhere'), ctx(0)))).toBe('E_NO_PLANET');
+  });
+
+  it('HERO-8: the spawn_allied marker opens ALLIED worlds — not neutral, not at-war', () => {
+    const st = rosterWorld();
+    st.heroes![SECOND]!.abilities = ['landing'];
+    // C belongs to p2; default stance is war → still E_BAD_SPAWN.
+    expect(errCode(kernel.applyAction(st, spawn(SECOND, 'C'), ctx(0)))).toBe('E_BAD_SPAWN');
+    // A committed alliance makes it a legal pad.
+    const allied = rosterWorld();
+    allied.heroes![SECOND]!.abilities = ['landing'];
+    allied.diplomacy = { 'p1|p2': 'alliance' };
+    const r = okApply(kernel.applyAction(allied, spawn(SECOND, 'C'), ctx(0)));
+    expect(r.state.heroes![SECOND]!.location).toBe('C');
+    expect(r.state.fleets[r.state.heroes![SECOND]!.fleetId!]?.location).toBe('C');
+    // Without the marker the alliance alone is not enough.
+    const bare = rosterWorld();
+    bare.diplomacy = { 'p1|p2': 'alliance' };
+    expect(errCode(kernel.applyAction(bare, spawn(SECOND, 'C'), ctx(0)))).toBe('E_BAD_SPAWN');
   });
 
   it('enforces the active cap of 3 — for the manual spawn AND the auto-respawn', () => {

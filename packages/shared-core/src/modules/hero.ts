@@ -2,8 +2,10 @@ import { hoursToMs } from '../action/types';
 import type { HeroAbilityDef, HeroPassiveDef } from '../data/schemas';
 import type { GameModule, HandlerContext } from '../kernel/module';
 import type { Fleet, GameState, Hero, PlanetId, PlayerId, TempLane } from '../state/gameState';
+import { getStance, stanceToRelation } from '../state/diplomacy';
 import { distance } from '../state/route';
 import { isCapturable } from '../state/sectorKind';
+import { addUnits } from '../util/stacks';
 import { canAfford, payCost } from '../util/treasury';
 
 /**
@@ -32,6 +34,9 @@ import { canAfford, payCost } from '../util/treasury';
  * gated by liveness (`E_HERO_ALIVE`), the respawn cooldown (`E_RESPAWN_COOLDOWN`),
  * spawn legality (`E_BAD_SPAWN`) and the per-player active cap of 3 (`E_HERO_CAP`);
  * the scheduled auto-respawn honors the same cap and shares the same deploy body.
+ * HERO-8: CARRYING an ability of type `spawn_allied` / `spawn_fleet` widens the legal
+ * targets to allied worlds (diplomacy `alliance`) / the player's own fleets (the hero
+ * boards the host, which then carries the hero aura).
  *
  * HERO-7 (docs/heroes.md) — the skill tree: `hero.skill.unlock {heroId, node}` unlocks
  * a `data.heroSkillTrees` node for a living, owned hero, gated by the node's `branch`
@@ -80,6 +85,12 @@ const HERO_RESPAWN_HOURS = 24;
 /** Max heroes a player may have DEPLOYED (commanding a live ship) at once —
  *  docs/heroes.md: «игрок может выставить до трёх одновременно». */
 const HERO_ACTIVE_CAP = 3;
+/** Ability TYPES that passively relax the `hero.spawn` target gate (HERO-8): a hero
+ *  CARRYING an ability of the type may form its ship aboard one of the player's own
+ *  fleets / at an allied world. Markers read by `hero.spawn`, not castable effects
+ *  (casting one still fail-secures to `E_NO_EFFECT`). */
+const SPAWN_FLEET_TYPE = 'spawn_fleet';
+const SPAWN_ALLIED_TYPE = 'spawn_allied';
 
 function heroOf(state: GameState, playerId: PlayerId): Hero | undefined {
   // Instance-keyed roster: find the player's hero by owner. (One per player today;
@@ -204,6 +215,23 @@ function activeHeroCount(state: GameState, owner: PlayerId): number {
   ).length;
 }
 
+/** The hull the hero's ship is made of: the archetype's `ship.unit`, else the default
+ *  projection `hero` unit (graceful when the archetype/data is absent). */
+function heroShipUnit(h: HandlerContext, hero: Hero): string {
+  return (
+    (hero.archetype !== undefined ? h.ctx.data.heroes[hero.archetype]?.ship.unit : undefined) ??
+    HERO_UNIT
+  );
+}
+
+/** Does the hero CARRY an ability of the given effect `type`? (HERO-8 marker check —
+ *  the ability relaxes a gate by being equipped, not by being cast.) */
+function carriesAbilityType(h: HandlerContext, hero: Hero, type: string): boolean {
+  return (hero.abilities ?? []).some(
+    (id) => typeof id === 'string' && h.ctx.data.heroAbilities[id]?.type === type,
+  );
+}
+
 /** Form the hero's ship at `at` — the single deploy path shared by the scheduled
  *  respawn and the manual `hero.spawn`: mint a one-ship fleet (unit resolved from the
  *  archetype's `ship.unit`, defaulting to the `hero` unit), link it, mark alive. */
@@ -211,15 +239,12 @@ function formHeroShip(h: HandlerContext, hero: Hero, at: PlanetId): string {
   const seq = (h.state.heroSeq ?? 0) + 1;
   h.state.heroSeq = seq;
   const fleetId = `hero:${hero.owner}:${seq}`;
-  const unit =
-    (hero.archetype !== undefined ? h.ctx.data.heroes[hero.archetype]?.ship.unit : undefined) ??
-    HERO_UNIT;
   const newFleet: Fleet = {
     id: fleetId,
     owner: hero.owner,
     location: at,
     movement: null,
-    units: [{ unit, count: 1 }],
+    units: [{ unit: heroShipUnit(h, hero), count: 1 }],
     traits: [],
     orbit: 'near',
   };
@@ -228,6 +253,16 @@ function formHeroShip(h: HandlerContext, hero: Hero, at: PlanetId): string {
   hero.location = at;
   hero.fleetId = fleetId;
   return fleetId;
+}
+
+/** Board the hero onto an existing fleet (HERO-8 `spawn_fleet`): its ship joins the
+ *  host's stack (the whole fleet then enjoys the hero aura), the hero commands the
+ *  host. Mid-flight hosts keep the hero's node memory unchanged. */
+function boardHeroShip(h: HandlerContext, hero: Hero, host: Fleet): void {
+  addUnits(host.units, heroShipUnit(h, hero), 1);
+  hero.alive = true;
+  if (typeof host.location === 'string') hero.location = host.location;
+  hero.fleetId = host.id;
 }
 
 /** Put a living hero into the dead/respawning state — the single death path shared by
@@ -600,14 +635,40 @@ export const heroModule: GameModule = {
         return h.reject('E_HERO_ALIVE');
       }
       if (onCooldown(hero, 'respawn', h.ctx.now)) return h.reject('E_RESPAWN_COOLDOWN');
+      // Target resolution: a world (own; allied with the `spawn_allied` marker) or —
+      // with the `spawn_fleet` marker (HERO-8) — one of the player's own fleets.
       const planet = h.state.planets[at];
-      if (!planet) return h.reject('E_NO_PLANET');
-      if (planet.owner !== action.playerId) return h.reject('E_BAD_SPAWN'); // own worlds only
+      const host = planet === undefined ? h.state.fleets[at] : undefined;
+      if (!planet && !host) return h.reject('E_NO_PLANET');
+      if (planet) {
+        const own = planet.owner === action.playerId;
+        const allied =
+          !own &&
+          planet.owner !== null &&
+          carriesAbilityType(h, hero, SPAWN_ALLIED_TYPE) &&
+          stanceToRelation(getStance(h.state, action.playerId, planet.owner)) === 'ally';
+        if (!own && !allied) return h.reject('E_BAD_SPAWN');
+      } else if (host) {
+        if (host.owner !== action.playerId || !carriesAbilityType(h, hero, SPAWN_FLEET_TYPE)) {
+          return h.reject('E_BAD_SPAWN');
+        }
+      }
       if (activeHeroCount(h.state, action.playerId) >= HERO_ACTIVE_CAP) {
         return h.reject('E_HERO_CAP');
       }
-      const fleetId = formHeroShip(h, hero, at);
-      h.emit('hero.spawned', { owner: action.playerId, heroId, fleetId, at });
+      if (planet) {
+        const fleetId = formHeroShip(h, hero, at);
+        h.emit('hero.spawned', { owner: action.playerId, heroId, fleetId, at });
+      } else if (host) {
+        boardHeroShip(h, hero, host);
+        h.emit('hero.spawned', {
+          owner: action.playerId,
+          heroId,
+          fleetId: host.id,
+          at: hero.location,
+          aboard: true,
+        });
+      }
     });
 
     // HERO-7 — unlock a skill-tree node. The tree is pure data: branch/requires/cost

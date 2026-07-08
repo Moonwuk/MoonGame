@@ -6,7 +6,7 @@
 > `deep-technical-roadmap.md`, `multiplayer.md`, `metagame.md`, `map-roadmap.md`, `security-a06.md` (модель угроз/A06), корневой `CLAUDE.md` / `CONTRIBUTING.md`.
 >
 > **Ветка:** feature-ветка · **PR:** создаётся после изменений.
-> **Гейт:** `pnpm run check` (lint + typecheck + test). **Тесты: 1068 зелёных** (4 skip, 105 файлов).
+> **Гейт:** `pnpm run check` (lint + typecheck + test). **Тесты: 1070 зелёных** (4 skip, 105 файлов).
 
 ---
 
@@ -552,7 +552,12 @@ E_NOT_DESTRUCTIBLE, E_OUT_OF_RANGE, E_COOLDOWN`.
   деплой-путь `formHeroShip` с авто-респауном; **авто-респаун уважает тот же кэп**
   (переполнен — герой остаётся мёртв). Ручной спавн — путь спасения: бездомно-мёртвый
   или удержанный кэпом герой поднимается вручную, когда мир/слот появился. Событие
-  `hero.spawned` (авто-путь по-прежнему `hero.respawned`).
+  `hero.spawned` (авто-путь по-прежнему `hero.respawned`). **HERO-8:** ноская способность
+  маркер-типа `spawn_fleet`/`spawn_allied` (не кастуемая — «носится» в `Hero.abilities`)
+  расширяет цели спавна: **свой флот** (герой абордажится в стек хоста — `addUnits`, аура
+  кроет весь флот, `fleetId`→хост, событие с `aboard: true`; чужой флот — `E_BAD_SPAWN`)
+  и **союзный мир** (D1-дипломатия, только `alliance`; нейтрал/война — `E_BAD_SPAWN`).
+  Шипованы «Абордажная транслокация» (ravager) и «Дипломатическая высадка» (commander).
 - Действие **`hero.skill.unlock {heroId, node}`** (HERO-7) — прокачка дерева навыков из
   `data/heroSkillTrees.json` (`HeroSkillNode {branch?, requires[], cost, grants
   {ability?|passive?}}`, ветки `transhuman|psionic`). Гейты: владение/живость →

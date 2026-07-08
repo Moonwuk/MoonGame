@@ -11,7 +11,8 @@
       "corridor",
       "rally",
       "scan",
-      "bulwark"
+      "bulwark",
+      "diplomatic_landing"
     ],
     "startPassives": [
       "rally_beacon"
@@ -28,7 +29,8 @@
     "startAbilities": [
       "annihilate",
       "scan",
-      "recall"
+      "recall",
+      "boarding_translocation"
     ],
     "startPassives": []
   },
