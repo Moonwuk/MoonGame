@@ -48,6 +48,7 @@ export const actionPayloadSchemas: Record<string, z.ZodType> = {
   'hero.move': z.object({ to: id }),
   'hero.path.create': z.object({ to: id }),
   'planet.annihilate': z.object({ planetId: id }),
+  'hero.ability': z.object({ heroId: id, abilityId: id, target: id.optional() }),
   // station.ts
   'station.deploy': z.object({ planetId: id }),
   // construction.ts

@@ -16,6 +16,7 @@ const CLIENT_ACTION_TYPES = [
   'army.unload',
   'hero.move',
   'hero.path.create',
+  'hero.ability',
   'planet.annihilate',
   'station.deploy',
   'building.construct',
@@ -54,6 +55,8 @@ describe('SV-1.2 · action payload schemas', () => {
       ['army.unload', { fleetId: 'f1', unit: 'marine', count: 3 }],
       ['hero.move', { to: 'p1' }],
       ['hero.path.create', { to: 'p1' }],
+      ['hero.ability', { heroId: 'hero:p1', abilityId: 'corridor', target: 'p2' }],
+      ['hero.ability', { heroId: 'hero:p1', abilityId: 'recall' }], // untargeted cast
       ['planet.annihilate', { planetId: 'p1' }],
       ['station.deploy', { planetId: 'p1' }],
       ['building.construct', { planetId: 'p1', building: 'radar' }],
@@ -94,6 +97,8 @@ describe('SV-1.2 · action payload schemas', () => {
       ['technology.research', {}], // missing technology
       ['station.deploy', { planetId: '' }], // empty id
       ['hero.move', { to: null }], // wrong type
+      ['hero.ability', { heroId: 'hero:p1' }], // missing abilityId
+      ['hero.ability', { heroId: 'hero:p1', abilityId: 'corridor', target: 7 }], // target not an id
       ['diplomacy.declare', { target: 'p2', stance: 'frenemy' }], // not a known stance
       ['diplomacy.declare', { target: 'p2' }], // missing stance
       ['diplomacy.declare', { stance: 'war' }], // missing target

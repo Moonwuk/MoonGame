@@ -1,8 +1,10 @@
 import { hoursToMs } from '../action/types';
+import type { HeroAbilityDef } from '../data/schemas';
 import type { GameModule, HandlerContext } from '../kernel/module';
 import type { Fleet, GameState, Hero, PlanetId, PlayerId, TempLane } from '../state/gameState';
 import { distance } from '../state/route';
 import { isCapturable } from '../state/sectorKind';
+import { canAfford, payCost } from '../util/treasury';
 
 /**
  * Hero — a per-player entity (one hero each) with a position on the map and ability
@@ -18,6 +20,17 @@ import { isCapturable } from '../state/sectorKind';
  *     (you can still fly through) but its `kind`/`planetType` flip to an uncapturable
  *     `dead_world`, garrison + buildings are gone, ownership drops. Victory recomputes
  *     automatically (lost score + one fewer ownable world).
+ *
+ * HERO-4 (docs/heroes.md) adds the generic, data-driven dispatcher on top:
+ *
+ *   - `hero.ability {heroId, abilityId, target?}` — cast an ability the hero carries
+ *     (`Hero.abilities`) out of the `data.heroAbilities` catalog. The module validates
+ *     ownership / liveness / equipment / cooldown / range / cost generically from the
+ *     `HeroAbilityDef`, then dispatches on its `type`: the built-in `temp_lane` /
+ *     `annihilate` effects (the two legacy actions above run the SAME effect bodies),
+ *     or the capability `hero.effect.<type>` for exotic types plugged in by another
+ *     module. Unknown type with no capability → `E_NO_EFFECT` (fail-secure: data may
+ *     promise only what some engine piece implements).
  *
  * State lives in `GameState.heroes` / `tempLanes` (JSON, deterministic); durations go
  * through `schedule`; the speed bonus through the `fleet.speed` hook. No kernel change.
@@ -80,6 +93,89 @@ function removeLink(state: GameState, a: PlanetId, b: PlanetId): void {
   if (pa?.links) pa.links = pa.links.filter((x) => x !== b);
 }
 
+/** Arguments handed to a custom ability effect (capability `hero.effect.<type>`). */
+export interface HeroEffectArgs {
+  heroId: string;
+  hero: Hero;
+  abilityId: string;
+  ability: HeroAbilityDef;
+  owner: PlayerId;
+  target?: string;
+}
+/** A custom ability effect plugged in by another module as `hero.effect.<type>`.
+ *  Runs after the generic gates (ownership/liveness/equipment/cooldown/range/cost)
+ *  have passed; it must `h.reject(code)` on any failure of its own (fail-secure —
+ *  a plain return means success and commits cost + cooldown). */
+export type HeroEffect = (args: HeroEffectArgs, h: HandlerContext) => void;
+
+/** A numeric knob out of an ability's free-form `params`, with an engine fallback. */
+function numParam(params: Record<string, unknown>, key: string, fallback: number): number {
+  const v = params[key];
+  return typeof v === 'number' && Number.isFinite(v) ? v : fallback;
+}
+
+/** Cooldown-ledger key for an ability. Built-in types share the legacy actions' keys
+ *  (`path` / `annihilate`) so the generic and legacy routes can never be combined to
+ *  double-fire the same effect; a custom type cools down per ability id. */
+function cooldownKey(type: string, abilityId: string): string {
+  if (type === 'temp_lane') return 'path';
+  if (type === 'annihilate') return 'annihilate';
+  return abilityId;
+}
+
+/** The temp-lane effect body (shared by `hero.path.create` and `hero.ability`):
+ *  link both ways, record the lane, schedule expiry, emit. Rejects on a
+ *  same-location or unknown-node target; range/cooldown gates belong to callers. */
+function castTempLane(
+  h: HandlerContext,
+  playerId: PlayerId,
+  hero: Hero,
+  to: PlanetId,
+  opts: { durationHours: number; speedBonus: number },
+): void {
+  const from = hero.location;
+  if (to === from) return h.reject('E_SAME_LOCATION');
+  if (!h.state.planets[from] || !h.state.planets[to]) return h.reject('E_NO_PLANET');
+  const addedLink = addLink(h.state, from, to);
+  addLink(h.state, to, from);
+  h.state.topology = (h.state.topology ?? 0) + 1; // invalidate the route cache
+  const seq = (h.state.heroSeq ?? 0) + 1;
+  h.state.heroSeq = seq;
+  const expiresAt = after(h, opts.durationHours);
+  const lane: TempLane = {
+    id: `lane:${seq}`,
+    owner: playerId,
+    from,
+    to,
+    speedBonus: opts.speedBonus,
+    expiresAt,
+    addedLink,
+  };
+  (h.state.tempLanes ??= []).push(lane);
+  h.schedule(expiresAt, 'hero.path.expire', { laneId: lane.id });
+  h.emit('hero.path.created', { owner: playerId, from, to, laneId: lane.id });
+}
+
+/** The annihilation effect body (shared by `planet.annihilate` and `hero.ability`):
+ *  flip the world to a neutral dead world and emit. Rejects unknown / undestructible
+ *  targets; range/cooldown gates belong to callers. */
+function castAnnihilate(h: HandlerContext, playerId: PlayerId, planetId: PlanetId): void {
+  const planet = h.state.planets[planetId];
+  if (!planet) return h.reject('E_NO_PLANET');
+  // Destructible = a real, ownable world that isn't already a dead world. Empty
+  // space (uncapturable) and a previously-annihilated dead world are both rejected.
+  if (!isCapturable(h.ctx.data, planet) || planet.kind === DEAD_KIND) {
+    return h.reject('E_NOT_DESTRUCTIBLE');
+  }
+  const previousOwner = planet.owner;
+  planet.owner = null; // neutral again — a depleted world anyone can re-claim
+  planet.buildings = [];
+  planet.garrison = [];
+  planet.kind = DEAD_KIND; // capturable + buildable, but worth only the flat 10
+  planet.planetType = DEAD_PLANET_TYPE; // no defense edge, but rich in metal (+30%)
+  h.emit('planet.destroyed', { planetId, by: playerId, from: previousOwner });
+}
+
 export const heroModule: GameModule = {
   id: 'hero',
   version: '1.0.0',
@@ -109,26 +205,12 @@ export const heroModule: GameModule = {
       if (distance(a.position, b.position) > PATH_RANGE) return h.reject('E_OUT_OF_RANGE');
       if (onCooldown(hero, 'path', h.ctx.now)) return h.reject('E_COOLDOWN');
 
-      const addedLink = addLink(h.state, from, to);
-      addLink(h.state, to, from);
-      h.state.topology = (h.state.topology ?? 0) + 1; // invalidate the route cache
-      const seq = (h.state.heroSeq ?? 0) + 1;
-      h.state.heroSeq = seq;
-      const expiresAt = after(h, PATH_DURATION_HOURS);
-      const lane: TempLane = {
-        id: `lane:${seq}`,
-        owner: action.playerId,
-        from,
-        to,
+      castTempLane(h, action.playerId, hero, to, {
+        durationHours: PATH_DURATION_HOURS,
         speedBonus: PATH_SPEED_BONUS,
-        expiresAt,
-        addedLink,
-      };
-      (h.state.tempLanes ??= []).push(lane);
+      });
       hero.cooldowns = hero.cooldowns ?? {};
       hero.cooldowns.path = after(h, PATH_COOLDOWN_HOURS);
-      h.schedule(expiresAt, 'hero.path.expire', { laneId: lane.id });
-      h.emit('hero.path.created', { owner: action.playerId, from, to, laneId: lane.id });
     });
 
     api.on('hero.path.expire', (event, h) => {
@@ -158,8 +240,6 @@ export const heroModule: GameModule = {
       if (!hero) return h.reject('E_NO_HERO');
       const planet = h.state.planets[planetId];
       if (!planet) return h.reject('E_NO_PLANET');
-      // Destructible = a real, ownable world that isn't already a dead world. Empty
-      // space (uncapturable) and a previously-annihilated dead world are both rejected.
       if (!isCapturable(h.ctx.data, planet) || planet.kind === DEAD_KIND) {
         return h.reject('E_NOT_DESTRUCTIBLE');
       }
@@ -170,15 +250,75 @@ export const heroModule: GameModule = {
       }
       if (onCooldown(hero, 'annihilate', h.ctx.now)) return h.reject('E_COOLDOWN');
 
-      const previousOwner = planet.owner;
-      planet.owner = null; // neutral again — a depleted world anyone can re-claim
-      planet.buildings = [];
-      planet.garrison = [];
-      planet.kind = DEAD_KIND; // capturable + buildable, but worth only the flat 10
-      planet.planetType = DEAD_PLANET_TYPE; // no defense edge, but rich in metal (+30%)
+      castAnnihilate(h, action.playerId, planetId);
       hero.cooldowns = hero.cooldowns ?? {};
       hero.cooldowns.annihilate = after(h, ANNIHILATE_COOLDOWN_HOURS);
-      h.emit('planet.destroyed', { planetId, by: action.playerId, from: previousOwner });
+    });
+
+    // HERO-4 — the generic, data-driven ability dispatcher. Every gate is derived
+    // from the `HeroAbilityDef`; the effect is picked by its `type` (built-in or a
+    // `hero.effect.<type>` capability). Cost + cooldown commit only on success —
+    // an effect rejection throws, and the kernel discards the whole draft.
+    api.onAction('hero.ability', (action, h) => {
+      const { heroId, abilityId, target } = action.payload as {
+        heroId?: string;
+        abilityId?: string;
+        target?: string;
+      };
+      if (typeof heroId !== 'string' || typeof abilityId !== 'string') {
+        return h.reject('E_BAD_PAYLOAD');
+      }
+      if (target !== undefined && typeof target !== 'string') return h.reject('E_BAD_PAYLOAD');
+      const hero = h.state.heroes?.[heroId];
+      if (!hero) return h.reject('E_NO_HERO');
+      if (hero.owner !== action.playerId) return h.reject('E_FORBIDDEN');
+      if (hero.alive === false) return h.reject('E_HERO_DEAD');
+      const def = h.ctx.data.heroAbilities[abilityId];
+      if (!def) return h.reject('E_NO_ABILITY');
+      // The hero must actually carry the ability in a slot (its data-driven loadout).
+      if (!(hero.abilities ?? []).includes(abilityId)) return h.reject('E_NOT_EQUIPPED');
+      const key = cooldownKey(def.type, abilityId);
+      if (onCooldown(hero, key, h.ctx.now)) return h.reject('E_COOLDOWN');
+      if (def.range > 0) {
+        if (typeof target !== 'string') return h.reject('E_BAD_PAYLOAD'); // ranged ⇒ targeted
+        const origin = h.state.planets[hero.location];
+        const dest = h.state.planets[target];
+        if (!origin || !dest) return h.reject('E_NO_PLANET');
+        if (distance(origin.position, dest.position) > def.range) {
+          return h.reject('E_OUT_OF_RANGE');
+        }
+      }
+      const player = h.state.players[action.playerId];
+      if (!player) return h.reject('E_NO_PLAYER');
+      if (!canAfford(player.resources, def.cost)) return h.reject('E_INSUFFICIENT');
+      payCost(player.resources, def.cost); // draft — a later reject discards everything
+
+      if (def.type === 'temp_lane') {
+        if (typeof target !== 'string') return h.reject('E_BAD_PAYLOAD');
+        castTempLane(h, action.playerId, hero, target, {
+          durationHours: numParam(def.params, 'durationHours', PATH_DURATION_HOURS),
+          speedBonus: numParam(def.params, 'speedBonus', PATH_SPEED_BONUS),
+        });
+      } else if (def.type === 'annihilate') {
+        if (typeof target !== 'string') return h.reject('E_BAD_PAYLOAD');
+        castAnnihilate(h, action.playerId, target);
+      } else {
+        const impl = h.capability<HeroEffect>(`hero.effect.${def.type}`);
+        if (!impl) return h.reject('E_NO_EFFECT'); // typed in data, absent in the engine
+        impl({ heroId, hero, abilityId, ability: def, owner: action.playerId, target }, h);
+      }
+
+      if (def.cooldownHours > 0) {
+        hero.cooldowns = hero.cooldowns ?? {};
+        hero.cooldowns[key] = after(h, def.cooldownHours);
+      }
+      h.emit('hero.ability.used', {
+        heroId,
+        owner: action.playerId,
+        abilityId,
+        type: def.type,
+        ...(target !== undefined ? { target } : {}),
+      });
     });
 
     // Speed bonus on a leg that runs along one of the fleet owner's active temp lanes.

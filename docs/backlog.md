@@ -314,15 +314,22 @@
   миграция `location`→флот, `on('fleet.destroyed')` → `hero.died` + `respawnAt`. Тесты.
 - **HERO-3** 🔒(HERO-2) `hero.spawn {heroId, at}` — спавн на своём мире, кэп **3/игрок**,
   респаун-кулдаун. Коды `E_HERO_ALIVE/E_RESPAWN_COOLDOWN/E_HERO_CAP/...`. Тесты.
-- **HERO-4** ⏳ _(HERO-1 ✅ — замок снят)_ Обобщённый `hero.ability {heroId, abilityId, target}` + диспетчер по
-  `type` (+ `capability hero.effect.<type>`); `path.create`/`annihilate` → типы-эффекты в данных. Тесты.
+- **HERO-4** ✅ Обобщённый `hero.ability {heroId, abilityId, target?}`: генерические гейты из
+  `HeroAbilityDef` (владение/живость/экипировка `Hero.abilities`/кулдаун/дальность/стоимость;
+  `E_HERO_DEAD/E_NO_ABILITY/E_NOT_EQUIPPED/E_NO_EFFECT` + существующие коды) + диспетчер по
+  `type`: встроенные `temp_lane`/`annihilate` (общие тела эффектов `castTempLane`/`castAnnihilate`
+  с legacy-действиями `path.create`/`annihilate`, поведение которых сохранено 1:1) или
+  `capability hero.effect.<type>` (контракт `HeroEffect`, экспортирован); неизвестный тип без
+  capability → `E_NO_EFFECT` (fail-secure). Кулдаун-ключи встроенных типов делятся с legacy
+  (`path`/`annihilate`) — анти-double-dip; кастомные — по `abilityId`. `params`-оверрайды
+  (`durationHours`/`speedBonus`) из данных. Payload-схема `hero.ability` в гейте (SV-1.2). 6 тестов.
 - **HERO-5** ⏳ _(HERO-1 ✅ — замок снят)_ Пассивки из данных → хуки (`fleet.speed`/`combat.damage`) с `scope`
   (баф усиления флота). `data/heroPassives.json`. Тесты.
 - **HERO-6** 🔒(HERO-2) Фитинги корабля: `data/heroFittings.json` + `hero.fit` (слоты,
   модификаторы статов / выдаёт способность). Тесты.
-- **HERO-7** 🔒(HERO-4) Дерево навыков: `data/heroSkillTrees.json` (ветки **transhuman**/
+- **HERO-7** ⏳ _(HERO-4 ✅ — замок снят)_ Дерево навыков: `data/heroSkillTrees.json` (ветки **transhuman**/
   **psionic**) + `hero.skill.unlock` (валидация `requires`/ветки); бонусы к способностям/статам. Тесты.
-- **HERO-8** 🔒(HERO-4) Способность спавна **на флоте / у союзника** (тип-эффект,
+- **HERO-8** 🔒(HERO-2,HERO-3 — spawn; HERO-4 ✅) Способность спавна **на флоте / у союзника** (тип-эффект,
   ослабляет проверку `at` в `hero.spawn`; союзник — через будущую `MatchRoom.areAllied`/дипломатию D1). Тесты.
 - **HERO-9** 🔒(HERO-3) Ростер: пред-матч выбор до 3 героев (config, как фракция/тех C3) +
   сборка старта. Тесты. _(зависит от open-question «ростер» в `heroes.md`)_
