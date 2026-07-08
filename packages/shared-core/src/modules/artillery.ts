@@ -88,6 +88,7 @@ function pickBarrageTarget(
   from: { x: number; y: number },
   range: number,
   mode: BarrageMode,
+  ids: readonly string[],
 ): Fleet | null {
   const inRange = (f: Fleet): boolean => {
     if (f.id === shooter.id || !targetableBy(h, shooter.owner, f, mode)) return false;
@@ -114,8 +115,10 @@ function pickBarrageTarget(
   }
   let best: Fleet | null = null;
   let bestDist = Infinity;
-  // Sorted ids ⇒ deterministic; the first at the minimal distance wins ties.
-  for (const id of Object.keys(h.state.fleets).sort()) {
+  // Sorted ids ⇒ deterministic; the first at the minimal distance wins ties. The
+  // caller passes pass-1's sorted snapshot (the fleet KEY set is stable until
+  // pass 2) — re-sorting per shooter would be O(S·F log F) per span.
+  for (const id of ids) {
     const f = h.state.fleets[id];
     if (!f || !inRange(f)) continue;
     const d = distance(from, fleetPosition(h.state, f, h.ctx.now)!);
@@ -151,7 +154,8 @@ function runArtillery(h: HandlerContext, hours: number): void {
   // Pass 1 — resolve every shot from the PRE-span state (no damage applied yet).
   const shots: { shooterId: string; owner: string; targetId: string; dmg: number; at: string }[] =
     [];
-  for (const id of Object.keys(h.state.fleets).sort()) {
+  const ids = Object.keys(h.state.fleets).sort();
+  for (const id of ids) {
     const shooter = h.state.fleets[id];
     if (!shooter || shooter.battleId || shooter.movement) continue; // pinned in melee / maneuvering
     // Rules of engagement: hold fire when passive, or when `return` and not yet hit.
@@ -163,7 +167,7 @@ function runArtillery(h: HandlerContext, hours: number): void {
     if (range <= 0 || power <= 0) continue;
     const from = fleetPosition(h.state, shooter, h.ctx.now);
     if (!from) continue;
-    const target = pickBarrageTarget(h, shooter, from, range, mode);
+    const target = pickBarrageTarget(h, shooter, from, range, mode, ids);
     if (!target) continue;
     shots.push({
       shooterId: id,

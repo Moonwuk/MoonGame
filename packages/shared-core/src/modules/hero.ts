@@ -1,7 +1,15 @@
 import { hoursToMs } from '../action/types';
 import type { HeroAbilityDef, HeroPassiveDef } from '../data/schemas';
 import type { GameModule, HandlerContext } from '../kernel/module';
-import type { Fleet, GameState, Hero, PlanetId, PlayerId, TempLane } from '../state/gameState';
+import type {
+  Fleet,
+  GameState,
+  Hero,
+  PlanetId,
+  PlayerId,
+  ResourceBag,
+  TempLane,
+} from '../state/gameState';
 import { getStance, stanceToRelation } from '../state/diplomacy';
 import { distance } from '../state/route';
 import { isCapturable } from '../state/sectorKind';
@@ -104,9 +112,12 @@ function heroOf(state: GameState, playerId: PlayerId): Hero | undefined {
   return Object.values(state.heroes ?? {}).find((hero) => hero.owner === playerId);
 }
 
-/** The hero commanding this fleet (its ship), if any. Insertion-order stable. */
+/** The hero commanding this fleet (its ship), if any. Insertion-order stable. The
+ *  undefined guard keeps the hero-less common case allocation-free — this runs on
+ *  every fleet.transit/arrived and both death signals. */
 function heroByFleet(state: GameState, fleetId: string): Hero | undefined {
-  return Object.values(state.heroes ?? {}).find((hero) => hero.fleetId === fleetId);
+  if (state.heroes === undefined) return undefined;
+  return Object.values(state.heroes).find((hero) => hero.fleetId === fleetId);
 }
 
 /** The node a hero acts from (HERO-2 — the hero's position IS its ship): the fleet's
@@ -197,8 +208,9 @@ function passiveBonus(
   owner: PlayerId,
   args: { fleetId?: string; node?: PlanetId },
 ): number {
+  if (h.state.heroes === undefined) return 0; // hero-less match: keep the hot hooks free
   let total = 0;
-  for (const hero of Object.values(h.state.heroes ?? {})) {
+  for (const hero of Object.values(h.state.heroes)) {
     if (hero.owner !== owner || hero.alive === false) continue;
     for (const id of hero.passives ?? []) {
       const def = h.ctx.data.heroPassives[id];
@@ -269,6 +281,16 @@ function boardHeroShip(h: HandlerContext, hero: Hero, host: Fleet): void {
   hero.alive = true;
   if (typeof host.location === 'string') hero.location = host.location;
   hero.fleetId = host.id;
+}
+
+/** Charge `cost` to the player's treasury or reject — the shared terminal gate of every
+ *  priced hero action (`hero.ability` / `hero.skill.unlock` / `hero.fit`). Charges the
+ *  DRAFT, so a later reject in the same handler still discards the payment. */
+function chargeOrReject(h: HandlerContext, playerId: PlayerId, cost: ResourceBag): void {
+  const player = h.state.players[playerId];
+  if (!player) return h.reject('E_NO_PLAYER');
+  if (!canAfford(player.resources, cost)) return h.reject('E_INSUFFICIENT');
+  payCost(player.resources, cost);
 }
 
 /** Extend the hero's instance loadout with a grant (shared by skill nodes, HERO-7, and
@@ -497,10 +519,7 @@ export const heroModule: GameModule = {
           return h.reject('E_OUT_OF_RANGE');
         }
       }
-      const player = h.state.players[action.playerId];
-      if (!player) return h.reject('E_NO_PLAYER');
-      if (!canAfford(player.resources, def.cost)) return h.reject('E_INSUFFICIENT');
-      payCost(player.resources, def.cost); // draft — a later reject discards everything
+      chargeOrReject(h, action.playerId, def.cost); // draft — a later reject discards everything
 
       if (def.type === 'temp_lane') {
         if (typeof target !== 'string') return h.reject('E_BAD_PAYLOAD');
@@ -713,10 +732,7 @@ export const heroModule: GameModule = {
       if (!def.requires.every((parent) => skills.includes(parent))) {
         return h.reject('E_REQUIRES');
       }
-      const player = h.state.players[action.playerId];
-      if (!player) return h.reject('E_NO_PLAYER');
-      if (!canAfford(player.resources, def.cost)) return h.reject('E_INSUFFICIENT');
-      payCost(player.resources, def.cost);
+      chargeOrReject(h, action.playerId, def.cost);
 
       hero.skills = [...skills, node];
       applyGrants(hero, def.grants);
@@ -742,10 +758,7 @@ export const heroModule: GameModule = {
       const slots =
         hero.archetype !== undefined ? (h.ctx.data.heroes[hero.archetype]?.slots ?? 0) : 0;
       if (fitted.length >= slots) return h.reject('E_NO_SLOTS');
-      const player = h.state.players[action.playerId];
-      if (!player) return h.reject('E_NO_PLAYER');
-      if (!canAfford(player.resources, def.cost)) return h.reject('E_INSUFFICIENT');
-      payCost(player.resources, def.cost);
+      chargeOrReject(h, action.playerId, def.cost);
 
       hero.fittings = [...fitted, fitting];
       applyGrants(hero, def.grants);

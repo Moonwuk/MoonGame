@@ -58,7 +58,3 @@ export function allowedBuildings(
   return sectorKindDef(data, planet).allowedBuildings;
 }
 
-/** Map appearance (color / label / shape) of this province type; neutral default if absent. */
-export function sectorAppearance(data: GameData, planet: Pick<Planet, 'kind'>): SectorKindAppearance {
-  return sectorKindDef(data, planet).appearance;
-}
