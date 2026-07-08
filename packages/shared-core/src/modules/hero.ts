@@ -27,6 +27,12 @@ import { canAfford, payCost } from '../util/treasury';
  * mid-flight + respawn anchor), `hero.move` is rejected (`E_HERO_DEPLOYED` — move the
  * fleet instead), and `fleet.destroyed` is a death signal alongside `unit.died`.
  *
+ * HERO-3 (docs/heroes.md) — manual deploy: `hero.spawn {heroId, at}` raises the hero's
+ * ship at an OWNED world (unit from the archetype's `ship.unit`, default `hero`),
+ * gated by liveness (`E_HERO_ALIVE`), the respawn cooldown (`E_RESPAWN_COOLDOWN`),
+ * spawn legality (`E_BAD_SPAWN`) and the per-player active cap of 3 (`E_HERO_CAP`);
+ * the scheduled auto-respawn honors the same cap and shares the same deploy body.
+ *
  * HERO-4 (docs/heroes.md) adds the generic, data-driven dispatcher on top:
  *
  *   - `hero.ability {heroId, abilityId, target?}` — cast an ability the hero carries
@@ -65,6 +71,9 @@ const HERO_UNIT = 'hero';
 const HERO_COMBAT_BONUS = 0.05;
 /** Game-hours before a slain projection hero respawns at its home world. */
 const HERO_RESPAWN_HOURS = 24;
+/** Max heroes a player may have DEPLOYED (commanding a live ship) at once —
+ *  docs/heroes.md: «игрок может выставить до трёх одновременно». */
+const HERO_ACTIVE_CAP = 3;
 
 function heroOf(state: GameState, playerId: PlayerId): Hero | undefined {
   // Instance-keyed roster: find the player's hero by owner. (One per player today;
@@ -175,6 +184,44 @@ function passiveBonus(
     }
   }
   return total;
+}
+
+/** How many of `owner`'s heroes currently command a live ship (the HERO_ACTIVE_CAP
+ *  ledger). A stale `fleetId` (ship already gone) does not count. */
+function activeHeroCount(state: GameState, owner: PlayerId): number {
+  return Object.values(state.heroes ?? {}).filter(
+    (x) =>
+      x.owner === owner &&
+      x.alive !== false &&
+      x.fleetId !== undefined &&
+      state.fleets[x.fleetId] !== undefined,
+  ).length;
+}
+
+/** Form the hero's ship at `at` — the single deploy path shared by the scheduled
+ *  respawn and the manual `hero.spawn`: mint a one-ship fleet (unit resolved from the
+ *  archetype's `ship.unit`, defaulting to the `hero` unit), link it, mark alive. */
+function formHeroShip(h: HandlerContext, hero: Hero, at: PlanetId): string {
+  const seq = (h.state.heroSeq ?? 0) + 1;
+  h.state.heroSeq = seq;
+  const fleetId = `hero:${hero.owner}:${seq}`;
+  const unit =
+    (hero.archetype !== undefined ? h.ctx.data.heroes[hero.archetype]?.ship.unit : undefined) ??
+    HERO_UNIT;
+  const newFleet: Fleet = {
+    id: fleetId,
+    owner: hero.owner,
+    location: at,
+    movement: null,
+    units: [{ unit, count: 1 }],
+    traits: [],
+    orbit: 'near',
+  };
+  h.state.fleets[fleetId] = newFleet;
+  hero.alive = true;
+  hero.location = at;
+  hero.fleetId = fleetId;
+  return fleetId;
 }
 
 /** Put a living hero into the dead/respawning state — the single death path shared by
@@ -511,14 +558,16 @@ export const heroModule: GameModule = {
     api.on('fleet.arrived', followShip);
 
     // Respawn: the hero re-forms as a fresh one-ship fleet at its capital (`home`) if
-    // still held, else its last node, else any world the player holds. Homeless ⇒ stays
-    // dead (likely being eliminated).
+    // still held, else its last node, else any world the player holds. Homeless — or
+    // held back by the active cap (HERO-3) — ⇒ stays dead; the manual `hero.spawn`
+    // below is the player's retry path once a world / cap slot frees up.
     api.on('hero.respawn', (event, h) => {
       const { heroId } = (event.payload ?? {}) as { heroId?: string };
       if (typeof heroId !== 'string') return;
       const hero = h.state.heroes?.[heroId];
       if (!hero || hero.alive) return;
       const owner = hero.owner;
+      if (activeHeroCount(h.state, owner) >= HERO_ACTIVE_CAP) return;
       const owned = (id: PlanetId | undefined): id is PlanetId =>
         id !== undefined && h.state.planets[id]?.owner === owner;
       const at =
@@ -527,23 +576,32 @@ export const heroModule: GameModule = {
           .sort()
           .find((id) => h.state.planets[id]?.owner === owner);
       if (at === undefined) return;
-      const seq = (h.state.heroSeq ?? 0) + 1;
-      h.state.heroSeq = seq;
-      const fleetId = `hero:${owner}:${seq}`;
-      const newFleet: Fleet = {
-        id: fleetId,
-        owner,
-        location: at,
-        movement: null,
-        units: [{ unit: HERO_UNIT, count: 1 }],
-        traits: [],
-        orbit: 'near',
-      };
-      h.state.fleets[fleetId] = newFleet;
-      hero.alive = true;
-      hero.location = at;
-      hero.fleetId = fleetId;
+      const fleetId = formHeroShip(h, hero, at);
       h.emit('hero.respawned', { owner, heroId, fleetId, at });
+    });
+
+    // HERO-3 — manual deploy: raise the hero's ship at an owned world. Complements the
+    // scheduled auto-respawn: it deploys roster heroes that never had a ship, and it is
+    // the recovery path when the auto-respawn found the player homeless or capped.
+    api.onAction('hero.spawn', (action, h) => {
+      const { heroId, at } = action.payload as { heroId?: string; at?: string };
+      if (typeof heroId !== 'string' || typeof at !== 'string') return h.reject('E_BAD_PAYLOAD');
+      const hero = h.state.heroes?.[heroId];
+      if (!hero) return h.reject('E_NO_HERO');
+      if (hero.owner !== action.playerId) return h.reject('E_FORBIDDEN');
+      // Already commanding a live ship. A stale fleetId (ship gone) doesn't block.
+      if (hero.fleetId !== undefined && h.state.fleets[hero.fleetId] !== undefined) {
+        return h.reject('E_HERO_ALIVE');
+      }
+      if (onCooldown(hero, 'respawn', h.ctx.now)) return h.reject('E_RESPAWN_COOLDOWN');
+      const planet = h.state.planets[at];
+      if (!planet) return h.reject('E_NO_PLANET');
+      if (planet.owner !== action.playerId) return h.reject('E_BAD_SPAWN'); // own worlds only
+      if (activeHeroCount(h.state, action.playerId) >= HERO_ACTIVE_CAP) {
+        return h.reject('E_HERO_CAP');
+      }
+      const fleetId = formHeroShip(h, hero, at);
+      h.emit('hero.spawned', { owner: action.playerId, heroId, fleetId, at });
     });
   },
 };

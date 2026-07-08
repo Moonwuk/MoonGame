@@ -459,6 +459,9 @@ export interface Hero {
   /** Active passive ids (→ `data.heroPassives`, HERO-5): always-on hook contributions
    *  while the hero is alive. Copied from the archetype's `startPassives` at seed. */
   passives?: string[];
+  /** The archetype this hero instantiates (→ `data.heroes`, HERO-3): resolves the ship
+   *  unit its fleet forms with on spawn/respawn. Absent ⇒ the default `hero` unit. */
+  archetype?: string;
   /** Respawn anchor — the owner's capital. A slain hero re-forms here if still held;
    *  absent ⇒ the core falls back to the hero's last node, then any owned world. */
   home?: PlanetId;

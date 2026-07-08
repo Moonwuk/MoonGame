@@ -55,6 +55,10 @@ const data: GameData = parseGameData({
       params: { durationHours: 2, speedBonus: 0.25 },
     },
   },
+  // HERO-3: an archetype whose ship is a concrete hull (spawn resolves the unit).
+  heroes: {
+    raider: { name: 'Raider', ship: { unit: 'warship' } },
+  },
   // HERO-5 catalog: one passive per scope for each wired hook.
   heroPassives: {
     swift: { name: 'Swift', hook: 'fleet.speed', scope: 'heroFleet', params: { bonus: 0.1 } },
@@ -606,6 +610,101 @@ describe('hero — fleet combat aura (+5%)', () => {
     const p = round?.payload as { dmgToDefender: number; dmgToAttacker: number };
     expect(p.dmgToDefender).toBe(21); // A (attacker, has hero): 20 attack × 1.05
     expect(p.dmgToAttacker).toBe(20); // D (defender, no hero): 20 defense, unbuffed
+  });
+});
+
+describe('hero — manual spawn (HERO-3)', () => {
+  const kernel = createKernel([heroModule]);
+  const SECOND = 'hero:p1:2';
+
+  /** world() + a second, undeployed roster hero for p1. */
+  function rosterWorld(): GameState {
+    const st = world();
+    st.heroes![SECOND] = { id: SECOND, owner: 'p1', location: 'A', cooldowns: {} };
+    return st;
+  }
+  const spawn = (heroId: string, at: string, playerId = 'p1', seq = 1) =>
+    act('hero.spawn', playerId, { heroId, at }, seq);
+
+  it('raises the ship of an undeployed hero at an owned world', () => {
+    const r = okApply(kernel.applyAction(rosterWorld(), spawn(SECOND, 'B'), ctx(0)));
+    const hero = r.state.heroes![SECOND]!;
+    expect(hero.alive).toBe(true);
+    expect(hero.location).toBe('B');
+    const ship = r.state.fleets[hero.fleetId!]!;
+    expect(ship.location).toBe('B');
+    expect(ship.owner).toBe('p1');
+    expect(ship.units).toEqual([{ unit: 'hero', count: 1 }]); // default projection hull
+    expect(r.events.map((e) => e.type)).toContain('hero.spawned');
+  });
+
+  it("resolves the ship's hull from the hero's archetype (data-driven)", () => {
+    const st = rosterWorld();
+    st.heroes![SECOND]!.archetype = 'raider'; // data.heroes.raider.ship.unit = warship
+    const r = okApply(kernel.applyAction(st, spawn(SECOND, 'A'), ctx(0)));
+    const hero = r.state.heroes![SECOND]!;
+    expect(r.state.fleets[hero.fleetId!]?.units).toEqual([{ unit: 'warship', count: 1 }]);
+  });
+
+  it('is the rescue path: a homeless-dead hero spawns manually once the cooldown passes', () => {
+    const st = rosterWorld();
+    Object.assign(st.heroes![SECOND]!, { alive: false, cooldowns: { respawn: 10 * HOUR } });
+    expect(errCode(kernel.applyAction(st, spawn(SECOND, 'A'), ctx(0)))).toBe(
+      'E_RESPAWN_COOLDOWN',
+    );
+    const rescued = okApply(kernel.applyAction(st, spawn(SECOND, 'A'), ctx(10 * HOUR)));
+    expect(rescued.state.heroes![SECOND]!.alive).toBe(true);
+  });
+
+  it('fail-secure gates: alive / foreign / unknown / spawn legality / payload', () => {
+    const st = rosterWorld();
+    const deployed = okApply(kernel.applyAction(st, spawn(SECOND, 'A'), ctx(0)));
+    expect(errCode(kernel.applyAction(deployed.state, spawn(SECOND, 'B', 'p1', 2), ctx(1)))).toBe(
+      'E_HERO_ALIVE',
+    );
+    expect(errCode(kernel.applyAction(st, spawn(SECOND, 'A', 'p2'), ctx(0)))).toBe('E_FORBIDDEN');
+    expect(errCode(kernel.applyAction(st, spawn('nobody', 'A'), ctx(0)))).toBe('E_NO_HERO');
+    expect(errCode(kernel.applyAction(st, spawn(SECOND, 'ZZ'), ctx(0)))).toBe('E_NO_PLANET');
+    expect(errCode(kernel.applyAction(st, spawn(SECOND, 'C'), ctx(0)))).toBe('E_BAD_SPAWN'); // p2's world
+    expect(
+      errCode(kernel.applyAction(st, act('hero.spawn', 'p1', { heroId: SECOND }), ctx(0))),
+    ).toBe('E_BAD_PAYLOAD');
+  });
+
+  it('enforces the active cap of 3 — for the manual spawn AND the auto-respawn', () => {
+    const signal: GameModule = {
+      id: 'test-signal-spawn',
+      version: '1.0.0',
+      setup(api) {
+        api.onAction('signal', (a, h) => {
+          const { type, payload } = a.payload as { type: string; payload: unknown };
+          h.emit(type, payload);
+        });
+      },
+    };
+    const withSignal = createKernel([heroModule, signal]);
+    const st = rosterWorld();
+    // Three heroes already command live ships…
+    for (let i = 1; i <= 3; i++) {
+      st.fleets[`s${i}`] = fleet(`s${i}`, 'p1', 'A');
+      st.heroes![`cap:${i}`] = { id: `cap:${i}`, owner: 'p1', location: 'A', cooldowns: {}, fleetId: `s${i}` };
+    }
+    // …so the fourth cannot deploy.
+    expect(errCode(withSignal.applyAction(st, spawn(SECOND, 'A'), ctx(0)))).toBe('E_HERO_CAP');
+    // The scheduled auto-respawn is held by the same cap: the dead hero stays dead.
+    st.heroes![SECOND]!.alive = false;
+    const held = okApply(
+      withSignal.applyAction(
+        st,
+        act('signal', 'p1', { type: 'hero.respawn', payload: { heroId: SECOND } }),
+        ctx(0),
+      ),
+    );
+    expect(held.state.heroes![SECOND]!.alive).toBe(false);
+    // Freeing a slot lets the manual spawn through.
+    delete held.state.fleets.s3;
+    const freed = okApply(withSignal.applyAction(held.state, spawn(SECOND, 'A', 'p1', 2), ctx(1)));
+    expect(freed.state.heroes![SECOND]!.alive).toBe(true);
   });
 });
 

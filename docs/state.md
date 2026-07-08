@@ -6,7 +6,7 @@
 > `deep-technical-roadmap.md`, `multiplayer.md`, `metagame.md`, `map-roadmap.md`, `security-a06.md` (модель угроз/A06), корневой `CLAUDE.md` / `CONTRIBUTING.md`.
 >
 > **Ветка:** feature-ветка · **PR:** создаётся после изменений.
-> **Гейт:** `pnpm run check` (lint + typecheck + test). **Тесты: 1058 зелёных** (4 skip, 105 файлов).
+> **Гейт:** `pnpm run check` (lint + typecheck + test). **Тесты: 1063 зелёных** (4 skip, 105 файлов).
 
 ---
 
@@ -544,6 +544,15 @@ E_NO_HERO, E_SAME_LOCATION, E_NO_PLANET, E_OUT_OF_RANGE, E_COOLDOWN`.
 E_NOT_DESTRUCTIBLE, E_OUT_OF_RANGE, E_COOLDOWN`.
 - Хук `fleet.speed`: ×(1+`speedBonus`) для леги, идущей вдоль активного лейна владельца
   флота. Без модуля способностей/лейнов нет (мягкая деградация).
+- Действие **`hero.spawn {heroId, at}`** (HERO-3) — ручной подъём корабля героя на
+  **своём** мире. Гейты: `E_HERO_ALIVE` (уже командует живым кораблём; stale-`fleetId`
+  не блокирует) · `E_RESPAWN_COOLDOWN` · `E_NO_PLANET`/`E_BAD_SPAWN` (только свой мир) ·
+  `E_HERO_CAP` (кэп **3 активных**/игрок, `activeHeroCount`). Корпус — из архетипа:
+  `Hero.archetype` → `data.heroes[..].ship.unit`, фолбэк — юнит `hero`. Общий
+  деплой-путь `formHeroShip` с авто-респауном; **авто-респаун уважает тот же кэп**
+  (переполнен — герой остаётся мёртв). Ручной спавн — путь спасения: бездомно-мёртвый
+  или удержанный кэпом герой поднимается вручную, когда мир/слот появился. Событие
+  `hero.spawned` (авто-путь по-прежнему `hero.respawned`).
 - **Пассивки (HERO-5, `data/heroPassives.json`):** `HeroPassiveDef {hook, scope,
   params{bonus, radius}}`, хуки — enum `fleet.speed|combat.damage` (fail-closed, новый
   хук = запись в enum + кейс-интерпретатор), scope — `heroFleet` (флот героя) |
