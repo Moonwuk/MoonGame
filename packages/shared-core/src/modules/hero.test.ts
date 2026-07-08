@@ -72,6 +72,13 @@ const data: GameData = parseGameData({
     },
     void_gift: { name: 'Void Gift', branch: 'psionic', grants: { ability: 'ghost' } },
     common_core: { name: 'Core', grants: {} },
+    // Fan-in node: BOTH parents must be unlocked (multi-parent requires).
+    synthesis: {
+      name: 'Synthesis',
+      branch: 'transhuman',
+      requires: ['neural_lace', 'overclock'],
+      grants: {},
+    },
   },
   // HERO-5 catalog: one passive per scope for each wired hook.
   heroPassives: {
@@ -790,6 +797,22 @@ describe('hero — skill tree (HERO-7)', () => {
     const dead = skillWorld();
     dead.heroes![HERO_ID]!.alive = false;
     expect(errCode(kernel.applyAction(dead, unlock('neural_lace'), ctx(0)))).toBe('E_HERO_DEAD');
+  });
+
+  it('dedupes a grant the hero already carries and requires ALL parents of a fan-in node', () => {
+    // The hero already carries `burst` (seeded) and has the root unlocked.
+    const st = skillWorld();
+    Object.assign(st.heroes![HERO_ID]!, { skills: ['neural_lace'], abilities: ['burst'] });
+    const r = okApply(kernel.applyAction(st, unlock('overclock'), ctx(0)));
+    const hero = r.state.heroes![HERO_ID]!;
+    expect(hero.abilities?.filter((a) => a === 'burst')).toHaveLength(1); // no duplicate
+    // `synthesis` needs BOTH parents: one of two unlocked → E_REQUIRES, and the
+    // rejected unlock leaves the treasury untouched.
+    expect(errCode(kernel.applyAction(st, unlock('synthesis'), ctx(0)))).toBe('E_REQUIRES');
+    expect(st.players.p1?.resources.metal).toBe(50); // cost charged only on success
+    // With both parents in place the fan-in node opens.
+    const both = okApply(kernel.applyAction(r.state, unlock('synthesis', 'p1', 2), ctx(1)));
+    expect(both.state.heroes![HERO_ID]!.skills).toContain('synthesis');
   });
 
   it('a branchless hero takes only common nodes; an archetype-less hero is branchless', () => {
