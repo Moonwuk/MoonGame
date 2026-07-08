@@ -6,7 +6,7 @@
 > `deep-technical-roadmap.md`, `multiplayer.md`, `metagame.md`, `map-roadmap.md`, `security-a06.md` (модель угроз/A06), корневой `CLAUDE.md` / `CONTRIBUTING.md`.
 >
 > **Ветка:** feature-ветка · **PR:** создаётся после изменений.
-> **Гейт:** `pnpm run check` (lint + typecheck + test). **Тесты: 1047 зелёных** (4 skip, 105 файлов).
+> **Гейт:** `pnpm run check` (lint + typecheck + test). **Тесты: 1050 зелёных** (4 skip, 105 файлов).
 
 ---
 
@@ -542,8 +542,10 @@ E_NOT_DESTRUCTIBLE, E_OUT_OF_RANGE, E_COOLDOWN`.
   (`HeroAbilityDef {type, cooldownHours, range, cost, params}`), гейты выводятся из
   данных генерически — владение (`E_FORBIDDEN`), живость (`E_HERO_DEAD`), каталог
   (`E_NO_ABILITY`), экипировка `Hero.abilities` (`E_NOT_EQUIPPED`), кулдаун
-  (`E_COOLDOWN`), дальность `range>0` от узла героя (`E_NO_PLANET`/`E_OUT_OF_RANGE`;
-  ranged ⇒ обязателен `target`, иначе `E_BAD_PAYLOAD`), стоимость `cost` из казны
+  (`E_COOLDOWN`), дальность от узла героя (`E_NO_PLANET`/`E_OUT_OF_RANGE`;
+  ranged ⇒ обязателен `target`, иначе `E_BAD_PAYLOAD`; для встроенных типов пропущенный
+  `range` **фолбэчится на движковую константу** (600/500) — никогда не «безлимит»),
+  стоимость `cost` из казны (nonnegative в схеме — каталог не может минтить)
   (`E_NO_PLAYER`/`E_INSUFFICIENT`, `payCost` на драфте — реджект отменяет всё).
   Диспетчеризация по `type`: встроенные **`temp_lane`** / **`annihilate`** исполняются
   **теми же телами эффектов** (`castTempLane`/`castAnnihilate`), что и legacy-действия
@@ -552,10 +554,12 @@ E_NOT_DESTRUCTIBLE, E_OUT_OF_RANGE, E_COOLDOWN`.
   из пакета; impl обязан `h.reject` на своих отказах); тип без capability →
   `E_NO_EFFECT` (fail-secure: данные обещают только то, что движок умеет).
   **Кулдаун-ключи**: встроенные типы делят ключ с legacy (`path`/`annihilate`) — generic
-  и legacy маршруты нельзя скомбинировать в double-fire; кастомные типы — ключ по
-  `abilityId`. `params`-оверрайды `durationHours`/`speedBonus` (числовые, с движковыми
+  и legacy маршруты нельзя скомбинировать в double-fire; кастомные типы — ключ `fx:<type>`
+  (два каталожных id одного эффекта делят кулдаун; префикс не коллидирует с `respawn`).
+  Гейт живости распространён и на legacy-действия (`hero.move`/`hero.path.create`/
+  `planet.annihilate` мёртвым героем → `E_HERO_DEAD` — обход через legacy закрыт). `params`-оверрайды `durationHours`/`speedBonus` (числовые, с движковыми
   фолбэками). Успех → кулдаун + событие `hero.ability.used {heroId, owner, abilityId,
-  type, target?}`. Payload-схема `hero.ability` добавлена в гейт (SV-1.2). 6 тестов.
+  type, target?}`. Payload-схема `hero.ability` добавлена в гейт (SV-1.2). 7 тестов; дифф прошёл 4-линзовый состязательный ревью (все находки закрыты).
 
 **Проекция-герой (развёрнутый герой игрока).** Особый **юнит-корабль** `hero` (трейт
 `hero`, высокий HP) в стеке флота. Хук **`combat.damage`**: флот, несущий героя,

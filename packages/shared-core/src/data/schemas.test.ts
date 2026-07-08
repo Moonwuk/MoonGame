@@ -260,6 +260,24 @@ describe('hero archetypes + abilities (HERO-1, docs/heroes.md)', () => {
     expect(a.params).toEqual({});
   });
 
+  it('the two live abilities map to the engine built-in effect types', () => {
+    // The prototype marks exactly corridor/annihilate as live (prototype/src/heroes.ts);
+    // the core wires exactly temp_lane/annihilate. Guard the pairing so catalog↔engine
+    // drift (a "live" ability with an unwired type ⇒ E_NO_EFFECT at cast) is caught here.
+    const data = parseGameData(loadShippedBundle());
+    expect(data.heroAbilities.corridor?.type).toBe('temp_lane');
+    expect(data.heroAbilities.annihilate?.type).toBe('annihilate');
+  });
+
+  it('rejects a hero ability with a negative cost (no resource minting)', () => {
+    expect(
+      safeParseGameData({
+        ...loadShippedBundle(),
+        heroAbilities: { mint: { name: 'X', type: 'aura', cost: { metal: -1000 } } },
+      }).success,
+    ).toBe(false);
+  });
+
   it('rejects an unknown hero branch and an ability with no type (fail-closed)', () => {
     expect(
       safeParseGameData({

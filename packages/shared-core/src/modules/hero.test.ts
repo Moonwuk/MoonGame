@@ -41,12 +41,19 @@ const data: GameData = parseGameData({
     terran: { productionBonus: 0, defenseBonus: 0.1 },
     dead_world: { productionBonus: 0, productionByResource: { metal: 0.3 }, defenseBonus: 0 },
   },
-  // HERO-4 catalog: the two built-in effect types, a costly custom type, an unwired type.
+  // HERO-4 catalog: the two built-in effect types, a costly custom type, an unwired type,
+  // and a params-tuned lane with NO range (falls back to the engine constant, never ∞).
   heroAbilities: {
     corridor: { name: 'Коридор', type: 'temp_lane', cooldownHours: 12, range: 600 },
     annihilate: { name: 'Аннигиляция', type: 'annihilate', cooldownHours: 48, range: 500 },
     burst: { name: 'Burst', type: 'test_burst', cooldownHours: 10, cost: { metal: 50 } },
     ghost: { name: 'Ghost', type: 'unwired_type' },
+    warp: {
+      name: 'Warp',
+      type: 'temp_lane',
+      cooldownHours: 1,
+      params: { durationHours: 2, speedBonus: 0.25 },
+    },
   },
 });
 const HOUR = 3_600_000;
@@ -296,7 +303,7 @@ describe('hero — generic data-driven ability (hero.ability, HERO-4)', () => {
   /** world() + the hero carries the whole test catalog and p1 can afford `burst` once. */
   function abilityWorld(): GameState {
     const st = world();
-    st.heroes![HERO_ID]!.abilities = ['corridor', 'annihilate', 'burst', 'ghost'];
+    st.heroes![HERO_ID]!.abilities = ['corridor', 'annihilate', 'burst', 'ghost', 'warp'];
     st.players.p1!.resources = { metal: 60 };
     return st;
   }
@@ -322,6 +329,20 @@ describe('hero — generic data-driven ability (hero.ability, HERO-4)', () => {
     );
     expect(errCode(kernel.applyAction(viaLegacy.state, cast('corridor', 'B', 2), ctx(HOUR)))).toBe(
       'E_COOLDOWN',
+    );
+  });
+
+  it('tunes the lane from ability params and never treats an omitted range as unlimited', () => {
+    // `warp` overrides durationHours/speedBonus via params — the "balance = edit
+    // numbers" seam. Cast at t=0 with timeScale 1: expiry = 2h, bonus = +25%.
+    const r = okApply(kernel.applyAction(abilityWorld(), cast('warp', 'C'), ctx(0)));
+    const lane = r.state.tempLanes?.[0];
+    expect(lane?.speedBonus).toBe(0.25);
+    expect(lane?.expiresAt).toBe(2 * HOUR);
+    // No `range` in the catalog entry ⇒ the ENGINE constant (600), not infinity:
+    // F sits at 700 and must stay unreachable (fail-secure fallback).
+    expect(errCode(kernel.applyAction(abilityWorld(), cast('warp', 'F'), ctx(0)))).toBe(
+      'E_OUT_OF_RANGE',
     );
   });
 
@@ -362,13 +383,18 @@ describe('hero — generic data-driven ability (hero.ability, HERO-4)', () => {
     const r = okApply(withBurst.applyAction(abilityWorld(), cast('burst'), ctx(0)));
     expect(r.state.players.p1?.resources.burstMark).toBe(1); // the capability ran
     expect(r.state.players.p1?.resources.metal).toBe(10); // 60 − 50 cost
-    expect(heroOf(r.state, 'p1')?.cooldowns.burst).toBeGreaterThan(0); // per-ability key
+    // Custom types cool down per effect TYPE (fx: ledger) — two catalog ids sharing
+    // one hero.effect.<x> cannot be interleaved to double-fire.
+    expect(heroOf(r.state, 'p1')?.cooldowns['fx:test_burst']).toBeGreaterThan(0);
     expect(r.events.map((e) => e.type)).toContain('hero.ability.used');
     // Second cast while cooling down → E_COOLDOWN even with a full purse.
     const rich = { ...r.state, players: { ...r.state.players, p1: { ...r.state.players.p1!, resources: { metal: 999 } } } };
     expect(errCode(withBurst.applyAction(rich, cast('burst', undefined, 2), ctx(HOUR)))).toBe(
       'E_COOLDOWN',
     );
+    // A range-0 (untargeted) ability still FORWARDS a supplied target to the effect.
+    const targeted = okApply(withBurst.applyAction(abilityWorld(), cast('burst', 'C'), ctx(0)));
+    expect(targeted.state.players.p1?.resources.burstMark).toBe(2);
   });
 
   it('fail-secure gates: unknown / unequipped / foreign / dead / bad payload', () => {
@@ -388,6 +414,17 @@ describe('hero — generic data-driven ability (hero.ability, HERO-4)', () => {
     const dead = abilityWorld();
     dead.heroes![HERO_ID]!.alive = false;
     expect(errCode(kernel.applyAction(dead, cast('corridor', 'C'), ctx(0)))).toBe('E_HERO_DEAD');
+    // …and the legacy sibling actions honor the SAME liveness gate — a dead hero
+    // cannot act through any route (review finding: gate must not be bypassable).
+    expect(
+      errCode(kernel.applyAction(dead, act('hero.path.create', 'p1', { to: 'C' }), ctx(0))),
+    ).toBe('E_HERO_DEAD');
+    expect(
+      errCode(kernel.applyAction(dead, act('planet.annihilate', 'p1', { planetId: 'C' }), ctx(0))),
+    ).toBe('E_HERO_DEAD');
+    expect(errCode(kernel.applyAction(dead, act('hero.move', 'p1', { to: 'B' }), ctx(0)))).toBe(
+      'E_HERO_DEAD',
+    );
     expect(
       errCode(kernel.applyAction(st, act('hero.ability', 'p1', { heroId: HERO_ID }), ctx(0))),
     ).toBe('E_BAD_PAYLOAD');

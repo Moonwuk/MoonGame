@@ -116,11 +116,25 @@ function numParam(params: Record<string, unknown>, key: string, fallback: number
 
 /** Cooldown-ledger key for an ability. Built-in types share the legacy actions' keys
  *  (`path` / `annihilate`) so the generic and legacy routes can never be combined to
- *  double-fire the same effect; a custom type cools down per ability id. */
-function cooldownKey(type: string, abilityId: string): string {
+ *  double-fire the same effect; a custom type cools down per effect TYPE for the same
+ *  reason (two catalog abilities dispatching to one `hero.effect.<x>` share a cooldown).
+ *  The `fx:` prefix keeps custom keys clear of the reserved `path`/`annihilate`/`respawn`
+ *  ledger slots. */
+function cooldownKey(type: string): string {
   if (type === 'temp_lane') return 'path';
   if (type === 'annihilate') return 'annihilate';
-  return abilityId;
+  return `fx:${type}`;
+}
+
+/** Targeting reach of an ability. The built-in effect types are inherently targeted, so
+ *  an omitted/zero `range` falls back to the engine constant the legacy action enforces
+ *  (fail-secure: a catalog omission must never mean "unlimited reach"); for custom types
+ *  0 keeps the schema meaning "self / untargeted". */
+function abilityRange(def: HeroAbilityDef): number {
+  if (def.range > 0) return def.range;
+  if (def.type === 'temp_lane') return PATH_RANGE;
+  if (def.type === 'annihilate') return ANNIHILATE_RANGE;
+  return 0;
 }
 
 /** The temp-lane effect body (shared by `hero.path.create` and `hero.ability`):
@@ -185,6 +199,7 @@ export const heroModule: GameModule = {
       if (typeof to !== 'string') return h.reject('E_BAD_PAYLOAD');
       const hero = heroOf(h.state, action.playerId);
       if (!hero) return h.reject('E_NO_HERO');
+      if (hero.alive === false) return h.reject('E_HERO_DEAD'); // a dead hero can't act
       const planet = h.state.planets[to];
       if (!planet) return h.reject('E_NO_PLANET');
       if (planet.owner !== action.playerId) return h.reject('E_FORBIDDEN'); // redeploy to your own world
@@ -197,6 +212,7 @@ export const heroModule: GameModule = {
       if (typeof to !== 'string') return h.reject('E_BAD_PAYLOAD');
       const hero = heroOf(h.state, action.playerId);
       if (!hero) return h.reject('E_NO_HERO');
+      if (hero.alive === false) return h.reject('E_HERO_DEAD'); // a dead hero can't act
       const from = hero.location;
       if (to === from) return h.reject('E_SAME_LOCATION');
       const a = h.state.planets[from];
@@ -238,6 +254,7 @@ export const heroModule: GameModule = {
       if (typeof planetId !== 'string') return h.reject('E_BAD_PAYLOAD');
       const hero = heroOf(h.state, action.playerId);
       if (!hero) return h.reject('E_NO_HERO');
+      if (hero.alive === false) return h.reject('E_HERO_DEAD'); // a dead hero can't act
       const planet = h.state.planets[planetId];
       if (!planet) return h.reject('E_NO_PLANET');
       if (!isCapturable(h.ctx.data, planet) || planet.kind === DEAD_KIND) {
@@ -277,14 +294,15 @@ export const heroModule: GameModule = {
       if (!def) return h.reject('E_NO_ABILITY');
       // The hero must actually carry the ability in a slot (its data-driven loadout).
       if (!(hero.abilities ?? []).includes(abilityId)) return h.reject('E_NOT_EQUIPPED');
-      const key = cooldownKey(def.type, abilityId);
+      const key = cooldownKey(def.type);
       if (onCooldown(hero, key, h.ctx.now)) return h.reject('E_COOLDOWN');
-      if (def.range > 0) {
+      const range = abilityRange(def);
+      if (range > 0) {
         if (typeof target !== 'string') return h.reject('E_BAD_PAYLOAD'); // ranged ⇒ targeted
         const origin = h.state.planets[hero.location];
         const dest = h.state.planets[target];
         if (!origin || !dest) return h.reject('E_NO_PLANET');
-        if (distance(origin.position, dest.position) > def.range) {
+        if (distance(origin.position, dest.position) > range) {
           return h.reject('E_OUT_OF_RANGE');
         }
       }
