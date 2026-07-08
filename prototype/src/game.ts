@@ -69,7 +69,17 @@ import {
   type DamageTable,
   type Officer,
 } from './groundcombat';
-import { DEFAULT_HEROES, type HeroLoadout } from './heroes';
+import { DEFAULT_HEROES, type HeroGrade, type HeroLoadout } from './heroes';
+
+/** Menu grade → core hero archetype: the four default roster heroes ARE the four
+ *  catalog archetypes (Командир/Разрушитель/Авангард/Страж), so the grade doubles as
+ *  the archetype key when the roster rides into the match as core hero instances. */
+const ARCHETYPE_OF_GRADE: Record<HeroGrade, string> = {
+  main: 'commander',
+  legendary: 'ravager',
+  rare: 'vanguard',
+  common: 'warden',
+};
 import { DEFAULT_SHIP_LOADOUTS, type ShipLoadout } from './ships';
 
 export const HOUR = 3_600_000;
@@ -555,6 +565,161 @@ export const data: GameData = parseGameData({
       productionBonus: 0,
       productionByResource: { metal: 0.3 },
       defenseBonus: 0,
+    },
+  },
+  // --- герои: 5 data-каталогов ядра (HERO-1..9), зеркало data/*.json --------------
+  // Архетипы 1:1 совпадают с четырьмя ростер-героями меню (main→commander,
+  // legendary→ravager, rare→vanguard, common→warden), а id способностей — с легаси-пулом
+  // heroes.ts, так что меню-дизайнер продолжает работать поверх новой модели. Костов
+  // хватает у прототипных валют (credits/metal/energy/microelectronics).
+  heroes: {
+    commander: {
+      name: 'Командир',
+      description: 'Главный герой-флагман: командный трансгуманист, усиливает флот и открывает коридоры.',
+      branch: 'transhuman',
+      ship: { unit: 'hero' },
+      slots: 4,
+      startAbilities: ['corridor', 'rally', 'scan', 'bulwark', 'diplomatic_landing'],
+      startPassives: ['rally_beacon'],
+    },
+    ravager: {
+      name: 'Разрушитель',
+      description: 'Псионик-разрушитель: аннигилирует миры и вскрывает туман.',
+      branch: 'psionic',
+      ship: { unit: 'hero' },
+      slots: 3,
+      startAbilities: ['annihilate', 'scan', 'recall', 'boarding_translocation'],
+      startPassives: [],
+    },
+    vanguard: {
+      name: 'Авангард',
+      description: 'Трансгуманист-манёвренник: коридоры и боевой клич для передовых флотов.',
+      branch: 'transhuman',
+      ship: { unit: 'hero' },
+      slots: 2,
+      startAbilities: ['corridor', 'rally'],
+      startPassives: ['vanguard_impulse'],
+    },
+    warden: {
+      name: 'Страж',
+      description: 'Псионик-защитник: держит рубеж бастионным щитом.',
+      branch: 'psionic',
+      ship: { unit: 'hero' },
+      slots: 1,
+      startAbilities: ['bulwark'],
+      startPassives: [],
+    },
+  },
+  // Способности: `temp_lane`/`annihilate` — встроенные эффекты heroModule (кастуются),
+  // `spawn_*` — пассивные маркеры точек развёртывания (читает `hero.spawn`), остальные
+  // типы (`aura`/`reveal`/`recall`) типизированы в данных, но эффекта в движке ещё нет —
+  // `hero.ability` на них честно отвечает `E_NO_EFFECT` (UI показывает «скоро»).
+  heroAbilities: {
+    corridor: {
+      name: 'Коридор',
+      description: 'Открывает временный публичный коридор-лейн до близкого мира; свои флоты идут по нему быстрее.',
+      type: 'temp_lane', cooldownHours: 12, range: 600, params: {},
+    },
+    annihilate: {
+      name: 'Аннигиляция',
+      description: 'Уничтожает планету в радиусе — она остаётся узлом, но становится мёртвым миром.',
+      type: 'annihilate', cooldownHours: 48, range: 500, params: {},
+    },
+    rally: {
+      name: 'Сбор',
+      description: 'Боевой клич: временный бонус к боевой ауре для своих флотов рядом с героем.',
+      type: 'aura', cooldownHours: 18, range: 300,
+      params: { combatBonus: 0.1, durationHours: 2 },
+    },
+    scan: {
+      name: 'Разведка',
+      description: 'Раскрывает зону вокруг цели сквозь туман на время.',
+      type: 'reveal', cooldownHours: 10, range: 400, params: { durationHours: 3 },
+    },
+    recall: {
+      name: 'Отзыв',
+      description: 'Мгновенно отзывает корабль-героя в столицу.',
+      type: 'recall', cooldownHours: 24, range: 0, params: {},
+    },
+    bulwark: {
+      name: 'Бастион',
+      description: 'Временный щит: бонус к обороне своим флотам рядом с героем.',
+      type: 'aura', cooldownHours: 20, range: 300,
+      params: { defenseBonus: 0.15, durationHours: 2 },
+    },
+    boarding_translocation: {
+      name: 'Абордажная транслокация',
+      description: 'Герой формируется прямо на борту одного из своих флотов — где бы тот ни был. Пассивный навык: расширяет точки развёртывания.',
+      type: 'spawn_fleet', cooldownHours: 0, range: 0, params: {},
+    },
+    diplomatic_landing: {
+      name: 'Дипломатическая высадка',
+      description: 'Союзные миры принимают героя как своего: корабль может подняться и на планете союзника. Пассивный навык: расширяет точки развёртывания.',
+      type: 'spawn_allied', cooldownHours: 0, range: 0, params: {},
+    },
+  },
+  heroPassives: {
+    vanguard_impulse: {
+      name: 'Импульс авангарда',
+      description: 'Корабль героя ведёт свой флот на форсаже: +10% к скорости флота героя.',
+      hook: 'fleet.speed', scope: 'heroFleet', params: { bonus: 0.1 },
+    },
+    rally_beacon: {
+      name: 'Маяк сбора',
+      description: 'Флоты рядом с героем бьются яростнее: +8% к урону своих флотов в радиусе 300.',
+      hook: 'combat.damage', scope: 'ownFleetsNear', params: { bonus: 0.08, radius: 300 },
+    },
+  },
+  heroSkillTrees: {
+    neural_lace: {
+      name: 'Нейрокружево',
+      description: 'Имплант прямого канала «мозг—штурвал»: корабль героя разгоняется на +10%.',
+      branch: 'transhuman',
+      cost: { microelectronics: 20 },
+      grants: { passive: 'vanguard_impulse' },
+    },
+    overclocked_helm: {
+      name: 'Разогнанный шлем',
+      description: 'Форсаж нейроинтерфейса открывает герою прокладку коридоров.',
+      branch: 'transhuman',
+      requires: ['neural_lace'],
+      cost: { microelectronics: 45, credits: 100 },
+      grants: { ability: 'corridor' },
+    },
+    void_attunement: {
+      name: 'Сонастройка с Пустотой',
+      description: 'Пси-резонанс героя воодушевляет флоты рядом: +8% к урону в радиусе 300.',
+      branch: 'psionic',
+      cost: { energy: 60 },
+      grants: { passive: 'rally_beacon' },
+    },
+    psi_veil: {
+      name: 'Пси-вуаль',
+      description: 'Отточенное пси-зрение: герой учится вскрывать туман разведкой.',
+      branch: 'psionic',
+      requires: ['void_attunement'],
+      cost: { energy: 90, credits: 100 },
+      grants: { ability: 'scan' },
+    },
+  },
+  heroFittings: {
+    psi_amplifier: {
+      name: 'Пси-усилитель',
+      description: 'Резонансный контур раскрывает герою разведку сквозь туман.',
+      grants: { ability: 'scan' },
+      cost: { microelectronics: 30 },
+    },
+    aegis_matrix: {
+      name: 'Матрица «Эгида»',
+      description: 'Полевой генератор воодушевляет флоты рядом с героем: +8% к урону в радиусе 300.',
+      grants: { passive: 'rally_beacon' },
+      cost: { metal: 60 },
+    },
+    ablative_plating: {
+      name: 'Абляционная обшивка',
+      description: 'Дополнительные +40 к корпусу корабля героя. (Статы корабля заработают со швом эффективных статов, SHIP-3.)',
+      statMods: { hp: 40 },
+      cost: { metal: 30 },
     },
   },
 });
@@ -1439,24 +1604,38 @@ export function newGame(setup: SetupConfig = DEFAULT_SETUP): GameState {
       ],
       [], // no marine landing troops — mobile ground is via the division system now
     );
-    // The deployed hero is a projection of the commander, named by their nick: the MAIN
-    // (grade-`main`) roster hero, flagship of the home fleet. It respawns at the capital
-    // (`home`), which defaults to the homeworld and is re-designatable in-match.
+    // The roster rides in as CORE hero instances (the HERO-9 model): each menu hero
+    // maps onto its archetype (grade → archetype flavour, 1:1 by design). The MAIN one
+    // deploys as flagship of the home fleet (named by the commander's nick); the rest
+    // seed UNDEPLOYED, mirroring `buildFromMap` — `hero.spawn` raises their ships
+    // in-match (active cap 3). All respawn at the capital (`home`, re-designatable).
     const roster = !seat.ai && setup.heroes ? setup.heroes : DEFAULT_HEROES;
-    const mainHero = roster.find((x) => x.grade === 'main') ?? roster[0];
-    const heroId = `hero:${seat.id}`;
-    heroes[heroId] = {
-      id: heroId,
-      owner: seat.id,
-      name: seat.name,
-      location: seat.start,
-      cooldowns: {},
-      alive: true,
-      grade: mainHero?.grade ?? 'main',
-      abilities: mainHero ? [...mainHero.abilities] : [],
-      home: seat.start,
-      fleetId: `${seat.id}-1`,
-    };
+    const mainIdx = Math.max(0, roster.findIndex((x) => x.grade === 'main'));
+    roster.forEach((loadout, i) => {
+      const archetype = ARCHETYPE_OF_GRADE[loadout.grade] ?? 'commander';
+      const def = data.heroes[archetype];
+      // Ability loadout = the menu picks (catalog-known ids) + the archetype's
+      // spawn-marker perks (not menu-pickable — they ride with the archetype).
+      const picks = loadout.abilities.filter((id): id is string => !!id && !!data.heroAbilities[id]);
+      const markers = (def?.startAbilities ?? []).filter((id) =>
+        data.heroAbilities[id]?.type.startsWith('spawn_'),
+      );
+      const main = i === mainIdx;
+      const heroId = `hero:${seat.id}:${i + 1}`;
+      heroes[heroId] = {
+        id: heroId,
+        owner: seat.id,
+        name: main ? seat.name : loadout.name,
+        location: seat.start,
+        cooldowns: {},
+        grade: loadout.grade,
+        archetype,
+        abilities: [...new Set([...picks, ...markers])],
+        passives: [...(def?.startPassives ?? [])],
+        home: seat.start,
+        ...(main ? { alive: true, fleetId: `${seat.id}-1` } : {}),
+      };
+    });
   }
   // Everyone starts at PEACE (not the core's war default): no marching through another
   // commander's space and no combat until war is declared (diplomacy.declare).
@@ -3323,6 +3502,21 @@ export const setDivisionOfficer = (playerId: string, divisionId: string, officer
 /** Designate one of your inhabited worlds as your capital (hero respawn / re-fit anchor). */
 export const designateCapital = (playerId: string, planetId: string) =>
   act(playerId, 'capital.designate', { planetId });
+
+// --- hero engine (core heroModule, HERO-3..9): the data-driven hero actions ---
+/** Cast a hero ability (HERO-4 dispatcher); `target` — planet id for ranged casts. */
+export const castHeroAbility = (playerId: string, heroId: string, abilityId: string, target?: string) =>
+  act(playerId, 'hero.ability', { heroId, abilityId, ...(target !== undefined ? { target } : {}) });
+/** Raise an undeployed hero's ship at an owned world (or own fleet / allied world
+ *  when the hero carries the matching spawn-marker ability). */
+export const spawnHero = (playerId: string, heroId: string, at: string) =>
+  act(playerId, 'hero.spawn', { heroId, at });
+/** Unlock a hero skill-tree node (branch/requires/cost gate the order). */
+export const unlockHeroSkill = (playerId: string, heroId: string, node: string) =>
+  act(playerId, 'hero.skill.unlock', { heroId, node });
+/** Install a ship fitting into one of the hero archetype's slots (no refit). */
+export const fitHero = (playerId: string, heroId: string, fitting: string) =>
+  act(playerId, 'hero.fit', { heroId, fitting });
 
 /** Can `mover`'s fleets enter/traverse a province owned by `owner`? Neutral, your own,
  *  and players you're at war / pact / alliance with are passable; a player you're at
