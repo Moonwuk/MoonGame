@@ -63,7 +63,6 @@ export {
   isBuildable,
   hasOrbit,
   allowedBuildings,
-  sectorAppearance,
 } from './state/sectorKind';
 export { factionStart, type FactionStart } from './state/factionStart';
 export { planRoute, routeDistance, fleetBaseSpeed, estimateTravelHours } from './state/route';

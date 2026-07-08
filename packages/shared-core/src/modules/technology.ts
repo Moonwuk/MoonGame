@@ -68,28 +68,17 @@ function hasCompleted(player: Player | undefined, technology: string): boolean {
   return player?.technologies?.completed.includes(technology) ?? false;
 }
 
-function completedTechs(player: Player | undefined, data: GameData): TechnologyDef[] {
-  if (!player) {
-    return [];
-  }
-  const out: TechnologyDef[] = [];
-  for (const id of player.technologies?.completed ?? []) {
-    const def = data.technologies[id];
-    if (def) {
-      out.push(def);
-    }
-  }
-  return out;
-}
-
 function effectsSum(
   player: Player | undefined,
   data: GameData,
   key: 'productionBonus' | 'fleetSpeedBonus' | 'combatDamageBonus',
 ): number {
+  // Summed inline (no intermediate def array) — this runs from the fleet.speed /
+  // combat.damage / economy.production hooks, i.e. per movement leg and combat round.
   let bonus = 0;
-  for (const tech of completedTechs(player, data)) {
-    bonus += tech.effects[key] ?? 0;
+  for (const id of player?.technologies?.completed ?? []) {
+    const def = data.technologies[id];
+    if (def) bonus += def.effects[key] ?? 0;
   }
   return bonus;
 }

@@ -13,6 +13,10 @@ import { z } from 'zod';
 /** A dynamic resource ledger, e.g. { "metal": 220, "credits": 80 }. */
 export const ResourceBagSchema = z.record(z.string(), z.number());
 
+/** A strictly-nonnegative cost bag — the anti-mint guard shared by every hero-content
+ *  price (a catalog line must never be able to CREDIT the treasury through payCost). */
+const NonnegativeCostSchema = z.record(z.string(), z.number().nonnegative());
+
 /** Combat/movement stats. Extra numeric stats are allowed (data-driven). */
 export const UnitStatsSchema = z
   .object({
@@ -458,9 +462,8 @@ export const HeroAbilityDefSchema = z.object({
    *  targeted types (`temp_lane`/`annihilate`) the engine falls back to its legacy
    *  constant instead — an omitted range never means "unlimited reach" (fail-secure). */
   range: z.number().nonnegative().default(0),
-  /** Treasury cost to activate (absent / empty = cooldown-only). Strictly nonnegative —
-   *  a catalog line must not be able to MINT resources through `payCost` (A08). */
-  cost: z.record(z.string(), z.number().nonnegative()).default({}),
+  /** Treasury cost to activate (absent / empty = cooldown-only). */
+  cost: NonnegativeCostSchema.default({}),
   /** Effect-specific parameters, interpreted by the type's handler. */
   params: z.record(z.string(), z.unknown()).default({}),
 });
@@ -513,8 +516,8 @@ export const HeroSkillNodeSchema = z.object({
   branch: HeroBranchSchema.optional(),
   /** Parent node ids that must be unlocked first (the tree edges). */
   requires: z.array(z.string()).default([]),
-  /** Treasury cost to unlock (nonnegative — a node must not mint resources). */
-  cost: z.record(z.string(), z.number().nonnegative()).default({}),
+  /** Treasury cost to unlock. */
+  cost: NonnegativeCostSchema.default({}),
   grants: HeroSkillGrantsSchema.default({}),
 });
 
@@ -533,8 +536,8 @@ export const HeroFittingDefSchema = z
     statMods: z.record(z.string(), z.number()).default({}),
     /** What installing the fitting grants the hero (live via HERO-4/5). */
     grants: HeroSkillGrantsSchema.default({}),
-    /** Treasury cost to install (nonnegative — a fitting must not mint resources). */
-    cost: z.record(z.string(), z.number().nonnegative()).default({}),
+    /** Treasury cost to install. */
+    cost: NonnegativeCostSchema.default({}),
   })
   .refine((f) => !Object.keys(f.statMods).some((k) => /slot/i.test(k)), {
     message: 'a fitting may not modify slot capacity (anti self-expansion)',

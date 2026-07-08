@@ -48,11 +48,12 @@ export interface StateDelta {
  *  `GameState` (e.g. the prototype's `orders` command chains or `divisions`). They are
  *  part of the JSONB snapshot and of every `welcome` full state, so deltas must carry
  *  them too — otherwise a client's copy goes stale right after the first broadcast. */
+const KNOWN_TOP_KEYS = new Set<string>([...COLLECTIONS, ...META_KEYS]);
+
 function extensionKeys(prev: GameState, next: GameState): string[] {
-  const known = new Set<string>([...COLLECTIONS, ...META_KEYS]);
   const keys = new Set<string>();
-  for (const k of Object.keys(prev)) if (!known.has(k)) keys.add(k);
-  for (const k of Object.keys(next)) if (!known.has(k)) keys.add(k);
+  for (const k of Object.keys(prev)) if (!KNOWN_TOP_KEYS.has(k)) keys.add(k);
+  for (const k of Object.keys(next)) if (!KNOWN_TOP_KEYS.has(k)) keys.add(k);
   return [...keys];
 }
 

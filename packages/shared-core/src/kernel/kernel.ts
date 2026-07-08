@@ -280,7 +280,6 @@ export class Kernel {
     const draft = deepClone(base);
     const rng = new Rng(draft.rng);
     const emitted: DomainEvent[] = [];
-    const queue: DomainEvent[] = [];
     let processed = 0;
 
     // Handlers see the time of THIS step (the event/segment instant), not the
@@ -292,9 +291,7 @@ export class Kernel {
       ctx: stepCtx,
       rng,
       emit: (type, payload) => {
-        const event: DomainEvent = { type, payload: payload ?? null };
-        emitted.push(event);
-        queue.push(event);
+        emitted.push({ type, payload: payload ?? null });
       },
       schedule: (at, type, payload) => {
         // Clamp against THIS step's instant, not draft.time (which is only stamped
@@ -328,12 +325,15 @@ export class Kernel {
 
     try {
       run(h);
-      // Drain emitted events in deterministic FIFO order.
-      while (queue.length > 0) {
+      // Drain emitted events in deterministic FIFO order: `emitted` doubles as the
+      // work queue (handlers may append while we walk), consumed by a read index —
+      // O(1) per event where `shift()` re-indexed the whole tail (O(n²) worst case).
+      let head = 0;
+      while (head < emitted.length) {
         if (++processed > MAX_EVENTS_PER_STEP) {
           return { ok: false, code: 'E_EVENT_OVERFLOW' };
         }
-        const event = queue.shift() as DomainEvent;
+        const event = emitted[head++]!;
         const subs = this.eventSubs.get(event.type);
         if (!subs) {
           continue; // Nobody listening → event harmlessly fades.
