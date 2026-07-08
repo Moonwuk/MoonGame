@@ -465,6 +465,32 @@ export const HeroAbilityDefSchema = z.object({
   params: z.record(z.string(), z.unknown()).default({}),
 });
 
+/** The hook pipelines a hero passive may feed (HERO-5). A curated enum, not an open
+ *  string — each hook needs an interpreter in the hero module (like the tech-condition
+ *  catalog §7.5); a new hook = one enum entry + one evaluator case. */
+export const HERO_PASSIVE_HOOKS = ['fleet.speed', 'combat.damage'] as const;
+/** Where a passive applies: the hero's OWN ship's fleet, or every owner fleet within
+ *  `params.radius` of the hero's node (the fleet-empowerment aura of docs/heroes.md). */
+export const HERO_PASSIVE_SCOPES = ['heroFleet', 'ownFleetsNear'] as const;
+
+/** A hero passive (docs/heroes.md §Данные) — an always-on, data-driven contribution to
+ *  a hook while its hero is alive. Carried by a hero instance (`Hero.passives`, copied
+ *  from the archetype's `startPassives` at seed). Balancing = editing these numbers. */
+export const HeroPassiveDefSchema = z.object({
+  name: z.string(),
+  description: z.string().optional(),
+  hook: z.enum(HERO_PASSIVE_HOOKS),
+  scope: z.enum(HERO_PASSIVE_SCOPES),
+  params: z
+    .object({
+      /** Multiplier contribution, e.g. 0.1 = +10% — applied as ×(1 + Σ bonuses). */
+      bonus: z.number().default(0),
+      /** Euclidean reach in MAP UNITS for `ownFleetsNear`. 0 ⇒ same node only. */
+      radius: z.number().nonnegative().default(0),
+    })
+    .default({ bonus: 0, radius: 0 }),
+});
+
 /** The ship a hero commands: either an existing unit archetype (`unit` → `data.units`) or
  *  inline stat overrides. A hero reuses the fleet for position/movement/combat, so its
  *  ship is described the same way a unit is (docs/heroes.md §Модель состояния). Both
@@ -507,6 +533,7 @@ export const GameDataSchema = z.object({
   modules: z.record(z.string(), ModuleDefSchema).default({}),
   heroes: z.record(z.string(), HeroArchetypeDefSchema).default({}),
   heroAbilities: z.record(z.string(), HeroAbilityDefSchema).default({}),
+  heroPassives: z.record(z.string(), HeroPassiveDefSchema).default({}),
 });
 
 export type ResourceBag = z.infer<typeof ResourceBagSchema>;
@@ -535,6 +562,7 @@ export type HeroBranch = z.infer<typeof HeroBranchSchema>;
 export type HeroAbilityDef = z.infer<typeof HeroAbilityDefSchema>;
 export type HeroShip = z.infer<typeof HeroShipSchema>;
 export type HeroArchetypeDef = z.infer<typeof HeroArchetypeDefSchema>;
+export type HeroPassiveDef = z.infer<typeof HeroPassiveDefSchema>;
 export type GameData = z.infer<typeof GameDataSchema>;
 
 /** Stats of a building at a given level (1-based). Level 1 = the base fields;

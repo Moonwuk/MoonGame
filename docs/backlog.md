@@ -328,8 +328,14 @@
   capability → `E_NO_EFFECT` (fail-secure). Кулдаун-ключи встроенных типов делятся с legacy
   (`path`/`annihilate`) — анти-double-dip; кастомные — по `abilityId`. `params`-оверрайды
   (`durationHours`/`speedBonus`) из данных. Payload-схема `hero.ability` в гейте (SV-1.2). 6 тестов.
-- **HERO-5** ⏳ _(HERO-1 ✅ — замок снят)_ Пассивки из данных → хуки (`fleet.speed`/`combat.damage`) с `scope`
-  (баф усиления флота). `data/heroPassives.json`. Тесты.
+- **HERO-5** ✅ Пассивки из данных → хуки. `data/heroPassives.json` + `HeroPassiveDefSchema
+  {hook: 'fleet.speed'|'combat.damage', scope: 'heroFleet'|'ownFleetsNear', params{bonus, radius}}`
+  (enum-гейт хуков — как каталог tech-условий); `Hero.passives?: string[]` (сеется из
+  `startPassives` архетипа); живой герой множит хук на ×(1+Σбонусов) поверх лейна/ауры —
+  `heroFleet` бафает флот героя, `ownFleetsNear` — свои флоты в `radius` от ноды героя
+  (`heroNode`, HERO-2); мёртвый герой/неизвестный id — ноль (мягкая деградация). Шипованы
+  `vanguard_impulse` (+10% скорость флота героя) и `rally_beacon` (+8% урона в 300).
+  Referential-integrity `startPassives`∈heroPassives. 4 теста.
 - **HERO-6** ⏳ _(HERO-2 ✅ — замок снят)_ Фитинги корабля: `data/heroFittings.json` + `hero.fit` (слоты,
   модификаторы статов / выдаёт способность). Тесты.
 - **HERO-7** ⏳ _(HERO-4 ✅ — замок снят)_ Дерево навыков: `data/heroSkillTrees.json` (ветки **transhuman**/

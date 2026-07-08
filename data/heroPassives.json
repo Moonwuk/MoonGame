@@ -1,0 +1,16 @@
+{
+  "vanguard_impulse": {
+    "name": "Импульс авангарда",
+    "description": "Корабль героя ведёт свой флот на форсаже: +10% к скорости флота героя.",
+    "hook": "fleet.speed",
+    "scope": "heroFleet",
+    "params": { "bonus": 0.1 }
+  },
+  "rally_beacon": {
+    "name": "Маяк сбора",
+    "description": "Флоты рядом с героем бьются яростнее: +8% к урону своих флотов в радиусе 300.",
+    "hook": "combat.damage",
+    "scope": "ownFleetsNear",
+    "params": { "bonus": 0.08, "radius": 300 }
+  }
+}

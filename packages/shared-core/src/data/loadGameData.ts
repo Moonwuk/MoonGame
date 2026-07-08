@@ -34,6 +34,7 @@ export function composeGameDataBundle(readJson: JsonReader): Record<string, unkn
     modules: readJson('modules.json'),
     heroes: readJson('heroes.json'),
     heroAbilities: readJson('heroAbilities.json'),
+    heroPassives: readJson('heroPassives.json'),
   };
 }
 

@@ -55,6 +55,22 @@ const data: GameData = parseGameData({
       params: { durationHours: 2, speedBonus: 0.25 },
     },
   },
+  // HERO-5 catalog: one passive per scope for each wired hook.
+  heroPassives: {
+    swift: { name: 'Swift', hook: 'fleet.speed', scope: 'heroFleet', params: { bonus: 0.1 } },
+    herald: {
+      name: 'Herald',
+      hook: 'fleet.speed',
+      scope: 'ownFleetsNear',
+      params: { bonus: 0.2, radius: 10 },
+    },
+    warcry: {
+      name: 'Warcry',
+      hook: 'combat.damage',
+      scope: 'ownFleetsNear',
+      params: { bonus: 0.5, radius: 300 },
+    },
+  },
 });
 const HOUR = 3_600_000;
 const ctx = (now: number): Context => ({ now, data });
@@ -590,6 +606,87 @@ describe('hero — fleet combat aura (+5%)', () => {
     const p = round?.payload as { dmgToDefender: number; dmgToAttacker: number };
     expect(p.dmgToDefender).toBe(21); // A (attacker, has hero): 20 attack × 1.05
     expect(p.dmgToAttacker).toBe(20); // D (defender, no hero): 20 defense, unbuffed
+  });
+});
+
+describe('hero — data-driven passives (HERO-5)', () => {
+  it('heroFleet scope: +10% speed for the ship the hero commands, nobody else', () => {
+    const kernel = createKernel([heroModule, movementModule]);
+    const st = world();
+    st.fleets = { F1: fleet('F1', 'p1', 'A'), E1: fleet('E1', 'p2', 'A') };
+    const hero = st.heroes!['hero:p1']!;
+    hero.fleetId = 'F1';
+    hero.passives = ['swift'];
+    // Hero's own fleet: 30 units at speed 10 × 1.1 = 11.
+    const own = okApply(kernel.applyAction(st, act('fleet.move', 'p1', { fleetId: 'F1', to: 'B' }), ctx(0)));
+    expect(own.state.fleets.F1?.movement?.arrivesAt).toBeCloseTo((30 / 11) * HOUR, 0);
+    // A foreign fleet on the same leg is untouched: 30 / 10.
+    const foe = okApply(kernel.applyAction(st, act('fleet.move', 'p2', { fleetId: 'E1', to: 'B' }), ctx(0)));
+    expect(foe.state.fleets.E1?.movement?.arrivesAt).toBeCloseTo(3 * HOUR, 0);
+    // A dead hero projects nothing.
+    const dead = world();
+    dead.fleets = { F1: fleet('F1', 'p1', 'A') };
+    Object.assign(dead.heroes!['hero:p1']!, { fleetId: 'F1', passives: ['swift'], alive: false });
+    const idle = okApply(kernel.applyAction(dead, act('fleet.move', 'p1', { fleetId: 'F1', to: 'B' }), ctx(0)));
+    expect(idle.state.fleets.F1?.movement?.arrivesAt).toBeCloseTo(3 * HOUR, 0);
+  });
+
+  it('ownFleetsNear scope: boosts owner fleets within radius of the hero, not beyond', () => {
+    const kernel = createKernel([heroModule, movementModule]);
+    const st = world();
+    st.fleets = { F1: fleet('F1', 'p1', 'A'), F2: fleet('F2', 'p1', 'B') };
+    st.heroes!['hero:p1']!.passives = ['herald']; // +20% within 10 units of the hero (at A)
+    // F1 departs from A (distance 0 ≤ 10): 30 / 12 = 2.5h.
+    const near = okApply(kernel.applyAction(st, act('fleet.move', 'p1', { fleetId: 'F1', to: 'B' }), ctx(0)));
+    expect(near.state.fleets.F1?.movement?.arrivesAt).toBeCloseTo(2.5 * HOUR, 0);
+    // F2 departs from B (distance 30 > 10): plain 3h.
+    const far = okApply(kernel.applyAction(st, act('fleet.move', 'p1', { fleetId: 'F2', to: 'A' }), ctx(0)));
+    expect(far.state.fleets.F2?.movement?.arrivesAt).toBeCloseTo(3 * HOUR, 0);
+    // An unknown passive id is skipped gracefully (no crash, no effect).
+    const odd = world();
+    odd.fleets = { F1: fleet('F1', 'p1', 'A') };
+    odd.heroes!['hero:p1']!.passives = ['no_such_passive'];
+    const plain = okApply(kernel.applyAction(odd, act('fleet.move', 'p1', { fleetId: 'F1', to: 'B' }), ctx(0)));
+    expect(plain.state.fleets.F1?.movement?.arrivesAt).toBeCloseTo(3 * HOUR, 0);
+  });
+
+  it('ownFleetsNear combat: a battle near the hero hits harder, a distant one does not', () => {
+    const kernel = createKernel([heroModule, combatModule, arriveModule]);
+    const base = (heroAt: string): GameState => {
+      const s = createInitialState({ seed: 'passive', version: { data: '0.1.0', manifest: '1' } });
+      return {
+        ...s,
+        players: { p1: player('p1'), p2: player('p2') },
+        planets: {
+          P: planet('P', null, 0, 0, [], 'planet'),
+          H: planet('H', 'p1', 200, 0, [], 'planet'), // 200 ≤ warcry radius 300
+          X: planet('X', 'p1', 700, 0, [], 'planet'), // 700 > 300
+        },
+        fleets: {
+          A: { id: 'A', owner: 'p1', location: 'P', movement: null, traits: [], units: [{ unit: 'warship', count: 1 }] },
+          D: { id: 'D', owner: 'p2', location: 'P', movement: null, traits: [], units: [{ unit: 'warship', count: 1 }] },
+        },
+        heroes: {
+          'hero:p1': { id: 'hero:p1', owner: 'p1', location: heroAt, cooldowns: {}, passives: ['warcry'] },
+        },
+      };
+    };
+    const round = (st: GameState) => {
+      const started = okApply(kernel.applyAction(st, act('arrive', 'p1', { fleetId: 'A' }), ctx(0)));
+      const r = okAdvance(kernel.advanceTo(started.state, ctx(HOUR)));
+      return r.events.find((e) => e.type === 'combat.round')?.payload as {
+        dmgToDefender: number;
+        dmgToAttacker: number;
+      };
+    };
+    // Hero at H (200 away): p1's side deals 20 × 1.5 = 30; p2's side stays 20.
+    const near = round(base('H'));
+    expect(near.dmgToDefender).toBe(30);
+    expect(near.dmgToAttacker).toBe(20);
+    // Hero at X (700 away): out of radius — both sides plain 20.
+    const far = round(base('X'));
+    expect(far.dmgToDefender).toBe(20);
+    expect(far.dmgToAttacker).toBe(20);
   });
 });
 
