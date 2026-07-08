@@ -152,6 +152,9 @@ export {
   TechnologyDefSchema,
   TechnologyConditionSchema,
   ScientistDefSchema,
+  HeroArchetypeDefSchema,
+  HeroAbilityDefSchema,
+  HeroBranchSchema,
   TechnologyEffectsSchema,
   TechnologyUnlocksSchema,
   ResourceBagSchema,
@@ -182,6 +185,10 @@ export {
   type TechnologyDef,
   type TechnologyCondition,
   type ScientistDef,
+  type HeroArchetypeDef,
+  type HeroAbilityDef,
+  type HeroShip,
+  type HeroBranch,
   type TechnologyEffects,
   type TechnologyUnlocks,
   type UnitStats,
@@ -223,6 +230,7 @@ export { armyModule } from './modules/army';
 export { victoryModule } from './modules/victory';
 export { visibilityModule } from './modules/visibility';
 export { heroModule } from './modules/hero';
+export type { HeroEffect, HeroEffectArgs } from './modules/hero';
 export {
   stewardModule,
   stewardActive,

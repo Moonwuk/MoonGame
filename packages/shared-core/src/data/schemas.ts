@@ -454,10 +454,13 @@ export const HeroAbilityDefSchema = z.object({
   type: z.string(),
   /** Cooldown in game-hours before it can fire again (deterministic `readyAt`). 0 = none. */
   cooldownHours: z.number().nonnegative().default(0),
-  /** Targeting reach in MAP UNITS (Euclidean). 0 = self / untargeted. */
+  /** Targeting reach in MAP UNITS (Euclidean). 0 = self / untargeted; for the built-in
+   *  targeted types (`temp_lane`/`annihilate`) the engine falls back to its legacy
+   *  constant instead — an omitted range never means "unlimited reach" (fail-secure). */
   range: z.number().nonnegative().default(0),
-  /** Treasury cost to activate (absent / empty = cooldown-only). */
-  cost: ResourceBagSchema.default({}),
+  /** Treasury cost to activate (absent / empty = cooldown-only). Strictly nonnegative —
+   *  a catalog line must not be able to MINT resources through `payCost` (A08). */
+  cost: z.record(z.string(), z.number().nonnegative()).default({}),
   /** Effect-specific parameters, interpreted by the type's handler. */
   params: z.record(z.string(), z.unknown()).default({}),
 });
