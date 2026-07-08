@@ -456,6 +456,9 @@ export interface Hero {
   /** Equipped ability "modules", one per grade slot (`null` = empty). Carried with the
    *  hero; per-module gating/effects are a later brick. */
   abilities?: (string | null)[];
+  /** Active passive ids (→ `data.heroPassives`, HERO-5): always-on hook contributions
+   *  while the hero is alive. Copied from the archetype's `startPassives` at seed. */
+  passives?: string[];
   /** Respawn anchor — the owner's capital. A slain hero re-forms here if still held;
    *  absent ⇒ the core falls back to the hero's last node, then any owned world. */
   home?: PlanetId;

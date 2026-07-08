@@ -227,18 +227,49 @@ describe('hero archetypes + abilities (HERO-1, docs/heroes.md)', () => {
     expect(data.heroAbilities.rally?.params.combatBonus).toBe(0.1);
   });
 
-  it('every hero references known abilities and a known ship unit (referential integrity)', () => {
+  it('every hero references known abilities, passives and a known ship unit (referential integrity)', () => {
     const data = parseGameData(loadShippedBundle());
     const abilities = new Set(Object.keys(data.heroAbilities));
+    const passives = new Set(Object.keys(data.heroPassives));
     const units = new Set(Object.keys(data.units));
     for (const [id, def] of Object.entries(data.heroes)) {
       for (const ab of def.startAbilities) {
         expect(abilities.has(ab), `hero ${id} references unknown ability "${ab}"`).toBe(true);
       }
+      for (const pa of def.startPassives) {
+        expect(passives.has(pa), `hero ${id} references unknown passive "${pa}"`).toBe(true);
+      }
       if (def.ship.unit !== undefined) {
         expect(units.has(def.ship.unit), `hero ${id} references unknown unit "${def.ship.unit}"`).toBe(true);
       }
     }
+  });
+
+  it('ships hero passives wired to hooks (HERO-5) and rejects an unknown hook/scope', () => {
+    const data = parseGameData(loadShippedBundle());
+    // The two shipped passives: the hero-fleet impulse and the nearby-fleets war beacon.
+    expect(data.heroPassives.vanguard_impulse?.hook).toBe('fleet.speed');
+    expect(data.heroPassives.vanguard_impulse?.scope).toBe('heroFleet');
+    expect(data.heroPassives.rally_beacon?.params.radius).toBe(300);
+    expect(data.heroes.vanguard?.startPassives).toContain('vanguard_impulse');
+    // Params default when omitted (bonus 0 / radius 0), and enums are fail-closed.
+    const min = parseGameData({
+      ...loadShippedBundle(),
+      heroPassives: { bare: { name: 'X', hook: 'fleet.speed', scope: 'heroFleet' } },
+    });
+    expect(min.heroPassives.bare?.params).toEqual({ bonus: 0, radius: 0 });
+    expect(
+      safeParseGameData({
+        ...loadShippedBundle(),
+        heroPassives: { bad: { name: 'X', hook: 'economy.production', scope: 'heroFleet' } },
+      }).success,
+    ).toBe(false);
+    expect(
+      safeParseGameData({
+        ...loadShippedBundle(),
+        heroPassives: { bad: { name: 'X', hook: 'fleet.speed', scope: 'everywhere' } },
+      }).success,
+    ).toBe(false);
   });
 
   it('applies defaults for omitted optional hero fields (graceful, back-compat)', () => {

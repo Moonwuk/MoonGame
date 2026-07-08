@@ -6,7 +6,7 @@
 > `deep-technical-roadmap.md`, `multiplayer.md`, `metagame.md`, `map-roadmap.md`, `security-a06.md` (модель угроз/A06), корневой `CLAUDE.md` / `CONTRIBUTING.md`.
 >
 > **Ветка:** feature-ветка · **PR:** создаётся после изменений.
-> **Гейт:** `pnpm run check` (lint + typecheck + test). **Тесты: 1054 зелёных** (4 skip, 105 файлов).
+> **Гейт:** `pnpm run check` (lint + typecheck + test). **Тесты: 1058 зелёных** (4 skip, 105 файлов).
 
 ---
 
@@ -544,6 +544,14 @@ E_NO_HERO, E_SAME_LOCATION, E_NO_PLANET, E_OUT_OF_RANGE, E_COOLDOWN`.
 E_NOT_DESTRUCTIBLE, E_OUT_OF_RANGE, E_COOLDOWN`.
 - Хук `fleet.speed`: ×(1+`speedBonus`) для леги, идущей вдоль активного лейна владельца
   флота. Без модуля способностей/лейнов нет (мягкая деградация).
+- **Пассивки (HERO-5, `data/heroPassives.json`):** `HeroPassiveDef {hook, scope,
+  params{bonus, radius}}`, хуки — enum `fleet.speed|combat.damage` (fail-closed, новый
+  хук = запись в enum + кейс-интерпретатор), scope — `heroFleet` (флот героя) |
+  `ownFleetsNear` (свои флоты в `radius` от ноды героя, `heroNode`). Живой герой
+  множит значение хука на ×(1+Σ применимых бонусов) ПОВЕРХ лейн-бонуса и базовой
+  +5% ауры; мёртвый герой и неизвестный id пассивки — ноль. Несёт `Hero.passives?`
+  (сеется из `startPassives` архетипа). Шипованы: `vanguard_impulse` (+10% скорость
+  флота героя), `rally_beacon` (+8% урона своих флотов в 300 от героя).
 - Действие **`hero.ability {heroId, abilityId, target?}`** (HERO-4) — **обобщённый
   data-driven диспетчер**: способность берётся из каталога `data.heroAbilities`
   (`HeroAbilityDef {type, cooldownHours, range, cost, params}`), гейты выводятся из

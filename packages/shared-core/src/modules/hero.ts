@@ -1,5 +1,5 @@
 import { hoursToMs } from '../action/types';
-import type { HeroAbilityDef } from '../data/schemas';
+import type { HeroAbilityDef, HeroPassiveDef } from '../data/schemas';
 import type { GameModule, HandlerContext } from '../kernel/module';
 import type { Fleet, GameState, Hero, PlanetId, PlayerId, TempLane } from '../state/gameState';
 import { distance } from '../state/route';
@@ -37,6 +37,13 @@ import { canAfford, payCost } from '../util/treasury';
  *     or the capability `hero.effect.<type>` for exotic types plugged in by another
  *     module. Unknown type with no capability → `E_NO_EFFECT` (fail-secure: data may
  *     promise only what some engine piece implements).
+ *
+ * HERO-5 (docs/heroes.md) — data-driven passives: a living hero contributes its
+ * `Hero.passives` (→ `data.heroPassives`, `{hook, scope, params{bonus, radius}}`) into
+ * the `fleet.speed` / `combat.damage` pipelines. Scopes: `heroFleet` (the hero's own
+ * ship's fleet) and `ownFleetsNear` (owner fleets within `radius` of the hero's node).
+ * Applied as ×(1 + Σ bonuses) on top of the lane bonus / base +5% aura; a dead hero
+ * or an unknown passive id contributes nothing (graceful degradation).
  *
  * State lives in `GameState.heroes` / `tempLanes` (JSON, deterministic); durations go
  * through `schedule`; the speed bonus through the `fleet.speed` hook. No kernel change.
@@ -130,6 +137,45 @@ export interface HeroEffectArgs {
  *  have passed; it must `h.reject(code)` on any failure of its own (fail-secure —
  *  a plain return means success and commits cost + cooldown). */
 export type HeroEffect = (args: HeroEffectArgs, h: HandlerContext) => void;
+
+/** Does `passive` apply to this fleet/node for a hero? Pure scope evaluation. */
+function passiveApplies(
+  state: GameState,
+  hero: Hero,
+  passive: HeroPassiveDef,
+  args: { fleetId?: string; node?: PlanetId },
+): boolean {
+  if (passive.scope === 'heroFleet') {
+    return args.fleetId !== undefined && hero.fleetId === args.fleetId;
+  }
+  // ownFleetsNear: the affected fleet's node within `radius` of the hero's node.
+  if (args.node === undefined) return false;
+  const heroPlanet = state.planets[heroNode(state, hero)];
+  const nodePlanet = state.planets[args.node];
+  if (!heroPlanet || !nodePlanet) return false;
+  return distance(heroPlanet.position, nodePlanet.position) <= passive.params.radius;
+}
+
+/** Σ of `owner`'s living heroes' passive bonuses feeding `hook`, for a fleet at a node
+ *  (HERO-5). Deterministic: heroes in insertion order, passives in list order; unknown
+ *  ids and dead heroes contribute nothing. */
+function passiveBonus(
+  h: HandlerContext,
+  hook: HeroPassiveDef['hook'],
+  owner: PlayerId,
+  args: { fleetId?: string; node?: PlanetId },
+): number {
+  let total = 0;
+  for (const hero of Object.values(h.state.heroes ?? {})) {
+    if (hero.owner !== owner || hero.alive === false) continue;
+    for (const id of hero.passives ?? []) {
+      const def = h.ctx.data.heroPassives[id];
+      if (!def || def.hook !== hook) continue;
+      if (passiveApplies(h.state, hero, def, args)) total += def.params.bonus;
+    }
+  }
+  return total;
+}
 
 /** Put a living hero into the dead/respawning state — the single death path shared by
  *  both death signals (`unit.died` for the hero stack, `fleet.destroyed` for the whole
@@ -378,28 +424,33 @@ export const heroModule: GameModule = {
       });
     });
 
-    // Speed bonus on a leg that runs along one of the fleet owner's active temp lanes.
+    // Speed bonus on a leg that runs along one of the fleet owner's active temp lanes,
+    // then the owner's hero passives (HERO-5): ×(1 + Σ applicable `fleet.speed` bonuses).
     api.hook<number>('fleet.speed', (speed, args, h) => {
       const { fleetId, from, to } = (args ?? {}) as { fleetId?: string; from?: string; to?: string };
       if (typeof fleetId !== 'string' || typeof from !== 'string' || typeof to !== 'string') {
         return speed;
       }
       const owner = h.state.fleets[fleetId]?.owner;
-      if (owner === undefined || !h.state.tempLanes) return speed;
-      const lane = h.state.tempLanes.find(
+      if (owner === undefined) return speed;
+      let out = speed;
+      const lane = h.state.tempLanes?.find(
         (l) =>
           l.owner === owner &&
           l.expiresAt > h.ctx.now &&
           ((l.from === from && l.to === to) || (l.from === to && l.to === from)),
       );
-      return lane ? speed * (1 + lane.speedBonus) : speed;
+      if (lane) out *= 1 + lane.speedBonus;
+      const passives = passiveBonus(h, 'fleet.speed', owner, { fleetId, node: from });
+      return passives !== 0 ? out * (1 + passives) : out;
     });
 
     // --- projection hero: fleet combat aura + death/respawn --------------------
 
-    // +5% to a fleet that carries the hero. combat.damage fires once per side per
-    // round; `args.attacker` is the owner DEALING this hit, so buffing that side's
-    // fleet covers both its attack (vs the foe) and its return-fire defense.
+    // +5% to a fleet that carries the hero, then the owner's hero passives (HERO-5)
+    // for the battle's node. combat.damage fires once per side per round;
+    // `args.attacker` is the owner DEALING this hit, so buffing that side's fleet
+    // covers both its attack (vs the foe) and its return-fire defense.
     api.hook<number>('combat.damage', (base, args, h) => {
       const { battleId, attacker } = (args ?? {}) as { battleId?: string; attacker?: string };
       if (typeof battleId !== 'string' || typeof attacker !== 'string') return base;
@@ -407,7 +458,13 @@ export const heroModule: GameModule = {
       if (!battle) return base;
       const side = battle.attacker.owner === attacker ? battle.attacker : battle.defender;
       if (side.ref.kind !== 'fleet') return base; // the aura is a fleet bonus only
-      return fleetHasHero(h, side.ref.fleetId) ? base * (1 + HERO_COMBAT_BONUS) : base;
+      let out = base;
+      if (fleetHasHero(h, side.ref.fleetId)) out *= 1 + HERO_COMBAT_BONUS;
+      const passives = passiveBonus(h, 'combat.damage', attacker, {
+        fleetId: side.ref.fleetId,
+        node: battle.location,
+      });
+      return passives !== 0 ? out * (1 + passives) : out;
     });
 
     // The hero went down (its ship was destroyed) → start the respawn timer once.
