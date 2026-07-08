@@ -97,6 +97,10 @@ import {
   delegateSteward,
   recallSteward,
   stewardActive,
+  castHeroAbility,
+  spawnHero,
+  unlockHeroSkill,
+  fitHero,
   type QStep,
   type Patrol,
 } from './game';
@@ -322,6 +326,10 @@ let selPlanet: string | null = null;
 let selFleets = new Set<string>();
 let aiming = false; // "Move" command armed → next world tap orders the move
 let barrageAim = false; // "Обстрел" armed → next tap picks the artillery's focus target
+// Hero window armed modes: a cast waits for its target world; a deploy waits for the
+// point the hero's ship rises at (own world / own fleet / allied world by markers).
+let heroAim: { heroId: string; abilityId: string } | null = null;
+let heroSpawnAim: string | null = null;
 // CC-1 order queue: while `queuing` is armed, world taps APPEND a move step to each
 // selected fleet's chain instead of ordering an immediate move. `fleetQueues` holds the
 // pending steps per fleet (client-side plan); driveQueues() pops the head when idle.
@@ -1735,6 +1743,23 @@ const ERR_RU: Record<string, string> = {
   E_CHAT_TARGET: 'адресат не найден',
   E_CHAT_TEXT: 'пустое сообщение',
   E_NO_HERO: 'герой не найден',
+  E_HERO_DEAD: 'герой погиб — дождитесь возрождения',
+  E_HERO_ALIVE: 'герой уже командует кораблём',
+  E_HERO_CAP: 'достигнут предел развёрнутых героев',
+  E_BAD_SPAWN: 'здесь нельзя развернуть героя',
+  E_RESPAWN_COOLDOWN: 'герой ещё восстанавливается',
+  E_NO_ABILITY: 'неизвестная способность',
+  E_NOT_EQUIPPED: 'у героя нет этой способности',
+  E_NO_EFFECT: 'эффект ещё не реализован',
+  E_COOLDOWN: 'способность перезаряжается',
+  E_NO_NODE: 'неизвестный узел дерева',
+  E_ALREADY_UNLOCKED: 'узел уже изучен',
+  E_WRONG_BRANCH: 'узел чужой ветви',
+  E_REQUIRES: 'сначала изучите предыдущий узел',
+  E_NO_FITTING: 'неизвестный фиттинг',
+  E_ALREADY_FITTED: 'фиттинг уже установлен',
+  E_NO_SLOTS: 'слоты фиттингов заняты',
+  E_NOT_DESTRUCTIBLE: 'этот мир нельзя уничтожить',
   E_INTERNAL: 'внутренняя ошибка',
 };
 function errText(code: string): string {
@@ -5918,6 +5943,8 @@ cmdbar.addEventListener('click', (ev) => {
   const ids = selectedFleetIds();
   if (cmd !== 'merge') merging = false; // any other command disarms merge-targeting
   if (cmd !== 'barrage') barrageAim = false; // any other command disarms barrage-targeting
+  heroAim = null; // any command disarms a pending hero cast / deploy
+  heroSpawnAim = null;
   queuing = false; // a command-bar order is immediate — leave queue-build mode
   if (cmd === 'move') {
     aiming = !aiming; // arm / disarm the move order
@@ -6001,6 +6028,44 @@ function selectAt(mx: number, my: number) {
     if (targetId) note(t('🎯 сосредоточенный огонь назначен'));
     else note(t('🎯 автоприцел'));
     barrageAim = false;
+    lastPanelHtml = '';
+    return;
+  }
+  // Hero cast armed: the next tap picks the target world. Range / cooldown / cost
+  // are the core's gates — a mis-aim comes back as an honest rejection note.
+  if (heroAim) {
+    const cast = heroAim;
+    heroAim = null;
+    const n = nearestHit(MAP, (nn) => world(nn), mx, my, rNode);
+    if (n) playerOrder(castHeroAbility(ME, cast.heroId, cast.abilityId, n.id));
+    else note(t('✖ каст отменён'));
+    lastPanelHtml = '';
+    return;
+  }
+  // Hero deploy armed: the tap picks WHERE the ship rises — your own world; with the
+  // marker perks also one of your fleets (boarding) / an allied world. Own-fleet hits
+  // are only considered when the hero actually carries the boarding marker, so a tap
+  // on a world under your fleet still means the world.
+  if (heroSpawnAim) {
+    const heroId = heroSpawnAim;
+    heroSpawnAim = null;
+    const hero = s.heroes?.[heroId];
+    const canBoard = (hero?.abilities ?? []).some(
+      (a) => a !== null && data.heroAbilities[a]?.type === 'spawn_fleet',
+    );
+    const host = canBoard
+      ? nearestHit(
+          Object.values(s.fleets).filter((f) => f.owner === ME),
+          fleetAnchor,
+          mx,
+          my,
+          rFleet,
+        )
+      : null;
+    const n = host ? null : nearestHit(MAP, (nn) => world(nn), mx, my, rNode);
+    if (host) playerOrder(spawnHero(ME, heroId, host.id));
+    else if (n) playerOrder(spawnHero(ME, heroId, n.id));
+    else note(t('✖ развёртывание отменено'));
     lastPanelHtml = '';
     return;
   }
@@ -6558,6 +6623,151 @@ stewWin.addEventListener('click', (e) => {
     return;
   }
   renderSteward();
+});
+
+// --- heroes («штаб героев»): the CORE hero engine over the inline catalogs -----
+// One window for the whole hero loop: deploy reserves (`hero.spawn`), cast abilities
+// (`hero.ability` — built-ins live, typed-but-unwired honestly say «скоро»), walk the
+// skill tree (`hero.skill.unlock`) and install fittings (`hero.fit`). All gates
+// (range/cooldown/cost/slots/branch) are the core's — the window only shows them.
+const heroWin = $('hero');
+const HERO_ACTIVE_CAP = 3; // mirrors the core heroModule's active cap (not exported)
+const HERO_BRANCH_RU: Record<string, string> = { transhuman: 'трансгуман', psionic: 'псионик' };
+/** The cooldown slot an ability occupies — mirrors the core's `cooldownKey`. */
+const heroCdKey = (type: string): string =>
+  type === 'temp_lane' ? 'path' : type === 'annihilate' ? 'annihilate' : `fx:${type}`;
+function renderHero(): void {
+  const body = $('herobody');
+  const mine = Object.values(s.heroes ?? {}).filter((h) => h.owner === ME);
+  const active = mine.filter((h) => h.alive !== false && h.fleetId && s.fleets[h.fleetId]).length;
+  let html = `<div class="hx-note">${t('Развёрнуто {a}/{cap}. Герой действует со своего корабля; резерв разворачивается на своём мире (перки открывают свой флот / мир союзника).', { a: active, cap: HERO_ACTIVE_CAP })}</div>`;
+  for (const h of mine) {
+    const def = h.archetype !== undefined ? data.heroes[h.archetype] : undefined;
+    const dead = h.alive === false;
+    const fleet = !dead && h.fleetId !== undefined ? s.fleets[h.fleetId] : undefined;
+    const status = dead
+      ? `<span class="hx-badge cd">${t('погиб')}</span>`
+      : fleet
+        ? `<span class="hx-badge on">⚓ ${esc(typeof fleet.location === 'string' ? fleet.location : t('в пути'))}</span>`
+        : `<span class="hx-badge">${t('резерв · {at}', { at: esc(h.location ?? '') })}</span>`;
+    html +=
+      `<div class="hx-card${dead ? ' dead' : ''}">` +
+      `<div style="display:flex;align-items:center;gap:8px;"><div class="hx-grow">` +
+      `<div class="hx-name">♔ ${esc(h.name ?? h.id)}</div>` +
+      `<div class="hx-sub">${esc(t(def?.name ?? h.archetype ?? ''))}${def?.branch ? ' · ' + t(HERO_BRANCH_RU[def.branch] ?? def.branch) : ''}</div>` +
+      `</div>${status}` +
+      (!dead && !fleet
+        ? `<button class="hx-btn" data-hspawn="${h.id}" ${active >= HERO_ACTIVE_CAP ? 'disabled' : ''}>${t('Развернуть')}</button>`
+        : '') +
+      `</div>`;
+    // abilities — the hero's data-driven loadout
+    const abilities = h.abilities ?? [];
+    if (abilities.length) {
+      html += `<div class="hx-h">${t('Способности')}</div>`;
+      for (const ab of abilities) {
+        const ad = ab !== null ? data.heroAbilities[ab] : undefined;
+        if (ab === null || !ad) continue;
+        const cdLeft = Math.max(0, (h.cooldowns?.[heroCdKey(ad.type)] ?? 0) - s.time);
+        const action = ad.type.startsWith('spawn_')
+          ? `<span class="hx-badge">${t('перк развёртывания')}</span>`
+          : cdLeft > 0
+            ? `<span class="hx-badge cd">${t('КД {h}', { h: fmtHrs(cdLeft / HOUR) })}</span>`
+            : ad.type === 'temp_lane' || ad.type === 'annihilate'
+              ? `<button class="hx-btn" data-hcast="${h.id}" data-ab="${ab}" ${dead ? 'disabled' : ''}>${t('Цель…')}</button>`
+              : `<span class="hx-badge">${t('скоро')}</span>`;
+        html +=
+          `<div class="hx-row"><div class="hx-grow"><span class="hx-an">${esc(t(ad.name))}</span>` +
+          `<div class="hx-note">${esc(t(ad.description ?? ''))}</div></div>${action}</div>`;
+      }
+    }
+    // skill tree — common nodes + the hero's own branch
+    const nodes = Object.entries(data.heroSkillTrees).filter(
+      ([, nd]) => nd.branch === undefined || nd.branch === def?.branch,
+    );
+    if (nodes.length) {
+      const skills = h.skills ?? [];
+      html += `<div class="hx-h">${t('Дерево скиллов')}</div>`;
+      for (const [nid, nd] of nodes) {
+        const action = skills.includes(nid)
+          ? `<span class="hx-badge on">✓ ${t('изучено')}</span>`
+          : !nd.requires.every((r) => skills.includes(r))
+            ? `<span class="hx-badge">🔒 ${t('нужен пред. узел')}</span>`
+            : `<button class="hx-btn" data-hskill="${h.id}" data-node="${nid}" ${dead || !afford(nd.cost) ? 'disabled' : ''}>${esc(cost(nd.cost))}</button>`;
+        html +=
+          `<div class="hx-row"><div class="hx-grow"><span class="hx-an">${esc(t(nd.name))}</span>` +
+          `<div class="hx-note">${esc(t(nd.description ?? ''))}</div></div>${action}</div>`;
+      }
+    }
+    // fittings — the archetype's slot budget, locked in for good (no refit)
+    const slots = def?.slots ?? 0;
+    if (slots > 0) {
+      const fitted = h.fittings ?? [];
+      html += `<div class="hx-h">${t('Фиттинги · {u}/{n}', { u: fitted.length, n: slots })}</div>`;
+      for (const [fid, fd] of Object.entries(data.heroFittings)) {
+        const action = fitted.includes(fid)
+          ? `<span class="hx-badge on">✓ ${t('установлен')}</span>`
+          : fitted.length >= slots
+            ? `<span class="hx-badge">${t('нет слотов')}</span>`
+            : `<button class="hx-btn" data-hfit="${h.id}" data-fit="${fid}" ${dead || !afford(fd.cost) ? 'disabled' : ''}>${esc(cost(fd.cost))}</button>`;
+        html +=
+          `<div class="hx-row"><div class="hx-grow"><span class="hx-an">${esc(t(fd.name))}</span>` +
+          `<div class="hx-note">${esc(t(fd.description ?? ''))}</div></div>${action}</div>`;
+      }
+    }
+    html += `</div>`;
+  }
+  body.innerHTML = html;
+}
+document.getElementById('rail-hero')?.addEventListener('click', () => {
+  heroWin.classList.add('show');
+  renderHero();
+});
+heroWin.addEventListener('click', (e) => {
+  const tg = e.target as HTMLElement;
+  if (tg.id === 'hero' || tg.classList.contains('tw-close')) {
+    heroWin.classList.remove('show');
+    return;
+  }
+  const castBtn = tg.closest('[data-hcast]') as HTMLElement | null;
+  if (castBtn) {
+    const heroId = castBtn.dataset.hcast!;
+    const abilityId = castBtn.dataset.ab!;
+    if ((data.heroAbilities[abilityId]?.range ?? 0) > 0) {
+      // ranged cast → arm the map: the next world tap is the target
+      heroAim = { heroId, abilityId };
+      heroWin.classList.remove('show');
+      note(t('✨ выберите мир-цель на карте'));
+    } else {
+      playerOrder(castHeroAbility(ME, heroId, abilityId));
+      renderHero();
+    }
+    return;
+  }
+  const spawnBtn = tg.closest('[data-hspawn]') as HTMLElement | null;
+  if (spawnBtn) {
+    heroSpawnAim = spawnBtn.dataset.hspawn!;
+    heroWin.classList.remove('show');
+    const hero = s.heroes?.[heroSpawnAim];
+    const perks = (hero?.abilities ?? []).map((a) => (a !== null ? data.heroAbilities[a]?.type : undefined));
+    note(
+      t('⚓ выберите свой мир{fl}{al} — там поднимется корабль героя', {
+        fl: perks.includes('spawn_fleet') ? t(' / свой флот') : '',
+        al: perks.includes('spawn_allied') ? t(' / мир союзника') : '',
+      }),
+    );
+    return;
+  }
+  const skillBtn = tg.closest('[data-hskill]') as HTMLElement | null;
+  if (skillBtn) {
+    playerOrder(unlockHeroSkill(ME, skillBtn.dataset.hskill!, skillBtn.dataset.node!));
+    renderHero();
+    return;
+  }
+  const fitBtn = tg.closest('[data-hfit]') as HTMLElement | null;
+  if (fitBtn) {
+    playerOrder(fitHero(ME, fitBtn.dataset.hfit!, fitBtn.dataset.fit!));
+    renderHero();
+  }
 });
 
 // --- session market: a two-sided order book, one tab per tradeable good -------

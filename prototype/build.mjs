@@ -521,15 +521,30 @@ button.b:disabled{opacity:.32;cursor:not-allowed;color:var(--dim);border-color:v
   font:11px/1.6 ui-monospace,Menlo,monospace;color:#73b6a2;scrollbar-width:thin;}
 #log div::before{content:"> ";color:var(--grn-dim);}
 
-/* technologies + steward windows (modal, mirror #logwin) */
-#tech,#steward{position:fixed;inset:0;z-index:47;display:none;align-items:center;justify-content:center;padding:16px;
+/* technologies + steward + heroes windows (modal, mirror #logwin) */
+#tech,#steward,#hero{position:fixed;inset:0;z-index:47;display:none;align-items:center;justify-content:center;padding:16px;
   background:rgba(1,5,9,.55);-webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px);}
-#tech.show,#steward.show{display:flex;}
-#tech .twbox,#steward .twbox{display:flex;flex-direction:column;width:min(460px,94vw);max-height:82vh;overflow:hidden;
+#tech.show,#steward.show,#hero.show{display:flex;}
+#tech .twbox,#steward .twbox,#hero .twbox{display:flex;flex-direction:column;width:min(460px,94vw);max-height:82vh;overflow:hidden;
   background:var(--glass);border:1px solid var(--cyan);border-radius:10px;
   box-shadow:0 0 40px rgba(0,0,0,.6),inset 0 0 0 1px rgba(53,214,230,.06);}
 .tw-close{width:28px;height:28px;border-radius:6px;border:1px solid var(--line);background:transparent;color:var(--dim);cursor:pointer;}
-#techbody,#stewardbody{flex:1;min-height:0;overflow:auto;touch-action:pan-y;padding:12px 14px;}
+#techbody,#stewardbody,#herobody{flex:1;min-height:0;overflow:auto;touch-action:pan-y;padding:12px 14px;}
+/* heroes window: roster cards + abilities / skill tree / fittings */
+#herobody .hx-card{border:1px solid var(--line-hi);border-radius:10px;padding:11px 13px;margin-bottom:12px;background:rgba(53,214,230,.04);}
+#herobody .hx-card.dead{opacity:.55;border-style:dashed;}
+#herobody .hx-name{font-weight:700;color:#eafffb;font-size:13px;}
+#herobody .hx-sub{font-size:10.5px;color:var(--dim);margin-top:2px;line-height:1.5;}
+#herobody .hx-h{font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--cyan-dim);margin:10px 0 4px;}
+#herobody .hx-row{display:flex;align-items:center;gap:8px;padding:6px 0;border-top:1px dashed var(--line);font-size:11.5px;}
+#herobody .hx-grow{flex:1;min-width:0;}
+#herobody .hx-an{color:var(--cyan);font-weight:600;}
+#herobody .hx-note{font-size:10px;color:var(--dim);line-height:1.45;}
+#herobody .hx-btn{padding:5px 10px;border-radius:7px;border:1px solid var(--cyan);background:rgba(53,214,230,.10);color:var(--cyan);cursor:pointer;font:inherit;font-size:11px;white-space:nowrap;}
+#herobody .hx-btn:disabled{opacity:.4;cursor:not-allowed;}
+#herobody .hx-badge{font-size:9px;letter-spacing:1px;text-transform:uppercase;border:1px solid var(--line-hi);border-radius:5px;padding:2px 6px;color:var(--dim);white-space:nowrap;}
+#herobody .hx-badge.on{border-color:#7df0d0;color:#9ff0da;}
+#herobody .hx-badge.cd{border-color:#e2a15a;color:#e2a15a;}
 /* Steward («Хранитель») delegate panel */
 #stewardbody .st-status{padding:11px 13px;border:1px solid var(--cyan-dim);border-radius:9px;background:rgba(53,214,230,.08);font-size:12px;color:var(--cyan);line-height:1.55;}
 #stewardbody .st-status.locked{border-color:var(--line);background:rgba(255,255,255,.03);color:var(--dim);}
@@ -1315,6 +1330,7 @@ const html = `<!doctype html>
     <button id="rail-diplo" title="Дипломатия" data-i18n-title>⬡<span class="rlbl" data-i18n>Дипло</span></button>
     <button id="rail-msgs" title="Сообщения" data-i18n-title>✉<span class="rlbl" data-i18n>Почта</span><b id="msgbadge" class="railbadge" style="display:none"></b></button>
     <button id="rail-tech" title="Технологии" data-i18n-title>⚛<span class="rlbl" data-i18n>Наука</span></button>
+    <button id="rail-hero" title="Герои — штаб: развёртывание, способности, скиллы, фиттинги" data-i18n-title>♔<span class="rlbl" data-i18n>Герои</span></button>
     <button id="rail-steward" title="Хранитель — передать ИИ на сон" data-i18n-title>😴<span class="rlbl" data-i18n>Сон</span></button>
     <button id="rail-market" title="Рынок" data-i18n-title>⇄<span class="rlbl" data-i18n>Рынок</span></button>
     <button id="railcorp" title="Корпорация" data-i18n-title>⬢<span class="rlbl" data-i18n>Корп</span></button>
@@ -1330,6 +1346,8 @@ const html = `<!doctype html>
 <div id="tech"><div class="twbox"><div class="lw-head"><b data-i18n>ТЕХНОЛОГИИ</b><button class="tw-close">✕</button></div><div id="techbody"></div></div></div>
 <!-- steward («Хранитель») window — content rendered by renderSteward() in main.ts -->
 <div id="steward"><div class="twbox"><div class="lw-head"><b data-i18n>ХРАНИТЕЛЬ · ИИ НА СОН</b><button class="tw-close">✕</button></div><div id="stewardbody"></div></div></div>
+<!-- heroes window («штаб героев») — content rendered by renderHero() in main.ts -->
+<div id="hero"><div class="twbox"><div class="lw-head"><b data-i18n>ГЕРОИ</b><button class="tw-close">✕</button></div><div id="herobody"></div></div></div>
 <!-- scientist council picker (setup-time, before the start-point) — rendered by renderSciPick() -->
 <div id="scipick"><div class="twbox"><div class="lw-head"><b data-i18n>СОВЕТ УЧЁНЫХ</b><button class="sp-cancel" type="button" data-i18n>↩ В меню</button></div><div id="scipickbody"></div></div></div>
 <!-- session market — whole box rendered by renderMarket() in main.ts -->
