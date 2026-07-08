@@ -17,6 +17,7 @@ const CLIENT_ACTION_TYPES = [
   'hero.move',
   'hero.path.create',
   'hero.ability',
+  'hero.spawn',
   'planet.annihilate',
   'station.deploy',
   'building.construct',
@@ -57,6 +58,7 @@ describe('SV-1.2 · action payload schemas', () => {
       ['hero.path.create', { to: 'p1' }],
       ['hero.ability', { heroId: 'hero:p1', abilityId: 'corridor', target: 'p2' }],
       ['hero.ability', { heroId: 'hero:p1', abilityId: 'recall' }], // untargeted cast
+      ['hero.spawn', { heroId: 'hero:p1', at: 'home_a' }],
       ['planet.annihilate', { planetId: 'p1' }],
       ['station.deploy', { planetId: 'p1' }],
       ['building.construct', { planetId: 'p1', building: 'radar' }],
@@ -99,6 +101,7 @@ describe('SV-1.2 · action payload schemas', () => {
       ['hero.move', { to: null }], // wrong type
       ['hero.ability', { heroId: 'hero:p1' }], // missing abilityId
       ['hero.ability', { heroId: 'hero:p1', abilityId: 'corridor', target: 7 }], // target not an id
+      ['hero.spawn', { heroId: 'hero:p1' }], // missing spawn world
       ['diplomacy.declare', { target: 'p2', stance: 'frenemy' }], // not a known stance
       ['diplomacy.declare', { target: 'p2' }], // missing stance
       ['diplomacy.declare', { stance: 'war' }], // missing target
