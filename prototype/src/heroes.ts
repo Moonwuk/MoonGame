@@ -44,9 +44,11 @@ export interface HeroAbility {
   live: boolean;
 }
 
-/** The pool a hero's slots draw from (tunable content). `corridor` / `annihilate` are
- *  already wired in the core heroModule (temp lane / planet annihilation); the rest are
- *  designed here and gain their effect in the in-match hero phase. */
+/** The pool a hero's slots draw from (tunable content). All are now wired in the engine:
+ *  `corridor`/`annihilate` are heroModule built-ins (temp lane / planet annihilation);
+ *  `rally`/`bulwark` (aura), `recall`, and `scan` (reveal) are `hero.effect.<type>`
+ *  capability providers (heroEffects). (`live`/`planned` are a vestige of the removed
+ *  pre-match hero designer — every ability wired ⇒ `planned` is now always 0.) */
 export const HERO_ABILITIES: Record<string, HeroAbility> = {
   corridor: {
     id: 'corridor',
@@ -70,7 +72,7 @@ export const HERO_ABILITIES: Record<string, HeroAbility> = {
     icon: '⚑',
     desc: 'Боевой клич: временный доп. бонус к ауре для своих флотов рядом с героем.',
     cooldownHours: 18,
-    live: false,
+    live: true,
   },
   scan: {
     id: 'scan',
@@ -78,7 +80,7 @@ export const HERO_ABILITIES: Record<string, HeroAbility> = {
     icon: '◎',
     desc: 'Раскрывает зону вокруг цели сквозь туман на время.',
     cooldownHours: 10,
-    live: false,
+    live: true,
   },
   recall: {
     id: 'recall',
@@ -86,7 +88,7 @@ export const HERO_ABILITIES: Record<string, HeroAbility> = {
     icon: '⟲',
     desc: 'Мгновенно отзывает корабль-героя в столицу.',
     cooldownHours: 24,
-    live: false,
+    live: true,
   },
   bulwark: {
     id: 'bulwark',
@@ -94,7 +96,7 @@ export const HERO_ABILITIES: Record<string, HeroAbility> = {
     icon: '⛨',
     desc: 'Временный щит: +оборона своим флотам рядом с героем.',
     cooldownHours: 20,
-    live: false,
+    live: true,
   },
 };
 

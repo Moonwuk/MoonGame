@@ -392,8 +392,18 @@
   кривая (0-бонус/0-длит.) аура → `E_BAD_EFFECT` (кулдаун не тратится). Данные:
   rally/bulwark `range:300`→`0` (самобаф-untargeted) + `params.radius:300`. Событие
   `hero.aura`. Прототип: `aura` в `HERO_CASTABLE` (rally/bulwark — «Активировать»).
-  5 core (вкл. боевой ×1.1 рядом/вне радиуса/истёкшая) + 1 proto теста. Осталось
-  `reveal` (scan — нужен таймбоксед fog-шов в `visibility`) — следующий провайдер (⏳).
+  5 core (вкл. боевой ×1.1 рядом/вне радиуса/истёкшая) + 1 proto теста.
+- **HERO-FX3** ✅ `[core]` Третий провайдер шва — `hero.effect.reveal` (scan):
+  **таймбоксед fog-шов**. Ranged-каст (диспетчер проверил цель в радиусе) кладёт
+  `{center, radius, until}` в `Hero.activeReveals` (прунинг на касте); проекция тумана
+  `coverageFor` (`state/visibility.ts`) читает раскрытия **только своих** героев
+  (per-viewer — не течёт сопернику) и поднимает полный identify на миры в `radius` от
+  `center`, пока `until > state.time`. Данные: `scan.params.radius:250`. Кривой reveal →
+  `E_BAD_EFFECT`; событие `hero.revealed`. Прототип: `reveal` в `HERO_CASTABLE`
+  (armed-тап цели), stale-флаги `heroes.ts` (`live`) выправлены — **«скоро» не осталось**,
+  все не-встроенные эффекты (recall/aura/reveal) имеют провайдеры (спавн-маркеры не
+  кастуются). 6 core + 1 proto теста; CDP-verify (Разведка → «Цель…», 0 «СКОРО»).
+  _(Трилогия recall/aura/reveal закрывает блок HERO-FX.)_
 
 ## Блок SHIP · Модульность кораблей `[proto]` `[core]` `[data]`
 

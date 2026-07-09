@@ -102,12 +102,37 @@ function auraBonus(h: HandlerContext, owner: string, at: PlanetId): number {
   return total;
 }
 
+/**
+ * `reveal` — a TIME-BOXED fog lift (scan). A RANGED cast: the dispatcher has already
+ * validated `target` is a node within the ability's range, so this stores a
+ * `{center, radius, until}` reveal on the hero. While live it lifts the fog to
+ * full-identify detail for every world within `radius` of `center` — but only in the
+ * OWNER's own visibility projection (`coverageFor` reads it per-viewer, so it never
+ * leaks to rivals). `params`: `radius`, `durationHours`. Malformed / no-op → reject so
+ * the cooldown isn't wasted.
+ */
+const reveal: HeroEffect = ({ heroId, hero, ability, owner, target }, h) => {
+  // The range gate guarantees a valid in-range node for a ranged ability; guard anyway.
+  if (typeof target !== 'string' || !h.state.planets[target]) return h.reject('E_BAD_PAYLOAD');
+  const p = ability.params;
+  const radius = num(p.radius);
+  const durationHours = num(p.durationHours);
+  if (radius <= 0 || durationHours <= 0) return h.reject('E_BAD_EFFECT');
+  const until = h.ctx.now + durationHours * MS_PER_HOUR;
+  // Prune expired reveals on cast (cooldown > duration ⇒ the list stays tiny), then add.
+  const live = (hero.activeReveals ?? []).filter((r) => r.until > h.ctx.now);
+  live.push({ center: target, radius, until });
+  hero.activeReveals = live;
+  h.emit('hero.revealed', { owner, heroId, center: target, radius, until });
+};
+
 export const heroEffectsModule: GameModule = {
   id: 'heroEffects',
   version: '1.0.0',
   setup(api) {
     api.provideCapability<HeroEffect>('hero.effect.recall', recall);
     api.provideCapability<HeroEffect>('hero.effect.aura', aura);
+    api.provideCapability<HeroEffect>('hero.effect.reveal', reveal);
 
     // Time-boxed combat aura → `combat.damage`, composing with the base default and the
     // heroModule contributions (multiple registrants chain; ×-factors commute, so the

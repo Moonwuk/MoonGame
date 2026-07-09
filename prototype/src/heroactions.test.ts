@@ -52,13 +52,17 @@ describe('hero actions — the core engine over the prototype catalogs', () => {
     expect(r.state.heroes![main.id]!.cooldowns?.path).toBeGreaterThan(s.time);
   });
 
-  it('hero.ability on a typed-but-unwired effect fails secure (E_NO_EFFECT)', () => {
+  it('hero.ability casts scan (hero.effect.reveal) and stores a time-boxed fog reveal', () => {
     const s = newGame();
     const main = mainOf(s, 'p1');
-    expect(main.abilities).toContain('scan'); // type `reveal` — typed in data, no engine effect yet
-    const origin = s.fleets[main.fleetId!]!.location!;
+    expect(main.abilities).toContain('scan'); // type `reveal` — now wired via heroEffects
+    const origin = s.fleets[main.fleetId!]!.location!; // in-range target (the hero's own node)
     const r = order(s, castHeroAbility('p1', main.id, 'scan', origin), s.time);
-    expect(r.error).toBe('E_NO_EFFECT');
+    expect(r.error).toBeUndefined();
+    const reveals = r.state.heroes![main.id]!.activeReveals ?? [];
+    expect(reveals.length).toBe(1);
+    expect(reveals[0]!.center).toBe(origin);
+    expect(r.state.heroes![main.id]!.cooldowns?.['fx:reveal']).toBeGreaterThan(s.time);
   });
 
   it('hero.skill.unlock walks the branch tree and grants the node', () => {

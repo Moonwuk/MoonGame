@@ -6652,8 +6652,8 @@ const heroCdKey = (type: string): string =>
   type === 'temp_lane' ? 'path' : type === 'annihilate' ? 'annihilate' : `fx:${type}`;
 // Ability types the prototype kernel can actually resolve: the two heroModule
 // built-ins + every `hero.effect.<type>` the kernel's MODULES provide (heroEffects →
-// recall). Types not here have no engine effect yet → the «скоро» badge.
-const HERO_CASTABLE = new Set(['temp_lane', 'annihilate', 'recall', 'aura']);
+// recall/aura/reveal). Types not here have no engine effect yet → the «скоро» badge.
+const HERO_CASTABLE = new Set(['temp_lane', 'annihilate', 'recall', 'aura', 'reveal']);
 /** The hero-roster body HTML (roster cards + abilities + skill tree + fittings). Rendered
  *  inside the constructor's «Герои» pane; hero actions are routed by the constructor. */
 function heroBodyHtml(): string {
