@@ -1139,16 +1139,20 @@ button.b:disabled{opacity:.32;cursor:not-allowed;color:var(--dim);border-color:v
 .fitpane .hgradeline.g-legendary{color:var(--amber);}
 .fitpane .hgradeline.g-main{color:var(--grn);}
 
-/* in-app APK update banner + manual check (APK only; updater.ts toggles visibility) */
-#connect #updbar{display:none;margin:14px 0 0;padding:12px 14px;border:1px solid var(--cyan);border-radius:10px;
-  background:rgba(53,214,230,.10);box-shadow:0 0 22px rgba(53,214,230,.12);}
-#connect #updbar .ub-t{font-size:12px;color:var(--cyan-dim);letter-spacing:.5px;line-height:1.5;}
-#connect #updbar .ub-t b{color:var(--ink);}
-#connect #updbar .ub-row{display:flex;gap:10px;margin-top:10px;}
-#connect #updbar .ub-go{flex:1;text-align:center;padding:11px 10px;border-radius:8px;border:1px solid var(--cyan);
+/* in-app APK update banner + manual check (APK only; updater.ts toggles visibility).
+   GLOBAL fixed banner — floats over ANY screen (welcome / hub / match), z above the
+   window overlays (47) and testmode (59): an update prompt is deliberately on top. */
+#updbar{display:none;position:fixed;top:calc(10px + env(safe-area-inset-top,0px));left:50%;
+  transform:translateX(-50%);z-index:96;width:min(440px,calc(100vw - 20px));
+  padding:12px 14px;border:1px solid var(--cyan);border-radius:10px;
+  background:rgba(4,20,26,.94);box-shadow:0 6px 28px rgba(0,0,0,.55),0 0 22px rgba(53,214,230,.16);}
+#updbar .ub-t{font-size:12px;color:var(--cyan-dim);letter-spacing:.5px;line-height:1.5;}
+#updbar .ub-t b{color:var(--ink);}
+#updbar .ub-row{display:flex;gap:10px;margin-top:10px;}
+#updbar .ub-go{flex:1;text-align:center;padding:11px 10px;border-radius:8px;border:1px solid var(--cyan);
   background:rgba(53,214,230,.18);color:var(--cyan);font-size:13px;letter-spacing:1px;text-decoration:none;cursor:pointer;}
-#connect #updbar .ub-go:active{background:rgba(53,214,230,.3);}
-#connect #updbar .ub-later{flex:none;padding:11px 16px;border-radius:8px;border:1px solid var(--line-hi);
+#updbar .ub-go:active{background:rgba(53,214,230,.3);}
+#updbar .ub-later{flex:none;padding:11px 16px;border-radius:8px;border:1px solid var(--line-hi);
   background:transparent;color:var(--dim);font-size:12px;cursor:pointer;}
 #connect .cupd{flex:none;width:100%;margin-top:10px;padding:9px 10px;border:1px dashed var(--line-hi);border-radius:8px;
   background:transparent;color:var(--cyan-dim);font-size:12px;letter-spacing:.5px;cursor:pointer;}
@@ -1545,14 +1549,6 @@ const html = `<!doctype html>
       </div>
       <div id="cstatus" class="cstat"></div>
     </div>
-    <!-- in-app APK update (APK only; dormant in the browser — driven by updater.ts) -->
-    <div id="updbar">
-      <div class="ub-t"><span data-i18n>Доступна новая сборка</span> <b id="ub-ver"></b></div>
-      <div class="ub-row">
-        <a id="ub-go" class="ub-go" href="#" rel="noopener" data-i18n>Обновить</a>
-        <button id="ub-later" class="ub-later" type="button" data-i18n>Позже</button>
-      </div>
-    </div>
     <button id="cupd" class="cupd" type="button" style="display:none" data-i18n>Проверить обновления</button>
     <div id="cver" class="cver"></div>
     <!-- DEV TEST MODE — remove this button (and the #testmode block + CSS + main.ts hook) to cut the feature -->
@@ -1564,6 +1560,17 @@ const html = `<!doctype html>
       <a id="cl-privacy" data-i18n>Политика конфиденциальности</a>
       <a id="cl-support" data-i18n>Поддержка</a>
     </div>
+  </div>
+</div>
+<!-- in-app APK update (APK only; dormant in the browser — driven by updater.ts).
+     A GLOBAL fixed banner so it is seen from ANY screen — welcome, hub, or mid-match:
+     the returning-player path lands in the hub and never visits #connect, which is
+     where this used to live (and why players never saw their updates). -->
+<div id="updbar">
+  <div class="ub-t"><span data-i18n>Доступна новая сборка</span> <b id="ub-ver"></b></div>
+  <div class="ub-row">
+    <a id="ub-go" class="ub-go" href="#" rel="noopener" data-i18n>Обновить</a>
+    <button id="ub-later" class="ub-later" type="button" data-i18n>Позже</button>
   </div>
 </div>
 <div id="hub">
@@ -1604,6 +1611,7 @@ const html = `<!doctype html>
     <div class="hub-panel" id="hp-more" style="display:none">
       <div class="hub-grid">
         <button class="hub-tile" id="hub-settings" type="button"><span class="ht-ic">⚙</span><span data-i18n>Настройки</span></button>
+        <button class="hub-tile" id="hub-upd" type="button" style="display:none"><span class="ht-ic">⟳</span><span data-i18n>Обновления</span></button>
         <button class="hub-tile" data-more="Аккаунт" type="button"><span class="ht-ic">◉</span><span data-i18n>Аккаунт</span></button>
         <button class="hub-tile" data-more="Сообщество" type="button"><span class="ht-ic">◍</span><span data-i18n>Сообщество</span></button>
         <button class="hub-tile" data-more="Поддержка" type="button"><span class="ht-ic">⚠</span><span data-i18n>Поддержка</span></button>

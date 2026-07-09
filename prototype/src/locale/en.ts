@@ -319,6 +319,7 @@ export const en: Record<string, string> = {
   'Флагман': 'Flagship',
   'Флот': 'Fleet',
   'Флоты на орбите': 'Fleets in orbit',
+  'Обновления': 'Updates',
   'Фракция': 'Faction',
   // H3 — setup faction picker (pure passive house bonuses)
   'Фракция — пассивный бонус дома': 'Faction — the house passive bonus',
