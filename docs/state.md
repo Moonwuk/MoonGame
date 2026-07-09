@@ -615,9 +615,15 @@ E_NOT_DESTRUCTIBLE, E_OUT_OF_RANGE, E_COOLDOWN`.
   **таймбоксед** боевая аура: каст кладёт `{bonus, radius, until}` в `Hero.activeAuras`
   (прунинг истёкших на касте), а собственный хук `combat.damage` модуля бафает флоты
   владельца в `radius` от ноды героя, пока `until > now` — временный близнец пассивки
-  HERO-5 `rally_beacon`; кривая аура → `E_BAD_EFFECT`; событие `hero.aura`. Эффекты
-  приходят добавлением провайдера, ядро/диспетчер не трогаются. Осталось `reveal` (scan)
-  — будущий провайдер (нужен таймбоксед fog-шов в `visibility`).
+  HERO-5 `rally_beacon`; кривая аура → `E_BAD_EFFECT`; событие `hero.aura`.
+  `hero.effect.reveal` (scan) — **таймбоксед fog-шов**: ranged-каст (диспетчер уже
+  проверил цель в радиусе) кладёт `{center, radius, until}` в `Hero.activeReveals`
+  (прунинг на касте), а проекция тумана `coverageFor` (`state/visibility.ts`) читает
+  активные раскрытия **только своих** героев (per-viewer) и поднимает полный identify
+  на миры в `radius` от `center`, пока `until > state.time` — раскрытие не течёт
+  сопернику; кривой reveal (0-радиус/0-длит.) → `E_BAD_EFFECT`; событие `hero.revealed`.
+  Эффекты приходят добавлением провайдера, ядро/диспетчер не трогаются — трилогия
+  recall/aura/reveal закрывает все не-встроенные эффекты (спавн-маркеры не кастуются).
   **Кулдаун-ключи**: встроенные типы делят ключ с legacy (`path`/`annihilate`) — generic
   и legacy маршруты нельзя скомбинировать в double-fire; кастомные типы — ключ `fx:<type>`
   (два каталожных id одного эффекта делят кулдаун; префикс не коллидирует с `respawn`).
@@ -772,16 +778,17 @@ steward, espionage, orderQueue, subscription, standingOrders, heroEffects])` (27
   сеется **core-инстансами** `hero:{seat}:{n}` (grade→архетип 1:1: main→commander,
   legendary→ravager, rare→vanguard, common→warden; главный — флагман домашнего флота,
   остальные — резерв как в `buildFromMap`; способности = выбор меню + маркер-перки
-  архетипа). Окно «Герои» (`rail-hero` → `renderHero`, оверлей `#hero`) — весь цикл:
-  развёртывание `hero.spawn` armed-тапом (свой мир / свой флот / мир союзника по
-  маркерам), каст `hero.ability` (встроенные `temp_lane`/`annihilate` armed-тапом цели +
-  `recall`/`aura` (rally/bulwark) кнопкой «Активировать» — прототип-кернел несёт
-  `heroEffectsModule`; `reveal`/scan без провайдера — честное «скоро»/`E_NO_EFFECT`),
-  дерево `hero.skill.unlock`, фиттинги
-  `hero.fit`. Кастуемость — `HERO_CASTABLE` (built-ins + провайдеры `hero.effect.*`).
-  Билдеры действий — `castHeroAbility`/`spawnHero`/`unlockHeroSkill`/`fitHero` (`game.ts`);
-  тесты `herostate.test.ts` (сид) + `heroactions.test.ts` (интеграция пяти действий,
-  включая recall, против прототипных каталогов).
+  архетипа). Ростер героев **свёрнут в таб «Верфи»** (панель «Герои» → `heroBodyHtml`;
+  окно `#hero`/рельс `rail-hero` ретайрнуты в CON-4) — весь цикл: развёртывание
+  `hero.spawn` armed-тапом (свой мир / свой флот / мир союзника по маркерам), каст
+  `hero.ability` (встроенные `temp_lane`/`annihilate` armed-тапом цели + `recall` /
+  `aura` (rally/bulwark) / `reveal` (scan, armed-тап цели) — прототип-кернел несёт
+  `heroEffectsModule`; **все не-встроенные эффекты имеют провайдеры → «скоро» не
+  осталось**), дерево `hero.skill.unlock`, фиттинги `hero.fit`. Кастуемость —
+  `HERO_CASTABLE` (built-ins + провайдеры `hero.effect.*`). Билдеры действий —
+  `castHeroAbility`/`spawnHero`/`unlockHeroSkill`/`fitHero` (`game.ts`); тесты
+  `herostate.test.ts` (сид) + `heroactions.test.ts` (интеграция пяти действий, включая
+  reveal/scan, против прототипных каталогов).
 - **Конструктор «Верфь» (`rail-constructor` → `renderConstructor`, оверлей `#constructor`):**
   единый in-match таб-лоадаут со Stellaris-свитчером `[Корабли|Эскадрильи|Армия|Герои]` —
   все четыре панели живые (разгрузка игрового HUD: рельс `rail-hero` и окно `#hero`

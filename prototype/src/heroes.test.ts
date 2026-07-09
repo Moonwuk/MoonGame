@@ -44,14 +44,15 @@ describe('hero roster model — loadout = grade slots ("modules") + base aura', 
     expect(heroLoadoutInfo(load('rare', ['nope', null])).count).toBe(0);
   });
 
-  it('flags abilities not yet wired in the engine as planned ("скоро")', () => {
+  it('all catalog abilities are now engine-wired ⇒ nothing is flagged planned ("скоро")', () => {
     expect(heroLoadoutInfo(load('rare', ['corridor', 'annihilate'])).planned).toBe(0);
-    expect(heroLoadoutInfo(load('rare', ['corridor', 'scan'])).planned).toBe(1);
+    expect(heroLoadoutInfo(load('rare', ['corridor', 'scan'])).planned).toBe(0); // scan → hero.effect.reveal
   });
 
-  it('the live abilities are exactly the ones the core heroModule already implements', () => {
+  it('the live abilities are exactly the ones the engine implements (built-ins + heroEffects providers)', () => {
     const live = HERO_ABILITY_IDS.filter((id) => HERO_ABILITIES[id]!.live).sort();
-    expect(live).toEqual(['annihilate', 'corridor']);
+    // corridor/annihilate = heroModule built-ins; rally/bulwark/recall/scan = hero.effect.* providers.
+    expect(live).toEqual(['annihilate', 'bulwark', 'corridor', 'rally', 'recall', 'scan']);
   });
 
   it('the default roster is the main hero + 3 others, each filled to its grade', () => {

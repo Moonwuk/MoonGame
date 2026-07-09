@@ -14,6 +14,7 @@ import {
   type Player,
 } from '../state/gameState';
 import { parseGameData, type GameData } from '../data/schemas';
+import { identifiedNodes } from '../state/visibility';
 import type { Action, AdvanceResult, ApplyResult, Context } from '../action/types';
 
 const data: GameData = parseGameData({
@@ -41,6 +42,10 @@ const data: GameData = parseGameData({
     },
     // a malformed aura (no bonus / no duration) — the provider must reject it.
     dud: { name: 'Dud', type: 'aura', cooldownHours: 5, range: 0, params: {} },
+    // scan: a ranged (400) fog reveal — full-identify within radius 250 of the target for 3h.
+    scan: { name: 'Разведка', type: 'reveal', cooldownHours: 10, range: 400, params: { radius: 250, durationHours: 3 } },
+    // a malformed reveal (ranged so a target is supplied, but no radius/duration) — reject.
+    dudscan: { name: 'DudScan', type: 'reveal', cooldownHours: 5, range: 400, params: {} },
   },
 });
 const HOUR = 3_600_000;
@@ -261,5 +266,71 @@ describe('heroEffects — aura (rally/bulwark → time-boxed combat.damage)', ()
   it('an EXPIRED aura contributes nothing (filtered by `until` at read time)', () => {
     const expired = round(battleBase(200, [{ bonus: 0.1, radius: 300, until: 0 }])); // until ≤ now
     expect(expired.dmgToDefender).toBe(20);
+  });
+});
+
+describe('heroEffects — reveal (scan → time-boxed fog lift, owner-only)', () => {
+  const kernel = createKernel([heroModule, heroEffectsModule]);
+  const scan = act('hero.ability', 'p1', { heroId: 'hero:p1:1', abilityId: 'scan', target: 'T' });
+
+  /** p1's hero at H(0,0) with a ship; T(300,0) is the neutral scan target (≤ range 400).
+   *  NEAR(350,0) is a rival world ≤ radius 250 of T; FARW(900,0) is a rival world outside.
+   *  No links / radar ⇒ p1 identifies only its own H until the scan lifts the fog. */
+  function revealWorld(): GameState {
+    const s = createInitialState({ seed: 'rv', version: { data: '0.1.0', manifest: '1' } });
+    return {
+      ...s,
+      players: { p1: player('p1'), p2: player('p2') },
+      planets: {
+        H: planet('H', 'p1', 0),
+        T: planet('T', null, 300),
+        NEAR: planet('NEAR', 'p2', 350),
+        FARW: planet('FARW', 'p2', 900),
+      },
+      fleets: {
+        f1: { id: 'f1', owner: 'p1', location: 'H', movement: null, traits: [], units: [{ unit: 'hero', count: 1 }] },
+      },
+      heroes: {
+        'hero:p1:1': { id: 'hero:p1:1', owner: 'p1', location: 'H', home: 'H', cooldowns: {}, alive: true, fleetId: 'f1', abilities: ['scan'] },
+      },
+    };
+  }
+
+  it('casting scan stores a live reveal on the hero + starts the fx:reveal cooldown', () => {
+    const r = okApply(kernel.applyAction(revealWorld(), scan, ctx(0)));
+    expect(r.state.heroes!['hero:p1:1']?.activeReveals).toEqual([{ center: 'T', radius: 250, until: 3 * HOUR }]);
+    expect(r.state.heroes!['hero:p1:1']?.cooldowns['fx:reveal']).toBeGreaterThan(0);
+    expect(r.events.map((e) => e.type)).toContain('hero.revealed');
+  });
+
+  it('lifts the fog for p1 within radius, not outside — and never for the rival', () => {
+    const before = identifiedNodes(revealWorld(), 'p1', data);
+    expect(before.has('NEAR')).toBe(false); // a rival world, no radar/adjacency → hidden pre-scan
+    const r = okApply(kernel.applyAction(revealWorld(), scan, ctx(0)));
+    const p1sees = identifiedNodes(r.state, 'p1', data);
+    expect(p1sees.has('NEAR')).toBe(true); // ≤ 250 of the target → revealed
+    expect(p1sees.has('FARW')).toBe(false); // 900 > radius reach → still fogged
+    // the reveal is scoped to the caster's projection — p2 never sees p1's scan.
+    expect(identifiedNodes(r.state, 'p2', data).has('NEAR')).toBe(true); // p2's own world (trivially)
+    expect(identifiedNodes(r.state, 'p2', data).has('H')).toBe(false); // p2 does NOT gain p1's scan
+  });
+
+  it('the reveal expires: once state.time passes `until`, the fog closes again', () => {
+    const r = okApply(kernel.applyAction(revealWorld(), scan, ctx(0)));
+    expect(identifiedNodes(r.state, 'p1', data).has('NEAR')).toBe(true); // live at t=0
+    const later: GameState = { ...r.state, time: 4 * HOUR }; // past until=3h
+    expect(identifiedNodes(later, 'p1', data).has('NEAR')).toBe(false);
+  });
+
+  it('rejects a malformed (no radius / no duration) reveal, charging nothing', () => {
+    const st = revealWorld();
+    st.heroes!['hero:p1:1']!.abilities = ['dudscan'];
+    const dud = act('hero.ability', 'p1', { heroId: 'hero:p1:1', abilityId: 'dudscan', target: 'T' });
+    expect(errCode(kernel.applyAction(st, dud, ctx(0)))).toBe('E_BAD_EFFECT');
+  });
+
+  it('an out-of-range target is refused by the dispatcher (E_OUT_OF_RANGE) before the effect', () => {
+    const far = act('hero.ability', 'p1', { heroId: 'hero:p1:1', abilityId: 'scan', target: 'FARW' }); // 900 > 400
+    expect(errCode(kernel.applyAction(revealWorld(), far, ctx(0)))).toBe('E_OUT_OF_RANGE');
   });
 });

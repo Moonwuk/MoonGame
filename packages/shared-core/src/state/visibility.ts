@@ -227,6 +227,20 @@ function coverageFor(state: GameState, viewerId: PlayerId, data: GameData): Cove
       }
     }
   }
+  // HERO-FX3 `reveal` (scan): the viewer's OWN living heroes' active time-boxed reveals
+  // light a full-identify zone around their target node until it expires. Read per-viewer
+  // (this coverage is already scoped to `viewerId`), so a scan never leaks to a rival.
+  const heroes = state.heroes;
+  if (heroes) {
+    for (const hero of Object.values(heroes)) {
+      if (hero.owner !== viewerId || hero.alive === false) continue;
+      const reveals = hero.activeReveals;
+      if (reveals === undefined) continue;
+      for (const r of reveals) {
+        if (r.until > state.time) withinRadius(state, r.center, r.radius, identify);
+      }
+    }
+  }
   for (const id of identify) radar.add(id); // identify implies radar
   return { identify, radar };
 }

@@ -671,7 +671,7 @@ export const data: GameData = parseGameData({
     scan: {
       name: 'Разведка',
       description: 'Раскрывает зону вокруг цели сквозь туман на время.',
-      type: 'reveal', cooldownHours: 10, range: 400, params: { durationHours: 3 },
+      type: 'reveal', cooldownHours: 10, range: 400, params: { radius: 250, durationHours: 3 },
     },
     recall: {
       name: 'Отзыв',
