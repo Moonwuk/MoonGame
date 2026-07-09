@@ -296,6 +296,7 @@ export const data: GameData = parseGameData({
       cost: { metal: 90, credits: 40, microelectronics: 10 },
       buildTimeHours: 2,
       upkeep: { credits: 4 },
+      slots: { weapon: 1 }, // a single gun mount — upgun the paper-thin strike wing
     },
     strike_carrier: {
       // A slow, tanky flat-top with few guns of its own — its punch is the squadrons it carries.
@@ -306,6 +307,7 @@ export const data: GameData = parseGameData({
       cost: { metal: 320, credits: 160 },
       buildTimeHours: 6,
       upkeep: { credits: 12 },
+      slots: { defense: 1, utility: 2 }, // a flat-top: armour + sensor/cargo bays
     },
     // (marine retired — mobile ground troops now come only from the division/formation
     //  system. Orbital AA is no longer a unit either: it's a defensive *building* now

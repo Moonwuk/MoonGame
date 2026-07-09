@@ -957,7 +957,6 @@ export const en: Record<string, string> = {
   'Корпус недоступен.': 'Hull unavailable.',
   'бесплатно': 'free',
   // stat / resource words used by the module-effect chips and cost lines
-  'оборона': 'defense',
   'корпус': 'hull',
   'щит': 'shield',
   'скорость': 'speed',

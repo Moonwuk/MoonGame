@@ -1,5 +1,15 @@
 import { describe, it, expect } from 'vitest';
-import { newGame, order, buildShip, data, START_CANDIDATES } from './game';
+import {
+  newGame,
+  order,
+  buildShip,
+  data,
+  START_CANDIDATES,
+  templatesOf,
+  formationStats,
+  setDivisionTemplate,
+  FORMATION_SLOTS,
+} from './game';
 import { createLoadoutEditor, applyLoadoutAction } from '../../packages/client/src/loadoutEditor';
 
 // The «Верфь» constructor renders the @void/client loadout view-model over the prototype's
@@ -60,5 +70,50 @@ describe('constructor («Верфь») — loadout editor over the prototype dat
     // two weapon modules but the cruiser has only one weapon bay → validateLoadout fails.
     const r = order(s, buildShip('p1', HOME, 'cruiser', 1, ['targeting_array', 'targeting_array']), s.time);
     expect(r.error).toBeTruthy();
+  });
+});
+
+// The «Эскадрильи» pane is the SAME loadout editor over the squadron/carrier hulls —
+// so the only new prototype wiring to pin is that those hulls carry typed slots and
+// space-domain modules fit them (squadrons default to domain='space').
+describe('constructor — «Эскадрильи» pane over the squadron hulls', () => {
+  it('squadron hulls carry typed slots and the loadout editor fits space modules', () => {
+    // the schema normalises `slots` to all three categories (absent ⇒ 0).
+    expect(data.units.fighter_squadron?.slots).toEqual({ weapon: 1, defense: 0, utility: 0 });
+    expect(data.units.strike_carrier?.slots).toEqual({ weapon: 0, defense: 1, utility: 2 });
+    const ed = createLoadoutEditor('strike_carrier', data, { metal: 999, credits: 999 });
+    expect(ed.ok).toBe(true);
+    if (!ed.ok) return;
+    expect(ed.slots.map((s) => s.type)).toEqual(['defense', 'utility', 'utility']);
+    // a single weapon gun mount on the strike wing → a weapon module installs, a 2nd is blocked.
+    const wing = createLoadoutEditor('fighter_squadron', data, { metal: 999, credits: 999 });
+    if (!wing.ok) throw new Error('editor');
+    const r = applyLoadoutAction({ kind: 'equip', moduleId: 'targeting_array' }, wing, data, {
+      metal: 999,
+      credits: 999,
+    });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.slots.find((s) => s.type === 'weapon')?.moduleId).toBe('targeting_array');
+  });
+});
+
+// The «Армия» pane edits a division template's 6 slots (division.template) and previews
+// the live formation aggregate — both are shared-core; here we pin the prototype wiring.
+describe('constructor — «Армия» pane edits a division template', () => {
+  it('a fresh game seeds templates whose slots the pane cycles through the kernel', () => {
+    const s = newGame();
+    const tpls = templatesOf(s, 'p1');
+    expect(tpls.length).toBeGreaterThan(0);
+    expect(tpls[0]!.slots.length).toBe(FORMATION_SLOTS);
+    // the pane emits division.template when a slot is tapped; clearing a filled slot to
+    // null (the last step of the null→infantry→tank→null cycle) shrinks the aggregate.
+    const before = formationStats(tpls[0]!);
+    const filled = tpls[0]!.slots.findIndex((u) => u !== null);
+    expect(filled).toBeGreaterThanOrEqual(0);
+    const r = order(s, setDivisionTemplate('p1', 0, filled, null), s.time);
+    expect(r.error).toBeUndefined();
+    const after = formationStats(templatesOf(r.state, 'p1')[0]!);
+    expect(after.count).toBe(before.count - 1);
   });
 });

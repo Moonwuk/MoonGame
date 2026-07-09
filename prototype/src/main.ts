@@ -6645,7 +6645,6 @@ stewWin.addEventListener('click', (e) => {
 // (`hero.ability` — built-ins live, typed-but-unwired honestly say «скоро»), walk the
 // skill tree (`hero.skill.unlock`) and install fittings (`hero.fit`). All gates
 // (range/cooldown/cost/slots/branch) are the core's — the window only shows them.
-const heroWin = $('hero');
 const HERO_ACTIVE_CAP = 3; // mirrors the core heroModule's active cap (not exported)
 const HERO_BRANCH_RU: Record<string, string> = { transhuman: 'трансгуман', psionic: 'псионик' };
 /** The cooldown slot an ability occupies — mirrors the core's `cooldownKey`. */
@@ -6655,8 +6654,9 @@ const heroCdKey = (type: string): string =>
 // built-ins + every `hero.effect.<type>` the kernel's MODULES provide (heroEffects →
 // recall). Types not here have no engine effect yet → the «скоро» badge.
 const HERO_CASTABLE = new Set(['temp_lane', 'annihilate', 'recall', 'aura']);
-function renderHero(): void {
-  const body = $('herobody');
+/** The hero-roster body HTML (roster cards + abilities + skill tree + fittings). Rendered
+ *  inside the constructor's «Герои» pane; hero actions are routed by the constructor. */
+function heroBodyHtml(): string {
   const mine = Object.values(s.heroes ?? {}).filter((h) => h.owner === ME);
   const active = mine.filter((h) => h.alive !== false && h.fleetId && s.fleets[h.fleetId]).length;
   let html = `<div class="hx-note">${t('Развёрнуто {a}/{cap}. Герой действует со своего корабля; резерв разворачивается на своём мире (перки открывают свой флот / мир союзника).', { a: active, cap: HERO_ACTIVE_CAP })}</div>`;
@@ -6735,59 +6735,8 @@ function renderHero(): void {
     }
     html += `</div>`;
   }
-  body.innerHTML = html;
+  return html;
 }
-document.getElementById('rail-hero')?.addEventListener('click', () => {
-  heroWin.classList.add('show');
-  renderHero();
-});
-heroWin.addEventListener('click', (e) => {
-  const tg = e.target as HTMLElement;
-  if (tg.id === 'hero' || tg.classList.contains('tw-close')) {
-    heroWin.classList.remove('show');
-    return;
-  }
-  const castBtn = tg.closest('[data-hcast]') as HTMLElement | null;
-  if (castBtn) {
-    const heroId = castBtn.dataset.hcast!;
-    const abilityId = castBtn.dataset.ab!;
-    if ((data.heroAbilities[abilityId]?.range ?? 0) > 0) {
-      // ranged cast → arm the map: the next world tap is the target
-      heroAim = { heroId, abilityId };
-      heroWin.classList.remove('show');
-      note(t('✨ выберите мир-цель на карте'));
-    } else {
-      playerOrder(castHeroAbility(ME, heroId, abilityId));
-      renderHero();
-    }
-    return;
-  }
-  const spawnBtn = tg.closest('[data-hspawn]') as HTMLElement | null;
-  if (spawnBtn) {
-    heroSpawnAim = spawnBtn.dataset.hspawn!;
-    heroWin.classList.remove('show');
-    const hero = s.heroes?.[heroSpawnAim];
-    const perks = (hero?.abilities ?? []).map((a) => (a !== null ? data.heroAbilities[a]?.type : undefined));
-    note(
-      t('⚓ выберите свой мир{fl}{al} — там поднимется корабль героя', {
-        fl: perks.includes('spawn_fleet') ? t(' / свой флот') : '',
-        al: perks.includes('spawn_allied') ? t(' / мир союзника') : '',
-      }),
-    );
-    return;
-  }
-  const skillBtn = tg.closest('[data-hskill]') as HTMLElement | null;
-  if (skillBtn) {
-    playerOrder(unlockHeroSkill(ME, skillBtn.dataset.hskill!, skillBtn.dataset.node!));
-    renderHero();
-    return;
-  }
-  const fitBtn = tg.closest('[data-hfit]') as HTMLElement | null;
-  if (fitBtn) {
-    playerOrder(fitHero(ME, fitBtn.dataset.hfit!, fitBtn.dataset.fit!));
-    renderHero();
-  }
-});
 
 // --- session market: a two-sided order book, one tab per tradeable good -------
 // Sell lots (asks) and buy lots (bids) per resource; place your own, take a rival's.
@@ -6900,9 +6849,11 @@ const CON_TABS: [ConTab, string][] = [
   ['army', 'Армия'],
   ['heroes', 'Герои'],
 ];
-// Buildable space hulls the ship pane fits (squadron/carrier hulls → the «Эскадрильи» pane).
+// Buildable space hulls the «Корабли» pane fits; squadron/carrier hulls → the «Эскадрильи» pane.
 const CON_HULLS = ['cruiser', 'siege', 'scout', 'dropship'];
+const CON_SQUAD_HULLS = ['fighter_squadron', 'strike_carrier'];
 let conHull = 'cruiser';
+let conTplIdx = 0; // which division template the «Армия» pane is editing
 let conModules: string[] = [];
 let conCount = 1;
 let conPlanet = '';
@@ -6955,15 +6906,21 @@ function conBar(line: { label: string; base: number; effective: number; delta: n
     `<div class="cn-strack"><span class="cn-sbar" style="width:${basePct}%"></span><span class="cn-sdelta" style="width:${deltaPct}%"></span></div></div>`
   );
 }
-/** The «Корабли» pane: the loadout constructor for one hull draft. */
-function conShipPane(): string {
+/** The loadout constructor pane for a family of hulls (ships or squadrons) — same
+ *  `loadoutEditor` view-model, just a different hull list. Resets the draft when the
+ *  selected hull isn't in this family (a tab switch). */
+function conLoadoutPane(hullList: string[]): string {
+  if (!hullList.includes(conHull)) {
+    conHull = hullList[0]!;
+    conModules = [];
+  }
   const ed: LoadoutEditorResult = createLoadoutEditor(conHull, data, myRes(), {
     modules: conModules,
     count: conCount,
   });
   if (!ed.ok) return `<div class="cn-soon">${t('Корпус недоступен.')}</div>`;
   const m: LoadoutModel = ed;
-  const hulls = CON_HULLS.map(
+  const hulls = hullList.map(
     (h) =>
       `<button class="cn-hbtn${h === conHull ? ' on' : ''}" data-cnhull="${h}">${UNIT_ICON[h] ?? '▲'} ${esc(displayUnit(h))}</button>`,
   ).join('');
@@ -7034,17 +6991,63 @@ function conShipPane(): string {
 function conSoonPane(what: string): string {
   return `<div class="cn-soon"><div class="cn-si">🚧</div>${t('«{what}» переезжает в конструктор следующим кирпичом.', { what })}</div>`;
 }
+/** The «Армия» pane: edit a division template's 6 slots (per-player, global). Live
+ *  aggregate stats + synergies; mobilisation stays in the planet panel. */
+function conArmyPane(): string {
+  const tpls = templatesOf(s, ME);
+  if (!tpls.length) return `<div class="cn-soon">${t('Нет шаблонов.')}</div>`;
+  const idx = Math.max(0, Math.min(conTplIdx, tpls.length - 1));
+  const tpl = tpls[idx]!;
+  const tabs = tpls
+    .map((tp, i) => `<button class="cn-hbtn${i === idx ? ' on' : ''}" data-contpl="${i}">⚔ ${esc(tp.name)}</button>`)
+    .join('');
+  const f = formationStats(tpl);
+  const slots = tpl.slots
+    .map((u, i) => {
+      const inner = u
+        ? `<span class="cn-fic">${FORM_ICON[u] ?? '▪'}</span><span class="cn-fn">${esc(FORM_RU[u] ?? u)}</span>`
+        : `<span class="cn-fic dim">＋</span><span class="cn-fn dim">${t('пусто')}</span>`;
+      return `<button class="cn-fslot${u ? ' filled' : ''}" data-confslot="${idx}|${i}">${inner}</button>`;
+    })
+    .join('');
+  const card =
+    `<div class="cn-hull"><div class="cn-hic">⚔</div><div><div class="cn-hn">${esc(tpl.name)}</div>` +
+    `<div class="cn-hm">${t('{n}/{s} юнитов · тапни слот, чтобы менять род войск', { n: String(f.count), s: String(FORMATION_SLOTS) })}</div></div></div>`;
+  const left =
+    `<div class="cn-fit"><div class="cn-hulls">${tabs}</div>${card}<div class="cn-fgrid">${slots}</div>` +
+    `<div class="cn-note">${t('Тап по слоту: пусто → пехота → танк. Мобилизация дивизии — в панели своего мира (вкладка «Дивизии»).')}</div></div>`;
+  const max = Math.max(1, f.attack, f.defense, f.hp);
+  const bars = [
+    conBar({ label: t('Атака'), base: f.attack, effective: f.attack, delta: 0 }, max),
+    conBar({ label: t('Оборона'), base: f.defense, effective: f.defense, delta: 0 }, max),
+    conBar({ label: t('Корпус'), base: f.hp, effective: f.hp, delta: 0 }, max),
+  ].join('');
+  const syn = f.synergies.length
+    ? `<div class="cn-ph" style="margin-top:14px">${t('Синергии состава')}</div>` +
+      f.synergies.map((x) => `<div class="cn-syn">✦ ${esc(x.name)}</div>`).join('')
+    : `<div class="cn-note" style="margin-top:12px">${t('Смешай пехоту и танки для синергий.')}</div>`;
+  const cost =
+    `<div class="cn-cost"><div class="cn-crow total"><span class="cn-cl">${t('Стоимость мобилизации')}</span>` +
+    `<span class="cn-cv">${bagRu(f.cost)}</span></div></div>`;
+  const right = `<div class="cn-side"><div class="cn-ph">${t('Итог по формации')} — <em>${t('пересчёт вживую')}</em></div>${bars}${syn}${cost}</div>`;
+  return `<div class="cn-grid">${left}${right}</div>`;
+}
+/** The «Герои» pane: the hero roster/штаб (folded from the old #hero window). The
+ *  `#herobody` id keeps the `.hx-*` styling; hero clicks route via the constructor. */
+function conHeroPane(): string {
+  return `<div id="herobody">${heroBodyHtml()}</div>`;
+}
 function renderConstructor(): void {
   const tabBtn = (k: ConTab, label: string) =>
     `<button class="cn-tab${conTab === k ? ' on' : ''}" data-ctab="${k}">${t(label)}</button>`;
   const body =
     conTab === 'ships'
-      ? conShipPane()
+      ? conLoadoutPane(CON_HULLS)
       : conTab === 'squads'
-        ? conSoonPane('Эскадрильи')
+        ? conLoadoutPane(CON_SQUAD_HULLS)
         : conTab === 'army'
-          ? conSoonPane('Армия')
-          : conSoonPane('Герои');
+          ? conArmyPane()
+          : conHeroPane();
   constructorWin.innerHTML =
     `<div class="cnbox"><div class="cn-head"><b>${t('КОНСТРУКТОР')}</b><button class="cn-close">✕</button></div>` +
     `<div class="cn-tabs">${CON_TABS.map(([k, l]) => tabBtn(k, l)).join('')}</div>` +
@@ -7096,6 +7099,63 @@ constructorWin.addEventListener('click', (e) => {
   const step = (tg.closest('[data-cncount]') as HTMLElement | null)?.dataset.cncount;
   if (step) {
     conCount = Math.max(1, Math.min(20, conCount + (step === '+' ? 1 : -1)));
+    renderConstructor();
+    return;
+  }
+  const tpl = (tg.closest('[data-contpl]') as HTMLElement | null)?.dataset.contpl;
+  if (tpl !== undefined) {
+    conTplIdx = Number(tpl);
+    renderConstructor();
+    return;
+  }
+  const fslot = (tg.closest('[data-confslot]') as HTMLElement | null)?.dataset.confslot;
+  if (fslot) {
+    const [ti, si] = fslot.split('|').map(Number);
+    const cur = templatesOf(s, ME)[ti!]?.slots[si!] ?? null;
+    const order: (string | null)[] = [null, ...FORMATION_UNITS];
+    const next = order[(order.indexOf(cur) + 1) % order.length] ?? null;
+    playerOrder(setDivisionTemplate(ME, ti!, si!, next));
+    renderConstructor();
+    return;
+  }
+  // --- «Герои» pane actions (folded from the old #hero window) ---
+  const castBtn = tg.closest('[data-hcast]') as HTMLElement | null;
+  if (castBtn) {
+    const heroId = castBtn.dataset.hcast!;
+    const abilityId = castBtn.dataset.ab!;
+    if ((data.heroAbilities[abilityId]?.range ?? 0) > 0) {
+      heroAim = { heroId, abilityId }; // ranged cast → arm the map (next world tap is the target)
+      constructorWin.classList.remove('show');
+      note(t('✨ выберите мир-цель на карте'));
+    } else {
+      playerOrder(castHeroAbility(ME, heroId, abilityId));
+      renderConstructor();
+    }
+    return;
+  }
+  const spawnBtn = tg.closest('[data-hspawn]') as HTMLElement | null;
+  if (spawnBtn) {
+    heroSpawnAim = spawnBtn.dataset.hspawn!;
+    constructorWin.classList.remove('show');
+    const hero = s.heroes?.[heroSpawnAim];
+    const perks = (hero?.abilities ?? []).map((a) => (a !== null ? data.heroAbilities[a]?.type : undefined));
+    note(
+      t('⚓ выберите свой мир{fl}{al} — там поднимется корабль героя', {
+        fl: perks.includes('spawn_fleet') ? t(' / свой флот') : '',
+        al: perks.includes('spawn_allied') ? t(' / мир союзника') : '',
+      }),
+    );
+    return;
+  }
+  const skillBtn = tg.closest('[data-hskill]') as HTMLElement | null;
+  if (skillBtn) {
+    playerOrder(unlockHeroSkill(ME, skillBtn.dataset.hskill!, skillBtn.dataset.node!));
+    renderConstructor();
+    return;
+  }
+  const fitBtn = tg.closest('[data-hfit]') as HTMLElement | null;
+  if (fitBtn) {
+    playerOrder(fitHero(ME, fitBtn.dataset.hfit!, fitBtn.dataset.fit!));
     renderConstructor();
     return;
   }
