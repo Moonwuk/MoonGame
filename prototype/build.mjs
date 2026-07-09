@@ -671,6 +671,7 @@ button.b:disabled{opacity:.32;cursor:not-allowed;color:var(--dim);border-color:v
   font:700 11px ui-monospace,monospace;letter-spacing:.5px;cursor:pointer;}
 .cn-tab.on{color:var(--cyan);border-color:var(--cyan-dim);background:rgba(53,214,230,.1);}
 #constructorbody{flex:1;min-height:0;overflow:auto;touch-action:pan-y;padding:14px 16px;}
+#constructorbody #herobody{padding:0;overflow:visible;}/* folded hero pane: no nested pad/scroll */
 /* two columns: fitting editor (left) + live preview/cost/build (right); stacks on narrow */
 .cn-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start;}
 @media (max-width:760px){.cn-grid{grid-template-columns:1fr;}}
@@ -748,6 +749,17 @@ button.b:disabled{opacity:.32;cursor:not-allowed;color:var(--dim);border-color:v
   color:var(--ink);font:12px ui-monospace,monospace;}
 .cn-soon{padding:26px 14px;text-align:center;color:var(--dim);font-size:12.5px;line-height:1.6;}
 .cn-soon .cn-si{font-size:30px;margin-bottom:8px;opacity:.7;}
+/* army pane: 6-slot formation grid + synergies */
+.cn-fgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:2px;}
+.cn-fslot{display:flex;flex-direction:column;align-items:center;gap:4px;padding:14px 6px;border:1px dashed var(--line-hi);
+  border-radius:10px;background:rgba(255,255,255,.02);cursor:pointer;color:var(--dim);font:inherit;}
+.cn-fslot.filled{border-style:solid;border-color:var(--cyan-dim);background:rgba(53,214,230,.06);}
+.cn-fslot:hover{border-color:var(--cyan);}
+.cn-fslot .cn-fic{font-size:22px;line-height:1;}
+.cn-fslot .cn-fn{font:700 11px ui-monospace,monospace;color:#eafffb;}
+.cn-fslot .cn-fn.dim,.cn-fslot .cn-fic.dim{color:var(--dim);font-weight:400;}
+.cn-syn{display:flex;gap:7px;align-items:center;padding:7px 10px;margin-bottom:6px;border:1px solid var(--cyan-dim);
+  border-radius:8px;background:rgba(53,214,230,.06);font-size:11.5px;color:var(--cyan);}
 
 /* === FLOATING CHAT (desktop) — sized/positioned/opacity inline by renderChat() === */
 .desk-only{} /* shown by default; the media query below hides it on phones */
@@ -1428,7 +1440,6 @@ const html = `<!doctype html>
     <button id="rail-msgs" title="Сообщения" data-i18n-title>✉<span class="rlbl" data-i18n>Почта</span><b id="msgbadge" class="railbadge" style="display:none"></b></button>
     <button id="rail-tech" title="Технологии" data-i18n-title>⚛<span class="rlbl" data-i18n>Наука</span></button>
     <button id="rail-constructor" title="Конструктор — оснащение кораблей, эскадрилий, армии и героев" data-i18n-title>⚒<span class="rlbl" data-i18n>Верфь</span></button>
-    <button id="rail-hero" title="Герои — штаб: развёртывание, способности, скиллы, фиттинги" data-i18n-title>♔<span class="rlbl" data-i18n>Герои</span></button>
     <button id="rail-steward" title="Хранитель — передать ИИ на сон" data-i18n-title>😴<span class="rlbl" data-i18n>Сон</span></button>
     <button id="rail-market" title="Рынок" data-i18n-title>⇄<span class="rlbl" data-i18n>Рынок</span></button>
     <button id="railcorp" title="Корпорация" data-i18n-title>⬢<span class="rlbl" data-i18n>Корп</span></button>
@@ -1444,8 +1455,7 @@ const html = `<!doctype html>
 <div id="tech"><div class="twbox"><div class="lw-head"><b data-i18n>ТЕХНОЛОГИИ</b><button class="tw-close">✕</button></div><div id="techbody"></div></div></div>
 <!-- steward («Хранитель») window — content rendered by renderSteward() in main.ts -->
 <div id="steward"><div class="twbox"><div class="lw-head"><b data-i18n>ХРАНИТЕЛЬ · ИИ НА СОН</b><button class="tw-close">✕</button></div><div id="stewardbody"></div></div></div>
-<!-- heroes window («штаб героев») — content rendered by renderHero() in main.ts -->
-<div id="hero"><div class="twbox"><div class="lw-head"><b data-i18n>ГЕРОИ</b><button class="tw-close">✕</button></div><div id="herobody"></div></div></div>
+<!-- heroes: the roster/штаб now lives INSIDE the constructor «Верфь» tab (Герои pane) -->
 <!-- scientist council picker (setup-time, before the start-point) — rendered by renderSciPick() -->
 <div id="scipick"><div class="twbox"><div class="lw-head"><b data-i18n>СОВЕТ УЧЁНЫХ</b><button class="sp-cancel" type="button" data-i18n>↩ В меню</button></div><div id="scipickbody"></div></div></div>
 <!-- session market — whole box rendered by renderMarket() in main.ts -->
