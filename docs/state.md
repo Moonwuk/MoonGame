@@ -78,7 +78,7 @@ packages/action-layer/src/
   action/        types.ts (Action, Context, MatchConfig.timeScale/victory, ApplyResult/AdvanceResult, Rejection, timeScaleOf)
   data/          schemas.ts (zod-схемы + parseGameData, buildingLevel/buildingMaxLevel)
   rng/           rng.ts (sfc32)
-  util/          clone.ts (deepClone/deepFreeze), treasury.ts (canAfford/payCost — shared by construction & technology)
+  util/          clone.ts (deepClone/deepFreeze), treasury.ts (canAfford/payCost — shared by construction & technology), fitting.ts (генерик-гейт «слоты+предметы», SHIP-4) + loadout.ts (ship-обёртка над ним)
   modules/       army, artillery, captureOnArrival, combat, construction, diplomacy, economy, espionage, faction, hero, heroEffects, intercept, market, movement, orbital, planetType, scientist, sector, station, steward, technology, victory, visibility  (23 модуля, + *.test.ts)
   examples/      skirmish.test.ts (демо-сценарий + SVG)
   index.ts       баррель (экспорт публичного API)
@@ -565,10 +565,16 @@ E_NOT_DESTRUCTIBLE, E_OUT_OF_RANGE, E_COOLDOWN`.
   анти-self-expansion рефайн) в слот архетипа (`slots`; `Hero.fittings`, **без refit** —
   owner-правило ship-модулей). Гейты: владение/живость → `E_NO_FITTING` →
   `E_ALREADY_FITTED` → `E_NO_SLOTS` (безархетипный герой слотов не имеет) → казна.
-  `grants` — живые (общий `applyGrants` с дедупом, HERO-4/5); `statMods` — данные до
-  шва эффективных статов SHIP-3/4 («designed, not live», как `live:false` прототипа).
-  Событие `hero.fitted`. Шипованы «Пси-усилитель» (scan), «Матрица „Эгида"»
-  (rally_beacon), «Абляционная обшивка» (hp+40, не live).
+  **Инсталл-гейт — общий генерик-механизм «слоты+предметы»** (`util/fitting.ts`, SHIP-4):
+  `canInstall`/`validateInstalled(spec)` — каталог → дубль → `allowed` → бюджет
+  по категории, generic-причины, которые каждый потребитель мапит в СВОИ стабильные
+  `E_*`-коды; ship-лоадаут (`canEquip`/`validateLoadout`) и `hero.fit` — обёртки над ним
+  (герои = одно-категорийный бюджет без предиката), поведение и коды не изменились.
+  `grants` — живые (общий `applyGrants` с дедупом, HERO-4/5); `statMods` — данные без
+  шва эффективных статов героя (свой будущий кирпич; «designed, not live» — SHIP-4
+  унифицировал только слот-гейт, не статы). Событие `hero.fitted`. Шипованы
+  «Пси-усилитель» (scan), «Матрица „Эгида"» (rally_beacon), «Абляционная обшивка»
+  (hp+40, не live).
 - **Пред-матч ростер (HERO-9, buildFromMap):** `SlotAssignment.heroes?: string[]` — до
   **3 разных** архетипов (решение по прецедентам C3/совета учёных: снапшот при сборке;
   `E_UNKNOWN_HERO`/`E_DUPLICATE_HERO`/`E_TOO_MANY_HEROES`; ростер без владеемого мира —

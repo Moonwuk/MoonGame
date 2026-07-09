@@ -1,5 +1,6 @@
 import type { GameData, ModuleDef, ShipSlotType, UnitDef, ResourceBag } from '../data/schemas';
 import type { UnitStack } from '../state/gameState';
+import { canInstall, validateInstalled, type FittingSpec, type InstallFailure } from './fitting';
 
 /**
  * Ship-module (loadout) helpers. Pure & deterministic — no Date/random, fixed
@@ -64,11 +65,29 @@ export function moduleAllowed(unit: string, def: UnitDef, m: ModuleDef): boolean
   return true;
 }
 
+/** The ship-module fitting system expressed on the generic gate (`util/fitting.ts`):
+ *  catalog = `data.modules`, category = the module's typed slot, capacity = the
+ *  hull's BASE `slots` (a module can't expand its own capacity), `allowed` predicate. */
+function shipSpec(unit: string, def: UnitDef, data: GameData): FittingSpec<ModuleDef> {
+  return {
+    item: (id) => data.modules[id],
+    category: (m) => m.slot,
+    capacity: (category) => def.slots[category as ShipSlotType],
+    allowed: (m) => moduleAllowed(unit, def, m),
+  };
+}
+/** Generic refusal → the ship loadout's stable codes (the public error surface). */
+const SHIP_CODES: Record<InstallFailure, string> = {
+  unknown: 'E_UNKNOWN_MODULE',
+  duplicate: 'E_DUP_MODULE',
+  not_allowed: 'E_NOT_ALLOWED',
+  no_slot: 'E_NO_SLOT',
+};
+
 /** Whether `moduleId` can be added to the `current` loadout of hull `def`: the
  *  module exists, isn't already installed (one instance per id per stack), the
  *  hull has a free slot of the module's category, and `allowed` holds. Fail-secure
- *  stable codes. Free slots count against the hull's BASE `slots` (a module can't
- *  expand its own capacity). */
+ *  stable codes. */
 export function canEquip(
   unit: string,
   def: UnitDef,
@@ -76,14 +95,8 @@ export function canEquip(
   moduleId: string,
   data: GameData,
 ): { ok: true } | { ok: false; code: string } {
-  const m = data.modules[moduleId];
-  if (!m) return { ok: false, code: 'E_UNKNOWN_MODULE' };
-  if (current.includes(moduleId)) return { ok: false, code: 'E_DUP_MODULE' };
-  if (!moduleAllowed(unit, def, m)) return { ok: false, code: 'E_NOT_ALLOWED' };
-  const cap = def.slots[m.slot];
-  const used = slotUsage(current, data)[m.slot];
-  if (used >= cap) return { ok: false, code: 'E_NO_SLOT' };
-  return { ok: true };
+  const check = canInstall(shipSpec(unit, def, data), current, moduleId);
+  return check.ok ? check : { ok: false, code: SHIP_CODES[check.reason] };
 }
 
 /** Validate a whole loadout for a hull: every module installs legally on top of
@@ -96,13 +109,8 @@ export function validateLoadout(
   modules: readonly string[],
   data: GameData,
 ): { ok: true } | { ok: false; code: string } {
-  const acc: string[] = [];
-  for (const id of modules) {
-    const check = canEquip(unit, def, acc, id, data);
-    if (!check.ok) return check;
-    acc.push(id);
-  }
-  return { ok: true };
+  const check = validateInstalled(shipSpec(unit, def, data), modules);
+  return check.ok ? check : { ok: false, code: SHIP_CODES[check.reason] };
 }
 
 /** Total resource cost of a loadout (Σ module costs). Unknown ids are skipped. */

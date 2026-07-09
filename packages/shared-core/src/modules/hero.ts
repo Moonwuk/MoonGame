@@ -13,6 +13,7 @@ import type {
 import { getStance, stanceToRelation } from '../state/diplomacy';
 import { distance } from '../state/route';
 import { isCapturable } from '../state/sectorKind';
+import { canInstall } from '../util/fitting';
 import { addUnits } from '../util/stacks';
 import { canAfford, payCost } from '../util/treasury';
 
@@ -741,6 +742,9 @@ export const heroModule: GameModule = {
 
     // HERO-6 — install a ship fitting into one of the archetype's slots. Locked in
     // for good (no refit); grants are live (HERO-4/5), statMods await SHIP-3.
+    // The install gate is the generic slots+items mechanism (`util/fitting.ts`,
+    // SHIP-4) — the same one ship modules run through — expressed as a
+    // single-category budget (the archetype's `slots`; archetype-less ⇒ 0).
     api.onAction('hero.fit', (action, h) => {
       const { heroId, fitting } = action.payload as { heroId?: string; fitting?: string };
       if (typeof heroId !== 'string' || typeof fitting !== 'string') {
@@ -750,14 +754,26 @@ export const heroModule: GameModule = {
       if (!hero) return h.reject('E_NO_HERO');
       if (hero.owner !== action.playerId) return h.reject('E_FORBIDDEN');
       if (hero.alive === false) return h.reject('E_HERO_DEAD');
-      const def = h.ctx.data.heroFittings[fitting];
-      if (!def) return h.reject('E_NO_FITTING');
       const fitted = hero.fittings ?? [];
-      if (fitted.includes(fitting)) return h.reject('E_ALREADY_FITTED');
-      // Slot budget comes from the archetype; an archetype-less hero fits nothing.
       const slots =
         hero.archetype !== undefined ? (h.ctx.data.heroes[hero.archetype]?.slots ?? 0) : 0;
-      if (fitted.length >= slots) return h.reject('E_NO_SLOTS');
+      const gate = canInstall(
+        {
+          item: (id) => h.ctx.data.heroFittings[id],
+          category: () => 'fitting',
+          capacity: () => slots,
+        },
+        fitted,
+        fitting,
+      );
+      if (!gate.ok) {
+        // `not_allowed` is unreachable (no predicate) → the fail-secure default.
+        const code = { unknown: 'E_NO_FITTING', duplicate: 'E_ALREADY_FITTED', no_slot: 'E_NO_SLOTS' }[
+          gate.reason as 'unknown' | 'duplicate' | 'no_slot'
+        ];
+        return h.reject(code ?? 'E_INTERNAL');
+      }
+      const def = h.ctx.data.heroFittings[fitting]!; // gate passed ⇒ the fitting exists
       chargeOrReject(h, action.playerId, def.cost);
 
       hero.fittings = [...fitted, fitting];
