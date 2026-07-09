@@ -9425,21 +9425,19 @@ requestAnimationFrame(frame);
       }
     };
     let checking = false;
-    const runCheck = async (manual: boolean): Promise<void> => {
+    const runCheck = async (manual: boolean, out?: HTMLElement | null): Promise<void> => {
       if (checking) return;
       checking = true;
       try {
         const r = await checkForUpdateDetailed();
         if (r.kind === 'update') showUpdate(r.info);
-        if (manual && cver) {
-          const prev = cver.textContent;
-          cver.textContent = t('проверка: {msg}', { msg: diagMsg(r) });
-          cver.style.color = r.kind === 'offline' || r.kind === 'http' ? 'var(--amber)' : '';
+        if (manual && out) {
+          const prev = out.textContent;
+          out.textContent = t('проверка: {msg}', { msg: diagMsg(r) });
+          out.style.color = r.kind === 'offline' || r.kind === 'http' ? 'var(--amber)' : '';
           window.setTimeout(() => {
-            if (cver) {
-              cver.textContent = prev;
-              cver.style.color = '';
-            }
+            out.textContent = prev;
+            out.style.color = '';
           }, 8000);
         }
       } finally {
@@ -9461,9 +9459,31 @@ requestAnimationFrame(frame);
     $('ub-later')?.addEventListener('click', () => {
       $('updbar').style.display = 'none';
     });
-    cupd?.addEventListener('click', () => void runCheck(true));
-    // Silent check on launch — only when the device reports it's online.
-    if (navigator.onLine !== false) void runCheck(false);
+    cupd?.addEventListener('click', () => void runCheck(true, cver));
+    // The hub carries its own manual check (the returning-player path never shows
+    // #connect); diagnostics land in the hub's note line.
+    const hubUpd = document.getElementById('hub-upd');
+    if (hubUpd) {
+      hubUpd.style.display = '';
+      hubUpd.addEventListener('click', () => void runCheck(true, document.getElementById('hub-note')));
+    }
+    // Silent re-checks: once at launch, whenever the app returns to the FOREGROUND
+    // (the phone pattern — launch offline, open later on wifi), and every 4h for a
+    // long-lived session. Throttled so foreground flapping can't hammer the API.
+    const CHECK_GAP_MS = 15 * 60_000;
+    let lastCheckAt = 0;
+    const maybeCheck = (): void => {
+      if (navigator.onLine === false) return;
+      const now = Date.now();
+      if (now - lastCheckAt < CHECK_GAP_MS) return;
+      lastCheckAt = now;
+      void runCheck(false);
+    };
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) maybeCheck();
+    });
+    window.setInterval(maybeCheck, 4 * 3_600_000);
+    maybeCheck(); // launch check (throttle-stamped so a foreground right after boot is free)
   }
 }
 
