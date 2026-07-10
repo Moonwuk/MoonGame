@@ -65,6 +65,19 @@ function accountStoreContract(name: string, make: () => AccountStore): void {
       // but an already-seated nick still resolves even when "full"
       expect((await store.resolveSeat('r2', 'bob', seats))?.playerId).toBe('p2');
     });
+
+    it('seat ticket (REL-5): first bind wins, later binds return the winner', async () => {
+      const store = make();
+      await store.resolveSeat('r3', 'alice', seats);
+      expect(await store.seatTicket('r3', 'alice')).toBeNull(); // nothing bound yet
+      expect(await store.bindSeatTicket('r3', 'alice', 'hash-A')).toBe('hash-A'); // we won
+      expect(await store.bindSeatTicket('r3', 'alice', 'hash-B')).toBe('hash-A'); // lost → winner
+      expect(await store.seatTicket('r3', 'alice')).toBe('hash-A');
+      // tickets are seat-scoped: another nick / another room are independent
+      await store.resolveSeat('r3', 'bob', seats);
+      expect(await store.seatTicket('r3', 'bob')).toBeNull();
+      expect(await store.bindSeatTicket('r4', 'alice', 'x')).toBeNull(); // no seat there
+    });
   });
 }
 
@@ -138,6 +151,18 @@ describe.skipIf(!DB)('Postgres adapters', () => {
     expect((await store.resolveSeat(room, 'alice', seats))).toEqual({ playerId: 'p1', isNew: false });
     expect((await store.resolveSeat(room, 'bob', seats))?.playerId).toBe('p2');
     expect(await store.resolveSeat(room, 'carol', seats)).toBeNull();
+  });
+
+  it('AccountStore seat ticket: first bind wins, no seat → null', async () => {
+    await migrate(pool);
+    const store = new PostgresAccountStore(pool);
+    const room = uniq('r');
+    await store.resolveSeat(room, 'alice', ['p1', 'p2']);
+    expect(await store.seatTicket(room, 'alice')).toBeNull();
+    expect(await store.bindSeatTicket(room, 'alice', 'hash-A')).toBe('hash-A');
+    expect(await store.bindSeatTicket(room, 'alice', 'hash-B')).toBe('hash-A'); // first wins
+    expect(await store.seatTicket(room, 'alice')).toBe('hash-A');
+    expect(await store.bindSeatTicket(room, 'nobody', 'x')).toBeNull(); // no seat row
   });
 
   it('ReceiptStore persists + dedupes by (match, action)', async () => {
