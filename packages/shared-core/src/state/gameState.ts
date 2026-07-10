@@ -160,6 +160,9 @@ export interface MatchScore {
 export interface MatchState {
   status: MatchStatus;
   winner: PlayerId | null;
+  /** Every winner of a coalition (alliance) score win, sorted (GDD §3.3). Present
+   *  only when a coalition won together; `winner` then holds its top scorer. */
+  winners?: PlayerId[];
   endedAt?: number;
   reason?: MatchEndReason;
   scores: Record<PlayerId, MatchScore>;
