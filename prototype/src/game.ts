@@ -1458,11 +1458,21 @@ export const fleetLaunchModule: GameModule = {
       if (!f || !target) return h.reject('E_NO_FLEET');
       if (f.owner !== action.playerId) return h.reject('E_FORBIDDEN');
       if (f.owner === target.owner) return h.reject('E_FORBIDDEN');
+      // Combat needs a DECLARED war (BF-охота MAJOR): engage was the one attack path
+      // without a stance gate — a hand-crafted client action could open fire on a
+      // player at peace/pact/alliance, bypassing diplomacy entirely in multiplayer.
+      if (getStance(h.state, f.owner, target.owner) !== 'war') return h.reject('E_NOT_HOSTILE');
+      if (!f.units.some((s) => s.count > 0) || !target.units.some((s) => s.count > 0)) {
+        return h.reject('E_NO_FLEET'); // ghosts can't fight — no empty-side battles
+      }
       if (f.battleId || target.battleId) return h.reject('E_IN_BATTLE');
       if (!f.location || f.movement || target.movement || f.location !== target.location) {
         return h.reject('E_NOT_COLOCATED');
       }
       const battleId = `battle:${h.state.battleSeq++}`;
+      // Round cadence mirrors the core combat module: one round per GAME hour
+      // (÷timeScale on the wall clock), with nextRoundAt stamped for the HUD timer.
+      const roundAt = h.ctx.now + HOUR / timeScaleOf(h.ctx);
       const battle: Battle = {
         id: battleId,
         location: f.location,
@@ -1470,13 +1480,14 @@ export const fleetLaunchModule: GameModule = {
         attacker: { ref: { kind: 'fleet', fleetId: f.id }, owner: f.owner },
         defender: { ref: { kind: 'fleet', fleetId: target.id }, owner: target.owner },
         round: 0,
+        nextRoundAt: roundAt,
       };
       h.state.battles[battleId] = battle;
       f.battleId = battleId;
       f.movement = null;
       target.battleId = battleId;
       target.movement = null;
-      h.schedule(h.ctx.now + HOUR, 'combat.tick', { battleId });
+      h.schedule(roundAt, 'combat.tick', { battleId });
       h.emit('battle.started', {
         battleId,
         location: f.location,
@@ -3143,6 +3154,10 @@ export function serverAutoAssaultActions(
     if (!f || f.location === null || !fleetIdle(f)) continue;
     const here = state.planets[f.location];
     if (!here || !isCapturable(data, here) || here.owner === f.owner) continue;
+    // Auto-storm only worlds we are AT WAR with (bug-hunt MINOR): the core rejects a
+    // peaceful assault anyway (E_FORBIDDEN), but the driver re-issued the doomed pair
+    // on every wake — rejected-action churn, and the fleet.orbit half DID apply.
+    if (here.owner !== null && getStance(state, f.owner, here.owner) !== 'war') continue;
     const enemyHere = Object.values(state.fleets).some(
       (g) => g.owner !== f.owner && g.location === f.location && g.units.some((u) => u.count > 0),
     );
@@ -3208,6 +3223,7 @@ export function serverPatrolActions(
       const targets: Array<{ id: string; location: string; pos: { x: number; y: number } }> = [];
       for (const g of Object.values(state.fleets)) {
         if (g.owner === f.owner || !g.location || g.movement || !g.units.some((u) => u.count > 0)) continue;
+        if (g.battleId) continue; // already locked in a battle — engage would reject, yet the sortie fuel is spent (BF-30)
         if (getStance(state, f.owner, g.owner) !== 'war') continue; // declared enemies only — never auto-war
         if (!seen.has(g.location)) continue; // identified contacts only — fog-honest
         const pos = state.planets[g.location]?.position;
