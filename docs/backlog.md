@@ -178,7 +178,7 @@
   (здания) бьёт раз в игровой час, **ближняя** (юниты гарнизона) — раз в 15 игровых
   минут четвертью часовой ставки; сетки по мировому времени, перецеливание на каждом
   залпе, нырок между залпами безнаказан. Ядро объявляет каждый залп событием `aa.fired
-  {planetId, owner, fleetId, by, damage}` (до применения урона — чтобы клиент дорисовал
+{planetId, owner, fleetId, by, damage}` (до применения урона — чтобы клиент дорисовал
   залп, даже если цель им же и уничтожена; жертве в тумане не уходит — фильтр по
   location/owner); прототип рисует трассер земля→орбита (штрих ползёт вверх) со вспышкой
   на цели, ~0.7с. Бонус: фазы боя различимы — орбита = красные расходящиеся кольца
@@ -417,7 +417,7 @@
 - **HERO-1** ✅ `[data]` Схемы + `data/heroes.json` (архетипы: `commander/ravager/vanguard/warden`,
   `HeroArchetypeDef {name, branch?, ship{unit?|stats?}, slots, startAbilities[], startPassives[]}`,
   ветка героев `transhuman|psionic`) + `data/heroAbilities.json` (`HeroAbilityDef {name, type,
-  cooldownHours, range, cost, params}`: `corridor/annihilate/rally/scan/recall/bulwark`); загрузчик
+cooldownHours, range, cost, params}`: `corridor/annihilate/rally/scan/recall/bulwark`); загрузчик
   (`loadGameData`) дополнен; `parseGameData` валидирует; тесты схем + referential-integrity
   (`startAbilities`∈heroAbilities, `ship.unit`∈units) + дефолты + fail-closed. 4 теста.
 - **HERO-2** ✅ Движок: герой → **корабль**. Позиция героя = **нода его корабля** (`heroNode`:
@@ -446,7 +446,7 @@
   (`path`/`annihilate`) — анти-double-dip; кастомные — по `abilityId`. `params`-оверрайды
   (`durationHours`/`speedBonus`) из данных. Payload-схема `hero.ability` в гейте (SV-1.2). 6 тестов.
 - **HERO-5** ✅ Пассивки из данных → хуки. `data/heroPassives.json` + `HeroPassiveDefSchema
-  {hook: 'fleet.speed'|'combat.damage', scope: 'heroFleet'|'ownFleetsNear', params{bonus, radius}}`
+{hook: 'fleet.speed'|'combat.damage', scope: 'heroFleet'|'ownFleetsNear', params{bonus, radius}}`
   (enum-гейт хуков — как каталог tech-условий); `Hero.passives?: string[]` (сеется из
   `startPassives` архетипа); живой герой множит хук на ×(1+Σбонусов) поверх лейна/ауры —
   `heroFleet` бафает флот героя, `ownFleetsNear` — свои флоты в `radius` от ноды героя
@@ -454,7 +454,7 @@
   `vanguard_impulse` (+10% скорость флота героя) и `rally_beacon` (+8% урона в 300).
   Referential-integrity `startPassives`∈heroPassives. 4 теста.
 - **HERO-6** ✅ Фитинги корабля: `data/heroFittings.json` (`HeroFittingDef {statMods,
-  grants{ability?|passive?}, cost}`, анти-self-expansion рефайн как у ship-модулей) +
+grants{ability?|passive?}, cost}`, анти-self-expansion рефайн как у ship-модулей) +
   действие `hero.fit {heroId, fitting}`: слот-бюджет из архетипа (`slots`;
   `E_NO_SLOTS`, безархетипный герой — 0 слотов), `E_ALREADY_FITTED`/`E_NO_FITTING`,
   казна (nonnegative), **без refit** (owner-правило ship-модулей). `grants` живые
@@ -463,7 +463,7 @@
   (scan), «Матрица „Эгида"» (rally_beacon), «Абляционная обшивка» (hp+40, не live).
   3 теста.
 - **HERO-7** ✅ Дерево навыков: `data/heroSkillTrees.json` (`HeroSkillNode {name, branch?,
-  requires[], cost, grants{ability?|passive?}}`; ветки **transhuman**/**psionic**, по руту на
+requires[], cost, grants{ability?|passive?}}`; ветки **transhuman**/**psionic**, по руту на
   каждую: `neural_lace`/`overclocked_helm` и `void_attunement`/`psi_veil`) + действие
   `hero.skill.unlock {heroId, node}`: гейты владения/живости, каталога (`E_NO_NODE`),
   повтора (`E_ALREADY_UNLOCKED`), ветки архетипа (`E_WRONG_BRANCH`; узел без ветки — общий,
@@ -667,8 +667,12 @@
 - **SEC-0** ✅ Базовый DevSecOps-пайплайн: SAST (Semgrep) + SCA (pnpm audit + osv-scanner)
   - секреты (Gitleaks) + Trivy fs + SBOM (Syft), ratcheting-гейт. Сейчас живёт в GitHub
     Actions (`security.yml`; мигрирован с GitLab — `docs/security/audit-2026-06-27.md`).
-- **SEC-1** ⏳ Триаж + baseline: разобрать находки, подавить ложные **с обоснованием**
-  (`.semgrepignore` / `.gitleaks.toml` / `.trivyignore`), разобранные сканеры → блокирующие.
+- **SEC-1** ✅ Триаж + baseline: находок — ноль (Gitleaks v8.18.4 локально + pnpm audit +
+  CI-прогоны пиненных образов; единственные подавления — обоснованные base-image CVE в
+  `.trivyignore`). Разобранные сканеры переведены в **блокирующие**: Semgrep (`--error`),
+  Gitleaks, OSV, Trivy fs/image (`--exit-code 1`) — gate-шаг валит джобу при находке ИЛИ
+  сбое скана (fail-secure), артефакты/отчёт собираются всегда. Запись триажа —
+  `docs/security/pipeline.md`.
 - **SEC-2** ⏳ Кастомные Semgrep-правила под инварианты ядра: запрет `Math.random`/
   `Date.now` и Node-built-ins в `shared-core/src` (детерминизм/чистота как security-граница).
 - **SEC-3** ✅ Безопасность самого пайплайна: пин образов сканеров по `sha256`,
