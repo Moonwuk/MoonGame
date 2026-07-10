@@ -58,6 +58,11 @@ export const actionPayloadSchemas: Record<string, z.ZodType> = {
   'building.construct': z.object({ planetId: id, building: id }),
   'building.upgrade': z.object({ planetId: id, building: id }),
   'unit.build': z.object({ planetId: id, unit: id, count: count.optional() }),
+  // construction.ts — cancel an ACTIVE order (refund the unbuilt share, pause it) by
+  // the `scheduled` event's `seq`; resume a paused one (pay the remainder, continue
+  // from the same progress) by its `PausedConstructionSite.id` (= the original `seq`).
+  'construction.cancel': z.object({ planetId: id, seq: z.number().int().nonnegative() }),
+  'construction.resume': z.object({ planetId: id, id: z.number().int().nonnegative() }),
   // technology.ts
   'technology.research': z.object({ technology: id }),
   // espionage.ts — steal a time-boxed intel window; `planetId` only with kind 'planet'

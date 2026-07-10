@@ -30,6 +30,7 @@ export {
   type ScheduledEvent,
   type UnitStack,
   type BuildingInstance,
+  type PausedConstructionSite,
   type ActiveResearch,
   type PlayerTechnologyState,
   type StewardState,
@@ -216,6 +217,7 @@ export {
   type SlotCounts,
 } from './util/loadout';
 export { requireOwnedIdleFleet, type IdleFleet } from './util/fleet';
+export { buildProgress, thresholdRamp } from './util/construction';
 
 // Base modules (plugins) — opt-in via the manifest passed to createKernel.
 export { economyModule, BROWNOUT } from './modules/economy';
