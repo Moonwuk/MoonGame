@@ -1,5 +1,15 @@
 import { applyDelta, type Action, type DomainEvent, type GameState, type PlayerId, type StateDelta } from '@void/shared-core';
-import { createActionEnvelope } from '@void/action-layer';
+import { createActionEnvelope, type ActionEnvelope } from '@void/action-layer';
+
+// BF-2 (bug-hunt CRIT): the gate's sequence cursor is strict (1,2,3…) and a throttled
+// (`E_RATE_LIMIT`) or out-of-order action does NOT consume its clientSeq — the server
+// expects the SAME seq again. Burning a fresh seq on every send therefore wedged the
+// session forever after one throttle (every later action → E_OUT_OF_ORDER). The client
+// now remembers its recent envelopes and RE-SENDS the same envelope after a backoff.
+const RESEND_DELAY_MS = 400; // one flush per window — spreads a big burst below the rate cap
+const RESEND_BATCH = 10; // envelopes per flush, lowest clientSeq first (chain re-admits in order)
+const RESEND_MAX = 5; // give up after this many attempts and surface the rejection
+const SENT_CAP = 64; // remembered recent envelopes (retry window, not a full history)
 
 export type MultiplayerStatus = 'connecting' | 'open' | 'closed';
 
@@ -140,6 +150,11 @@ export class MultiplayerClient {
   private sessionId?: string;
   private gated = false;
   private clientSeq = 0;
+  /** Recent gated envelopes by actionId — the resend window for transient rejections. */
+  private readonly sentEnvelopes = new Map<string, ActionEnvelope>();
+  private readonly retryCounts = new Map<string, number>();
+  private readonly resendQueue = new Map<string, ActionEnvelope>();
+  private resendTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     private readonly socket: MultiplayerSocket,
@@ -153,6 +168,7 @@ export class MultiplayerClient {
   }
 
   close(): void {
+    this.clearRetryState();
     this.socket.close();
     this.setStatus('closed');
   }
@@ -173,10 +189,68 @@ export class MultiplayerClient {
         type: action.type,
         payload: action.payload,
       });
+      // Remember for the transient-rejection resend window (BF-2), bounded FIFO.
+      this.sentEnvelopes.set(envelope.actionId, envelope);
+      while (this.sentEnvelopes.size > SENT_CAP) {
+        const oldest = this.sentEnvelopes.keys().next().value;
+        if (oldest === undefined) break;
+        this.sentEnvelopes.delete(oldest);
+      }
       this.socket.send(JSON.stringify({ type: 'action.v1', envelope }));
       return;
     }
     this.socket.send(JSON.stringify({ type: 'action', action }));
+  }
+
+  /** Transient rejection (throttle / ordering): the server did NOT consume this
+   *  clientSeq — queue the SAME envelope for a backed-off resend. Returns true when
+   *  the rejection was absorbed (a retry is scheduled) so it isn't surfaced yet. */
+  private queueResend(actionId: string): boolean {
+    const envelope = this.sentEnvelopes.get(actionId);
+    if (!envelope || envelope.sessionId !== this.sessionId) return false; // stale session
+    const attempts = (this.retryCounts.get(actionId) ?? 0) + 1;
+    if (attempts > RESEND_MAX) {
+      // Give up: drop the retry state and let the rejection reach the caller.
+      this.retryCounts.delete(actionId);
+      this.sentEnvelopes.delete(actionId);
+      this.resendQueue.delete(actionId);
+      return false;
+    }
+    this.retryCounts.set(actionId, attempts);
+    this.resendQueue.set(actionId, envelope);
+    this.resendTimer ??= setTimeout(() => {
+      this.resendTimer = null;
+      this.flushResend();
+    }, RESEND_DELAY_MS);
+    return true;
+  }
+
+  /** Re-send queued envelopes lowest clientSeq first (the strict cursor re-admits them
+   *  in order), a bounded batch per window so a big burst stays under the rate cap. */
+  private flushResend(): void {
+    const batch = [...this.resendQueue.values()]
+      .sort((a, b) => a.clientSeq - b.clientSeq)
+      .slice(0, RESEND_BATCH);
+    for (const envelope of batch) {
+      this.resendQueue.delete(envelope.actionId);
+      this.socket.send(JSON.stringify({ type: 'action.v1', envelope }));
+    }
+    if (this.resendQueue.size > 0) {
+      this.resendTimer ??= setTimeout(() => {
+        this.resendTimer = null;
+        this.flushResend();
+      }, RESEND_DELAY_MS);
+    }
+  }
+
+  private clearRetryState(): void {
+    if (this.resendTimer !== null) {
+      clearTimeout(this.resendTimer);
+      this.resendTimer = null;
+    }
+    this.sentEnvelopes.clear();
+    this.retryCounts.clear();
+    this.resendQueue.clear();
   }
 
   ping(clientTime: number): void {
@@ -232,7 +306,10 @@ export class MultiplayerClient {
       if (message.type === 'welcome') {
         // Bind the session for the gated send path. A reconnect mints a fresh sessionId
         // (server resets its cursor), so a changed id restarts our clientSeq at 0 → 1.
-        if (message.sessionId !== this.sessionId) this.clientSeq = 0;
+        if (message.sessionId !== this.sessionId) {
+          this.clientSeq = 0;
+          this.clearRetryState(); // stale-session envelopes are unauthorizable — drop them
+        }
         this.sessionId = message.sessionId;
         this.gated = message.gated ?? false;
         // Seat lock: a freshly-minted ticket rides the welcome exactly once — surface
@@ -292,6 +369,17 @@ export class MultiplayerClient {
       return;
     }
     if (message.type === 'rejection' && message.actionId && message.code) {
+      // Transient, non-seq-consuming rejections are retried silently (BF-2); the
+      // rejection surfaces only when the retry budget is exhausted. Everything else
+      // consumed its seq — drop it from the resend window and surface as before.
+      if (
+        (message.code === 'E_RATE_LIMIT' || message.code === 'E_OUT_OF_ORDER') &&
+        this.queueResend(message.actionId)
+      ) {
+        return;
+      }
+      this.sentEnvelopes.delete(message.actionId);
+      this.retryCounts.delete(message.actionId);
       this.handlers.onRejection?.(message.actionId, message.code);
       return;
     }

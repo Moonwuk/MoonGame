@@ -668,7 +668,11 @@ export const heroModule: GameModule = {
       const hero = h.state.heroes?.[heroId];
       if (!hero) return h.reject('E_NO_HERO');
       if (hero.owner !== action.playerId) return h.reject('E_FORBIDDEN');
-      // Already commanding a live ship. A stale fleetId (ship gone) doesn't block.
+      // Already commanding a live ship. `alive` is stamped by deploy and cleared ONLY
+      // by death (unit.died / fleet.destroyed) — check the flag, not just a live
+      // fleetId: a host may delete/rename the carrier without a death (fleet.merge),
+      // and a stale fleetId must not re-mint a second free flagship (BF-3 dupe).
+      if (hero.alive === true) return h.reject('E_HERO_ALIVE');
       if (hero.fleetId !== undefined && h.state.fleets[hero.fleetId] !== undefined) {
         return h.reject('E_HERO_ALIVE');
       }
