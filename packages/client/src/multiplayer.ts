@@ -87,6 +87,10 @@ export interface MultiplayerClientHandlers {
   onEvents?(events: DomainEvent[]): void;
   /** A chat message we may read — live, or replayed on join (dedupe by `id`). */
   onChatMessage?(message: MultiplayerChatMessage): void;
+  /** Seat lock (REL-5): the server minted a seat ticket for our nick on THIS join and
+   *  will require it (`?ticket=`) on every later join. Fired once, from the welcome
+   *  that carries it — persist it; the server keeps only a hash and cannot re-issue. */
+  onSeatTicket?(ticket: string): void;
 }
 
 interface InboundBase {
@@ -96,6 +100,7 @@ interface InboundBase {
   playerId?: PlayerId;
   sessionId?: string;
   gated?: boolean;
+  seatTicket?: string;
   state?: GameState;
   delta?: StateDelta;
   actionId?: string;
@@ -230,6 +235,9 @@ export class MultiplayerClient {
         if (message.sessionId !== this.sessionId) this.clientSeq = 0;
         this.sessionId = message.sessionId;
         this.gated = message.gated ?? false;
+        // Seat lock: a freshly-minted ticket rides the welcome exactly once — surface
+        // it BEFORE onSnapshot so the caller has persisted it by the time it reacts.
+        if (message.seatTicket) this.handlers.onSeatTicket?.(message.seatTicket);
       }
       this.handlers.onSnapshot?.({
         matchId: message.matchId,

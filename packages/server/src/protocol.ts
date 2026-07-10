@@ -188,6 +188,11 @@ export interface ServerWelcomeMessage extends VisibilityFields, LobbyField, Hash
    *  envelopes (a bare `action` is refused). Absent/false ⇒ send bare actions. Lets the
    *  client self-configure its send path from the handshake instead of a build-time flag. */
   gated?: boolean;
+  /** Seat lock (REL-5): the plaintext seat ticket, present ONLY on the join that minted
+   *  it (first join of this nick / adoption of a pre-lock seat). The client must store
+   *  it and present it (`?ticket=`) on every later join of this seat; the server keeps
+   *  only the hash, so a lost ticket is not recoverable from the server. */
+  seatTicket?: string;
 }
 
 export interface ServerStateMessage extends VisibilityFields, LobbyField, HashField {

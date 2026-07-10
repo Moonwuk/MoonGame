@@ -2,10 +2,16 @@ name: Play in browser (GitHub Pages)
 
 # Builds the self-contained prototype HTML and publishes it to GitHub Pages, so the
 # game can be tried in a browser with no install at https://moonwuk.github.io/Nygame/.
-# configure-pages runs with enablement: true, so the workflow turns Pages on itself
-# (needs the pages: write permission granted below) — no manual repo-settings step.
-# If your org policy forbids token-based enablement, do it once by hand instead:
-# Settings → Pages → "Build and deployment" → Source: "GitHub Actions".
+#
+# ⚠ ONE-TIME MANUAL STEP (the reason every run failed until now — 0 green out of 119):
+# GitHub Pages must be enabled in the repo settings FIRST — Settings → Pages →
+# "Build and deployment" → Source: "GitHub Actions". Until then the
+# `environment: github-pages` gate refuses the job BEFORE its first step (failure
+# signature: the run fails in ~3s, the job shows NO steps, logs 404) — so
+# configure-pages `enablement: true` never gets a chance to run and cannot self-enable
+# out of this state. After that single toggle, every push to main deploys and the Pages
+# link is always the latest build (the browser "auto-update": nothing to update — the
+# link IS the current version).
 # This workflow deploys on every push to main. Actions are SHA-pinned (SD-6.1 / F-16).
 
 on:

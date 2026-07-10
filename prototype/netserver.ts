@@ -41,15 +41,13 @@ import {
   aiOrders,
   stewardActive,
   HOUR,
-  serverQueueActions,
   serverAutoAssaultActions,
   serverPatrolActions,
-  orderPop,
-  orderHold,
-  orderBlock,
   orderScramble,
   patrolStamp,
 } from './src/game';
+import { ActionGate } from '../packages/action-layer/src/index';
+import { isValidActionPayload } from '../packages/shared-core/src/actions/payloadSchemas';
 const { Pool } = pgPkg;
 
 // --- M0 playtest log: append every room event (join/leave/lobby/action/end) to a
@@ -119,6 +117,14 @@ const port = Number(process.env.PORT ?? 8788);
 // Playtest fast-forward: wall→game clock multiplier. TIME_SCALE=100 ⇒ a real minute
 // is ~1.7 game-hours, so fleets/builds/economy resolve on-screen instead of over real
 // hours. 1 (default) = real-time. Compresses the clock itself, not just durations.
+// GATE=1|true → only validated `action.v1` envelopes are accepted (bare `action`
+// messages are rejected); the bundled client self-configures from `welcome.gated`.
+// Mirrors packages/server serverConfig (per-room gate instance, shared validator).
+const GATE = process.env.GATE === '1' || process.env.GATE === 'true';
+// SEAT_LOCK=1|true → seat tickets (REL-5): a nick's first join mints a secret the
+// client stores and must present on every reconnect (`?ticket=`), so knowing a URL
+// or a nick is no longer enough to take someone's seat; `?player=` is refused.
+const SEAT_LOCK = process.env.SEAT_LOCK === '1' || process.env.SEAT_LOCK === 'true';
 const TIME_SCALE = Math.max(1, Number(process.env.TIME_SCALE ?? 1) || 1);
 
 // Serve the built prototype HTML at `/` so a peer just opens `http://host:port/`
@@ -213,6 +219,10 @@ const room = new MatchRoom({
     await receiptStore.save('proto', receipt);
   },
   timeScale: TIME_SCALE, // playtest fast-forward (1 = real-time)
+  // REL-4: the action-layer front-door — envelope validate→authorize→sequence→dedup
+  // with per-type payload schemas BEFORE the reducer. Server-internal drivers
+  // (AI / standing orders) submit via room.submitAction and are unaffected.
+  ...(GATE ? { gate: new ActionGate({ payloadValidator: isValidActionPayload }) } : {}),
 });
 
 // Snapshot the world after changes, debounced so a burst of actions is one write.
@@ -299,39 +309,8 @@ function runServerAI(): void {
   }
 }
 
-// CC-server: drive the authoritative per-fleet command-chains server-side, so a queued
-// chain (move → assault → load → wait → …) advances even with NOBODY connected — the
-// player "sleeps and it plays". The pure decision is `serverQueueActions` (tested); this
-// just issues its orders + pop/hold through the same authoritative room, mirroring
-// runServerAI. Runs on every wake (heartbeat while connected, event wakeup while offline).
-function runServerQueues(): void {
-  if (!room.isStarted) return;
-  const now = room.state.time;
-  for (const step of serverQueueActions(room.state, now)) {
-    // A rejected step BLOCKS the chain with its reason (order.block) instead of being
-    // silently popped — the owner wakes up to «⚠ шаг: причина», not a derailed plan
-    // that kept executing in the wrong place (CC-4.1 minimum).
-    let failed = step.fail ?? null;
-    if (!failed) {
-      for (const a of step.actions) {
-        const r = room.submitAction(step.owner, a);
-        if (!r.ok) {
-          failed = r.code ?? 'E_INTERNAL';
-          break;
-        }
-      }
-    }
-    if (failed) {
-      room.submitAction(step.owner, orderBlock(step.owner, step.fleetId, failed));
-      continue;
-    }
-    if (step.holdUntil !== undefined) room.submitAction(step.owner, orderHold(step.owner, step.fleetId, step.holdUntil));
-    if (step.pop) room.submitAction(step.owner, orderPop(step.owner, step.fleetId));
-  }
-}
-
 // CC-2 / CC-4: drive the authoritative STANDING orders (auto-storm + дежурный вылет)
-// server-side, same shape as runServerQueues — the pure decisions live in game.ts
+// server-side — the pure decisions live in game.ts
 // (serverAutoAssaultActions / serverPatrolActions, tested); this just applies them
 // through the authoritative room. A rejected storm is simply skipped (a standing
 // stance has no chain to block); patrol runtime state persists via patrol.stamp.
@@ -354,7 +333,7 @@ function onWake(): void {
   wakeTimer = null;
   const progressed = room.tick(); // fire whatever is now due (no-op if a capped timer fired early)
   // Stall guard: work is due (ms 0) but the clock didn't move ⇒ a same-instant runaway.
-  // While stalled, SKIP the AI/queue drivers — their submissions (even rejected ones)
+  // While stalled, SKIP the AI/standing-order drivers — their submissions (even rejected ones)
   // emit `action` observations that would reset this guard and re-arm a 0ms wake — and
   // back off after a few tries instead of busy-looping (the room has already surfaced
   // an advance_overflow). A real player action re-arms via `observe`, which resets the
@@ -363,7 +342,6 @@ function onWake(): void {
   if (!stalled) {
     wakeStalls = 0;
     runServerAI(); // drive any empty seat once the clock has moved
-    runServerQueues(); // CC-server: advance each fleet's authoritative order chain
     runServerStanding(); // CC-2/CC-4: standing orders (auto-storm / дежурный вылет)
   }
   scheduleSave(); // persist the advanced world
@@ -392,6 +370,7 @@ const server = createMultiplayerServer({
   port,
   indexHtml,
   accountStore, // `?nick=` WS login resolves its seat here
+  seatLock: SEAT_LOCK, // REL-5: nick+ticket identity; `?player=` refused when on
   // The match-browser read-model + archive intents (GET /matches, POST …/archive).
   httpRoutes: (app) => registerBrowserApi(app, registry),
 });
@@ -431,6 +410,12 @@ const lines = [
   DATABASE_URL
     ? `  store  : Postgres — durable${restored ? ' (resumed a saved match)' : ''}`
     : '  store  : in-memory — a restart loses the match (set DATABASE_URL for durability)',
+  GATE
+    ? '  gate   : ON — only validated action.v1 envelopes (clients auto-detect via welcome.gated)'
+    : '  gate   : off — bare actions accepted (set GATE=1 for the release posture)',
+  SEAT_LOCK
+    ? '  seats  : LOCKED — a nick’s first join mints a ticket its client must present to reconnect'
+    : '  seats  : open — any nick takes any free seat (set SEAT_LOCK=1 for the release posture)',
   TIME_SCALE > 1
     ? `  time   : ×${TIME_SCALE} fast-forward (1 real min ≈ ${(TIME_SCALE / 60).toFixed(1)} game-hours) — playtest mode`
     : '  time   : ×1 real-time (set TIME_SCALE=100 to fast-forward a playtest)',
@@ -447,7 +432,13 @@ if (unreachableOnly) {
     `     Remote friend? Tunnel it:  cloudflared tunnel --url http://localhost:${port}   (or run \`pnpm doctor\`)`,
   );
 }
-lines.push('', `  raw ws : ${wsUrl.replace('0.0.0.0', 'localhost')}?player=p1  ·  …?player=p2`, '');
+lines.push(
+  '',
+  SEAT_LOCK
+    ? `  raw ws : ${wsUrl.replace('0.0.0.0', 'localhost')}?nick=<name>  (seat lock on — ?player= is refused)`
+    : `  raw ws : ${wsUrl.replace('0.0.0.0', 'localhost')}?player=p1  ·  …?player=p2`,
+  '',
+);
 process.stdout.write(lines.join('\n'));
 
 // Start the offline heartbeat: if a restored match already has a due/pending event,

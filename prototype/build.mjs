@@ -527,7 +527,25 @@ button.b:disabled{opacity:.32;cursor:not-allowed;color:var(--dim);border-color:v
 #tech,#steward,#hero{position:fixed;inset:0;z-index:47;display:none;align-items:center;justify-content:center;padding:16px;
   background:rgba(1,5,9,.55);-webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px);}
 #tech.show,#steward.show,#hero.show{display:flex;}
-#tech .twbox,#steward .twbox,#hero .twbox{display:flex;flex-direction:column;width:min(460px,94vw);max-height:82vh;overflow:hidden;
+/* division designer (H4) */
+#divdesign{position:fixed;inset:0;z-index:44;display:none;align-items:center;justify-content:center;background:rgba(2,8,11,.62);}
+#divdesign.show{display:flex;}
+#divdesign .dd-tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;}
+#divdesign .dd-tabs button{padding:7px 10px;border:1px solid var(--line-hi);border-radius:8px;background:transparent;color:var(--ink);font:700 11px ui-monospace,monospace;cursor:pointer;}
+#divdesign .dd-tabs button.on{border-color:var(--cyan);color:var(--cyan);background:rgba(53,214,230,.12);}
+#divdesign .dd-name{display:flex;gap:8px;margin-bottom:10px;}
+#divdesign .dd-name input{flex:1;padding:7px 9px;border:1px solid var(--line-hi);border-radius:8px;background:rgba(2,10,14,.6);color:#eafffb;font:700 12px ui-monospace,monospace;}
+#divdesign .dd-slots{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:10px;}
+#divdesign .dd-slots button{padding:10px 6px;border:1px dashed var(--line-hi);border-radius:9px;background:rgba(53,214,230,.04);color:#cfeeea;font:700 11px ui-monospace,monospace;cursor:pointer;}
+#divdesign .dd-slots button:disabled{cursor:default;opacity:.75;border-style:solid;}
+#divdesign .dd-vs{display:flex;flex-direction:column;gap:4px;margin:8px 0;}
+#divdesign .dd-vs .vrow{display:flex;align-items:center;gap:8px;font-size:11px;color:#9fc9c4;}
+#divdesign .dd-vs .vnm{flex:0 0 130px;}
+#divdesign .dd-vs .vtrack{flex:1;height:5px;border-radius:3px;background:rgba(53,214,230,.1);overflow:hidden;}
+#divdesign .dd-vs .vbar{height:100%;background:var(--amber);}
+#divdesign .dd-lock{color:var(--amber);font-size:11px;margin:6px 0;}
+#divdesign .hint2{color:#74b0aa;font-size:11px;line-height:1.5;margin-top:8px;}
+#tech .twbox,#steward .twbox,#hero .twbox,#divdesign .twbox{display:flex;flex-direction:column;width:min(460px,94vw);max-height:82vh;overflow:hidden;
   background:var(--glass);border:1px solid var(--cyan);border-radius:10px;
   box-shadow:0 0 40px rgba(0,0,0,.6),inset 0 0 0 1px rgba(53,214,230,.06);}
 .tw-close{width:28px;height:28px;border-radius:6px;border:1px solid var(--line);background:transparent;color:var(--dim);cursor:pointer;}
@@ -1039,6 +1057,15 @@ button.b:disabled{opacity:.32;cursor:not-allowed;color:var(--dim);border-color:v
 #setup .smap .cand{cursor:pointer;}
 #setup .smaphint{text-align:center;color:var(--dim);font-size:11px;margin:0 0 14px;}
 #setup .sslots{display:flex;flex-direction:column;gap:8px;margin-bottom:16px;}
+/* H3 faction picker: four houses, each a pure passive bonus (economy or units) */
+#setup .fph{font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--cyan-dim);margin:0 0 6px;}
+#setup .fpick{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px;}
+#setup .fchip{display:flex;flex-direction:column;gap:3px;text-align:left;padding:9px 11px;border:1px solid var(--line-hi);
+  border-radius:9px;background:rgba(255,255,255,.02);color:var(--dim);cursor:pointer;font:inherit;}
+#setup .fchip b{font:700 12px ui-monospace,monospace;color:#eafffb;}
+#setup .fchip span{font:10.5px ui-monospace,monospace;color:var(--grn);}
+#setup .fchip.on{border-color:var(--cyan);background:rgba(53,214,230,.1);}
+#setup .fchip.on b{color:var(--cyan);}
 #setup .srow{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--line-hi);
   border-radius:8px;font:13px ui-monospace,monospace;color:var(--ink);}
 #setup .srow .dot{width:10px;height:10px;border-radius:50%;flex:none;box-shadow:0 0 8px currentColor;}
@@ -1130,16 +1157,20 @@ button.b:disabled{opacity:.32;cursor:not-allowed;color:var(--dim);border-color:v
 .fitpane .hgradeline.g-legendary{color:var(--amber);}
 .fitpane .hgradeline.g-main{color:var(--grn);}
 
-/* in-app APK update banner + manual check (APK only; updater.ts toggles visibility) */
-#connect #updbar{display:none;margin:14px 0 0;padding:12px 14px;border:1px solid var(--cyan);border-radius:10px;
-  background:rgba(53,214,230,.10);box-shadow:0 0 22px rgba(53,214,230,.12);}
-#connect #updbar .ub-t{font-size:12px;color:var(--cyan-dim);letter-spacing:.5px;line-height:1.5;}
-#connect #updbar .ub-t b{color:var(--ink);}
-#connect #updbar .ub-row{display:flex;gap:10px;margin-top:10px;}
-#connect #updbar .ub-go{flex:1;text-align:center;padding:11px 10px;border-radius:8px;border:1px solid var(--cyan);
+/* in-app APK update banner + manual check (APK only; updater.ts toggles visibility).
+   GLOBAL fixed banner — floats over ANY screen (welcome / hub / match), z above the
+   window overlays (47) and testmode (59): an update prompt is deliberately on top. */
+#updbar{display:none;position:fixed;top:calc(10px + env(safe-area-inset-top,0px));left:50%;
+  transform:translateX(-50%);z-index:96;width:min(440px,calc(100vw - 20px));
+  padding:12px 14px;border:1px solid var(--cyan);border-radius:10px;
+  background:rgba(4,20,26,.94);box-shadow:0 6px 28px rgba(0,0,0,.55),0 0 22px rgba(53,214,230,.16);}
+#updbar .ub-t{font-size:12px;color:var(--cyan-dim);letter-spacing:.5px;line-height:1.5;}
+#updbar .ub-t b{color:var(--ink);}
+#updbar .ub-row{display:flex;gap:10px;margin-top:10px;}
+#updbar .ub-go{flex:1;text-align:center;padding:11px 10px;border-radius:8px;border:1px solid var(--cyan);
   background:rgba(53,214,230,.18);color:var(--cyan);font-size:13px;letter-spacing:1px;text-decoration:none;cursor:pointer;}
-#connect #updbar .ub-go:active{background:rgba(53,214,230,.3);}
-#connect #updbar .ub-later{flex:none;padding:11px 16px;border-radius:8px;border:1px solid var(--line-hi);
+#updbar .ub-go:active{background:rgba(53,214,230,.3);}
+#updbar .ub-later{flex:none;padding:11px 16px;border-radius:8px;border:1px solid var(--line-hi);
   background:transparent;color:var(--dim);font-size:12px;cursor:pointer;}
 #connect .cupd{flex:none;width:100%;margin-top:10px;padding:9px 10px;border:1px dashed var(--line-hi);border-radius:8px;
   background:transparent;color:var(--cyan-dim);font-size:12px;letter-spacing:.5px;cursor:pointer;}
@@ -1471,6 +1502,8 @@ const html = `<!doctype html>
 <!-- heroes: the roster/штаб now lives INSIDE the constructor «Верфь» tab (Герои pane) -->
 <!-- scientist council picker (setup-time, before the start-point) — rendered by renderSciPick() -->
 <div id="scipick"><div class="twbox"><div class="lw-head"><b data-i18n>СОВЕТ УЧЁНЫХ</b><button class="sp-cancel" type="button" data-i18n>↩ В меню</button></div><div id="scipickbody"></div></div></div>
+<!-- division template designer (H4, Stellaris-style) — rendered by renderDivDesign() -->
+<div id="divdesign"><div class="twbox"><div class="lw-head"><b data-i18n>КОНСТРУКТОР ДИВИЗИЙ</b><button class="tw-close">✕</button></div><div id="divdesignbody"></div></div></div>
 <!-- session market — whole box rendered by renderMarket() in main.ts -->
 <div id="market"></div>
 <!-- constructor («Верфь») — unified loadout tab; whole box rendered by renderConstructor() -->
@@ -1536,14 +1569,6 @@ const html = `<!doctype html>
       </div>
       <div id="cstatus" class="cstat"></div>
     </div>
-    <!-- in-app APK update (APK only; dormant in the browser — driven by updater.ts) -->
-    <div id="updbar">
-      <div class="ub-t"><span data-i18n>Доступна новая сборка</span> <b id="ub-ver"></b></div>
-      <div class="ub-row">
-        <a id="ub-go" class="ub-go" href="#" rel="noopener" data-i18n>Обновить</a>
-        <button id="ub-later" class="ub-later" type="button" data-i18n>Позже</button>
-      </div>
-    </div>
     <button id="cupd" class="cupd" type="button" style="display:none" data-i18n>Проверить обновления</button>
     <div id="cver" class="cver"></div>
     <!-- DEV TEST MODE — remove this button (and the #testmode block + CSS + main.ts hook) to cut the feature -->
@@ -1555,6 +1580,17 @@ const html = `<!doctype html>
       <a id="cl-privacy" data-i18n>Политика конфиденциальности</a>
       <a id="cl-support" data-i18n>Поддержка</a>
     </div>
+  </div>
+</div>
+<!-- in-app APK update (APK only; dormant in the browser — driven by updater.ts).
+     A GLOBAL fixed banner so it is seen from ANY screen — welcome, hub, or mid-match:
+     the returning-player path lands in the hub and never visits #connect, which is
+     where this used to live (and why players never saw their updates). -->
+<div id="updbar">
+  <div class="ub-t"><span data-i18n>Доступна новая сборка</span> <b id="ub-ver"></b></div>
+  <div class="ub-row">
+    <a id="ub-go" class="ub-go" href="#" rel="noopener" data-i18n>Обновить</a>
+    <button id="ub-later" class="ub-later" type="button" data-i18n>Позже</button>
   </div>
 </div>
 <div id="hub">
@@ -1595,6 +1631,7 @@ const html = `<!doctype html>
     <div class="hub-panel" id="hp-more" style="display:none">
       <div class="hub-grid">
         <button class="hub-tile" id="hub-settings" type="button"><span class="ht-ic">⚙</span><span data-i18n>Настройки</span></button>
+        <button class="hub-tile" id="hub-upd" type="button" style="display:none"><span class="ht-ic">⟳</span><span data-i18n>Обновления</span></button>
         <button class="hub-tile" data-more="Аккаунт" type="button"><span class="ht-ic">◉</span><span data-i18n>Аккаунт</span></button>
         <button class="hub-tile" data-more="Сообщество" type="button"><span class="ht-ic">◍</span><span data-i18n>Сообщество</span></button>
         <button class="hub-tile" data-more="Поддержка" type="button"><span class="ht-ic">⚠</span><span data-i18n>Поддержка</span></button>

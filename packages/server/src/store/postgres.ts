@@ -37,6 +37,9 @@ export async function migrate(pool: Pool): Promise<void> {
     );
     -- a side is held by at most one nick per room (so two nicks can't take p1)
     CREATE UNIQUE INDEX IF NOT EXISTS seats_room_player_idx ON seats (room, player_id);
+    -- seat lock (REL-5): sha256 of the seat ticket; NULL = seat claimed before the
+    -- lock existed (adopted on the owner's next join). Plaintext never stored.
+    ALTER TABLE seats ADD COLUMN IF NOT EXISTS ticket_hash text;
 
     CREATE TABLE IF NOT EXISTS receipts (
       match_id   text NOT NULL,
@@ -173,6 +176,30 @@ export class PostgresAccountStore implements AccountStore {
       [room, nick],
     );
     return r.rows[0]?.player_id ?? null;
+  }
+
+  async bindSeatTicket(room: string, nick: string, ticketHash: string): Promise<string | null> {
+    // First bind wins atomically: the UPDATE only lands on a NULL hash, then the
+    // SELECT reads back whichever hash is durably bound (ours, or a concurrent
+    // winner's). No row (nick holds no seat) → null → the caller refuses.
+    await this.pool.query(
+      `UPDATE seats SET ticket_hash = $3
+       WHERE room = $1 AND nick = $2 AND ticket_hash IS NULL`,
+      [room, nick, ticketHash],
+    );
+    const r = await this.pool.query<{ ticket_hash: string | null }>(
+      `SELECT ticket_hash FROM seats WHERE room = $1 AND nick = $2`,
+      [room, nick],
+    );
+    return r.rows[0]?.ticket_hash ?? null;
+  }
+
+  async seatTicket(room: string, nick: string): Promise<string | null> {
+    const r = await this.pool.query<{ ticket_hash: string | null }>(
+      `SELECT ticket_hash FROM seats WHERE room = $1 AND nick = $2`,
+      [room, nick],
+    );
+    return r.rows[0]?.ticket_hash ?? null;
   }
 
   async occupiedSeats(room: string): Promise<number> {
