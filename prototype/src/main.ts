@@ -3007,6 +3007,13 @@ function drawRadarRange(now: number): void {
 
 function render(now: number) {
   cx.setTransform(DPR, 0, 0, DPR, 0, 0); // draw in CSS pixels, crisp on hi-DPI
+  // Semantic zoom (LOD): zoomed far out the map turns SCHEMATIC — holo type
+  // badges, callout text, fleet pyramids/cargo/counts, orbit rings and battle
+  // timers dissolve away (a globalAlpha cross-fade over scale 1.2→1.45, fully
+  // schematic below), leaving territories, node art, fleet chevrons, battle
+  // pulses and pings. Skipping those draws over the widest views — where the
+  // most nodes are on screen at once — is also the frame-time win.
+  const detail = clamp((cam.scale - 1.2) / 0.25, 0, 1);
   blitStaticLayer(); // backdrop + province political map (re-baked on camera move, else cached)
   drawScanSweep(now); // slow radar sweep — pure console chrome
   updateRadarContacts(now); // the arm paints enemy signatures as it crosses them
@@ -3026,8 +3033,9 @@ function render(now: number) {
     const c = world(anchor);
     if (!visible(c, 120)) continue;
     drawBattlePulse(c.x, c.y, wave, b.phase);
-    if (typeof b.nextRoundAt === 'number') {
+    if (typeof b.nextRoundAt === 'number' && detail > 0) {
       cx.save();
+      cx.globalAlpha = detail; // LOD: the timer text dissolves on the schematic view
       cx.font = '700 10px ui-monospace,Menlo,monospace';
       cx.textAlign = 'center';
       cx.fillStyle = b.phase === 'ground' ? '#f5cf6b' : '#ff8a7d';
@@ -3250,13 +3258,14 @@ function render(now: number) {
     // a projected hologram (soft glow halo + holo capsule ring + a faint projector
     // tether down to the node), gently bobbing in the sector-type colour so the type
     // reads at a glance regardless of the bespoke art below (planet / asteroid / …).
-    if (KIND_ICON[n.sector]) {
+    if (KIND_ICON[n.sector] && detail > 0) {
       const kc = SECTOR_TYPES[SECTOR_OF[n.id]]?.color ?? '#9fb6bd';
       const bob = Math.sin(now / 700 + n.x * 0.021 + n.y * 0.017) * 2.4;
       const brad = 11;
       const bx = c.x;
       const by = c.y - R - 6 - brad - 6 + bob; // badge centre floats above, softly bobbing
       cx.save();
+      cx.globalAlpha = detail; // LOD: the hologram dissolves on the schematic view
       blitGlow(kc, bx, by, brad + 9, 0.5); // holographic bloom (cached disc)
       // projector tether — a faint dashed beam from the node up to the badge
       cx.strokeStyle = rgba(kc, 0.16);
@@ -3587,8 +3596,13 @@ function render(now: number) {
     // callout: id + garrison/buildings, monospace. Worlds (planets — the capturable
     // prize) get a BRIGHT designation; every other sector is de-emphasised to a dim,
     // smaller coordinate so the map reads "worlds first" (fogged → no telemetry).
+    // LOD: callout text dissolves on the schematic view — except YOUR OWN worlds,
+    // which stay labelled like city names on a globe (your anchor at any zoom).
     const isWorld = n.sector === 'planet';
+    const mineWorld = isWorld && p.owner === ME;
+    if (detail === 0 && !mineWorld) continue;
     cx.save();
+    cx.globalAlpha = mineWorld ? Math.max(detail, 0.9) : detail;
     cx.shadowColor = 'rgba(0,0,0,0.85)';
     cx.shadowBlur = 3;
     if (isWorld) {
@@ -3599,7 +3613,9 @@ function render(now: number) {
       cx.font = '600 10px ui-monospace,Menlo,monospace';
     }
     cx.fillText(n.id, c.x + R + 12, c.y - 1);
-    if (kn) {
+    // the telemetry line is detail-only — on the schematic view a labelled own
+    // world keeps just its name
+    if (kn && detail > 0) {
       const g = p.garrison.reduce((a, st) => a + st.count, 0);
       const icons = p.buildings.map((b) => BUILD_ICON[b.type] ?? '▪').join('');
       // worlds always show telemetry; a quiet sector only when it holds something
@@ -3608,7 +3624,7 @@ function render(now: number) {
         cx.font = isWorld ? '10px ui-monospace,Menlo,monospace' : '9px ui-monospace,Menlo,monospace';
         cx.fillText(`G:${g}  B:${icons || '—'}`, c.x + R + 12, c.y + (isWorld ? 12 : 11));
       }
-    } else {
+    } else if (!kn && detail > 0) {
       cx.fillStyle = 'rgba(110,130,140,0.5)';
       cx.font = '10px ui-monospace,Menlo,monospace';
       cx.fillText('· no telemetry', c.x + R + 12, c.y + 12);
@@ -3624,7 +3640,8 @@ function render(now: number) {
       if (!fleetSeen(f)) continue; // hidden enemy orbit (no identify, no intel window)
       (stationed[f.location] ??= []).push(f);
     }
-  for (const pid of Object.keys(stationed)) {
+  // LOD: stationed-orbit rings are gone entirely on the schematic view
+  for (const pid of detail > 0 ? Object.keys(stationed) : []) {
     const pl = s.planets[pid];
     if (!pl) continue;
     // orbit only on types that have one (cities); a fortress gives a junction one too
@@ -3636,6 +3653,7 @@ function render(now: number) {
     // A single orbit ring (GDD §7.4) — one orbit, so no N/F labels cluttering the map.
     const rr = orbitRingRadius(pl);
     cx.save();
+    cx.globalAlpha = detail;
     cx.setLineDash([2, 5]);
     cx.lineDashOffset = now / 200;
     cx.strokeStyle = rgba(ORBIT_COLOR, 0.4);
@@ -3699,6 +3717,34 @@ function render(now: number) {
         cx.fill();
       }
     }
+
+    // LOD: far out a fleet is ONE glowing chevron, nose on course — the pyramid,
+    // cargo pips and ship count cross-fade away (schematic view keeps who/where).
+    if (detail < 1) {
+      cx.save();
+      cx.globalAlpha = 1 - detail;
+      cx.translate(A.x, A.y);
+      cx.rotate(A.ang + Math.PI / 2);
+      cx.shadowColor = col;
+      cx.shadowBlur = 5 + 4 * engine;
+      cx.fillStyle = rgba(col, 0.92);
+      cx.strokeStyle = 'rgba(4,10,12,.8)';
+      cx.lineWidth = 1;
+      cx.beginPath();
+      cx.moveTo(0, -5);
+      cx.lineTo(4, 3.5);
+      cx.lineTo(-4, 3.5);
+      cx.closePath();
+      cx.fill();
+      cx.stroke();
+      cx.restore();
+    }
+    if (detail === 0) {
+      // selection still reads on the schematic view; the rest of the kit is gone
+      if (selFleet === f.id || selFleets.has(f.id)) targetBrackets(A.x, A.y, 10, now);
+      continue;
+    }
+    cx.globalAlpha = detail; // full detail fades back in toward 1.45
 
     // Squadron emblem (upright): ships are up-triangles, ONE per three ships, packed
     // into a pyramid — "каждые 3 корабля = один треугольник". Cargo glues under the
@@ -3854,6 +3900,7 @@ function render(now: number) {
     cx.font = '700 9px ui-monospace,Menlo,monospace';
     cx.fillText(String(ships), A.x, A.y + 18);
 
+    cx.globalAlpha = 1; // end of the per-fleet LOD cross-fade
   }
 
   drawRadarContacts(now); // swept enemy signatures — last-known ghosts until repainted
