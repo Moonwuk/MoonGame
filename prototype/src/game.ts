@@ -1357,6 +1357,12 @@ export const fleetLaunchModule: GameModule = {
       for (const d of Object.values(divisionsOf(h.state))) {
         if (d.carriedBy === payload.from) d.carriedBy = into.id;
       }
+      // Heroes are bound by fleetId the same way (BF-3): the hero UNIT rides into the
+      // merged fleet, so the hero ENTITY must follow — a stale fleetId left the hero
+      // orphaned, and hero.spawn could then mint a duplicate free flagship.
+      for (const hr of Object.values(h.state.heroes ?? {})) {
+        if (hr.fleetId === payload.from) hr.fleetId = into.id;
+      }
       delete h.state.fleets[payload.from];
       h.emit('fleet.merged', {
         from: payload.from,
@@ -1394,6 +1400,12 @@ export const fleetLaunchModule: GameModule = {
       for (const t of payload.take) {
         if (typeof t?.unit !== 'string' || typeof t?.count !== 'number' || t.count <= 0) {
           return h.reject('E_BAD_PAYLOAD');
+        }
+        // The hero flagship can't be peeled off by a split (BF-3): the hero ENTITY is
+        // bound to the source fleet by fleetId, and moving its UNIT without the entity
+        // would orphan the binding (wrong-fleet aura, wrong-hero death attribution).
+        if (h.ctx.data.units[t.unit]?.traits.includes('hero')) {
+          return h.reject('E_HERO_UNIT');
         }
         want.set(t.unit, (want.get(t.unit) ?? 0) + Math.floor(t.count));
       }
