@@ -136,6 +136,33 @@ describe('victory module', () => {
     });
   });
 
+  it('a dead-equal share at a ≤50% threshold crowns nobody; a strict leader wins', () => {
+    const kernel = createKernel([victoryModule]);
+    const config = { timeScale: 1, victory: { dominationPercent: 0.5, scoreLimit: 0 } };
+    // 50/50: both qualify, neither leads — the match keeps running (no alphabetical
+    // coronation of p1).
+    const tied: GameState = {
+      ...baseState(),
+      planets: { A: planet('A', 'p1'), B: planet('B', 'p2') },
+    };
+    const r1 = okAdvance(kernel.advanceTo(tied, ctx(HOUR, config)));
+    expect(r1.state.match.status).toBe('ongoing');
+    // 3/5 vs 2/5 (with the threshold at 0.4 BOTH qualify): the strict leader wins.
+    const led: GameState = {
+      ...baseState(),
+      planets: {
+        A: planet('A', 'p2'),
+        B: planet('B', 'p2'),
+        C: planet('C', 'p2'),
+        D: planet('D', 'p1'),
+        E: planet('E', 'p1'),
+      },
+    };
+    const cfg2 = { timeScale: 1, victory: { dominationPercent: 0.4, scoreLimit: 0 } };
+    const r2 = okAdvance(kernel.advanceTo(led, ctx(HOUR, cfg2)));
+    expect(r2.state.match).toMatchObject({ status: 'ended', winner: 'p2', reason: 'domination' });
+  });
+
   it('domination counts only CAPTURABLE provinces (void is ignored in the share)', () => {
     const kernel = createKernel([victoryModule]);
     const voids: Record<string, Planet> = {};

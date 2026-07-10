@@ -2189,8 +2189,13 @@ export const marketModule: GameModule = {
       if (p?.side !== 'sell' && p?.side !== 'buy') return h.reject('E_BAD_PAYLOAD');
       if (typeof p.resource !== 'string' || !MARKET_GOODS.includes(p.resource))
         return h.reject('E_BAD_RESOURCE');
-      const amount = Math.floor(p.amount ?? 0);
-      const price = p.price ?? 0;
+      // typeof first: a numeric STRING passes `>`/`>=` through coercion and would
+      // otherwise reach the treasury math on the ungated path.
+      if (typeof p.amount !== 'number' || typeof p.price !== 'number') {
+        return h.reject('E_BAD_PAYLOAD');
+      }
+      const amount = Math.floor(p.amount);
+      const price = p.price;
       if (!(amount > 0) || !(price >= 0)) return h.reject('E_BAD_PAYLOAD');
       const player = h.state.players[action.playerId];
       if (!player) return h.reject('E_NO_PLAYER');
