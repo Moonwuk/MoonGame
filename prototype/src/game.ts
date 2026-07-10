@@ -2064,13 +2064,6 @@ type DivState = GameState & {
   /** Session market: a two-sided order book of open lots (sell/buy) + its id counter. */
   sessionMarket?: MarketLot[];
   sessionMarketSeq?: number;
-  /** CC-server: per-fleet command-chain, now AUTHORITATIVE STATE (was a client-only plan)
-   *  so the server drives it and it runs offline in multiplayer. fleetId → queued steps. */
-  orders?: Record<string, QStep[]>;
-  /** CC-6: seats with an active subscription (convenience-only perks — never combat
-   *  power, docs/main-menu.md). Stamped by the meta-layer at match creation / renewal;
-   *  nothing inside a match grants it. */
-  subscribers?: Record<string, true>;
   /** CC-2 standing order, AUTHORITATIVE (was a client-only Set): fleets that auto-storm
    *  the enemy world they arrive at. Driven server-side (serverAutoAssaultActions). */
   autoAssault?: Record<string, true>;
@@ -2587,204 +2580,12 @@ export const capitalModule: GameModule = {
   },
 };
 
-/** Validate an order-chain step arriving as an action payload (fail-secure, A05/A08). */
-function isQStep(x: unknown): x is QStep {
-  if (typeof x !== 'object' || x === null) return false;
-  const s = x as { kind?: unknown; to?: unknown; hours?: unknown };
-  switch (s.kind) {
-    case 'move':
-      return typeof s.to === 'string';
-    case 'orbit':
-    case 'assault':
-    case 'load':
-    case 'unload':
-    case 'bombard':
-    case 'repeat':
-      return true;
-    case 'wait':
-      // Finite and bounded: Infinity would wedge the chain forever AND corrupt the
-      // JSONB round-trip (JSON.stringify(Infinity) === null). CC-5.1 bounds.
-      return (
-        typeof s.hours === 'number' &&
-        Number.isFinite(s.hours) &&
-        s.hours >= 0 &&
-        s.hours <= MAX_WAIT_HOURS
-      );
-    default:
-      return false;
-  }
-}
-
-// CC-server: the fleet order-chain (CC-1..CC-4) promoted from a CLIENT-ONLY plan to
-// AUTHORITATIVE, durable state so the server drives it — the chain runs offline in
-// multiplayer ("sleep and it plays"). This module only STORES the queue; a host driver
-// (netserver's runServerQueues, mirroring runServerAI) pops the head step for an idle fleet
-// and issues its actions through the same reducer. Fail-secure: any bad input → rejection,
-// and the queue stays JSON-serializable (persisted through deepClone, like `divisions`).
-export const orderQueueModule: GameModule = {
-  id: 'order-queue',
-  version: '0.1.0',
-  setup(api) {
-    // Resolve the payload's fleet to one this player owns, or an error code (fail-secure).
-    const ownedFleet = (h: HandlerContext, playerId: string, fleetId: unknown): Fleet | string => {
-      if (typeof fleetId !== 'string') return 'E_BAD_PAYLOAD';
-      const f = h.state.fleets[fleetId];
-      if (!f) return 'E_NO_FLEET';
-      if (f.owner !== playerId) return 'E_FORBIDDEN';
-      return f;
-    };
-    api.onAction('order.enqueue', (action, h) => {
-      // One enqueue = one player ORDER = 1..MAX_ORDER_STEPS compiled steps sharing a
-      // group stamp (CC-6): a one-tap capture arrives as [move, assault] and costs one
-      // slot of the order limit, exactly like a plain move.
-      const p = action.payload as { fleetId?: unknown; steps?: unknown };
-      const f = ownedFleet(h, action.playerId, p?.fleetId);
-      if (typeof f === 'string') return h.reject(f);
-      const raw = p.steps;
-      if (!Array.isArray(raw) || raw.length === 0 || raw.length > MAX_ORDER_STEPS) {
-        return h.reject('E_BAD_PAYLOAD');
-      }
-      if (!raw.every(isQStep)) return h.reject('E_BAD_PAYLOAD');
-      const isRepeat = raw.some((st) => st.kind === 'repeat');
-      // The 🔁 marker is a lone plan property, never part of a step pattern.
-      if (isRepeat && raw.length > 1) return h.reject('E_BAD_PAYLOAD');
-      const orders = ((h.state as DivState).orders ??= {});
-      const q = (orders[f.id] ??= []);
-      if (q.length + raw.length > MAX_CHAIN_STEPS) return h.reject('E_QUEUE_FULL'); // absolute step bound (CC-5.1)
-      if (isRepeat) {
-        if (q.some((st) => st.kind === 'repeat')) return h.reject('E_LIMIT'); // one 🔁 per chain
-      } else {
-        // The player-facing limit counts ORDERS; a subscription raises the base via the hook.
-        const limit = h.hook<number>('order.chainLimit', CHAIN_ORDERS_BASE, { playerId: action.playerId });
-        if (chainOrderCount(q) >= limit) return h.reject('E_QUEUE_FULL');
-      }
-      // Runtime stamps (wait countdown, driver verdict, group) are never client-supplied.
-      const group = nextChainGroup(q);
-      for (const st of raw) {
-        const step = { ...st } as QStep & { until?: number };
-        delete step.until;
-        delete step.blocked;
-        step.group = group;
-        q.push(step);
-      }
-    });
-    api.onAction('order.clear', (action, h) => {
-      const p = action.payload as { fleetId?: unknown };
-      const f = ownedFleet(h, action.playerId, p?.fleetId);
-      if (typeof f === 'string') return h.reject(f);
-      const orders = (h.state as DivState).orders;
-      if (orders) delete orders[f.id];
-    });
-    api.onAction('order.pop', (action, h) => {
-      const p = action.payload as { fleetId?: unknown };
-      const f = ownedFleet(h, action.playerId, p?.fleetId);
-      if (typeof f === 'string') return h.reject(f);
-      const orders = (h.state as DivState).orders;
-      const q = orders?.[f.id];
-      if (q && q.length) {
-        popChainStep(q); // shared rule: shift, or rotate to the tail on a 🔁 chain
-        if (q.length === 0) delete orders![f.id];
-      }
-    });
-    api.onAction('order.remove', (action, h) => {
-      // Edit one ORDER of the plan (a mis-tap on order 3 of 5 must not cost the plan).
-      // The index addresses any step of the order; the whole group goes — half a
-      // capture (a move without its assault) is not something a player ever asked for.
-      const p = action.payload as { fleetId?: unknown; index?: unknown };
-      const f = ownedFleet(h, action.playerId, p?.fleetId);
-      if (typeof f === 'string') return h.reject(f);
-      const i = p.index;
-      if (typeof i !== 'number' || !Number.isInteger(i) || i < 0) return h.reject('E_BAD_PAYLOAD');
-      const orders = (h.state as DivState).orders;
-      const q = orders?.[f.id];
-      if (!q || i >= q.length) return h.reject('E_NO_STEP');
-      const group = q[i]!.group;
-      if (group === undefined) q.splice(i, 1); // legacy ungrouped step = its own order
-      else orders![f.id] = q.filter((st) => st.group !== group);
-      if (orders![f.id]!.length === 0) delete orders![f.id];
-    });
-    api.onAction('order.block', (action, h) => {
-      // The DRIVER's verdict on a failed head step: pause the chain with its reason
-      // instead of silently popping (CC-4.1 minimum). The owner-addressed event lets
-      // a connected client toast it; the panel shows it from state on next login.
-      const p = action.payload as { fleetId?: unknown; code?: unknown };
-      const f = ownedFleet(h, action.playerId, p?.fleetId);
-      if (typeof f === 'string') return h.reject(f);
-      if (typeof p.code !== 'string' || !/^[A-Z0-9_]{1,32}$/.test(p.code)) {
-        return h.reject('E_BAD_PAYLOAD');
-      }
-      const head = (h.state as DivState).orders?.[f.id]?.[0];
-      if (!head) return h.reject('E_NO_STEP');
-      head.blocked = p.code;
-      h.emit('order.blocked', { fleetId: f.id, owner: f.owner, step: head.kind, code: p.code });
-    });
-    api.onAction('order.retry', (action, h) => {
-      // Un-pause a blocked chain: clear the verdict so the driver tries the step again.
-      const p = action.payload as { fleetId?: unknown };
-      const f = ownedFleet(h, action.playerId, p?.fleetId);
-      if (typeof f === 'string') return h.reject(f);
-      const head = (h.state as DivState).orders?.[f.id]?.[0];
-      if (!head || head.blocked === undefined) return h.reject('E_NO_STEP');
-      delete head.blocked;
-    });
-    api.onAction('order.hold', (action, h) => {
-      // Stamp the head 'wait' step's resume time — set once, when it reaches the head, so
-      // the delayed order counts down from that moment (mirrors the client's waitStatus).
-      const p = action.payload as { fleetId?: unknown; until?: unknown };
-      const f = ownedFleet(h, action.playerId, p?.fleetId);
-      if (typeof f === 'string') return h.reject(f);
-      if (typeof p.until !== 'number' || !Number.isFinite(p.until)) return h.reject('E_BAD_PAYLOAD');
-      const head = (h.state as DivState).orders?.[f.id]?.[0];
-      if (!head || head.kind !== 'wait') return h.reject('E_NO_WAIT');
-      head.until = p.until;
-      // Put the resume moment on the world timeline: the offline wakeup driver arms by
-      // msUntilNextEvent(), so without this the chain would freeze mid-wait until some
-      // unrelated event (or a login) happened to tick the room.
-      h.schedule(Math.max(p.until, h.ctx.now + 1), 'order.wake', { fleetId: f.id });
-    });
-    // 'order.wake' exists only to appear on the schedule (see order.hold) — waking the
-    // room is the whole job; the queue driver then sees the elapsed wait and pops it.
-    api.on('order.wake', () => {});
-    // Housekeeping: a destroyed fleet must not leave its chain in state (and in every
-    // snapshot) forever. Deterministic sweep on the world clock.
-    api.on('time.advanced', (_ev, h) => {
-      const st = h.state as DivState;
-      const orders = st.orders;
-      if (!orders) return;
-      for (const fid of Object.keys(orders)) {
-        if (!h.state.fleets[fid] || orders[fid]!.length === 0) delete orders[fid];
-      }
-      if (Object.keys(orders).length === 0) delete st.orders;
-    });
-  },
-};
-
-/** Is this seat subscribed? (read by the client for its local plan limit + upsell row). */
-export function isSubscriber(state: GameState, playerId: string): boolean {
-  return (state as DivState).subscribers?.[playerId] === true;
-}
-
-// CC-6: subscription perks — convenience only, NEVER combat power (docs/main-menu.md).
-// A separate module so the queue logic stays subscription-blind: it asks the
-// `order.chainLimit` hook and this module (or its future meta-layer replacement)
-// answers. No module present → base limit, never a crash (designed degradation).
-export const subscriptionModule: GameModule = {
-  id: 'subscription',
-  version: '0.1.0',
-  setup(api) {
-    api.hook<number>('order.chainLimit', (base, args, h) => {
-      const playerId = (args as { playerId?: string }).playerId;
-      return playerId !== undefined && isSubscriber(h.state, playerId) ? CHAIN_ORDERS_PREMIUM : base;
-    });
-  },
-};
-
 // --- CC-server: standing orders (CC-2 auto-storm / CC-4 дежурный вылет) -------------
 // Promoted from client-only Set/Map to AUTHORITATIVE state so the server drives them —
-// like the order chains, they run in NET and while the owner is offline. The module only
-// STORES the standing order; the host driver (netserver.runServerStanding, mirroring
-// runServerQueues) reads the pure decision cores below and issues the orders through the
-// same authoritative room. Single-player keeps its local frame-loop drivers.
+// they run in NET and while the owner is offline. The module only STORES the standing
+// order; the host driver (netserver.runServerStanding) reads the pure decision cores
+// below and issues the orders through the same authoritative room. Single-player keeps
+// its local frame-loop drivers.
 export const standingOrdersModule: GameModule = {
   id: 'standing-orders',
   version: '0.1.0',
@@ -2902,8 +2703,6 @@ export const MODULES: GameModule[] = [
   marketModule, // session resource market: two-sided order book (sell/buy lots), embargo-gated
   divisionModule, // ground divisions: mobilise from a template + daily restoration
   capitalModule, // designatable capital (hero respawn / module re-fit anchor)
-  orderQueueModule, // CC-server: authoritative per-fleet command-chain (server-driven, offline-safe)
-  subscriptionModule, // CC-6: raises the order limit for subscribed seats (order.chainLimit hook)
   standingOrdersModule, // CC-2/CC-4 standing orders (auto-storm / дежурный вылет), server-driven
 ];
 
@@ -3037,128 +2836,12 @@ export const spyOn = (
 ) => act(playerId, 'espionage.spy', { target, kind, ...(planetId ? { planetId } : {}) });
 
 // --- CC-1: fleet order queue (command chains) -------------------------------
-// A queued step is one intent a fleet runs when it next falls idle. The host driver
-// (main.ts `driveQueues`) pops the head step per fleet each frame, so a chain like
-// [move A, move B, assault] executes hands-off across real hours. The pure, testable
-// pieces live here; the mutable queue + UI live in main.ts. Later bricks add timed and
-// reactive (auto-assault / auto-launch on contact) steps on top of this shape.
-export type QStep = (
-  | { kind: 'move'; to: string } // route to a world, then hold for the next step
-  | { kind: 'orbit' } // enter orbit over the fleet's current world
-  | { kind: 'assault' } // land carried troops (enters orbit first when needed)
-  | { kind: 'load' } // re-embark the liftable garrison here (pick your troops back up)
-  | { kind: 'unload' } // drop the carried troops onto the world the fleet is docked over
-  | { kind: 'bombard' } // start bombarding the world here (enters orbit first when needed)
-  | { kind: 'wait'; hours: number; until?: number } // hold N game-hours, then continue (delayed order)
-  | { kind: 'repeat' } // 🔁 loop marker: finished steps rotate to the tail — patrol until cleared
-) & {
-  blocked?: string; // set by the DRIVER when the step's order was rejected: the chain
-  // pauses on the failed step with its E_* reason instead of silently skipping (CC-4.1 minimum)
-  /** The player ORDER this step belongs to (CC-6). One order may compile to several
-   *  steps (a one-tap capture = move + assault) — the chain LIMIT counts orders, not
-   *  steps, so an auto-generated pattern still costs one slot. Stamped by the server
-   *  on enqueue (never client-supplied); monotonic per fleet chain. */
-  group?: number;
-};
-
-/** Chain bounds (CC-5.1 / CC-6). The player-facing limit counts ORDERS (step groups):
- *  `CHAIN_ORDERS_BASE` for everyone, `CHAIN_ORDERS_PREMIUM` once a subscription raises it
- *  via the `order.chainLimit` hook. `MAX_ORDER_STEPS` bounds one order's compiled steps
- *  (fail-secure payload cap); `MAX_CHAIN_STEPS` stays as the absolute per-fleet step
- *  bound, and `MAX_WAIT_HOURS` bounds the longest single `wait` (game-hours). */
-export const CHAIN_ORDERS_BASE = 3;
-export const CHAIN_ORDERS_PREMIUM = 5;
-export const MAX_ORDER_STEPS = 4;
-export const MAX_CHAIN_STEPS = 32;
-export const MAX_WAIT_HOURS = 24 * 30;
-
-/** How many ORDERS a chain holds: distinct `group` stamps, skipping the 🔁 repeat marker
- *  (a plan property, not an action — it must not eat a slot or a 3-order patrol dies).
- *  Steps from before the group stamp each count as their own order (legacy chains). */
-export function chainOrderCount(steps: QStep[]): number {
-  const groups = new Set<number>();
-  let legacy = 0;
-  for (const st of steps) {
-    if (st.kind === 'repeat') continue;
-    if (st.group === undefined) legacy++;
-    else groups.add(st.group);
-  }
-  return groups.size + legacy;
-}
-
-/** The next order-group stamp for a chain (monotonic — survives removals in the middle). */
-export function nextChainGroup(steps: QStep[]): number {
-  let max = 0;
-  for (const st of steps) if (st.group !== undefined && st.group > max) max = st.group;
-  return max + 1;
-}
-
 /** A fleet may run its next queued step only when idle — not in transit, not locked in
  *  a battle. (A fleet parked on a lane counts as idle; its next move routes from there.) */
 export function fleetIdle(fleet: Fleet): boolean {
   return !fleet.movement && !fleet.battleId;
 }
 
-/** The kernel action(s) a queued step issues for `fleet`. An assault enters orbit first
- *  when the fleet isn't already there (orbit is instant), mirroring the AI auto-capture
- *  pass. Pure — returns intents; the caller applies them. */
-export function stepActions(me: string, fleetId: string, step: QStep, fleet: Fleet): Action[] {
-  switch (step.kind) {
-    case 'move':
-      return [moveFleet(me, fleetId, step.to)];
-    case 'orbit':
-      return [orbitFleet(me, fleetId)];
-    case 'assault':
-      return fleet.orbit === 'near'
-        ? [assaultFleet(me, fleetId)]
-        : [orbitFleet(me, fleetId), assaultFleet(me, fleetId)];
-    case 'load':
-    case 'unload':
-      // (Un)loading depends on the world's garrison / the fleet's hold, not just the
-      // fleet, so the driver computes it via (un)loadHereActions(state, me, fleet).
-      return [];
-    case 'bombard':
-      // Starting a bombardment needs near orbit, like an assault (orbit is instant).
-      return fleet.orbit === 'near'
-        ? [bombardFleet(me, fleetId, true)]
-        : [orbitFleet(me, fleetId), bombardFleet(me, fleetId, true)];
-    case 'wait':
-      // A pure hold — issues no order; the driver counts it down via waitStatus.
-      return [];
-    case 'repeat':
-      // The 🔁 loop marker issues nothing itself — the drivers rotate it (popChainStep).
-      return [];
-  }
-}
-
-/** Drop a chain's finished head IN PLACE — and when the chain carries a 🔁 repeat
- *  marker, rotate the head to the tail (cleansed of its runtime stamps) instead of
- *  discarding it, so `[A, B, 🔁]` patrols A→B→A→… until cleared. One shared rule for
- *  the authoritative `order.pop` and the single-player driver. */
-export function popChainStep(steps: QStep[]): void {
-  const head = steps.shift();
-  if (!head) return;
-  if (steps.some((st) => st.kind === 'repeat') || (head.kind === 'repeat' && steps.length > 0)) {
-    const fresh = { ...head } as QStep & { until?: number };
-    delete fresh.until; // a re-queued wait re-counts from when it's next reached
-    delete fresh.blocked;
-    steps.push(fresh);
-  }
-}
-
-/**
- * Where a `wait` step stands: its absolute resume time (started lazily from `now` the
- * first time it's reached) and whether the hold has elapsed. Pure — the driver persists
- * the returned `until` back onto the step so the countdown survives across frames.
- */
-export function waitStatus(
-  step: { hours: number; until?: number },
-  now: number,
-  hourMs: number,
-): { until: number; done: boolean } {
-  const until = step.until ?? now + step.hours * hourMs;
-  return { until, done: now >= until };
-}
 
 /** The squadron-trait ship stacks aboard a fleet — what a carrier launches as a strike
  *  wing (squadrons-roadmap SQ-1.1: launch-as-unit). Pure. */
@@ -3342,7 +3025,12 @@ export function serverAutoAssaultActions(
       (g) => g.owner !== f.owner && g.location === f.location && g.units.some((u) => u.count > 0),
     );
     if (enemyHere) continue; // let the orbital battle settle first
-    out.push({ fleetId: fid, owner: f.owner, actions: stepActions(f.owner, fid, { kind: 'assault' }, f) });
+    // An assault needs near orbit first (orbit is instant), mirroring the AI capture pass.
+    const actions =
+      f.orbit === 'near'
+        ? [assaultFleet(f.owner, fid)]
+        : [orbitFleet(f.owner, fid), assaultFleet(f.owner, fid)];
+    out.push({ fleetId: fid, owner: f.owner, actions });
   }
   return out;
 }
@@ -3419,70 +3107,7 @@ export function serverPatrolActions(
   return out;
 }
 
-/**
- * Actions to re-embark the liftable garrison of the fleet's CURRENT world back into its
- * cargo — the "auto-load after capture" step. After a defended assault the storming
- * troops become the world's garrison (combat.ts capturePlanet), so this picks them up
- * again to carry onward, letting one army leapfrog a whole chain of worlds unattended.
- * Only lifts from a world you own; skips ships/immobile emplacements; respects cargo. Pure.
- */
-export function loadHereActions(state: GameState, me: string, fleet: Fleet): Action[] {
-  const at = fleet.location;
-  if (at === null) return [];
-  const planet = state.planets[at];
-  if (!planet || planet.owner !== me) return []; // only your own world's troops are liftable
-  let free = fleetCargoFree(state, fleet);
-  const out: Action[] = [];
-  for (const st of planet.garrison) {
-    const u = data.units[st.unit];
-    if (!u || st.count <= 0 || u.domain !== 'ground') continue; // ships/AA aren't cargo
-    if (u.traits.includes('immobile')) continue; // fixed emplacements can't be lifted (E_IMMOBILE)
-    const size = u.stats.cargoSize || 1;
-    const fit = Math.min(st.count, Math.floor(free / size));
-    if (fit <= 0) continue; // no room left
-    out.push(loadArmy(me, fleet.id, st.unit, fit));
-    free -= fit * size;
-  }
-  return out;
-}
 
-/** The unload orders for everything in `fleet`'s hold onto the world it's docked
- *  over — the symmetric partner of loadHereActions ("drop the troops off here").
- *  Mirrors the live `army.unload` preconditions: just a world under the fleet. Pure. */
-export function unloadHereActions(state: GameState, me: string, fleet: Fleet): Action[] {
-  if (fleet.location === null || !state.planets[fleet.location]) return [];
-  const out: Action[] = [];
-  for (const st of fleet.landing ?? []) {
-    if (st.count > 0) out.push(unloadArmy(me, fleet.id, st.unit, st.count));
-  }
-  return out;
-}
-
-// --- CC-server: authoritative order-chain — actions + the server-side driver core -------
-
-/** Append one player ORDER to a fleet's authoritative chain (CC-server / CC-6): a single
- *  step or an auto-compiled pattern (capture = [move, assault]) — either way ONE slot of
- *  the order limit; the server stamps all its steps with one group. */
-export const orderEnqueue = (playerId: string, fleetId: string, steps: QStep | QStep[]) =>
-  act(playerId, 'order.enqueue', { fleetId, steps: Array.isArray(steps) ? steps : [steps] });
-/** Drop a fleet's whole order chain. */
-export const orderClear = (playerId: string, fleetId: string) =>
-  act(playerId, 'order.clear', { fleetId });
-/** Drop the head step (the driver pops after issuing it / after a wait elapses). */
-export const orderPop = (playerId: string, fleetId: string) =>
-  act(playerId, 'order.pop', { fleetId });
-/** Remove one step of the chain by index (plan editing — a mis-tap costs one tap). */
-export const orderRemove = (playerId: string, fleetId: string, index: number) =>
-  act(playerId, 'order.remove', { fleetId, index });
-/** Pause the chain on its failed head step with the rejection's E_* reason (driver verdict). */
-export const orderBlock = (playerId: string, fleetId: string, code: string) =>
-  act(playerId, 'order.block', { fleetId, code });
-/** Clear a blocked head step's verdict so the driver tries it again. */
-export const orderRetry = (playerId: string, fleetId: string) =>
-  act(playerId, 'order.retry', { fleetId });
-/** Stamp the head 'wait' step's resume time (set once when the step reaches the head). */
-export const orderHold = (playerId: string, fleetId: string, until: number) =>
-  act(playerId, 'order.hold', { fleetId, until });
 /** Toggle the CC-2 auto-storm stance on an owned fleet (authoritative standing order). */
 export const orderAuto = (playerId: string, fleetId: string, on: boolean) =>
   act(playerId, 'order.auto', { fleetId, on });
@@ -3494,53 +3119,6 @@ export const orderScramble = (playerId: string, fleetId: string, on: boolean) =>
 export const patrolStamp = (playerId: string, fleetId: string, sortie: SortieState, rearmAt?: number) =>
   act(playerId, 'patrol.stamp', rearmAt === undefined ? { fleetId, sortie } : { fleetId, sortie, rearmAt });
 
-/** One tick of the SERVER-SIDE order-chain driver (CC-server): for every fleet whose
- *  authoritative chain is at the head and the fleet is IDLE, the actions to issue plus how
- *  to advance the queue. Pure — the host (netserver.runServerQueues) applies the actions
- *  and issues the pop / hold through the same authoritative room, so the chain runs even
- *  with nobody connected. Mirrors the client driveQueues() but reads `state.orders` and
- *  reuses the identical tested step helpers (stepActions / loadHereActions / waitStatus). */
-export function serverQueueActions(
-  state: GameState,
-  now: number,
-): Array<{ fleetId: string; owner: string; actions: Action[]; pop: boolean; holdUntil?: number; fail?: string }> {
-  const orders = (state as DivState).orders ?? {};
-  const out: Array<{ fleetId: string; owner: string; actions: Action[]; pop: boolean; holdUntil?: number; fail?: string }> = [];
-  for (const [fid, steps] of Object.entries(orders)) {
-    const f = state.fleets[fid];
-    if (!f || steps.length === 0) continue; // stale entry — the module sweeps it on advance
-    if (!fleetIdle(f)) continue; // in transit / battle → hold the chain
-    const step = steps[0]!;
-    if (step.blocked !== undefined) continue; // paused on a failed step — needs the player
-    if (step.kind === 'repeat') {
-      // Rotate the 🔁 marker to the tail so the next real step comes up; an orphan
-      // marker (nothing left to repeat) just idles.
-      if (steps.length > 1) out.push({ fleetId: fid, owner: f.owner, actions: [], pop: true });
-      continue;
-    }
-    if (step.kind === 'wait') {
-      const w = waitStatus(step, now, HOUR);
-      if (step.until === undefined)
-        out.push({ fleetId: fid, owner: f.owner, actions: [], pop: false, holdUntil: w.until });
-      else if (w.done) out.push({ fleetId: fid, owner: f.owner, actions: [], pop: true });
-      continue; // still counting down → do nothing this tick
-    }
-    const actions =
-      step.kind === 'load'
-        ? loadHereActions(state, f.owner, f)
-        : step.kind === 'unload'
-          ? unloadHereActions(state, f.owner, f)
-          : stepActions(f.owner, fid, step, f);
-    // A planned (un)load with nothing to move is a broken plan, not a no-op — the
-    // garrison the player counted on is gone (or the hold is empty). Fail loudly.
-    if ((step.kind === 'load' || step.kind === 'unload') && actions.length === 0) {
-      out.push({ fleetId: fid, owner: f.owner, actions: [], pop: false, fail: 'E_NO_CARGO' });
-      continue;
-    }
-    out.push({ fleetId: fid, owner: f.owner, actions, pop: true });
-  }
-  return out;
-}
 /** Place a market lot: `sell` escrows `amount` of `resource` for `price` credits/unit;
  *  `buy` escrows the credits and offers to buy that much of `resource`. */
 export const marketList = (

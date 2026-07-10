@@ -41,12 +41,8 @@ import {
   aiOrders,
   stewardActive,
   HOUR,
-  serverQueueActions,
   serverAutoAssaultActions,
   serverPatrolActions,
-  orderPop,
-  orderHold,
-  orderBlock,
   orderScramble,
   patrolStamp,
 } from './src/game';
@@ -299,39 +295,8 @@ function runServerAI(): void {
   }
 }
 
-// CC-server: drive the authoritative per-fleet command-chains server-side, so a queued
-// chain (move → assault → load → wait → …) advances even with NOBODY connected — the
-// player "sleeps and it plays". The pure decision is `serverQueueActions` (tested); this
-// just issues its orders + pop/hold through the same authoritative room, mirroring
-// runServerAI. Runs on every wake (heartbeat while connected, event wakeup while offline).
-function runServerQueues(): void {
-  if (!room.isStarted) return;
-  const now = room.state.time;
-  for (const step of serverQueueActions(room.state, now)) {
-    // A rejected step BLOCKS the chain with its reason (order.block) instead of being
-    // silently popped — the owner wakes up to «⚠ шаг: причина», not a derailed plan
-    // that kept executing in the wrong place (CC-4.1 minimum).
-    let failed = step.fail ?? null;
-    if (!failed) {
-      for (const a of step.actions) {
-        const r = room.submitAction(step.owner, a);
-        if (!r.ok) {
-          failed = r.code ?? 'E_INTERNAL';
-          break;
-        }
-      }
-    }
-    if (failed) {
-      room.submitAction(step.owner, orderBlock(step.owner, step.fleetId, failed));
-      continue;
-    }
-    if (step.holdUntil !== undefined) room.submitAction(step.owner, orderHold(step.owner, step.fleetId, step.holdUntil));
-    if (step.pop) room.submitAction(step.owner, orderPop(step.owner, step.fleetId));
-  }
-}
-
 // CC-2 / CC-4: drive the authoritative STANDING orders (auto-storm + дежурный вылет)
-// server-side, same shape as runServerQueues — the pure decisions live in game.ts
+// server-side — the pure decisions live in game.ts
 // (serverAutoAssaultActions / serverPatrolActions, tested); this just applies them
 // through the authoritative room. A rejected storm is simply skipped (a standing
 // stance has no chain to block); patrol runtime state persists via patrol.stamp.
@@ -354,7 +319,7 @@ function onWake(): void {
   wakeTimer = null;
   const progressed = room.tick(); // fire whatever is now due (no-op if a capped timer fired early)
   // Stall guard: work is due (ms 0) but the clock didn't move ⇒ a same-instant runaway.
-  // While stalled, SKIP the AI/queue drivers — their submissions (even rejected ones)
+  // While stalled, SKIP the AI/standing-order drivers — their submissions (even rejected ones)
   // emit `action` observations that would reset this guard and re-arm a 0ms wake — and
   // back off after a few tries instead of busy-looping (the room has already surfaced
   // an advance_overflow). A real player action re-arms via `observe`, which resets the
@@ -363,7 +328,6 @@ function onWake(): void {
   if (!stalled) {
     wakeStalls = 0;
     runServerAI(); // drive any empty seat once the clock has moved
-    runServerQueues(); // CC-server: advance each fleet's authoritative order chain
     runServerStanding(); // CC-2/CC-4: standing orders (auto-storm / дежурный вылет)
   }
   scheduleSave(); // persist the advanced world
