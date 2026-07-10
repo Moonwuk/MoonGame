@@ -788,7 +788,7 @@ self-contained `dist/void-dominion.html` (открывается с диска, 
 - **Реальное ядро** в браузере: `createKernel([sector, planetType, tax, faction, economy,
 movement, hero, heroEffects, orbital, combat, artillery, intercept, captureOnArrival,
 construction, technology, steward, army, victory, fleetLaunch, diplomacy, espionage,
-botDiplomacy, market, division, capital, orderQueue, subscription, standingOrders])` (28 модулей), тик в реальном
+botDiplomacy, market, division, capital, standingOrders])` (26 модулей), тик в реальном
   времени (скорость ⏸/▶/⏩). Концовка матча — из авторитетного `state.match` (`victoryModule`),
   баннер победы/поражения/ничьи (а не хардкод по узлам).
 - **Фракции (H3):** setup-экран несёт **пикер из 4 лор-домов** (`data.factions`:
@@ -895,52 +895,19 @@ botDiplomacy, market, division, capital, orderQueue, subscription, standingOrder
   (теперь защитное здание, не юнит) — встроенный counter; ядро суммирует `aaDamage`
   и по гарнизону, и по зданиям (`aaStrengthAt`). Топливо/перезарядка (`SortieState`), евклидов `strikeRange`,
   детерминированное решение патруля (`patrolTarget`) — чистые тестируемые хелперы `game.ts`.
-- **Цепочки приказов (command-chains).** Простаивающий флот сам проходит цепочку
-  `move→штурм→обстрел→погрузка/выгрузка→ждать N ч` (клиентский план `fleetQueues` +
-  драйвер `driveQueues`); «дежурный вылет» (CC-4) — эскадрилья авто-бьёт опознанного
-  врага в радиусе (`scrambleOrder`/`drivePatrols`). **CC-server:** в NET цепочка —
-  авторитетное durable-состояние (`state.orders`, `orderQueueModule`), ведётся сервером
-  (`serverQueueActions` + `runServerQueues` в `netserver.ts`) → идёт офлайн 24/7.
-  **Комфорт-батч (аудит «удобные цепочки»):** провал шага **не** скипается молча —
-  драйверы блокируют цепочку на шаге с причиной (`step.blocked` + `order.block`/
-  `order.retry`, событие `order.blocked` владельцу; панель «⚠ план прерван», карта ⚠);
-  `order.hold` кладёт `order.wake` в `schedule` (оффлайн-будилка видит конец wait);
-  лимиты CC-5.1 (`MAX_CHAIN_STEPS`=32 как абсолютная граница шагов, `wait`≤720ч,
-  `E_QUEUE_FULL`); правка по приказу `order.remove {index}` (✕ в панели, «↩ последний»);
-  **🔁 повтор** — маркер-шаг `repeat`, `popChainStep` ротирует исполненный шаг в хвост
-  (патруль оффлайн); шаги `unload`/`bombard` (`unloadHereActions`); живой приказ
-  (Move/Stop/штурм/обстрел/отступление/слияние) **снимает план** (`dropChains`, тост);
-  режим «➕ строить» без ловушек (сброс в `clearSelection`/Back, канвас-баннер, тосты
-  «приказ N: → мир · весь план ≈Xч», hit-тест флотов/пингов пропускается); план
-  **виден на карте** (`drawChainPlans`: тусклый пунктир по `planRoute` + пипы с номером
-  ПРИКАЗА + глифы ⚔/▲/▼/☄/⏸/🔁, бейдж `▸N`/`⚠` на маркере флота); превью+ETA при
-  постройке (`drawAimPreview` от `chainTailNode`, `chainEta`/`fmtHrs`, накопительное
-  ETA приказов и итог плана в панели); маршрут через мир при мире — бейдж «⚔ нужна
-  война» в момент постройки; `state.orders` **фильтруется в fog** (`visibility.project`:
-  только свои флоты — план не утекает врагу); группа флотов строит план теми же кнопками.
-  **Стоячие приказы авторитетны (CC-2/CC-4 → сервер):** `standingOrdersModule` —
-  `order.auto`→`state.autoAssault`, `order.scramble`→`state.patrols` (сервер сам считает
-  центр/радиус/запас вылетов), `patrol.stamp` (рантайм-штамп драйвера, bounds-check по
-  спеке крыла), sweep мёртвых флотов; чистые драйверы `serverAutoAssaultActions`/
-  `serverPatrolActions` (видимость цели — `identifiedNodes` владельца, война обязательна,
-  перезарядка по абсолютным меткам `rearmAt`) + хост-цикл `netserver.runServerStanding`;
-  `autoAssault`/`patrols` фильтруются в fog как `orders`; кнопки «⚔ авто-штурм» и
-  «🛩 дежурный вылет» теперь работают и в NET (сингл — на прежних локальных драйверах).
-  **CC-6 — лимит по ПРИКАЗАМ игрока, не по шагам:** один enqueue = один приказ =
-  1..`MAX_ORDER_STEPS`(4) скомпилированных шагов с общим штампом `group` (сервер
-  ставит сам, клиентский `group` затирается) — тап по чужому миру строит «⚔ захват»
-  `[move, assault]` за ОДИН слот (владелец читается через fog, `knownOwner`); лимит
-  `CHAIN_ORDERS_BASE`=3 через хук `order.chainLimit`, `subscriptionModule` поднимает
-  подписчику (`state.subscribers`, `isSubscriber`) до `CHAIN_ORDERS_PREMIUM`=5 —
-  монетизация только-удобство по `main-menu.md`; 🔁 вне лимита (и не больше одного,
-  `E_LIMIT`); `chainOrderCount`/`nextChainGroup` — чистые хелперы, соло-путь
-  (`enqueueOrder`/`removeChainStep`) зеркалит серверное правило; `order.remove` сносит
-  весь приказ по индексу любого его шага (полузахват никому не нужен); панель — строки
-  по приказам «N. ⚔ захват МИР +ETA ✕» со счётчиком `N/лимит`, кнопки добавления
-  гаснут на лимите, ряд-апселл «🔒 … с подпиской до 5» (скрыт у подписчика), цель
-  приказа — ссылка `data-goto` (панорама `focusWorld` + кольцо `drawGoFlash`, выделение
-  не трогается); соло-стаб подписки на плейтест — `localStorage['vd.premium']='1'`
-  (штампует `subscribers` при старте матча).
+- **Цепочки приказов (command-chains) — УДАЛЕНЫ к релизу (REL-1, «пока убери»).**
+  Очередь приказов (CC-1/CC-5/CC-6/CC-server: `orderQueueModule`, `state.orders`,
+  клиентский план `fleetQueues`+`driveQueues`, серверный драйвер `runServerQueues`,
+  весь UI «Очередь приказов»/«➕ строить»/план на карте) и `subscriptionModule`
+  (лимит-апселл) вырезаны из кернела, UI и netserver — команды панели (штурм/
+  обстрел/погрузка/выгрузка) теперь прямые действия. История дизайна — в git
+  (ветка до REL-1) и `docs/backlog.md` (блок CC). **Стоячие приказы ОСТАЛИСЬ**
+  (CC-2/CC-4, `standingOrdersModule`): `order.auto`→`state.autoAssault` (авто-штурм),
+  `order.scramble`→`state.patrols` (дежурный вылет, сервер сам считает центр/радиус/
+  запас вылетов), `patrol.stamp`; чистые драйверы `serverAutoAssaultActions`/
+  `serverPatrolActions` + хост-цикл `netserver.runServerStanding`; `autoAssault`/
+  `patrols` фильтруются в fog; кнопки «⚔ авто-штурм» и «🛩 дежурный вылет» работают
+  в соло и NET.
 - Валидаторы: `src/smoke.ts` (Node-сценарий ядра) и `uitest.mjs` (headless-DOM
   прогон UI-бандла).
 - **UI-прототип экрана корпорации (mock)** — межсессионный альянс из `metagame.md`:
