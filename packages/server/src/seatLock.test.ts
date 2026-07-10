@@ -163,6 +163,45 @@ describe('REL-5 · seat lock (nick + ticket)', () => {
     }
   });
 
+  it('two concurrent FIRST joins of one nick: exactly one is ticketed, the other refused', async () => {
+    const server = createMultiplayerServer({
+      room: makeRoom(),
+      accountStore: new MemoryAccountStore(),
+      seatLock: true,
+    });
+    const url = await server.listen();
+    try {
+      // Same nick, no tickets, dialed in the same tick — racing resolveSeat + bind.
+      // Whichever loses the bind race holds no ticket and must be refused; the winner
+      // is admitted WITH the freshly minted ticket. Never two tickets, never zero.
+      const dial = (): Promise<{ ok: true; w: Welcome } | { ok: false; status: number }> =>
+        new Promise((resolve) => {
+          const ws = new WebSocket(`${url}?nick=alice`);
+          ws.on('unexpected-response', (_req, res) => {
+            ws.terminate();
+            resolve({ ok: false, status: res.statusCode ?? 0 });
+          });
+          ws.on('error', () => {});
+          ws.on('message', (data) => {
+            const m = JSON.parse(data.toString()) as Welcome;
+            if (m.type === 'welcome') {
+              ws.close();
+              resolve({ ok: true, w: m });
+            }
+          });
+        });
+      const results = await Promise.all([dial(), dial()]);
+      const admittedResults = results.filter((r) => r.ok);
+      const refused = results.filter((r) => !r.ok);
+      expect(admittedResults).toHaveLength(1);
+      expect(refused).toHaveLength(1);
+      expect(typeof (admittedResults[0] as { w: Welcome }).w.seatTicket).toBe('string');
+      expect((refused[0] as { status: number }).status).toBe(401);
+    } finally {
+      await server.close();
+    }
+  });
+
   it('a full room still answers 409 to a NEW nick (unchanged by the lock)', async () => {
     const server = createMultiplayerServer({
       room: makeRoom(),
