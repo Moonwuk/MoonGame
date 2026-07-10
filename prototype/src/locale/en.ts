@@ -648,6 +648,7 @@ export const en: Record<string, string> = {
   '🎯 тапните вражеский флот для сосредоточенного огня · пустота = авто':
     '🎯 tap an enemy fleet to focus fire · empty space = auto',
   '🏆 ПОБЕДА — {why}': '🏆 VICTORY — {why}',
+  '🏆 ПОБЕДА КОАЛИЦИИ ({who}) — {why}': '🏆 COALITION VICTORY ({who}) — {why}',
   '🏗️ {b}: построено на {at}': '🏗️ {b} built at {at}',
   '💀 ПОРАЖЕНИЕ — {why}': '💀 DEFEAT — {why}',
   '💥 {b}: разрушено на {at}': '💥 {b} destroyed at {at}',

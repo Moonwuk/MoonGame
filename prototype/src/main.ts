@@ -2376,17 +2376,24 @@ function checkEnd() {
   if (banner) return;
   if (s.match?.status !== 'ended') return;
   const why = endReasonText(s.match.reason);
-  banner =
-    s.match.winner === ME
-      ? t('🏆 ПОБЕДА — {why}', { why })
-      : s.match.winner === null
-        ? t('⚖️ НИЧЬЯ — {why}', { why })
-        : t('💀 ПОРАЖЕНИЕ — {why}', { why });
+  // A coalition wins together (SES-1): every member of match.winners is a victor,
+  // not only the top scorer in match.winner.
+  const iWon = s.match.winner === ME || (s.match.winners?.includes(ME) ?? false);
+  banner = iWon
+    ? s.match.winners && s.match.winners.length > 1
+      ? t('🏆 ПОБЕДА КОАЛИЦИИ ({who}) — {why}', {
+          who: s.match.winners.map((id) => NAME[id as string] ?? id).join(' + '),
+          why,
+        })
+      : t('🏆 ПОБЕДА — {why}', { why })
+    : s.match.winner === null
+      ? t('⚖️ НИЧЬЯ — {why}', { why })
+      : t('💀 ПОРАЖЕНИЕ — {why}', { why });
   // Meta-progression: one XP award per finished match (прокачка командующего).
   if (!xpAwarded) {
     xpAwarded = true;
     const st = loadMeta();
-    const gained = matchXp({ won: s.match.winner === ME, score: s.match.scores?.[ME]?.total ?? 0 });
+    const gained = matchXp({ won: iWon, score: s.match.scores?.[ME]?.total ?? 0 });
     const before = metaLevel(st.xp);
     const after = { xp: st.xp + gained, spent: st.spent };
     saveMeta(after);
