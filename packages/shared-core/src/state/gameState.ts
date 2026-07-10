@@ -184,6 +184,9 @@ export interface MatchScore {
 export interface MatchState {
   status: MatchStatus;
   winner: PlayerId | null;
+  /** Every winner of a coalition (alliance) score win, sorted (GDD §3.3). Present
+   *  only when a coalition won together; `winner` then holds its top scorer. */
+  winners?: PlayerId[];
   endedAt?: number;
   reason?: MatchEndReason;
   scores: Record<PlayerId, MatchScore>;
@@ -505,6 +508,11 @@ export interface Hero {
    *  adds `bonus` to the `combat.damage` of the owner's fleets within `radius` of the
    *  hero's node until `until` (ms). Filtered by `until` at read time; pruned on cast. */
   activeAuras?: { bonus: number; radius: number; until: number }[];
+  /** Active time-boxed fog reveals cast via `hero.effect.reveal` (scan) — each lifts the
+   *  fog to full-identify detail for every world within `radius` of `center` until `until`
+   *  (ms), but only in the OWNER's own visibility projection. Filtered by `until` at read
+   *  time; pruned on cast. */
+  activeReveals?: { center: PlanetId; radius: number; until: number }[];
 }
 
 /** A temporary lane a hero opened: a real, routable graph edge between two nodes for

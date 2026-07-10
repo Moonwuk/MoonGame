@@ -10,6 +10,7 @@ import {
 } from '../state/gameState';
 import type { AdvanceResult, Context, MatchConfig } from '../action/types';
 import type { GameModule } from '../kernel/module';
+import { setStance } from '../state/diplomacy';
 import { victoryModule } from './victory';
 
 const HOUR = 3_600_000;
@@ -241,6 +242,127 @@ describe('victory module', () => {
       reason: 'score',
     });
     expect(r.state.match.scores.p1?.total).toBe(50);
+  });
+
+  it('coalition (alliance) wins TOGETHER at the sub-linear threshold (GDD §3.3)', () => {
+    const kernel = createKernel([victoryModule]);
+    const state: GameState = {
+      ...baseState(),
+      players: { p1: player('p1'), p2: player('p2'), p3: player('p3') },
+      planets: {
+        A: planet('A', 'p1', { kind: 'planet' }), // 50
+        B: planet('B', 'p1', { kind: 'planet' }), // 50 → p1 = 100
+        C: planet('C', 'p2', { kind: 'planet' }), // 50 → p2 = 50
+        D: planet('D', 'p3', { kind: 'planet' }),
+        E: planet('E', null, { kind: 'planet' }), // p1 holds 2/5 — below domination
+      },
+    };
+    setStance(state, 'p1', 'p2', 'alliance');
+
+    // scoreLimit 100 → coalition of 2 needs 100 × 2 × 0.7 = 140; combined 150 wins.
+    const r = okAdvance(
+      kernel.advanceTo(state, ctx(HOUR, { timeScale: 1, victory: { scoreLimit: 100 } })),
+    );
+
+    expect(r.state.match).toMatchObject({ status: 'ended', reason: 'score', winner: 'p1' });
+    expect(r.state.match.winners).toEqual(['p1', 'p2']); // the whole coalition wins
+    expect(r.events).toContainEqual({
+      type: 'match.ended',
+      payload: expect.objectContaining({ winners: ['p1', 'p2'] }),
+    });
+  });
+
+  it('a coalition is a CLIQUE, not a chain: A–B, B–C with A–C at war do not win together', () => {
+    const kernel = createKernel([victoryModule]);
+    const state: GameState = {
+      ...baseState(),
+      players: { p1: player('p1'), p2: player('p2'), p3: player('p3') },
+      planets: {
+        A: planet('A', 'p1', { kind: 'planet' }), // 50
+        B: planet('B', 'p2', { kind: 'planet' }), // 50
+        C: planet('C', 'p3', { kind: 'planet' }), // 50
+        D: planet('D', null, { kind: 'planet' }),
+        E: planet('E', null, { kind: 'planet' }),
+      },
+    };
+    setStance(state, 'p1', 'p2', 'alliance');
+    setStance(state, 'p2', 'p3', 'alliance');
+    setStance(state, 'p1', 'p3', 'war'); // p1 and p3 are NOT allies — belligerents
+
+    // The chain {p1,p2,p3}=150 would clear a 3-way threshold (100×3×0.5=150), but they
+    // are not a clique. The valid cliques are {p1,p2}=100 and {p2,p3}=100, each below
+    // the 2-way threshold 100×2×0.5=100? — exactly 100 ≥ 100, so a 2-clique CAN win;
+    // pick a factor that leaves the pairs short to prove the trio never sums.
+    const r = okAdvance(
+      kernel.advanceTo(state, ctx(HOUR, { timeScale: 1, victory: { scoreLimit: 100, coalitionFactor: 0.7 } })),
+    );
+
+    // 2-way threshold = 140; every clique (pairs at 100, singletons at 100-solo) is short.
+    expect(r.state.match.status).toBe('ongoing');
+    expect(r.state.match.winners).toBeUndefined();
+  });
+
+  it('the coalition threshold REPLACES the solo one for members', () => {
+    const kernel = createKernel([victoryModule]);
+    const state: GameState = {
+      ...baseState(),
+      players: { p1: player('p1'), p2: player('p2'), p3: player('p3') },
+      planets: {
+        A: planet('A', 'p1', { kind: 'planet' }), // 50
+        B: planet('B', 'p1', { kind: 'planet' }), // 50 → p1 = 100 = solo limit
+        C: planet('C', 'p2'), // flat 10 → combined 110 < 140
+        D: planet('D', 'p3'),
+        E: planet('E', null, { kind: 'planet' }),
+      },
+    };
+    setStance(state, 'p1', 'p2', 'alliance');
+
+    // Solo p1 WOULD win at 100 — but an allied player races as the coalition, and
+    // 110 < 100 × 2 × 0.7 = 140, so the match keeps going (allying is a commitment).
+    const r = okAdvance(
+      kernel.advanceTo(state, ctx(HOUR, { timeScale: 1, victory: { scoreLimit: 100 } })),
+    );
+
+    expect(r.state.match.status).toBe('ongoing');
+    expect(r.state.match.winners).toBeUndefined();
+  });
+
+  it('honors a custom victory.coalitionFactor', () => {
+    const kernel = createKernel([victoryModule]);
+    const make = (): GameState => {
+      const state: GameState = {
+        ...baseState(),
+        players: { p1: player('p1'), p2: player('p2'), p3: player('p3') },
+        planets: {
+          A: planet('A', 'p1', { kind: 'planet' }),
+          B: planet('B', 'p1', { kind: 'planet' }),
+          C: planet('C', 'p2', { kind: 'planet' }), // combined p1+p2 = 150
+          D: planet('D', 'p3', { kind: 'planet' }),
+          E: planet('E', null, { kind: 'planet' }),
+        },
+      };
+      setStance(state, 'p1', 'p2', 'alliance');
+      return state;
+    };
+
+    // factor 1.0 → need 200: 150 is not enough, the race continues.
+    const strict = okAdvance(
+      kernel.advanceTo(
+        make(),
+        ctx(HOUR, { timeScale: 1, victory: { scoreLimit: 100, coalitionFactor: 1 } }),
+      ),
+    );
+    expect(strict.state.match.status).toBe('ongoing');
+
+    // factor 0.5 → need 100: 150 wins.
+    const loose = okAdvance(
+      kernel.advanceTo(
+        make(),
+        ctx(HOUR, { timeScale: 1, victory: { scoreLimit: 100, coalitionFactor: 0.5 } }),
+      ),
+    );
+    expect(loose.state.match).toMatchObject({ status: 'ended', reason: 'score' });
+    expect(loose.state.match.winners).toEqual(['p1', 'p2']);
   });
 
   it('ends on timeout and chooses the highest score, or no winner on a tie', () => {

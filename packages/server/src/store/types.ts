@@ -52,6 +52,15 @@ export interface AccountStore {
    *  Unlike `resolveSeat` this never assigns — it answers "is this nick a participant
    *  of this match?" for the match-browser read-model and archive authorization. */
   seatOf(room: string, nick: string): Promise<PlayerId | null>;
+  /** Seat lock (REL-5): bind `ticketHash` to (room, nick) — but only if no hash is
+   *  bound yet — and return the hash that is durably bound AFTER the call (ours when
+   *  we won, the pre-existing one when we lost a concurrent bind). Returns null when
+   *  the nick holds no seat in the room (nothing to lock — fail-secure: refuse).
+   *  Only the HASH ever reaches the store; the plaintext ticket lives on the client. */
+  bindSeatTicket(room: string, nick: string, ticketHash: string): Promise<string | null>;
+  /** The bound ticket hash for (room, nick), or null when none was ever bound
+   *  (first join, or a seat claimed before the lock existed). */
+  seatTicket(room: string, nick: string): Promise<string | null>;
   /** Read-only: how many seats are currently claimed in a room (occupied count), for
    *  the browser's "players X/Y" status line. */
   occupiedSeats(room: string): Promise<number>;

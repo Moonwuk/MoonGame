@@ -327,7 +327,14 @@ export const en: Record<string, string> = {
   'Флагман': 'Flagship',
   'Флот': 'Fleet',
   'Флоты на орбите': 'Fleets in orbit',
+  'Обновления': 'Updates',
   'Фракция': 'Faction',
+  // H3 — setup faction picker (pure passive house bonuses)
+  'Фракция — пассивный бонус дома': 'Faction — the house passive bonus',
+  '+{n}% экономика': '+{n}% economy',
+  '+{n}% урон': '+{n}% damage',
+  '+{n}% скорость флотов': '+{n}% fleet speed',
+  '+{n}% радар': '+{n}% radar',
   'ХОСТ': 'HOST',
   'ХП': 'HP',
   'Цвет шрифта': 'Font color',
@@ -649,6 +656,7 @@ export const en: Record<string, string> = {
   '🎯 тапните вражеский флот для сосредоточенного огня · пустота = авто':
     '🎯 tap an enemy fleet to focus fire · empty space = auto',
   '🏆 ПОБЕДА — {why}': '🏆 VICTORY — {why}',
+  '🏆 ПОБЕДА КОАЛИЦИИ ({who}) — {why}': '🏆 COALITION VICTORY ({who}) — {why}',
   '🏗️ {b}: построено на {at}': '🏗️ {b} built at {at}',
   '💀 ПОРАЖЕНИЕ — {why}': '💀 DEFEAT — {why}',
   '💥 {b}: разрушено на {at}': '💥 {b} destroyed at {at}',
@@ -786,6 +794,33 @@ export const en: Record<string, string> = {
   'Учёные совета — ещё +1 уровень.': 'Council scientists — another +1 level.',
   'Орбитальная кафедра': 'Orbital Faculty',
   '«Орбитальная логистика» изучена с первой секунды.': '"Orbital Logistics" is researched from the first second.',
+  // --- H4: ground-army designer (3 infantry lines + tank, officer premades) -------
+  'Мобилизация': 'Mobilization',
+  '⚙ Конструктор': '⚙ Designer',
+  'Переименовать': 'Rename',
+  'Урон по:': 'Damage vs:',
+  'живучесть': 'toughness',
+  'Ополчение': 'Militia',
+  'Тяжёлая пехота': 'Heavy Infantry',
+  'Спецназ': 'Special Forces',
+  'Рейд': 'Raid',
+  'Гвардия прорыва': 'Breakthrough Guard',
+  'Железный рубеж': 'Iron Line',
+  'Колонна снабжения': 'Supply Column',
+  'Штурмовик': 'Assault Leader',
+  'Командир обороны': 'Defense Commander',
+  'Снабженец': 'Quartermaster',
+  'Рейдовая доктрина': 'Raid Doctrine',
+  '+15% атака — ≥2 спецназа без ополчения': '+15% attack — ≥2 special forces, no militia',
+  'Людская волна': 'Human Wave',
+  '+10% оборона — ≥4 ополчения': '+10% defense — ≥4 militia',
+  '+25% оборона — ≥3 тяжёлой пехоты': '+25% defense — ≥3 heavy infantry',
+  'Именной шаблон офицера: состав закреплён, редактировать нельзя.':
+    "An officer's named template: composition locked, no editing.",
+  'Дивизия — снапшот шаблона: правка шаблона в конструкторе не меняет уже собранные. На своём мире +1 HP/юнит/день; выбитая исчезает.':
+    "A division is a snapshot of its template: editing a design never touches armies already fielded. On your own world it heals +1 HP/unit/day; wiped out, it disappears.",
+  'Тап по слоту меняет род войск: ополчение → тяжёлая пехота → спецназ → танк. Танки бьют любую пехоту; спецназ — единственная пехота, опасная танкам; тяжёлая пехота держит оборону.':
+    'Tap a slot to cycle the unit type: militia → heavy infantry → special forces → tank. Tanks shred any infantry; special forces are the one infantry that threatens armour; heavy infantry holds the line.',
   '‹ назад': '‹ back',
   '🧪 Тесты · режим разработчика': '🧪 Tests · developer mode',
 
@@ -921,6 +956,10 @@ export const en: Record<string, string> = {
   'вращающийся луч на карте — только вид, не влияет на обнаружение':
     'the rotating beam on the map — visual only, does not affect detection',
   'Прозрачность радарной развёртки': 'Radar sweep opacity',
+  'Свои метки на карте': 'My map markers',
+  'булавки 📍 ваших пингов — метки союзников видны всегда': "your own 📍 ping pins — allies' markers always show",
+  'вкл': 'on',
+  'выкл': 'off',
   'ГОТОВО': 'DONE',
   '⟳ К выбору ботов': '⟳ Back to setup',
 

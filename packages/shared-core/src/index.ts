@@ -216,6 +216,12 @@ export {
   hullSlotTypes,
   type SlotCounts,
 } from './util/loadout';
+export {
+  canInstall,
+  validateInstalled,
+  type FittingSpec,
+  type InstallFailure,
+} from './util/fitting';
 export { requireOwnedIdleFleet, type IdleFleet } from './util/fleet';
 export { buildProgress, thresholdRamp } from './util/construction';
 

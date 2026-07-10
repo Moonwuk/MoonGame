@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createInitialState, diffState, type GameState } from '@void/shared-core';
 import {
   authorizeActionEnvelope,
@@ -288,5 +288,86 @@ describe('MultiplayerClient · gated envelope path (SV-1.1)', () => {
     expect(env.sessionId).toBe('sess-B');
     expect(env.clientSeq).toBe(1); // reset, not 2
     expect(env.actionId).toBe('sess-B:p1:1');
+  });
+});
+
+// BF-2 (bug-hunt CRIT): E_RATE_LIMIT / E_OUT_OF_ORDER do NOT consume the gate's
+// clientSeq cursor — the server expects the SAME seq again. The client must re-send
+// the same envelope after a backoff instead of burning fresh seqs, or one throttle
+// wedges the whole session (every later action → E_OUT_OF_ORDER forever).
+describe('MultiplayerClient · transient-rejection resend (BF-2)', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  const rejection = (actionId: string, code: string): string =>
+    JSON.stringify({ type: 'rejection', matchId: 'm', seq: 0, actionId, code });
+
+  it('re-sends the SAME envelope (same clientSeq) after E_RATE_LIMIT, silently', () => {
+    const socket = new FakeSocket();
+    const rejections: string[] = [];
+    const client = new MultiplayerClient(socket, { onRejection: (_id, code) => rejections.push(code) });
+    client.receive(gatedWelcome(baseState(10), 'sess-A'));
+    client.sendAction(orbit()); // seq 1
+    client.sendAction(orbit()); // seq 2 — this one gets throttled
+    expect(socket.sent).toHaveLength(2);
+
+    client.receive(rejection('sess-A:p1:2', 'E_RATE_LIMIT'));
+    expect(rejections).toEqual([]); // absorbed — a retry is scheduled, no user-facing toast
+    vi.advanceTimersByTime(500);
+    expect(socket.sent).toHaveLength(3);
+    const resent = (JSON.parse(socket.sent[2] ?? '{}') as { envelope: ActionEnvelope }).envelope;
+    expect(resent.clientSeq).toBe(2); // the SAME seq — not a fresh one
+    expect(resent.actionId).toBe('sess-A:p1:2');
+  });
+
+  it('resends a wedged burst lowest-seq first so the strict cursor re-admits in order', () => {
+    const socket = new FakeSocket();
+    const client = new MultiplayerClient(socket, {});
+    client.receive(gatedWelcome(baseState(10), 'sess-A'));
+    for (let i = 0; i < 3; i += 1) client.sendAction(orbit()); // seqs 1..3
+    // 2 and 3 rejected out of order (as after a throttle of 1): both must retry.
+    client.receive(rejection('sess-A:p1:3', 'E_OUT_OF_ORDER'));
+    client.receive(rejection('sess-A:p1:2', 'E_RATE_LIMIT'));
+    vi.advanceTimersByTime(500);
+    const resent = socket.sent
+      .slice(3)
+      .map((r) => (JSON.parse(r) as { envelope: ActionEnvelope }).envelope.clientSeq);
+    expect(resent).toEqual([2, 3]); // ascending — seq 2 unblocks seq 3
+  });
+
+  it('gives up after the retry budget and surfaces the rejection', () => {
+    const socket = new FakeSocket();
+    const rejections: string[] = [];
+    const client = new MultiplayerClient(socket, { onRejection: (_id, code) => rejections.push(code) });
+    client.receive(gatedWelcome(baseState(10), 'sess-A'));
+    client.sendAction(orbit()); // seq 1
+    for (let round = 0; round < 6; round += 1) {
+      client.receive(rejection('sess-A:p1:1', 'E_RATE_LIMIT'));
+      vi.advanceTimersByTime(500);
+    }
+    expect(rejections).toEqual(['E_RATE_LIMIT']); // surfaced exactly once, after exhausting retries
+  });
+
+  it('drops the retry state on a reconnect (stale-session envelopes never resend)', () => {
+    const socket = new FakeSocket();
+    const client = new MultiplayerClient(socket, {});
+    client.receive(gatedWelcome(baseState(10), 'sess-A'));
+    client.sendAction(orbit()); // sess-A:p1:1
+    client.receive(rejection('sess-A:p1:1', 'E_RATE_LIMIT')); // retry armed…
+    client.receive(gatedWelcome(baseState(10), 'sess-B')); // …but the session died
+    vi.advanceTimersByTime(1000);
+    expect(socket.sent).toHaveLength(1); // no stale resend under the new session
+  });
+
+  it('a non-transient rejection is surfaced immediately and not retried', () => {
+    const socket = new FakeSocket();
+    const rejections: string[] = [];
+    const client = new MultiplayerClient(socket, { onRejection: (_id, code) => rejections.push(code) });
+    client.receive(gatedWelcome(baseState(10), 'sess-A'));
+    client.sendAction(orbit());
+    client.receive(rejection('sess-A:p1:1', 'E_NO_FLEET'));
+    vi.advanceTimersByTime(1000);
+    expect(rejections).toEqual(['E_NO_FLEET']);
+    expect(socket.sent).toHaveLength(1); // no resend
   });
 });

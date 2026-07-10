@@ -57,7 +57,14 @@ export const actionPayloadSchemas: Record<string, z.ZodType> = {
   // construction.ts
   'building.construct': z.object({ planetId: id, building: id }),
   'building.upgrade': z.object({ planetId: id, building: id }),
-  'unit.build': z.object({ planetId: id, unit: id, count: count.optional() }),
+  'unit.build': z.object({
+    planetId: id,
+    unit: id,
+    count: count.optional(),
+    // The ship loadout chosen in the «Верфь» constructor — validated/priced/stamped by
+    // the reducer (validateLoadout); the schema only bounds well-formedness.
+    modules: z.array(id).max(32).optional(),
+  }),
   // construction.ts — cancel an ACTIVE order (refund the unbuilt share, pause it) by
   // the `scheduled` event's `seq`; resume a paused one (pay the remainder, continue
   // from the same progress) by its `PausedConstructionSite.id` (= the original `seq`).
@@ -78,18 +85,55 @@ export const actionPayloadSchemas: Record<string, z.ZodType> = {
   // market.ts — amounts are plain positive numbers (resources accrue continuously,
   // so fractional amounts are legal); price is a non-negative unit price.
   'market.list': z.object({
+    // `side` is the prototype's two-sided order book (sell lot / buy bid); the core
+    // marketModule ignores it (sell-only) — optional so ONE schema serves both hosts.
+    side: z.enum(['sell', 'buy']).optional(),
     resource: id,
     amount: z.number().finite().positive(),
     price: z.number().finite().nonnegative(),
   }),
   'market.buy': z.object({ orderId: id, amount: z.number().finite().positive() }),
-  'market.cancel': z.object({ orderId: id }),
+  // The prototype's fill action (take up to `amount` from an open lot).
+  'market.take': z.object({ id: id, amount: z.number().finite().positive().optional() }),
+  // The core cancels by `orderId`; the prototype's book cancels by `id` — one schema
+  // serves both hosts (the reducer that owns the action reads its own key).
+  'market.cancel': z.union([z.object({ orderId: id }), z.object({ id: id })]),
   // diplomacy.ts — one action for the whole protocol (D2+D3): escalation applies
   // at once, a friendlier declaration records/commits a mutual-consent offer
   'diplomacy.declare': z.object({
     target: id,
     stance: z.enum(['war', 'peace', 'pact', 'alliance']),
   }),
+  // --- prototype-host actions (the netserver runs the prototype's kernel) -----------
+  // fleetLaunch / squadron ops (prototype game.ts modules)
+  'fleet.launch': z.object({ planetId: id }),
+  'fleet.merge': z.object({ from: id, into: id }),
+  'fleet.split': z.object({
+    fleetId: id,
+    take: z.array(z.object({ unit: id, count })).min(1).max(32),
+  }),
+  'fleet.engage': z.object({ fleetId: id, targetId: id }),
+  // capital (hero respawn / re-fit anchor)
+  'capital.designate': z.object({ planetId: id }),
+  // ground divisions (formation system)
+  'division.mobilize': z.object({ planetId: id, template: z.number().int().nonnegative() }),
+  'division.template': z.object({
+    template: z.number().int().nonnegative(),
+    slot: z.number().int().nonnegative(),
+    unit: z.string().nullable(),
+  }),
+  'division.load': z.object({ divisionId: id, fleetId: id }),
+  'division.unload': z.object({ divisionId: id }),
+  'division.officer': z.object({ divisionId: id, officer: z.string().nullable() }),
+  // steward («Хранитель») — postures are data-driven; the module gates the value
+  'steward.delegate': z.object({ posture: z.string().min(1), until: z.number().finite() }),
+  'steward.recall': z.object({}),
+  // standing orders (CC-2 auto-storm / CC-4 дежурный вылет) — client toggles only.
+  // `patrol.stamp` is deliberately ABSENT: it is the SERVER driver's runtime stamp
+  // (submitAction path, gate-exempt); a client stamping its own sortie would refill
+  // its fuel — the gate must keep rejecting it from the wire.
+  'order.auto': z.object({ fleetId: id, on: z.boolean() }),
+  'order.scramble': z.object({ fleetId: id, on: z.boolean() }),
 };
 
 /** True if `payload` is a valid payload for the client-submittable action `type`. A type

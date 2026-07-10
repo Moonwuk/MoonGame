@@ -44,6 +44,8 @@ export class MemoryMatchStore implements MatchStore {
 /** In-memory seat map — `room → nick → side`. */
 export class MemoryAccountStore implements AccountStore {
   private readonly rooms = new Map<string, Map<string, PlayerId>>();
+  /** Seat-lock ticket hashes — `room → nick → sha256(ticket)` (REL-5). */
+  private readonly tickets = new Map<string, Map<string, string>>();
 
   resolveSeat(
     room: string,
@@ -66,6 +68,23 @@ export class MemoryAccountStore implements AccountStore {
 
   seatOf(room: string, nick: string): Promise<PlayerId | null> {
     return Promise.resolve(this.rooms.get(room)?.get(nick) ?? null);
+  }
+
+  bindSeatTicket(room: string, nick: string, ticketHash: string): Promise<string | null> {
+    if (!this.rooms.get(room)?.has(nick)) return Promise.resolve(null); // no seat → nothing to lock
+    let byNick = this.tickets.get(room);
+    if (!byNick) {
+      byNick = new Map();
+      this.tickets.set(room, byNick);
+    }
+    const existing = byNick.get(nick);
+    if (existing !== undefined) return Promise.resolve(existing); // first bind wins
+    byNick.set(nick, ticketHash);
+    return Promise.resolve(ticketHash);
+  }
+
+  seatTicket(room: string, nick: string): Promise<string | null> {
+    return Promise.resolve(this.tickets.get(room)?.get(nick) ?? null);
   }
 
   occupiedSeats(room: string): Promise<number> {

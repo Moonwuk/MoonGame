@@ -2,12 +2,17 @@ import type { MatchEndReason, MatchScore, PlayerId, UnitStack } from '../state/g
 import type { HandlerContext, GameModule } from '../kernel/module';
 import { MS_PER_DAY } from '../util/time';
 import { isCapturable, provinceScore } from '../state/sectorKind';
+import { getStance } from '../state/diplomacy';
 
 const DEFAULT_DOMINATION_PERCENT = 0.6;
 /** Solo score threshold — the genre's core win race (GDD §3.2). Config may override
  *  it (e.g. a higher coalition threshold). Tuned so a board of ~1000 base points
  *  (12 planets × 50 + the rest × 10) needs a clear majority to win. */
 const DEFAULT_SCORE_LIMIT = 600;
+/** Coalition threshold per member as a share of the solo limit (GDD §3.3):
+ *  порог коалиции = scoreLimit × N × 0.7 — sub-linear in N, so allying is cheaper
+ *  per player than winning solo, but it REPLACES the solo threshold for members. */
+const DEFAULT_COALITION_FACTOR = 0.7;
 /** Session-length cap (game days) by speed — the time-crisis backstop that forces a
  *  finale ranked by score (GDD §3.1/§3.2). Any other speed falls back to the ×1 cap. */
 const SESSION_MAX_DAYS: Record<number, number> = { 1: 100, 2: 60, 4: 30 };
@@ -95,9 +100,17 @@ function highestScore(
   return tied ? null : winner;
 }
 
-function endMatch(h: HandlerContext, winner: PlayerId | null, reason: MatchEndReason): void {
+function endMatch(
+  h: HandlerContext,
+  winner: PlayerId | null,
+  reason: MatchEndReason,
+  winners?: PlayerId[],
+): void {
   h.state.match.status = 'ended';
   h.state.match.winner = winner;
+  // A coalition wins TOGETHER (GDD §3.3): every member lands in `winners`,
+  // `winner` stays its top scorer for the single-champion consumers.
+  if (winners && winners.length > 1) h.state.match.winners = [...winners].sort();
   h.state.match.endedAt = h.ctx.now;
   h.state.match.reason = reason;
   h.emit('match.ended', {
@@ -105,7 +118,37 @@ function endMatch(h: HandlerContext, winner: PlayerId | null, reason: MatchEndRe
     reason,
     at: h.ctx.now,
     scores: h.state.match.scores,
+    ...(h.state.match.winners ? { winners: h.state.match.winners } : {}),
   });
+}
+
+/** Victory units for the score race: a coalition is a mutually-allied CLIQUE (every
+ *  pair inside it holds the `alliance` stance), NOT a connected component — a chain
+ *  A–B, B–C with A–C at war must not let A and C share a win, and a treaty A was not
+ *  party to must not block A's own win (GDD §3.3: "недвусмысленный критерий 'чьи очки
+ *  суммируются'"). Coalitions are humans-only by construction (`E_BOT_ALLIANCE` bars
+ *  bots from the alliance stance). Cliques overlap, so a player may appear in several
+ *  candidate units — the caller looks for ANY unit over its threshold. Deterministic:
+ *  seeds and members visited in sorted order; greedy per seed; deduped by membership. */
+function victoryUnits(h: HandlerContext, active: readonly PlayerId[]): PlayerId[][] {
+  const sorted = [...active].sort();
+  const units: PlayerId[][] = [];
+  const seenKeys = new Set<string>();
+  for (const seed of sorted) {
+    const members: PlayerId[] = [seed];
+    // Grow a clique: add a candidate only if it is allied with EVERY current member.
+    for (const cand of sorted) {
+      if (cand === seed) continue;
+      if (members.every((m) => getStance(h.state, m, cand) === 'alliance')) members.push(cand);
+    }
+    members.sort(); // seed may not be the smallest member — sort so dedup keys match
+    const key = members.join('|');
+    if (!seenKeys.has(key)) {
+      seenKeys.add(key);
+      units.push(members);
+    }
+  }
+  return units;
 }
 
 function evaluateVictory(h: HandlerContext): void {
@@ -177,14 +220,28 @@ function evaluateVictory(h: HandlerContext): void {
   }
 
   // Score win — the genre's core race. 600 is the solo threshold (GDD §3.2); on by
-  // default so a match without explicit config still has a points victory.
+  // default so a match without explicit config still has a points victory. A
+  // coalition (alliance component) races as ONE unit against the sub-linear
+  // threshold scoreLimit × N × factor and wins together (GDD §3.3).
   const scoreLimit = h.ctx.config?.victory?.scoreLimit ?? DEFAULT_SCORE_LIMIT;
-  const scoreWinner = highestScore(
-    scores,
-    active.filter((playerId) => (scores[playerId]?.total ?? 0) >= scoreLimit),
-  );
-  if (scoreWinner) {
-    endMatch(h, scoreWinner, 'score');
+  const coalitionFactor = h.ctx.config?.victory?.coalitionFactor ?? DEFAULT_COALITION_FACTOR;
+  let bestUnit: PlayerId[] | null = null;
+  let bestTotal = -Infinity;
+  let unitTie = false;
+  for (const unit of victoryUnits(h, active)) {
+    const total = unit.reduce((sum, id) => sum + (scores[id]?.total ?? 0), 0);
+    const threshold = unit.length === 1 ? scoreLimit : scoreLimit * unit.length * coalitionFactor;
+    if (total < threshold) continue;
+    if (total > bestTotal) {
+      bestTotal = total;
+      bestUnit = unit;
+      unitTie = false;
+    } else if (total === bestTotal) {
+      unitTie = true; // two units over their thresholds at the same total — no call
+    }
+  }
+  if (bestUnit && !unitTie) {
+    endMatch(h, highestScore(scores, bestUnit) ?? (bestUnit[0] ?? null), 'score', bestUnit);
     return;
   }
 

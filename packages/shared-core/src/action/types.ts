@@ -31,6 +31,11 @@ export interface VictoryConfig {
   dominationPercent?: number;
   /** Aggregate scoreboard points required to end by score. */
   scoreLimit?: number;
+  /** Coalition score threshold per member, as a share of the solo `scoreLimit`
+   *  (GDD §3.3: порог коалиции = scoreLimit × N × factor — sub-linear, so allying
+   *  is cheaper per player than winning solo, but it REPLACES the solo threshold
+   *  for every member). Default: 0.7. */
+  coalitionFactor?: number;
   /** Authoritative timestamp when the highest score wins. */
   endsAt?: number;
 }

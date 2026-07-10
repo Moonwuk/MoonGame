@@ -33,6 +33,22 @@ const CLIENT_ACTION_TYPES = [
   'market.list',
   'market.buy',
   'market.cancel',
+  // REL-2 — the prototype-host intents (the netserver runs the prototype's kernel):
+  'market.take',
+  'fleet.launch',
+  'fleet.merge',
+  'fleet.split',
+  'fleet.engage',
+  'capital.designate',
+  'division.mobilize',
+  'division.template',
+  'division.load',
+  'division.unload',
+  'division.officer',
+  'steward.delegate',
+  'steward.recall',
+  'order.auto',
+  'order.scramble',
 ];
 
 describe('SV-1.2 · action payload schemas', () => {
@@ -78,6 +94,27 @@ describe('SV-1.2 · action payload schemas', () => {
       ['diplomacy.declare', { target: 'p2', stance: 'alliance' }], // friendly declare = an offer
       ['espionage.spy', { target: 'p2', kind: 'treasury' }],
       ['espionage.spy', { target: 'p2', kind: 'planet', planetId: 'home_b' }],
+      // REL-2 — prototype-host intents
+      ['market.list', { side: 'buy', resource: 'metal', amount: 4, price: 2 }], // two-sided book
+      ['market.take', { id: 'lot:1', amount: 2 }],
+      ['market.take', { id: 'lot:1' }], // amount optional (fill the whole lot)
+      ['market.cancel', { id: 'lot:1' }], // the prototype book cancels by `id`
+      ['fleet.launch', { planetId: 'p1' }],
+      ['fleet.merge', { from: 'f1', into: 'f2' }],
+      ['fleet.split', { fleetId: 'f1', take: [{ unit: 'fighter_squadron', count: 2 }] }],
+      ['fleet.engage', { fleetId: 'f1', targetId: 'f2' }],
+      ['capital.designate', { planetId: 'p1' }],
+      ['division.mobilize', { planetId: 'p1', template: 0 }],
+      ['division.template', { template: 0, slot: 2, unit: 'tank' }],
+      ['division.template', { template: 0, slot: 2, unit: null }], // clear the slot
+      ['division.load', { divisionId: 'div:1', fleetId: 'f1' }],
+      ['division.unload', { divisionId: 'div:1' }],
+      ['division.officer', { divisionId: 'div:1', officer: null }],
+      ['steward.delegate', { posture: 'defend', until: 123456 }],
+      ['steward.recall', {}],
+      ['order.auto', { fleetId: 'f1', on: true }],
+      ['order.scramble', { fleetId: 'f1', on: false }],
+      ['unit.build', { planetId: 'p1', unit: 'cruiser', modules: ['targeting_array'] }],
     ];
     for (const [type, payload] of valid) {
       expect(isValidActionPayload(type, payload), `${type}: ${JSON.stringify(payload)}`).toBe(true);

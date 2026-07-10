@@ -34,6 +34,7 @@
     "cooldownHours": 10,
     "range": 400,
     "params": {
+      "radius": 250,
       "durationHours": 3
     }
   },
