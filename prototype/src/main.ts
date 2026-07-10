@@ -2354,6 +2354,7 @@ function drivePatrols(): void {
     const targets: Array<{ id: string; location: string; pos: { x: number; y: number } }> = [];
     for (const g of Object.values(s.fleets)) {
       if (g.owner === ME || !g.location || g.movement || !g.units.some((u) => u.count > 0)) continue;
+      if (g.battleId) continue; // in a battle — engage would reject, yet the sortie fuel is spent (BF-30)
       if (getStance(s, ME, g.owner) !== 'war') continue; // only declared enemies — never auto-war
       if (!known(g.location)) continue; // identified only — "опознанная цель в зоне видимости"
       const pos = s.planets[g.location]?.position;
