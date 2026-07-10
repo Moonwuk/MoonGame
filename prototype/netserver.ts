@@ -121,6 +121,10 @@ const port = Number(process.env.PORT ?? 8788);
 // messages are rejected); the bundled client self-configures from `welcome.gated`.
 // Mirrors packages/server serverConfig (per-room gate instance, shared validator).
 const GATE = process.env.GATE === '1' || process.env.GATE === 'true';
+// SEAT_LOCK=1|true → seat tickets (REL-5): a nick's first join mints a secret the
+// client stores and must present on every reconnect (`?ticket=`), so knowing a URL
+// or a nick is no longer enough to take someone's seat; `?player=` is refused.
+const SEAT_LOCK = process.env.SEAT_LOCK === '1' || process.env.SEAT_LOCK === 'true';
 const TIME_SCALE = Math.max(1, Number(process.env.TIME_SCALE ?? 1) || 1);
 
 // Serve the built prototype HTML at `/` so a peer just opens `http://host:port/`
@@ -366,6 +370,7 @@ const server = createMultiplayerServer({
   port,
   indexHtml,
   accountStore, // `?nick=` WS login resolves its seat here
+  seatLock: SEAT_LOCK, // REL-5: nick+ticket identity; `?player=` refused when on
   // The match-browser read-model + archive intents (GET /matches, POST …/archive).
   httpRoutes: (app) => registerBrowserApi(app, registry),
 });
@@ -408,6 +413,9 @@ const lines = [
   GATE
     ? '  gate   : ON — only validated action.v1 envelopes (clients auto-detect via welcome.gated)'
     : '  gate   : off — bare actions accepted (set GATE=1 for the release posture)',
+  SEAT_LOCK
+    ? '  seats  : LOCKED — a nick’s first join mints a ticket its client must present to reconnect'
+    : '  seats  : open — any nick takes any free seat (set SEAT_LOCK=1 for the release posture)',
   TIME_SCALE > 1
     ? `  time   : ×${TIME_SCALE} fast-forward (1 real min ≈ ${(TIME_SCALE / 60).toFixed(1)} game-hours) — playtest mode`
     : '  time   : ×1 real-time (set TIME_SCALE=100 to fast-forward a playtest)',
@@ -424,7 +432,13 @@ if (unreachableOnly) {
     `     Remote friend? Tunnel it:  cloudflared tunnel --url http://localhost:${port}   (or run \`pnpm doctor\`)`,
   );
 }
-lines.push('', `  raw ws : ${wsUrl.replace('0.0.0.0', 'localhost')}?player=p1  ·  …?player=p2`, '');
+lines.push(
+  '',
+  SEAT_LOCK
+    ? `  raw ws : ${wsUrl.replace('0.0.0.0', 'localhost')}?nick=<name>  (seat lock on — ?player= is refused)`
+    : `  raw ws : ${wsUrl.replace('0.0.0.0', 'localhost')}?player=p1  ·  …?player=p2`,
+  '',
+);
 process.stdout.write(lines.join('\n'));
 
 // Start the offline heartbeat: if a restored match already has a due/pending event,

@@ -1,5 +1,5 @@
 import type { IncomingMessage, Server as HttpServer } from 'node:http';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { Duplex } from 'node:stream';
 import type { PlayerId } from '@void/shared-core';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
@@ -40,6 +40,15 @@ export interface MultiplayerServerOptions {
    *  match and its `playerId` must be a seat in it. Absent ⇒ the dev `?player=`/`?nick=`
    *  handshake (the default for local dev, LAN playtests, and tests). */
   auth?: JoinTokenVerifyConfig;
+  /** Seat lock (REL-5) — protect the nick-login path without accounts. On a nick's
+   *  FIRST join the server mints a random seat ticket, stores only its sha256 in the
+   *  account store and hands the plaintext to that client in `welcome.seatTicket`;
+   *  every LATER join of the same nick must present it back (`?ticket=`) or is
+   *  refused (401). The direct `?player=` handshake is refused outright — it would
+   *  bypass the lock. A seat claimed before the lock existed is adopted (ticketed)
+   *  on its owner's next join. Requires `accountStore`; meaningless under `auth`
+   *  (the join token is already the identity there). */
+  seatLock?: boolean;
   /** Origin allowlist (CSWSH defense, F-06). When set, an upgrade whose `Origin` header is
    *  not in the list is rejected (403) before any work. Absent ⇒ no Origin check (dev).
    *  Should ship WITH `auth`: a token gates identity, the Origin check gates which sites
@@ -77,6 +86,19 @@ const UPGRADE_REASON: Record<number, string> = {
 function rejectUpgrade(socket: Duplex, status: number): void {
   socket.write(`HTTP/1.1 ${status} ${UPGRADE_REASON[status] ?? 'Not Found'}\r\n\r\n`);
   socket.destroy();
+}
+
+/** Seat lock: only the sha256 of a ticket is ever stored or compared. */
+function hashTicket(ticket: string): string {
+  return createHash('sha256').update(ticket).digest('hex');
+}
+
+/** Constant-time check of a presented ticket against the stored hash (no
+ *  early-exit compare an attacker could time; sha256 makes lengths equal). */
+function ticketMatches(presented: string, storedHash: string): boolean {
+  const a = createHash('sha256').update(presented).digest();
+  const b = Buffer.from(storedHash, 'hex');
+  return a.length === b.length && timingSafeEqual(a, b);
 }
 
 export function createMultiplayerServer(
@@ -198,6 +220,9 @@ export function createMultiplayerServer(
           return;
         }
         let playerId: string;
+        // Plaintext seat ticket minted THIS join (seat lock) — delivered once in
+        // `welcome.seatTicket`; the server keeps only the hash.
+        let mintedTicket: string | undefined;
         if (auth) {
           // Authenticated handshake (SE-0.1): the join token is the SOLE identity —
           // `?player=`/`?nick=` are ignored so they can't bypass it. The token rides in
@@ -217,6 +242,45 @@ export function createMultiplayerServer(
             return;
           }
           playerId = verified.claim.playerId;
+        } else if (options.seatLock) {
+          // Seat lock (REL-5): nick+ticket is the SOLE identity on this path — the
+          // direct `?player=` handshake would bypass the lock, so it is refused
+          // (the same way `auth` refuses both dev handshakes).
+          const nick = url.searchParams.get('nick');
+          if (!nick || !accountStore) {
+            rejectUpgrade(socket, 401);
+            return;
+          }
+          const seats = Object.keys(room.state.players) as PlayerId[];
+          const seat = await accountStore.resolveSeat(room.id, nick, seats);
+          if (!seat) {
+            rejectUpgrade(socket, 409); // every side already taken by another nick
+            return;
+          }
+          playerId = seat.playerId;
+          const presented = url.searchParams.get('ticket') ?? '';
+          const stored = await accountStore.seatTicket(room.id, nick);
+          if (stored === null) {
+            // First join of this nick (or a seat claimed before the lock existed):
+            // mint + bind. Losing the concurrent-bind race means someone else just
+            // ticketed this nick — verify against the winner instead (we hold no
+            // ticket → refused); never hand out a second ticket for one seat.
+            const ticket = randomBytes(24).toString('base64url');
+            const winner = await accountStore.bindSeatTicket(room.id, nick, hashTicket(ticket));
+            if (winner === null) {
+              rejectUpgrade(socket, 401); // seat vanished under us — fail-secure
+              return;
+            }
+            if (winner === hashTicket(ticket)) {
+              mintedTicket = ticket; // deliver once in welcome — the client stores it
+            } else if (!ticketMatches(presented, winner)) {
+              rejectUpgrade(socket, 401);
+              return;
+            }
+          } else if (!ticketMatches(presented, stored)) {
+            rejectUpgrade(socket, 401); // locked seat, no/wrong ticket — no detail leaked
+            return;
+          }
         } else {
           // Insecure dev handshake: `?player=` directly, or `?nick=` via the account store.
           playerId = url.searchParams.get('player') ?? '';
@@ -240,7 +304,7 @@ export function createMultiplayerServer(
         // envelope's session binding, SV-1.1-live-A). A reconnect mints a fresh one.
         const sessionId = randomUUID();
         wss.handleUpgrade(request, socket, head, (ws) => {
-          wss.emit('connection', ws, request, playerId, room, sessionId);
+          wss.emit('connection', ws, request, playerId, room, sessionId, mintedTicket);
         });
       } catch {
         rejectUpgrade(socket, 500);
@@ -273,6 +337,7 @@ export function createMultiplayerServer(
       playerId: string,
       room: MatchRoom,
       sessionId: string,
+      mintedTicket?: string,
     ) => {
       sockets.add(ws);
       alive.set(ws, true);
@@ -280,7 +345,7 @@ export function createMultiplayerServer(
       // Only retain when the peer actually joined — addPeer rejects (and closes the socket)
       // for an unknown player or a duplicate on a single-seat slot, and a spurious retain
       // would disarm a legitimate hibernation countdown, starving eviction under reconnects.
-      if (room.addPeer(playerId, ws, sessionId)) {
+      if (room.addPeer(playerId, ws, sessionId, mintedTicket ? { seatTicket: mintedTicket } : undefined)) {
         registry.retain?.(room.id); // keep the match resident while this socket is connected
       }
       ws.on('message', (data) => {

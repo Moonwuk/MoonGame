@@ -434,7 +434,12 @@ export class MatchRoom {
     return this.stateValue.players[playerId] !== undefined;
   }
 
-  addPeer(playerId: PlayerId, peer: RoomPeer, sessionId?: string): boolean {
+  addPeer(
+    playerId: PlayerId,
+    peer: RoomPeer,
+    sessionId?: string,
+    welcomeExtras?: { seatTicket?: string },
+  ): boolean {
     if (!this.hasPlayer(playerId)) {
       this.send(peer, { type: 'error', matchId: this.id, code: 'E_UNKNOWN_PLAYER' });
       peer.close?.(1008, 'unknown player');
@@ -466,6 +471,9 @@ export class MatchRoom {
       remembered: view.remembered,
       ...(sessionId !== undefined ? { sessionId } : {}),
       ...(this.gate ? { gated: true } : {}), // tell the client to send action.v1 envelopes
+      // Seat lock: a ticket minted at THIS join rides the welcome once (the transport
+      // keeps only its hash) — the client stores it and presents it on reconnect.
+      ...(welcomeExtras?.seatTicket !== undefined ? { seatTicket: welcomeExtras.seatTicket } : {}),
       ...this.hashField(view.base),
       ...this.lobbyField(),
     });

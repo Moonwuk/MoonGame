@@ -30,6 +30,10 @@ services:
       # Release posture: only validated action.v1 envelopes are accepted (the bundled
       # client auto-detects via welcome.gated). Set GATE=0 to fall back to bare actions.
       GATE: ${GATE:-1}
+      # Release posture: seat tickets — a nick's first join mints a secret its client
+      # stores and must present to reconnect, so a URL+nick alone can't take a seat.
+      # Set SEAT_LOCK=0 to fall back to the open dev handshake.
+      SEAT_LOCK: ${SEAT_LOCK:-1}
       # Playtest fast-forward (wall→game clock multiplier); 1 = real-time 24/7.
       TIME_SCALE: ${TIME_SCALE:-1}
       # Durable matches: snapshots to the postgres service over the compose network.

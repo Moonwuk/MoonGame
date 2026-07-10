@@ -7275,9 +7275,16 @@ function connect(): void {
   const srv = resolveServer();
   if (!srv) return;
   const { base, nick } = srv;
+  // Seat lock (REL-5): the ticket the server minted for this seat on first join —
+  // presented back on every reconnect so nobody else can take the seat by typing
+  // our nick. Keyed per server+match+nick (the ticket is seat-scoped).
+  const ticketKey = `void.ticket.${base}|${currentMatchId}|${nick}`;
+  const seatTicket = localStorage.getItem(ticketKey);
   // Nick-login: the server maps this name → a fixed side and hands it back, so we
   // learn our seat from the welcome (snap.playerId), not from a side picker.
-  const url = `${base}/matches/${encodeURIComponent(currentMatchId)}?nick=${encodeURIComponent(nick)}`;
+  const url =
+    `${base}/matches/${encodeURIComponent(currentMatchId)}?nick=${encodeURIComponent(nick)}` +
+    (seatTicket ? `&ticket=${encodeURIComponent(seatTicket)}` : '');
   statusEl.textContent = t('Подключение: {nick}…', { nick });
   localStorage.setItem('void.server', base);
   localStorage.setItem('void.nick', nick); // resume this seat next visit
@@ -7294,6 +7301,11 @@ function connect(): void {
       onStatus: () => {
         // Intentionally no-op on "open": admission is confirmed by the first
         // welcome snapshot (see onSnapshot), not by the socket opening.
+      },
+      onSeatTicket: (ticket) => {
+        // The server minted our seat ticket (first join of this nick) — persist it;
+        // every later join must present it, and the server can't re-issue (hash-only).
+        localStorage.setItem(ticketKey, ticket);
       },
       onPong: (_serverTime, clientTime) => {
         if (clientTime === undefined) return;
