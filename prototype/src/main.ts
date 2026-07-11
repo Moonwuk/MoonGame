@@ -5266,12 +5266,13 @@ function scrollFeedToEnd(): void {
 /** A compact codex tile (icon + a one-line label) that opens the full info panel on
  *  tap. `label` is the build cost for buildables, or ×count for a fleet's ships. The
  *  tiles live in context — building tiles in the build menu, ship tiles in the fleet
- *  panel — not in a global HUD strip. */
+ *  panel — not in a global HUD strip. The LOCALIZED name rides both the desktop
+ *  `title` (hover tooltip) and `data-name` — the mobile long-press bubble reads it. */
 function codexTile(kind: 'b' | 'u', id: string, label: string): string {
   if (!(kind === 'b' ? data.buildings[id] : data.units[id])) return '';
   const icon = kind === 'b' ? BUILD_ICON[id] ?? '▣' : unitIcon(id);
-  const name = kind === 'b' ? data.buildings[id]?.name ?? id : unitDossier(id)?.name ?? displayUnit(id);
-  return `<button class="ptile" data-codex="${kind}:${id}" title="${esc(name)} — tap for full specs"><span class="pt-ic">${icon}</span><span class="pt-c">${esc(label)}</span></button>`;
+  const name = kind === 'b' ? buildingName(id) : unitDossier(id)?.name ?? displayUnit(id);
+  return `<button class="ptile" data-codex="${kind}:${id}" data-name="${esc(name)}" title="${esc(name)} — ${t('тап — полное досье')}"><span class="pt-ic">${icon}</span><span class="pt-c">${esc(label)}</span></button>`;
 }
 /** A row of ship/troop tiles for a fleet's composition — tap one for its full specs. */
 function unitTilesHtml(stacks: Array<{ unit: string; count: number }>): string {
@@ -5717,6 +5718,79 @@ side.addEventListener('pointerleave', () => {
     renderObjDesc();
   }
 });
+
+// Mobile long-press on a codex tile (.ptile): touch has no hover, so the desktop
+// `title` tooltip is unreachable — press-and-HOLD shows a small bubble with the
+// tile's localized name (from `data-name`) instead. While held it stays; releasing
+// hides it AND swallows the click, so a long-press never falls through into the
+// tap action (opening the full codex). A plain tap keeps opening the codex as
+// before. Listeners are optional-called: the headless harness DOM has no
+// document.addEventListener.
+let holdTipEl: HTMLElement | null = null;
+let holdTimer: number | null = null;
+let holdTipShown = false; // the press matured into a bubble → eat the click tail
+let holdStart: { x: number; y: number } | null = null;
+const HOLD_TIP_MS = 400;
+const HOLD_SLOP_PX = 12; // a moving finger is a scroll/drag, not a hold
+function showHoldTip(btn: HTMLElement): void {
+  const name = btn.dataset.name;
+  if (!name) return;
+  if (!holdTipEl) {
+    holdTipEl = document.createElement('div');
+    holdTipEl.id = 'holdtip';
+    document.body.appendChild(holdTipEl);
+  }
+  holdTipEl.textContent = name;
+  holdTipEl.style.display = 'block';
+  // above the tile, clamped to the viewport
+  const r = btn.getBoundingClientRect();
+  const w = holdTipEl.offsetWidth;
+  const h = holdTipEl.offsetHeight;
+  holdTipEl.style.left = `${Math.max(6, Math.min(window.innerWidth - w - 6, r.left + r.width / 2 - w / 2))}px`;
+  holdTipEl.style.top = `${Math.max(6, r.top - h - 8)}px`;
+}
+function cancelHoldTip(): void {
+  if (holdTimer !== null) {
+    clearTimeout(holdTimer);
+    holdTimer = null;
+  }
+  holdStart = null;
+  if (holdTipEl) holdTipEl.style.display = 'none';
+}
+document.addEventListener?.('pointerdown', (ev) => {
+  if (!MOBILE) return;
+  const btn = (ev.target as HTMLElement).closest?.('.ptile') as HTMLElement | null;
+  if (!btn) return;
+  holdTipShown = false;
+  holdStart = { x: ev.clientX, y: ev.clientY };
+  if (holdTimer !== null) clearTimeout(holdTimer);
+  holdTimer = window.setTimeout(() => {
+    holdTimer = null;
+    holdTipShown = true;
+    showHoldTip(btn);
+  }, HOLD_TIP_MS);
+});
+document.addEventListener?.('pointermove', (ev) => {
+  if (holdTimer === null || !holdStart) return;
+  if (Math.hypot(ev.clientX - holdStart.x, ev.clientY - holdStart.y) > HOLD_SLOP_PX) {
+    cancelHoldTip(); // the finger is scrolling the panel, not holding the tile
+  }
+});
+document.addEventListener?.('pointerup', () => cancelHoldTip());
+document.addEventListener?.('pointercancel', () => cancelHoldTip());
+document.addEventListener?.(
+  'click',
+  (ev) => {
+    if (!holdTipShown) return;
+    holdTipShown = false;
+    // the click is the tail of a matured long-press — it must not open the codex
+    if ((ev.target as HTMLElement).closest?.('.ptile')) {
+      ev.preventDefault();
+      ev.stopPropagation();
+    }
+  },
+  true, // capture — ahead of the side panel's click handler
+);
 
 cmdbar.addEventListener('click', (ev) => {
   const bEl = (ev.target as HTMLElement).closest('button') as HTMLButtonElement | null;
