@@ -316,8 +316,8 @@ export const data: GameData = parseGameData({
     //  system. Orbital AA is no longer a unit either: it's a defensive *building* now
     //  (see `orbital_aa` under buildings) — anti-ship, immobile, player-built.)
     // --- formation roster: the ground units that fill a division template's 6 slots
-    // (formation.ts). Each has a distinct role; the template's SUM + composition
-    // synergies (combined-arms / entrenched / armour / air) set the division's stats.
+    // (formation.ts). Each has a distinct role; the division's paper stats are the SUM of
+    // its slots — composition doctrines are organisational labels, not stat bonuses (BF-23).
     // Пехота — cheap, defensive front line; the backbone that holds ground.
     // Пехота в трёх вариантах (H4): ополчение — дешёвое мясо, тяжёлая пехота — щит
     // обороны, спецназ — элита с противотанковыми средствами (см. GROUND_ROSTER —
@@ -1586,9 +1586,10 @@ export interface SetupConfig {
 
 // --- ground formations (HOI4-style division templates) -----------------------
 // A "воинское объединение" is a TEMPLATE of 6 slots, each holding one formation unit
-// (or empty). Mobilising it builds those units as a ground army; the division's stats
-// are the SUM of its slots PLUS composition synergies. Templates are composed in the
-// menu and frozen for the session, giving players a flexible, pre-committed doctrine.
+// (or empty). Mobilising it builds those units as a ground army; the division's paper
+// stats are the SUM of its slots — composition doctrines are organisational LABELS only
+// and add nothing to the numbers (BF-23). Templates are composed in the menu and frozen
+// for the session, giving players a flexible, pre-committed doctrine.
 
 /** The unit ids a template slot may hold — the formation roster (data.units above). */
 export const FORMATION_UNITS = ['militia', 'heavy_infantry', 'special_forces', 'tank'] as const;
@@ -1622,14 +1623,18 @@ export const OFFICER_TEMPLATES: OfficerTemplate[] = [
   { name: 'Колонна снабжения', officer: 'quartermaster', slots: ['militia', 'militia', 'militia', 'heavy_infantry', 'heavy_infantry', 'tank'] },
 ];
 
-/** An active composition synergy (a doctrine bonus the template's mix unlocks). */
+/** A composition doctrine the template's mix unlocks — an organisational LABEL
+ *  (combined-arms, entrenched, …), NOT a combat bonus: it carries no multiplier and
+ *  combat never reads it (BF-23). Purely descriptive flavour for the designer. */
 export interface FormationSynergy {
   key: string;
   name: string;
   desc: string;
 }
-/** Aggregate characteristics of a division template — what the designer previews and
- *  what mobilisation/combat read. attack/defense already include synergy multipliers. */
+/** Aggregate characteristics of a division template — the designer's PAPER-STRENGTH
+ *  readout. attack/defense are the raw Σ of slot stats; combat resolves per-target from
+ *  the ground roster + officer (groundcombat.ts), never from these, so `synergies` are
+ *  organisational doctrine labels only — no attack/defence multiplier (BF-23). */
 export interface FormationStats {
   count: number;
   byType: Record<FormationUnit, number>;
@@ -1640,9 +1645,10 @@ export interface FormationStats {
   synergies: FormationSynergy[];
 }
 
-/** Compute a template's aggregate stats = Σ(slot stats) × composition synergies
- *  (combined-arms / entrenched / armour / air-support). Pure + deterministic; used by
- *  the menu preview and (later) by mobilisation. */
+/** Compute a template's aggregate paper stats = Σ(slot stats), plus the doctrine LABELS
+ *  its composition unlocks (combined-arms / entrenched / armour / raid / human-wave).
+ *  Pure + deterministic; a designer-preview readout only — combat resolves per-target
+ *  from the ground roster + officer, so these doctrines carry no combat multiplier (BF-23). */
 export function formationStats(tpl: FormationTemplate): FormationStats {
   const byType: Record<FormationUnit, number> = { militia: 0, heavy_infantry: 0, special_forces: 0, tank: 0 };
   let baseAtk = 0;
@@ -1661,50 +1667,43 @@ export function formationStats(tpl: FormationTemplate): FormationStats {
   }
   const infantry = byType.militia + byType.heavy_infantry + byType.special_forces;
   const count = infantry + byType.tank;
-  // Composition synergies — additive multipliers on attack / defense. Doctrines follow
-  // the H4 roster: combined arms, an entrenched heavy line, an armoured fist, a
-  // spec-ops raid and the cheap human wave.
-  let atkMul = 1;
-  let defMul = 1;
+  // Composition doctrines — organisational LABELS the mix unlocks (combined arms, an
+  // entrenched heavy line, an armoured fist, a spec-ops raid, the cheap human wave).
+  // Descriptive ONLY: combat resolves per-target from the ground roster + officer, so a
+  // doctrine grants no attack/defence multiplier — the preview must not advertise one (BF-23).
   const synergies: FormationSynergy[] = [];
   if (infantry > 0 && byType.tank > 0) {
-    atkMul += 0.15;
-    defMul += 0.15;
     synergies.push({
       key: 'combined',
       name: 'Комбинированные войска',
-      desc: '+15% атака и оборона — пехота и танки вместе',
+      desc: 'Пехота и танки в одном строю',
     });
   }
   if (byType.heavy_infantry >= 3) {
-    defMul += 0.25;
-    synergies.push({ key: 'entrench', name: 'Окопались', desc: '+25% оборона — ≥3 тяжёлой пехоты' });
+    synergies.push({ key: 'entrench', name: 'Окопались', desc: '≥3 тяжёлой пехоты держат рубеж' });
   }
   if (byType.tank >= 3) {
-    atkMul += 0.2;
     synergies.push({
       key: 'armor',
       name: 'Танковый кулак',
-      desc: '+20% атака — ≥3 танков (прорыв)',
+      desc: '≥3 танков — ударный клин',
     });
   }
   if (byType.special_forces >= 2 && byType.militia === 0) {
-    atkMul += 0.15;
     synergies.push({
       key: 'raid',
       name: 'Рейдовая доктрина',
-      desc: '+15% атака — ≥2 спецназа без ополчения',
+      desc: '≥2 спецназа без ополчения',
     });
   }
   if (byType.militia >= 4) {
-    defMul += 0.1;
-    synergies.push({ key: 'wave', name: 'Людская волна', desc: '+10% оборона — ≥4 ополчения' });
+    synergies.push({ key: 'wave', name: 'Людская волна', desc: '≥4 ополчения — берут числом' });
   }
   return {
     count,
     byType,
-    attack: Math.round(baseAtk * atkMul),
-    defense: Math.round(baseDef * defMul),
+    attack: baseAtk,
+    defense: baseDef,
     hp,
     cost,
     synergies,

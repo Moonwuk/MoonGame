@@ -6815,9 +6815,9 @@ function conArmyPane(): string {
     conBar({ label: t('Корпус'), base: f.hp, effective: f.hp, delta: 0 }, max),
   ].join('');
   const syn = f.synergies.length
-    ? `<div class="cn-ph" style="margin-top:14px">${t('Синергии состава')}</div>` +
-      f.synergies.map((x) => `<div class="cn-syn">✦ ${esc(x.name)}</div>`).join('')
-    : `<div class="cn-note" style="margin-top:12px">${t('Смешай пехоту и танки для синергий.')}</div>`;
+    ? `<div class="cn-ph" style="margin-top:14px">${t('Доктрина состава')}</div>` +
+      f.synergies.map((x) => `<div class="cn-syn">✦ ${esc(t(x.name))}</div>`).join('')
+    : `<div class="cn-note" style="margin-top:12px">${t('Смешай рода войск — состав задаёт доктрину.')}</div>`;
   const cost =
     `<div class="cn-cost"><div class="cn-crow total"><span class="cn-cl">${t('Стоимость мобилизации')}</span>` +
     `<span class="cn-cv">${bagRu(f.cost)}</span></div></div>`;
