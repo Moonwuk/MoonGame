@@ -574,3 +574,29 @@ describe('MultiplayerClient · hash desync → report + resync (M1)', () => {
     expect(socket.sent).toEqual([]);
   });
 });
+
+// M2 perf telemetry: a light fps/rtt/mem sample the caller (the prototype's 30s
+// timer) pushes through the client — dropped while disconnected.
+describe('MultiplayerClient · perf sample (M2)', () => {
+  it('sends the sample as a perf message', () => {
+    const socket = new FakeSocket();
+    const client = new MultiplayerClient(socket);
+    client.open();
+    client.sendPerf({ fps: 58, rttMs: 42, memMb: 120 });
+    expect(JSON.parse(socket.sent[0] ?? '')).toEqual({
+      type: 'perf',
+      fps: 58,
+      rttMs: 42,
+      memMb: 120,
+    });
+  });
+
+  it('drops the sample while the connection is lost (queueing)', () => {
+    const socket = new FakeSocket();
+    const client = new MultiplayerClient(socket);
+    client.open();
+    client.connectionLost();
+    client.sendPerf({ fps: 60 });
+    expect(socket.sent).toEqual([]);
+  });
+});

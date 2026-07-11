@@ -44,6 +44,10 @@ export interface MetricsSummary {
   broadcastMs: SeriesStat & { avg: number };
   /** Serialized per-player delta size (bytes) — the fog-efficiency signal. */
   deltaBytes: SeriesStat & { avg: number };
+  /** Client-reported fps samples (M2). `min` is the signal — the worst dip seen. */
+  clientFps: (SeriesStat & { avg: number; min: number }) | null;
+  /** Client-reported round-trip samples (M2). */
+  clientRttMs: (SeriesStat & { avg: number }) | null;
   end: { winner: PlayerId | null; reason?: string } | null;
 }
 
@@ -77,6 +81,9 @@ export class MetricsAggregator {
   private readonly advanceMs = series();
   private readonly broadcastMs = series();
   private readonly deltaBytes = series();
+  private readonly clientFps = series();
+  private fpsMin = Infinity;
+  private readonly clientRttMs = series();
   private end: { winner: PlayerId | null; reason?: string } | null = null;
 
   observe(ev: RoomObservation): void {
@@ -118,6 +125,11 @@ export class MetricsAggregator {
         record(this.broadcastMs, ev.ms);
         for (const bytes of Object.values(ev.deltaBytes)) record(this.deltaBytes, bytes);
         return;
+      case 'client_perf':
+        record(this.clientFps, ev.fps);
+        if (ev.fps < this.fpsMin) this.fpsMin = ev.fps;
+        if (ev.rttMs !== undefined) record(this.clientRttMs, ev.rttMs);
+        return;
       case 'end':
         this.end = { winner: ev.winner, ...(ev.reason !== undefined ? { reason: ev.reason } : {}) };
         return;
@@ -147,6 +159,9 @@ export class MetricsAggregator {
       advanceMs: withAvg(this.advanceMs),
       broadcastMs: withAvg(this.broadcastMs),
       deltaBytes: withAvg(this.deltaBytes),
+      clientFps:
+        this.clientFps.count === 0 ? null : { ...withAvg(this.clientFps), min: this.fpsMin },
+      clientRttMs: this.clientRttMs.count === 0 ? null : withAvg(this.clientRttMs),
       end: this.end,
     };
   }

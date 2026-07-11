@@ -398,6 +398,53 @@ describe('MatchRoom — M1 observations (events / broadcast / timing / desync)',
     await r.receive('p1', p1, JSON.stringify({ type: 'desync', seq: 'nope' }));
     expect(p1.messages.at(-1)).toMatchObject({ type: 'error', code: 'E_BAD_MESSAGE' });
   });
+
+  it('observes a client perf sample and never answers it (M2)', async () => {
+    const { r, events, peers } = observed();
+    const [p1] = peers;
+    const before = p1.messages.length;
+
+    await r.receive('p1', p1, JSON.stringify({ type: 'perf', fps: 58, rttMs: 42, memMb: 120 }));
+
+    expect(events.filter((e) => e.kind === 'client_perf')).toEqual([
+      { kind: 'client_perf', playerId: 'p1', fps: 58, rttMs: 42, memMb: 120 },
+    ]);
+    expect(p1.messages).toHaveLength(before); // telemetry is not a conversation
+  });
+
+  it('rate-limits perf samples per player — a flood is dropped silently', async () => {
+    const { r, events, peers } = observed();
+    const [p1] = peers;
+    const before = p1.messages.length;
+
+    await r.receive('p1', p1, JSON.stringify({ type: 'perf', fps: 60 }));
+    await r.receive('p1', p1, JSON.stringify({ type: 'perf', fps: 59 })); // same instant → dropped
+
+    expect(events.filter((e) => e.kind === 'client_perf')).toHaveLength(1);
+    expect(p1.messages).toHaveLength(before); // no error either — silent drop
+  });
+
+  it('rejects an out-of-range perf sample as E_BAD_MESSAGE (fail-secure)', async () => {
+    const { r, events, peers } = observed();
+    const [p1] = peers;
+    await r.receive('p1', p1, JSON.stringify({ type: 'perf', fps: -5 }));
+    await r.receive('p1', p1, JSON.stringify({ type: 'perf', fps: Infinity }));
+    expect(events.filter((e) => e.kind === 'client_perf')).toHaveLength(0);
+    expect(p1.messages.at(-1)).toMatchObject({ type: 'error', code: 'E_BAD_MESSAGE' });
+  });
+
+  it('drops garbage optional fields but keeps the valid fps (parse clamps)', async () => {
+    const { r, events, peers } = observed();
+    const [p1] = peers;
+    await r.receive(
+      'p1',
+      p1,
+      JSON.stringify({ type: 'perf', fps: 30, rttMs: 'huge', memMb: -1 }),
+    );
+    expect(events.filter((e) => e.kind === 'client_perf')).toEqual([
+      { kind: 'client_perf', playerId: 'p1', fps: 30 },
+    ]);
+  });
 });
 
 describe('MatchRoom — lobby gate (waitForPlayers)', () => {

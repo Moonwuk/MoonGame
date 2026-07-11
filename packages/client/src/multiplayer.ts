@@ -310,6 +310,14 @@ export class MultiplayerClient {
     this.socket.send(JSON.stringify({ type: 'ping', clientTime }));
   }
 
+  /** Send a lightweight perf sample (M2): smoothed fps + optional rtt/mem. Pure
+   *  telemetry — the server observes it into the metrics stream (rate-limited) and
+   *  never answers. Dropped while disconnected (nothing to report a dead wire to). */
+  sendPerf(sample: { fps: number; rttMs?: number; memMb?: number }): void {
+    if (this.queueing) return;
+    this.socket.send(JSON.stringify({ type: 'perf', ...sample }));
+  }
+
   /** Host-only: ask the server to begin the match (manual-start lobby). */
   start(): void {
     this.socket.send(JSON.stringify({ type: 'start' }));

@@ -446,6 +446,10 @@ let netSock: WebSocket | null = null;
 // compares our reconstructed view to the server's hash on every snapshot.
 let rttEma: number | null = null;
 let pingTimer: ReturnType<typeof setInterval> | null = null;
+// M2 perf telemetry: a light fps/rtt/mem sample every 30s while in a network match —
+// lands in the server's metrics stream (observe → JSONL/сводка), never answered.
+let perfTimer: ReturnType<typeof setInterval> | null = null;
+const PERF_SAMPLE_MS = 30_000;
 let netDesync = false; // last snapshot's hash mismatched (server vs our rebuild)
 let netDesyncCount = 0; // how many snapshots have mismatched this session
 // Manual-start lobby roster from the server (host + who's connected + started).
@@ -7879,6 +7883,19 @@ function connect(): void {
           if (pingTimer) clearInterval(pingTimer);
           pingTimer = setInterval(() => client.ping(performance.now()), 2000);
           client.ping(performance.now()); // seed an RTT reading immediately
+          // Perf sample (M2): smoothed fps + rtt + JS-heap (Chrome-only field),
+          // every 30s — cheap enough to never matter, useful on every playtest.
+          if (perfTimer) clearInterval(perfTimer);
+          perfTimer = setInterval(() => {
+            const mem = (
+              performance as unknown as { memory?: { usedJSHeapSize?: number } }
+            ).memory?.usedJSHeapSize;
+            client.sendPerf({
+              fps: Math.round(fpsEma),
+              ...(rttEma !== null ? { rttMs: Math.round(rttEma) } : {}),
+              ...(mem !== undefined ? { memMb: Math.round(mem / 1048576) } : {}),
+            });
+          }, PERF_SAMPLE_MS);
         }
         const diploShift = admitted && s !== snap.state && diffNetDiplomacy(s, snap.state);
         s = snap.state;
@@ -7998,6 +8015,10 @@ function connect(): void {
     if (pingTimer) {
       clearInterval(pingTimer);
       pingTimer = null;
+    }
+    if (perfTimer) {
+      clearInterval(perfTimer);
+      perfTimer = null;
     }
     rttEma = null;
     if (NET) {

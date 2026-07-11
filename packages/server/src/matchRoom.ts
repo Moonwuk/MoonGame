@@ -174,7 +174,11 @@ export type RoomObservation =
   /** A client reported that its reconstructed state hashed differently from the
    *  server's snapshot hash (M1). The room answers with a full resync snapshot;
    *  this record is the log half (the doc's desync-rate target is 0). */
-  | { kind: 'desync'; playerId: PlayerId; atSeq: number; clientHash: string };
+  | { kind: 'desync'; playerId: PlayerId; atSeq: number; clientHash: string }
+  /** A client perf sample (M2): smoothed fps + round-trip + JS-heap as the player's
+   *  device experiences the match. Rate-limited at the room (floods are dropped
+   *  silently — telemetry, not a conversation); values already range-checked at parse. */
+  | { kind: 'client_perf'; playerId: PlayerId; fps: number; rttMs?: number; memMb?: number };
 
 export interface SubmitResult {
   ok: boolean;
@@ -245,6 +249,10 @@ const ACTION_RATE_WINDOW_MS_DEFAULT = 1_000;
  *  real desync storm), only the resync reply is skipped. */
 const DESYNC_RESYNC_COOLDOWN_MS = 2_000;
 
+/** Min interval between accepted client perf samples (M2). The client sends every
+ *  ~30 s; anything faster is a bug or a flood — dropped silently (telemetry). */
+const PERF_SAMPLE_MIN_MS = 5_000;
+
 export class MatchRoom {
   readonly id: string;
 
@@ -314,6 +322,8 @@ export class MatchRoom {
   private readonly actionTimes = new Map<PlayerId, number[]>();
   /** Per-player wall time of the last desync-triggered resync reply (cool-down). */
   private readonly lastResyncAt = new Map<PlayerId, number>();
+  /** Per-player wall time of the last accepted perf sample (rate limit). */
+  private readonly lastPerfAt = new Map<PlayerId, number>();
   /** Wall→game clock multiplier (1 = real-time; >1 fast-forwards the match). */
   private readonly timeScale: number;
 
@@ -535,6 +545,7 @@ export class MatchRoom {
       this.peers.delete(playerId);
       this.lastVisible.delete(playerId); // reclaim the per-player snapshot — no leak after a leave
       this.lastResyncAt.delete(playerId); // and the desync-resync cool-down stamp
+      this.lastPerfAt.delete(playerId); // and the perf-sample rate-limit stamp
       this.observe?.({ kind: 'leave', playerId });
       // Manual-start lobby: if the host leaves before starting, hand the Start
       // button to whoever's still here (insertion order) so the lobby isn't stuck.
@@ -606,6 +617,24 @@ export class MatchRoom {
       if (last === undefined || wallNow - last >= DESYNC_RESYNC_COOLDOWN_MS) {
         this.lastResyncAt.set(playerId, wallNow);
         this.send(peer, this.stateMessageFor(playerId));
+      }
+      return;
+    }
+    if (message.type === 'perf') {
+      // M2 client perf telemetry: observe-and-forget. Rate-limited per player; a
+      // too-frequent sample is dropped silently (telemetry is not a conversation,
+      // and answering floods would be the amplification we're avoiding).
+      const wallNow = this.now();
+      const last = this.lastPerfAt.get(playerId);
+      if (last === undefined || wallNow - last >= PERF_SAMPLE_MIN_MS) {
+        this.lastPerfAt.set(playerId, wallNow);
+        this.observe?.({
+          kind: 'client_perf',
+          playerId,
+          fps: message.fps,
+          ...(message.rttMs !== undefined ? { rttMs: message.rttMs } : {}),
+          ...(message.memMb !== undefined ? { memMb: message.memMb } : {}),
+        });
       }
       return;
     }

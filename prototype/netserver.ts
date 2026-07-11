@@ -510,6 +510,10 @@ const printSummary = (): void => {
       `  submit    : ${ms(s.submitMs)}`,
       `  advance   : ${ms(s.advanceMs)}`,
       `  broadcast : ${ms(s.broadcastMs)} · delta ${kb(s.deltaBytes)}`,
+      s.clientFps
+        ? `  client    : fps avg ${s.clientFps.avg.toFixed(0)} · min ${s.clientFps.min.toFixed(0)}` +
+          (s.clientRttMs ? ` · rtt avg ${s.clientRttMs.avg.toFixed(0)}ms · max ${s.clientRttMs.max.toFixed(0)}ms` : '')
+        : '  client    : — (перф-сэмплы не приходили)',
       s.end
         ? `  match end : winner ${s.end.winner ?? '—'}${s.end.reason ? ` (${s.end.reason})` : ''}`
         : '  match end : —',
