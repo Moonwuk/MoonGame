@@ -500,6 +500,12 @@ const battleLosses = new Map<string, Record<string, Record<string, number>>>();
 // Single-player setup screen state: per-seat role (seat 0 is always you) + your
 // chosen homeworld. Seats 2-4 toggle 'ai'/'off'; an 'ai' seat spawns a rival.
 let setupSlots: Array<'human' | 'ai' | 'off'> = ['human', 'ai', 'off', 'off'];
+// Team battle (2v2 etc.): when on, seats fight in sides — same side ALLIED (win
+// together, no friendly fire), across sides at WAR from the first hour. Seat 0 (you)
+// is always side A; the default when enabling pairs you with seat 1 vs seats 2-3.
+// Off ⇒ classic free-for-all. See newGame's team-aware diplomacy seeding.
+let setupTeams = false;
+let setupSeatTeam: Array<'A' | 'B'> = ['A', 'A', 'B', 'B'];
 let setupStart: string = START_CANDIDATES[0] ?? MAP[0]!.id;
 let setupScientists: string[] = []; // the human's chosen research-leader council (≤2), picked at setup
 let setupFaction = 'blue'; // H3: the house the HUMAN plays; AI seats take the remaining ones
@@ -7449,7 +7455,19 @@ function renderSetupSlots(): void {
       `<span>${factionBonusLine(m.faction)}</span></button>`;
   }
   h += `</div>`;
+  // Team-battle toggle: sides fight as allies. Only meaningful with ≥2 rivals (a 2v2
+  // needs three AI seats on); shown always so the player can arm it before adding them.
+  h +=
+    `<div class="tmrow"><button class="tmtog${setupTeams ? ' on' : ''}" data-teamtog="1">` +
+    `${setupTeams ? '⚔ ' + t('Командный бой: ВКЛ') : t('Командный бой: выкл')}</button>` +
+    (setupTeams ? `<span class="tmhint">${t('одна сторона — союзники')}</span>` : '') +
+    `</div>`;
   const fids = seatFactionIds();
+  // A/B side chip for a seat (you are locked to A; AI seats toggle side).
+  const teamChip = (i: number, locked: boolean): string => {
+    const side = setupSeatTeam[i]!;
+    return `<button class="tmchip s${side}${locked ? ' lock' : ''}" data-teamseat="${i}"${locked ? ' disabled' : ''}>${side}</button>`;
+  };
   for (let i = 0; i < SEAT_META.length; i++) {
     const m = SEAT_META[i]!;
     const role = setupSlots[i]!;
@@ -7457,12 +7475,15 @@ function renderSetupSlots(): void {
     if (i === 0) {
       h +=
         `<div class="srow"><span class="dot" style="background:${m.color};color:${m.color}"></span>` +
-        `<span class="nm">${house}</span><span class="you">${t('ВЫ')}</span></div>`;
+        `<span class="nm">${house}</span>` +
+        (setupTeams ? teamChip(0, true) : '') +
+        `<span class="you">${t('ВЫ')}</span></div>`;
     } else {
       const aiOn = role === 'ai';
       h +=
         `<div class="srow ${aiOn ? '' : 'off'}"><span class="dot" style="background:${m.color};color:${m.color}"></span>` +
         `<span class="nm">${house}</span>` +
+        (setupTeams && aiOn ? teamChip(i, false) : '') +
         `<button class="stog ${aiOn ? 'ai' : ''}" data-slot="${i}">${aiOn ? t('ИИ') : t('ВЫКЛ')}</button></div>`;
     }
   }
@@ -7577,6 +7598,8 @@ sciWin.addEventListener('click', (e) => {
 function openSetup(from: 'welcome' | 'hub' = 'welcome'): void {
   setupReturn = from;
   setupSlots = ['human', 'ai', 'off', 'off'];
+  setupTeams = false; // a fresh setup opens on the classic free-for-all
+  setupSeatTeam = ['A', 'A', 'B', 'B'];
   setupStart = START_CANDIDATES[0] ?? MAP[0]!.id;
   // Re-consecrate the council each time setup opens, PRE-SEEDED with the recommended
   // newbie pair (командование «Куратор» + генералист «Полимат»): the first permanent
@@ -7621,6 +7644,7 @@ function buildSetupConfig(): SetupConfig {
       faction: fids[0]!,
       start: setupStart,
       ai: false,
+      ...(setupTeams ? { team: setupSeatTeam[0] } : {}),
     },
   ];
   // Hand each active AI seat one of the remaining candidate worlds, in order.
@@ -7631,7 +7655,14 @@ function buildSetupConfig(): SetupConfig {
     const start = free[fi++];
     if (!start) break; // ran out of candidate worlds
     const m = SEAT_META[i]!;
-    seats.push({ id: m.id, name: houseName(fids[i]!, m.name), faction: fids[i]!, start, ai: true });
+    seats.push({
+      id: m.id,
+      name: houseName(fids[i]!, m.name),
+      faction: fids[i]!,
+      start,
+      ai: true,
+      ...(setupTeams ? { team: setupSeatTeam[i] } : {}),
+    });
   }
   // Carry the player's division templates + hero roster into the match (deep-cloned),
   // plus the meta-progression grant (snapshot — no live account reads mid-match).
@@ -7752,6 +7783,18 @@ setupSlotsEl.addEventListener('click', (ev) => {
   const fp = (ev.target as Element).closest('[data-fpick]');
   if (fp) {
     setupFaction = fp.getAttribute('data-fpick') ?? setupFaction;
+    renderSetup();
+    return;
+  }
+  if ((ev.target as Element).closest('[data-teamtog]')) {
+    setupTeams = !setupTeams;
+    renderSetup();
+    return;
+  }
+  const ts = (ev.target as Element).closest('[data-teamseat]');
+  if (ts) {
+    const i = Number(ts.getAttribute('data-teamseat'));
+    if (i > 0) setupSeatTeam[i] = setupSeatTeam[i] === 'A' ? 'B' : 'A'; // you (0) are locked to A
     renderSetup();
     return;
   }
