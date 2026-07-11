@@ -112,6 +112,22 @@ describe('MetricsAggregator (M1)', () => {
     expect(s.end).toEqual({ winner: 'p2', reason: 'score' });
   });
 
+  it('aggregates client perf samples — fps with min, rtt avg/max (M2)', () => {
+    const s = feed([
+      { kind: 'client_perf', playerId: 'p1', fps: 60, rttMs: 40 },
+      { kind: 'client_perf', playerId: 'p2', fps: 30 },
+      { kind: 'client_perf', playerId: 'p1', fps: 45, rttMs: 80 },
+    ]).summary();
+    expect(s.clientFps).toEqual({ count: 3, total: 135, max: 60, avg: 45, min: 30 });
+    expect(s.clientRttMs).toEqual({ count: 2, total: 120, max: 80, avg: 60 });
+  });
+
+  it('client perf summaries are null when no samples arrived', () => {
+    const s = new MetricsAggregator().summary();
+    expect(s.clientFps).toBeNull();
+    expect(s.clientRttMs).toBeNull();
+  });
+
   it('summary is a snapshot — later observations do not mutate an earlier summary', () => {
     const m = new MetricsAggregator();
     m.observe({ kind: 'action', actionId: 'a1', playerId: 'p1', type: 'x', ok: true, seq: 1 });
