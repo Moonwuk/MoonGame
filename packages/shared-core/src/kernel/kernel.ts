@@ -150,6 +150,14 @@ export class Kernel {
       // Fail-secure: an unknown action type is rejected, never silently ignored.
       return { ok: false, code: 'E_UNKNOWN_ACTION' };
     }
+    // Terminal gate (BF-34): once the match is decided, the world is frozen — a
+    // player intent must not keep mutating (and persisting) a finished game. A
+    // future victory-lap grace window would relax THIS check; the fail-secure
+    // default is to reject. Scheduled events (advanceTo) still settle any battle
+    // that was already in flight — this bars only new player-driven change.
+    if (state.match.status === 'ended') {
+      return { ok: false, code: 'E_MATCH_ENDED' };
+    }
     // Monotonic time guard: the server clock must not move backwards mid-match.
     if (ctx.now < state.time) {
       return { ok: false, code: 'E_TIME_BACKWARDS' };
