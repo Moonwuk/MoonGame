@@ -1133,6 +1133,16 @@ button.b:disabled{opacity:.32;cursor:not-allowed;color:var(--dim);border-color:v
 #setup .srow .stog{font:11px ui-monospace,monospace;letter-spacing:1px;border:1px solid var(--line-hi);
   border-radius:6px;padding:6px 12px;min-width:64px;cursor:pointer;background:transparent;color:var(--dim);}
 #setup .srow .stog.ai{border-color:var(--cyan);color:var(--cyan);background:rgba(53,214,230,.12);}
+#setup .tmrow{display:flex;align-items:center;gap:10px;margin-bottom:8px;}
+#setup .tmtog{flex:1;padding:9px 12px;border-radius:8px;border:1px solid var(--line-hi);background:transparent;
+  color:var(--dim);font:700 12px ui-monospace,monospace;letter-spacing:.5px;cursor:pointer;text-align:left;}
+#setup .tmtog.on{border-color:var(--amber);color:var(--amber);background:rgba(232,178,74,.12);}
+#setup .tmhint{font-size:10px;color:var(--dim);letter-spacing:.3px;}
+#setup .srow .tmchip{width:30px;height:30px;flex:none;border-radius:7px;border:1px solid var(--line-hi);
+  background:transparent;font:800 13px ui-monospace,monospace;cursor:pointer;color:var(--dim);}
+#setup .srow .tmchip.sA{border-color:#4fe0b0;color:#4fe0b0;background:rgba(79,224,176,.14);}
+#setup .srow .tmchip.sB{border-color:#e5884a;color:#e5884a;background:rgba(229,136,74,.14);}
+#setup .srow .tmchip.lock{cursor:default;opacity:.85;}
 #setup .sspeedlabel{font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--cyan-dim);margin:0 0 4px;}
 #setup .sspeedhint{font-size:11px;color:var(--dim);margin:0 0 8px;line-height:1.45;}
 #setup .sspeed{display:flex;gap:8px;margin-bottom:16px;}

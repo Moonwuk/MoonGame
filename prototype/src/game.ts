@@ -1561,6 +1561,10 @@ export interface SeatConfig {
   faction: string;
   start: string; // a START_CANDIDATES world id
   ai: boolean;
+  /** Team side for a team battle (e.g. 'A' / 'B'). Seats sharing a team start ALLIED;
+   *  across teams they start at WAR. Absent on every seat ⇒ free-for-all (all pairs
+   *  seeded at peace, the classic skirmish). Mirrors the core map's slot `team`. */
+  team?: string;
 }
 export interface SetupConfig {
   seats: SeatConfig[];
@@ -1863,12 +1867,27 @@ export function newGame(setup: SetupConfig = DEFAULT_SETUP): GameState {
       };
     });
   }
-  // Everyone starts at PEACE (not the core's war default): no marching through another
-  // commander's space and no combat until war is declared (diplomacy.declare).
+  // Free-for-all seeds every pair at PEACE (not the core's war default): no marching
+  // through another commander's space and no combat until war is declared. A TEAM
+  // battle instead seeds by side — same team ALLIED (win together, no friendly fire),
+  // across teams at WAR (fight from the first hour). A team alliance is seeded state,
+  // so it bypasses the `E_BOT_ALLIANCE` declare-gate — an AI teammate is a real ally
+  // (the SES-1 victory clique reads the stance, so the coalition forms).
+  const teamed = setup.seats.some((seat) => seat.team !== undefined);
+  const teamOf = new Map(setup.seats.map((seat) => [seat.id, seat.team]));
   const diplomacy: Record<string, DiplomaticStance> = {};
   const ids = setup.seats.map((seat) => seat.id);
   for (let i = 0; i < ids.length; i++)
-    for (let j = i + 1; j < ids.length; j++) diplomacy[pairKey(ids[i]!, ids[j]!)] = 'peace';
+    for (let j = i + 1; j < ids.length; j++) {
+      const ta = teamOf.get(ids[i]!);
+      const tb = teamOf.get(ids[j]!);
+      const stance: DiplomaticStance = !teamed
+        ? 'peace'
+        : ta !== undefined && ta === tb
+          ? 'alliance'
+          : 'war';
+      diplomacy[pairKey(ids[i]!, ids[j]!)] = stance;
+    }
   // Bots track a favour meter toward every other seat (seeded neutral-friendly). Only a
   // player's aggression lowers it; a bot never wars for expansion (see botDiplomacyModule).
   const approval: Record<string, Record<string, number>> = {};
