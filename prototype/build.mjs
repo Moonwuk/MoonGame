@@ -1026,6 +1026,11 @@ button.b:disabled{opacity:.32;cursor:not-allowed;color:var(--dim);border-color:v
   color:var(--cyan);font:600 13px ui-monospace,monospace;letter-spacing:1px;cursor:pointer;min-height:46px;}
 #connect .cbtn:active{background:rgba(53,214,230,.24);}
 #connect .cbtn.ghost{border-color:var(--line-hi);background:transparent;color:var(--dim);}
+#connect .cwlogin{display:flex;gap:8px;margin-top:10px;}
+#connect .cwlogin input{flex:1;min-width:0;padding:11px 12px;background:rgba(2,10,14,.9);border:1px solid var(--line-hi);
+  border-radius:7px;color:var(--ink);font:13px/1.4 ui-monospace,Menlo,Consolas,monospace;letter-spacing:.3px;}
+#connect .cwlogin input:focus{outline:none;border-color:var(--cyan);box-shadow:0 0 0 2px rgba(53,214,230,.2);}
+#connect .cwlogin .cbtn{flex:0 0 auto;min-width:92px;}
 #connect .cstat{margin-top:14px;min-height:16px;font-size:12px;color:var(--amber);text-align:center;}
 #connect .mtabs{display:flex;gap:6px;margin-top:16px;}
 #connect .mtab{flex:1;padding:8px 6px;border-radius:7px;border:1px solid var(--line-hi);background:transparent;
@@ -1604,6 +1609,10 @@ const html = `<!doctype html>
         <div class="cstack">
           <button id="clogin" class="cbtn ghost" type="button" data-i18n>Вход по позывному</button>
           <button id="csolo" class="cbtn ghost" type="button" data-i18n>Одиночная игра</button>
+        </div>
+        <div id="cwlogin" class="cwlogin" style="display:none">
+          <input id="cwnick" type="text" autocapitalize="off" autocomplete="off" spellcheck="false" maxlength="24" placeholder="позывной" data-i18n-ph>
+          <button id="cwgo" class="cbtn" type="button" data-i18n>Войти</button>
         </div>
       </div>
       <div id="cbrowse" style="display:none">

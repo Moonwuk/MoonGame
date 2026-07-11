@@ -7224,7 +7224,36 @@ function openHub(note = ''): void {
 }
 
 $('cnew').addEventListener('click', () => openHub());
-$('clogin').addEventListener('click', () => openHub());
+// «Вход по позывному»: reveal an inline field and enter under a callsign YOU type (vs
+// «Новый командир», which auto-suggests one). The chosen callsign is remembered
+// (`void.nick`) so the next visit auto-recognises you (the first-run gate above). No
+// accounts backend yet — local identity, not cross-device recovery (accounts-roadmap.md).
+const wLoginEl = $('cwlogin');
+const wNickInput = $('cwnick') as HTMLInputElement;
+function signInByCallsign(): void {
+  const nick = wNickInput.value.trim();
+  if (!nick) {
+    statusEl.textContent = t('Введи позывной');
+    wNickInput.focus();
+    return;
+  }
+  nickInput.value = nick;
+  localStorage.setItem('void.nick', nick); // remembered — next visit skips the welcome card
+  openHub();
+}
+$('clogin').addEventListener('click', () => {
+  const show = wLoginEl.style.display === 'none';
+  wLoginEl.style.display = show ? 'flex' : 'none';
+  statusEl.textContent = '';
+  if (show) {
+    wNickInput.value = (localStorage.getItem('void.nick') ?? '').trim();
+    wNickInput.focus();
+  }
+});
+$('cwgo').addEventListener('click', signInByCallsign);
+wNickInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') signInByCallsign();
+});
 $('cgoogle').addEventListener('click', () => openHub(t('Вход через Google — скоро · ты вошёл гостем')));
 $('capple').addEventListener('click', () => openHub(t('Вход через Apple — скоро · ты вошёл гостем')));
 $('cback').addEventListener('click', () => {
