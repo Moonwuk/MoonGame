@@ -198,11 +198,17 @@ function upkeepByOwner(state: GameState, data: GameData): Map<string, ResourceBa
       }
     }
   };
-  for (const fleet of Object.values(state.fleets)) {
+  // Sorted walks (BF-13): several fleets/planets of one owner add into the SAME
+  // resource cell, and float addition is order-sensitive — a JSONB round-trip
+  // (hibernation) re-orders object keys, so an insertion-order walk diverges
+  // from the replay. Sorting pins the summation order to the data, not the store.
+  for (const id of Object.keys(state.fleets).sort()) {
+    const fleet = state.fleets[id]!;
     addStacks(fleet.owner, fleet.units);
     if (fleet.landing) addStacks(fleet.owner, fleet.landing);
   }
-  for (const planet of Object.values(state.planets)) {
+  for (const pid of Object.keys(state.planets).sort()) {
+    const planet = state.planets[pid]!;
     if (planet.owner === null) {
       continue;
     }
@@ -259,7 +265,9 @@ export const economyModule: GameModule = {
       const data = h.ctx.data;
       const bombarded = bombardedPlanets(h.state); // O(fleets) once, then O(1) per planet
 
-      for (const planetId of Object.keys(h.state.planets)) {
+      // Sorted (BF-13): several planets credit the same treasury cell — float
+      // addition order must not depend on JSONB key order after hibernation.
+      for (const planetId of Object.keys(h.state.planets).sort()) {
         const planet = h.state.planets[planetId];
         if (!planet || planet.owner === null) {
           continue; // neutral / unclaimed sectors do not produce
@@ -295,7 +303,7 @@ export const economyModule: GameModule = {
       }
 
       const upkeepPerOwner = upkeepByOwner(h.state, data);
-      for (const playerId of Object.keys(h.state.players)) {
+      for (const playerId of Object.keys(h.state.players).sort()) {
         const player = h.state.players[playerId];
         if (!player) {
           continue;
