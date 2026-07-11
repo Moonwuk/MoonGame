@@ -526,6 +526,14 @@ const printSummary = (): void => {
 
 const shutdown = (): void => {
   printSummary();
+  // M3: land the aggregated summary as the LAST JSONL line — the per-line log keeps
+  // only anomalous broadcast/timing entries, so without this the report script would
+  // have no full latency/delta aggregates to read.
+  try {
+    appendFileSync(logFile, JSON.stringify({ t: Date.now(), kind: 'summary', summary: metrics.summary() }) + '\n');
+  } catch {
+    /* the report just falls back to the partial per-line data */
+  }
   if (saveTimer) {
     clearTimeout(saveTimer);
     saveTimer = null;

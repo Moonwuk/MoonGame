@@ -25,6 +25,7 @@
     "stack": "docker compose -f deploy/docker-compose.yml up -d --build",
     "doctor": "node prototype/doctor.mjs",
     "perf": "node prototype/perf.mjs",
+    "metrics": "node prototype/report.mjs",
     "dev:client": "node testclient/build.mjs",
     "audit": "pnpm audit --audit-level=high",
     "check": "pnpm run lint && pnpm run typecheck && pnpm run test"
