@@ -417,25 +417,16 @@ export const en: Record<string, string> = {
   'Авангард': 'Vanguard',
   'Страж': 'Sentinel',
 
-  // --- ground-division designer (renderTemplates) -------------------------------
-  'Собери 3 шаблона дивизий из 6 слотов. Состав даёт суммарные статы и бонусы; во время боя шаблоны не меняются. Тапни слот, чтобы сменить юнит.':
-    "Build 3 division templates out of 6 slots. Composition sets combined stats and bonuses; templates don't change mid-battle. Tap a slot to cycle its unit.",
-  'Стоимость мобилизации: {cost}': 'Mobilize for: {cost}',
-  'Нет бонусов состава — смешай рода войск.': "No composition bonus — mix unit types.",
   'Пехота': 'Infantry',
   'Танк': 'Tank',
   'Бомбер': 'Bomber',
-  // formation synergies (formationStats, game.ts)
+  // formation doctrines (formationStats, game.ts) — organisational labels, no combat bonus (BF-23)
   'Комбинированные войска': 'Combined arms',
-  '+15% атака и оборона — есть все три рода войск': '+15% attack and defense — you have all three troop types',
+  'Пехота и танки в одном строю': 'Infantry and tanks in one line',
   'Окопались': 'Entrenched',
-  '+25% оборона — чистая пехота': '+25% defense — pure infantry',
+  '≥3 тяжёлой пехоты держат рубеж': '≥3 heavy infantry hold the line',
   'Танковый кулак': 'Armored fist',
-  '+20% атака — ≥3 танков (прорыв)': '+20% attack — ≥3 tanks (breakthrough)',
-  'Авиаподдержка': 'Air support',
-  '+10% атака и удар по структурам — есть бомбардировщик': '+10% attack and structure damage — you have a bomber',
-  'ПВО-зонтик': 'AA umbrella',
-  '+10% оборона и защита от авиации — есть ПВО': '+10% defense and air protection — you have AA',
+  '≥3 танков — ударный клин': '≥3 tanks — a breakthrough wedge',
   // preset division template names (setupTemplates, game.ts)
   'Линия': 'Line',
   'Кулак': 'Fist',
@@ -813,10 +804,9 @@ export const en: Record<string, string> = {
   'Командир обороны': 'Defense Commander',
   'Снабженец': 'Quartermaster',
   'Рейдовая доктрина': 'Raid Doctrine',
-  '+15% атака — ≥2 спецназа без ополчения': '+15% attack — ≥2 special forces, no militia',
+  '≥2 спецназа без ополчения': '≥2 special forces, no militia',
   'Людская волна': 'Human Wave',
-  '+10% оборона — ≥4 ополчения': '+10% defense — ≥4 militia',
-  '+25% оборона — ≥3 тяжёлой пехоты': '+25% defense — ≥3 heavy infantry',
+  '≥4 ополчения — берут числом': '≥4 militia — winning by numbers',
   'Именной шаблон офицера: состав закреплён, редактировать нельзя.':
     "An officer's named template: composition locked, no editing.",
   'Дивизия — снапшот шаблона: правка шаблона в конструкторе не меняет уже собранные. На своём мире +1 HP/юнит/день; выбитая исчезает.':
@@ -1040,10 +1030,10 @@ export const en: Record<string, string> = {
   'Цель…': 'Target…',
   // --- division / formation builder (конструктор дивизий) ----------------------
   'Итог по формации': 'Formation summary',
-  'Синергии состава': 'Composition synergies',
+  'Доктрина состава': 'Composition doctrine',
   'Стоимость мобилизации': 'Mobilization cost',
   'Нет шаблонов.': 'No templates.',
-  'Смешай пехоту и танки для синергий.': 'Mix infantry and tanks for synergies.',
+  'Смешай рода войск — состав задаёт доктрину.': 'Mix troop types — the composition sets a doctrine.',
   '{n}/{s} юнитов · тапни слот, чтобы менять род войск':
     '{n}/{s} units · tap a slot to change the troop type',
   'Тап по слоту: пусто → пехота → танк. Мобилизация дивизии — в панели своего мира (вкладка «Дивизии»).':
