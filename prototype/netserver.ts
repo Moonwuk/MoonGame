@@ -68,16 +68,25 @@ let connected = 0; // live players currently connected (drives the running-match
 // Seats with a live human peer. Any seat in the match NOT in here is "empty" and is
 // driven by the server-side AI (mirrors single-player: empty slots are taken by the AI).
 const humans = new Set<string>();
+// BF-17: the AI stand-in must not seize a seat the MOMENT it looks empty. `humans`
+// is in-memory — after a server restart it is empty for everyone, and a mobile
+// network blip drops a live player for seconds — so every "empty" seat gets a grace
+// window (per-seat wall-clock deadline) before the expand-AI starts commanding it.
+// Steward delegation bypasses the grace: handing the seat over was the player's call.
+const AI_GRACE_MS = Number(process.env.AI_GRACE_MS ?? 10 * 60 * 1000);
+const aiEligibleAt = new Map<string, number>();
 const observe = (ev: RoomObservation): void => {
   appendFileSync(logFile, JSON.stringify({ t: Date.now(), ...ev }) + '\n');
   if (ev.kind === 'join') {
     stats.joins++;
     connected++;
     humans.add(ev.playerId);
+    aiEligibleAt.delete(ev.playerId); // the human is back — cancel any pending takeover
   } else if (ev.kind === 'leave') {
     stats.leaves++;
     connected = Math.max(0, connected - 1);
     humans.delete(ev.playerId);
+    aiEligibleAt.set(ev.playerId, Date.now() + AI_GRACE_MS); // reconnect window
   } else if (ev.kind === 'end') stats.end = ev;
   else if (ev.kind === 'action') {
     stats.actions++;
@@ -225,6 +234,14 @@ const room = new MatchRoom({
   ...(GATE ? { gate: new ActionGate({ payloadValidator: isValidActionPayload }) } : {}),
 });
 
+// BF-17: after a (re)start `humans` is empty for EVERY seat — a restarted server
+// must not immediately hand every human's empire to the expand-AI. Seed the same
+// reconnect grace window for all seats; a joining human clears it, a delegated
+// steward bypasses it, and a genuinely empty chair starts playing once it lapses.
+for (const seat of Object.keys(room.state.players)) {
+  aiEligibleAt.set(seat, Date.now() + AI_GRACE_MS);
+}
+
 // Snapshot the world after changes, debounced so a burst of actions is one write.
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 let saving = false;
@@ -307,6 +324,12 @@ async function runServerAI(): Promise<void> {
     // its owner is connected but asleep; an unclaimed/empty seat gets the full expansion AI.
     const posture = stewardActive(room.state, seat, now);
     if (humans.has(seat) && !posture) continue; // a human is actively commanding this seat
+    // Grace window (BF-17): an empty seat without an explicit delegation waits for
+    // its human to come back (drop / server restart) before the AI takes the wheel.
+    if (!humans.has(seat) && !posture) {
+      const eligibleAt = aiEligibleAt.get(seat);
+      if (eligibleAt !== undefined && Date.now() < eligibleAt) continue;
+    }
     for (const action of aiOrders(room.state, seat, posture ?? 'expand')) {
       await room.submitServerAction(seat, action);
     }
