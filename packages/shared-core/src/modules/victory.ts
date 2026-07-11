@@ -210,12 +210,20 @@ function evaluateVictory(h: HandlerContext): void {
   }
   const dominationPercent = h.ctx.config?.victory?.dominationPercent ?? DEFAULT_DOMINATION_PERCENT;
   if (capturableCount > 0 && dominationPercent > 0) {
-    const dominator = active.find(
+    // With a threshold ≤ 50% two players can cross it in the SAME span — the old
+    // `find` on the sorted id list crowned the alphabetically-first one. Domination
+    // means holding MORE than every rival: the crown goes to the strict leader
+    // among the qualifiers; a dead-equal share keeps the match running.
+    const qualified = active.filter(
       (playerId) => (ownedCapturable.get(playerId) ?? 0) / capturableCount >= dominationPercent,
     );
-    if (dominator) {
-      endMatch(h, dominator, 'domination');
-      return;
+    if (qualified.length > 0) {
+      const best = Math.max(...qualified.map((p) => ownedCapturable.get(p) ?? 0));
+      const leaders = qualified.filter((p) => (ownedCapturable.get(p) ?? 0) === best);
+      if (leaders.length === 1) {
+        endMatch(h, leaders[0]!, 'domination');
+        return;
+      }
     }
   }
 
