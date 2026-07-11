@@ -4976,10 +4976,18 @@ function convoLineHtml(m: SessionMsg, stamp?: StampOpts): string {
 function convoFeedInnerHtml(key: string): string {
   const msgs = convoMessages(key);
   if (msgs.length) return msgs.map((m) => convoLineHtml(m)).join('');
-  return `<div class="dp-empty">${key === COALITION ? t('Чат коалиции пуст.<br>Отметьте провинцию пингом 📍 или напишите.') : t('Сообщений пока нет.')}</div>`;
+  const hint =
+    key === COALITION
+      ? t('Чат коалиции пуст.<br>Отметьте провинцию пингом 📍 или напишите.')
+      : key === CH_SESSION
+        ? t('Общий канал матча — вас слышат все участники.')
+        : t('Сообщений пока нет.');
+  return `<div class="dp-empty">${hint}</div>`;
 }
-/** Left column: the coalition channel pinned on top, then a DM per participant
- *  (most-recently-active first). Selecting one opens its thread on the right. */
+/** Left column: the match-wide session channel + the coalition channel pinned on
+ *  top, then a DM per participant (most-recently-active first). Selecting one
+ *  opens its thread on the right. Session here is what makes the NET chat fully
+ *  reachable from a PHONE — the floating chat window is desktop-only. */
 function convoListHtml(): string {
   const dms = diploSeats()
     .filter((id) => id !== ME)
@@ -4988,6 +4996,14 @@ function convoListHtml(): string {
         (convoLast(b)?.at ?? -1) - (convoLast(a)?.at ?? -1) ||
         (NAME[a] ?? a).localeCompare(NAME[b] ?? b),
     );
+  const sessLast = convoLast(CH_SESSION);
+  const sessPrev = sessLast
+    ? esc((sessLast.from === ME ? t('Вы') + ': ' : '') + sessLast.text)
+    : t('{n} уч.', { n: Object.keys(s.players).length });
+  const sess =
+    `<button class="dp-cv coal${convoOpen === CH_SESSION ? ' on' : ''}" data-convo="${CH_SESSION}">` +
+    `<span class="dp-cv-ic" style="color:var(--cyan)">△</span>` +
+    `<span class="dp-cv-nm">${t('Сессия')}<em>${sessPrev}</em></span></button>`;
   const coal =
     `<button class="dp-cv coal${convoOpen === COALITION ? ' on' : ''}" data-convo="${COALITION}">` +
     `<span class="dp-cv-ic" style="color:var(--amber)">⚡</span>` +
@@ -5003,15 +5019,18 @@ function convoListHtml(): string {
       );
     })
     .join('');
-  return `<div class="dp-cvlist">${coal}${items}</div>`;
+  return `<div class="dp-cvlist">${sess}${coal}${items}</div>`;
 }
 /** Right column: header, the open conversation's messages, and the composer (with a
  *  ping button in the coalition channel). */
 function convoThreadHtml(): string {
   const isCoal = convoOpen === COALITION;
-  const title = isCoal
-    ? t('⚡ Коалиция · {n} уч.', { n: coalitionMembers().length })
-    : `${seatBadge(convoOpen).icon} ${esc(NAME[convoOpen] ?? convoOpen)}`;
+  const title =
+    convoOpen === CH_SESSION
+      ? t('△ Сессия · {n} в матче', { n: Object.keys(s.players).length })
+      : isCoal
+        ? t('⚡ Коалиция · {n} уч.', { n: coalitionMembers().length })
+        : `${seatBadge(convoOpen).icon} ${esc(NAME[convoOpen] ?? convoOpen)}`;
   const pingBtn = isCoal
     ? `<button class="dp-ping" title="${t('Отметить выбранную провинцию пингом')}">📍</button>`
     : '';
