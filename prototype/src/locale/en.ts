@@ -632,6 +632,8 @@ export const en: Record<string, string> = {
   '⚛ Исследуется: {tech}': '⚛ Researching: {tech}',
   '⚛ изучено: {tech}': '⚛ researched: {tech}',
   '⚡ Коалиция · {n} уч.': '⚡ Coalition · {n} members',
+  '△ Сессия · {n} в матче': '△ Session · {n} in match',
+  'Общий канал матча — вас слышат все участники.': 'The match-wide channel — everyone in the match hears you.',
   '⛬ выберите флот для объединения': '⛬ pick a fleet to merge with',
   '⛬ флоты объединены у {at}': '⛬ fleets merged at {at}',
   '✓ актуально · локально {l} · сервер {r}': '✓ up to date · local {l} · server {r}',
