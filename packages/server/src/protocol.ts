@@ -139,6 +139,17 @@ export interface ClientChatSendMessage {
   text: string;
 }
 
+/** Desync report (M1): the client's reconstructed state hashed differently from the
+ *  `hash` the server attached to snapshot `seq`. The room logs it (observation) and
+ *  answers with a full `state` snapshot so the client recovers without reconnecting. */
+export interface ClientDesyncMessage {
+  type: 'desync';
+  /** The snapshot seq whose hash mismatched. */
+  seq: number;
+  /** The client's own `hashState` of its reconstructed view (for the server log). */
+  hash: string;
+}
+
 export type ClientMessage =
   | ClientActionMessage
   | ClientActionEnvelopeMessage
@@ -146,7 +157,8 @@ export type ClientMessage =
   | ClientStartMessage
   | ClientPingPlaceMessage
   | ClientPingClearMessage
-  | ClientChatSendMessage;
+  | ClientChatSendMessage
+  | ClientDesyncMessage;
 
 /** Roster shown on the pre-match lobby screen (manual-start mode). */
 export interface LobbyInfo {
@@ -357,6 +369,14 @@ export function parseClientMessage(raw: string): ClientMessage | null {
     };
     if (typeof decoded.to === 'string') message.to = decoded.to;
     return message;
+  }
+  if (
+    decoded.type === 'desync' &&
+    typeof decoded.seq === 'number' &&
+    Number.isFinite(decoded.seq) &&
+    typeof decoded.hash === 'string'
+  ) {
+    return { type: 'desync', seq: decoded.seq, hash: decoded.hash };
   }
   return null;
 }
