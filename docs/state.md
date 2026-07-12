@@ -6,7 +6,7 @@
 > `deep-technical-roadmap.md`, `multiplayer.md`, `metagame.md`, `map-roadmap.md`, `security-a06.md` (модель угроз/A06), корневой `CLAUDE.md` / `CONTRIBUTING.md`.
 >
 > **Ветка:** feature-ветка · **PR:** создаётся после изменений.
-> **Гейт:** `pnpm run check` (lint + typecheck + test). **Тесты: 1209 зелёных** (5 skip, 117 файлов).
+> **Гейт:** `pnpm run check` (lint + typecheck + test). **Тесты: 1267 зелёных** (11 skip, 121 файл).
 
 ---
 
@@ -953,6 +953,20 @@ botDiplomacy, market, division, capital, standingOrders])` (26 модулей), 
   `serverPatrolActions` + хост-цикл `netserver.runServerStanding`; `autoAssault`/
   `patrols` фильтруются в fog; кнопки «⚔ авто-штурм» и «🛩 дежурный вылет» работают
   в соло и NET.
+- **Движок гайд-марок (ONB-1, spotlight)** — переиспользуемый онбординг-примитив
+  (`src/spotlight.ts` — чистый, DOM-free стейт-машина + геометрия; `src/spotlightDom.ts`
+  — браузерный адаптер; `src/onboardingTour.ts` — data-цепочка над реальным HUD).
+  Затемняющий оверлей + подсветка узла (дыра из 4 dim-панелей по bounding-box, элемент
+  виден/кликабелен сквозь щель) + пузырь-подсказка со счётчиком «шаг k из n», «Далее/
+  Понятно» и «Пропустить обучение». Продвижение по `tap` / `action:<type>` (реальный
+  приказ через `playerOrder` → `activeTour.notifyAction`) / `state`-предикату (пуллится
+  на `refresh`). Устойчив к перерисовке панели (re-query по селектору каждый кадр);
+  отсутствующий target → optional-скип или безопасный стоп (не крашится). z-50: поверх
+  HUD, ниже критичных модалок; `tap`-шаги ловят клики (только «Далее» ведёт вперёд),
+  `action`/`state`-шаги — click-through к живому HUD. Локаль RU/EN. Запуск — шов
+  `window.__vdTour` (авто-предложение и «Ещё → Обучение» — за ONB-0/ONB-2, они строятся
+  на этом движке). Тесты: `spotlight.test.ts` (19 — tap/action/state, скип, optional-скип
+  vs safe-stop, счётчик, re-query-устойчивость, геометрия).
 - Валидаторы: `src/smoke.ts` (Node-сценарий ядра) и `uitest.mjs` (headless-DOM
   прогон UI-бандла).
 - **UI-прототип экрана корпорации (mock)** — межсессионный альянс из `metagame.md`:

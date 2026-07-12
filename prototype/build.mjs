@@ -163,6 +163,35 @@ body.sheet-open #cmdbar{bottom:calc(34vh + 12px);}
 #holdtip{position:fixed;z-index:60;display:none;max-width:70vw;padding:6px 10px;pointer-events:none;
   background:rgba(4,16,22,.96);border:1px solid var(--cyan);border-radius:7px;color:var(--cyan);
   font-size:13px;font-weight:600;letter-spacing:.3px;box-shadow:0 4px 14px rgba(0,0,0,.5);}
+/* ONB-1 spotlight — guide-mark overlay (engine: src/spotlight.ts, adapter: src/spotlightDom.ts).
+   z-50 sits ABOVE the HUD (top-bar 30, toasts 40) but BELOW critical modals (endscreen 56,
+   settings 59, scipick/holdtip 60). The four .sl-dim panels frame the target; the element
+   shows through the gap. .sl-passthrough (action/state steps) lets HUD clicks reach the map;
+   default (tap steps) swallows them so «Далее» is the only way forward. */
+#spotlight{position:fixed;inset:0;z-index:50;display:none;}
+#spotlight .sl-dim{position:fixed;background:rgba(2,8,11,.72);pointer-events:auto;}
+#spotlight.sl-passthrough .sl-dim{pointer-events:none;}
+#spotlight .sl-ring{position:fixed;border:2px solid var(--cyan);border-radius:8px;pointer-events:none;
+  box-shadow:0 0 0 2px rgba(53,214,230,.25),0 0 18px rgba(53,214,230,.45);animation:sl-pulse 1.6s ease-in-out infinite;}
+@keyframes sl-pulse{0%,100%{box-shadow:0 0 0 2px rgba(53,214,230,.2),0 0 14px rgba(53,214,230,.35);}
+  50%{box-shadow:0 0 0 4px rgba(53,214,230,.35),0 0 22px rgba(53,214,230,.6);}}
+#spotlight .sl-bubble{position:fixed;pointer-events:auto;max-width:min(320px,82vw);
+  background:rgba(4,16,22,.97);border:1px solid var(--cyan);border-radius:10px;padding:13px 15px;
+  box-shadow:0 6px 22px rgba(0,0,0,.55);color:var(--ink);}
+#spotlight .sl-arrow{position:absolute;width:12px;height:12px;background:rgba(4,16,22,.97);
+  border:1px solid var(--cyan);transform:rotate(45deg);}
+#spotlight .sl-arrow[data-dir=up]{top:-7px;left:calc(50% - 6px);border-right:none;border-bottom:none;}
+#spotlight .sl-arrow[data-dir=down]{bottom:-7px;left:calc(50% - 6px);border-left:none;border-top:none;}
+#spotlight .sl-arrow[data-dir=left]{left:-7px;top:calc(50% - 6px);border-right:none;border-top:none;}
+#spotlight .sl-arrow[data-dir=right]{right:-7px;top:calc(50% - 6px);border-left:none;border-bottom:none;}
+#spotlight .sl-count{font-size:11px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:var(--cyan);margin-bottom:5px;}
+#spotlight .sl-copy{font-size:14px;line-height:1.42;color:var(--ink);}
+#spotlight .sl-btns{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:12px;}
+#spotlight .sl-skip{background:none;border:none;color:var(--dim);font-size:12px;cursor:pointer;padding:4px 2px;}
+#spotlight .sl-skip:hover{color:var(--ink);text-decoration:underline;}
+#spotlight .sl-next{background:var(--cyan);border:none;color:#04121a;font-weight:700;font-size:13px;
+  padding:7px 16px;border-radius:7px;cursor:pointer;}
+#spotlight .sl-next:hover{filter:brightness(1.08);}
 /* codex popup — full stats + description on tile click */
 #codex{position:fixed;inset:0;z-index:46;display:none;align-items:center;justify-content:center;padding:18px;
   background:rgba(1,5,9,.55);-webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px);}

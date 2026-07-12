@@ -141,6 +141,11 @@ import { META_TREE, META_BRANCH_RU, metaLevel, metaLevelProgress, metaPoints, ca
 // DEV TEST MODE — self-contained dev-only scenarios; remove this import + the
 // initTestMode(...) call below + the #testmode HTML/CSS to cut it cleanly.
 import { initTestMode, openTestMode } from './testmode';
+// ONB-1 — the reusable guide-mark (spotlight) engine + its browser adapter.
+// `playerOrder` feeds it real actions so `action` steps advance; ONB-2 builds
+// the full guided first match on the same `startTour` primitive.
+import { startTour, type RunningTour } from './spotlightDom';
+import { HUD_ORIENTATION_TOUR } from './onboardingTour';
 import type {
   GameState,
   Fleet,
@@ -1813,12 +1818,36 @@ function errText(code: string): string {
 function playerOrder(action: Action) {
   if (NET && netClient) {
     netClient.sendAction(action); // server is authoritative — await its broadcast
+    activeTour?.notifyAction(action.type); // optimistic — server result is async
     return;
   }
   const out = order(s, action, s.time);
   apply(out);
   if (out.error) note('✖ ' + errText(out.error));
+  else activeTour?.notifyAction(action.type); // an accepted intent advances `action` steps
 }
+
+// --- ONB-1 guide-mark launcher ------------------------------------------------
+// One tour at a time; `playerOrder` above notifies it of accepted actions so a
+// step's `advance: { on: 'action' }` fires on the real order. Exposed on `window`
+// as the reusable seam ONB-0/ONB-2 (auto-offer, «Ещё → Обучение») and headless
+// e2e drive — starting a HUD tour needs an active match, which those own.
+let activeTour: RunningTour | null = null;
+function launchTour(steps = HUD_ORIENTATION_TOUR): void {
+  activeTour = startTour(steps, () => {
+    activeTour = null;
+  });
+}
+interface TourWindow {
+  __vdTour?: { start: (steps?: typeof HUD_ORIENTATION_TOUR) => void; stop: () => void; readonly active: boolean };
+}
+(window as unknown as TourWindow).__vdTour = {
+  start: (steps) => launchTour(steps),
+  stop: () => activeTour?.stop(),
+  get active() {
+    return activeTour?.active ?? false;
+  },
+};
 
 // --- timed cargo loading (prototype UX: "погрузка занимает час") --------------
 // A ground-army load doesn't snap into the hold — it takes ~1 game-hour. The order
