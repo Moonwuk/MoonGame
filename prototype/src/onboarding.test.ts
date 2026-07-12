@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  applyTourOutcome,
   FRESH_ONBOARD,
   isOnboarded,
   markCompleted,
@@ -106,5 +107,53 @@ describe('parseOnboardState — fail-secure', () => {
   it('floors a fractional stepReached and rejects a negative one', () => {
     expect(parseOnboardState(JSON.stringify({ stepReached: 2.9 })).stepReached).toBe(2);
     expect(parseOnboardState(JSON.stringify({ stepReached: -1 })).stepReached).toBe(0);
+  });
+});
+
+describe('applyTourOutcome — fold a finished guide run', () => {
+  it('rewards the FIRST completion and marks onboarded', () => {
+    const { state, rewarded } = applyTourOutcome(FRESH_ONBOARD, {
+      completed: true,
+      skipped: false,
+      reachedStep: 7,
+    });
+    expect(rewarded).toBe(true);
+    expect(state.completed).toBe(true);
+    expect(isOnboarded(state)).toBe(true);
+    expect(state.stepReached).toBe(8); // reachedStep 7 (0-based) → 8 steps deep
+  });
+
+  it('does NOT reward a replay of an already-completed guide', () => {
+    const done = markCompleted(FRESH_ONBOARD);
+    const { rewarded, state } = applyTourOutcome(done, {
+      completed: true,
+      skipped: false,
+      reachedStep: 7,
+    });
+    expect(rewarded).toBe(false);
+    expect(state.completed).toBe(true);
+  });
+
+  it('a skip marks skipped and never rewards', () => {
+    const { state, rewarded } = applyTourOutcome(FRESH_ONBOARD, {
+      completed: false,
+      skipped: true,
+      reachedStep: 2,
+    });
+    expect(rewarded).toBe(false);
+    expect(state.skipped).toBe(true);
+    expect(state.stepReached).toBe(3);
+  });
+
+  it('a safe-stop only banks progress (not onboarded, no reward)', () => {
+    const { state, rewarded } = applyTourOutcome(FRESH_ONBOARD, {
+      completed: false,
+      skipped: false,
+      reachedStep: 4,
+    });
+    expect(rewarded).toBe(false);
+    expect(isOnboarded(state)).toBe(false);
+    expect(state.started).toBe(true);
+    expect(state.stepReached).toBe(5);
   });
 });

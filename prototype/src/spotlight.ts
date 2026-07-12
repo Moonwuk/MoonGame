@@ -16,8 +16,9 @@
  *   - advance only on the step's own condition (a `fleet.move` step ignores
  *     other actions; a `tap` step ignores actions entirely);
  *   - «Пропустить обучение» ends the WHOLE chain, at any step;
- *   - a missing target is graceful, never a crash — `optional` steps skip
- *     themselves, required ones SAFE-STOP the tour (no highlight over nothing);
+ *   - a missing target is graceful, never a crash — a `tap` step with no target
+ *     to point at either skips (`optional`) or SAFE-STOPs (required); an
+ *     `action`/`state` step keeps waiting for its condition, highlight or not;
  *   - re-query the selector every `refresh()` so a panel that re-renders its
  *     nodes (and moves/recreates the target) keeps the highlight glued to it.
  */
@@ -48,7 +49,9 @@ export interface SpotlightStep {
   copy: string;
   advance: StepAdvance;
   placement?: Placement;
-  /** A missing target skips this step instead of stopping the whole tour. */
+  /** For a `tap` step whose target is absent: skip it instead of safe-stopping the
+   *  tour. No effect on `action`/`state` steps — those always wait for their
+   *  condition (their highlight is best-effort regardless). */
   optional?: boolean;
 }
 
@@ -157,10 +160,17 @@ export class SpotlightTour {
     this.i = i;
     if (i > this.reached) this.reached = i;
     const step = this.current;
-    // A required step whose selector isn't in the DOM can't be highlighted:
-    // `optional` slides past it, otherwise we stop the tour safely (never draw
-    // a hole over nothing, never throw).
-    if (step.target !== null && this.host.locate(step.target) === null) {
+    // A step whose selector isn't in the DOM right now can't be highlighted. For a
+    // `tap` step there's nothing to wait for BUT the (missing) target, so `optional`
+    // slides past it and a required one safe-stops (never a hole over nothing, never
+    // a throw). An `action`/`state` step must still WAIT for its condition — the
+    // highlight is best-effort, so it just paints a bubble and re-queries the target
+    // each refresh (a panel that renders its node a frame later is picked up then).
+    if (
+      step.advance.on === 'tap' &&
+      step.target !== null &&
+      this.host.locate(step.target) === null
+    ) {
       if (step.optional) {
         this.next();
         return;

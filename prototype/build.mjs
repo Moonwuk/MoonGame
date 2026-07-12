@@ -170,7 +170,9 @@ body.sheet-open #cmdbar{bottom:calc(34vh + 12px);}
    default (tap steps) swallows them so «Далее» is the only way forward. */
 #spotlight{position:fixed;inset:0;z-index:50;display:none;}
 #spotlight .sl-dim{position:fixed;background:rgba(2,8,11,.72);pointer-events:auto;}
-#spotlight.sl-passthrough .sl-dim{pointer-events:none;}
+/* action/state steps: the player must operate the real HUD — let clicks through AND
+   drop the dimming so the map stays fully legible (only the ring marks the target). */
+#spotlight.sl-passthrough .sl-dim{pointer-events:none;background:transparent;}
 #spotlight .sl-ring{position:fixed;border:2px solid var(--cyan);border-radius:8px;pointer-events:none;
   box-shadow:0 0 0 2px rgba(53,214,230,.25),0 0 18px rgba(53,214,230,.45);animation:sl-pulse 1.6s ease-in-out infinite;}
 @keyframes sl-pulse{0%,100%{box-shadow:0 0 0 2px rgba(53,214,230,.2),0 0 14px rgba(53,214,230,.35);}

@@ -206,6 +206,23 @@ describe('SpotlightTour — missing target', () => {
     expect(h.last()).toBeNull();
   });
 
+  it('keeps an action step waiting when its highlight is not in the DOM yet, then highlights it', () => {
+    const steps: SpotlightStep[] = [
+      { id: 'act', target: '#panel', copy: 'Do it', advance: { on: 'action', type: 'build' } },
+      { id: 'end', target: '#e', copy: 'E', advance: { on: 'tap' } },
+    ];
+    const h = fakeHost({ '#e': RECT }); // #panel renders a frame later
+    const tour = new SpotlightTour(steps, h.host);
+    tour.start();
+    expect(tour.index).toBe(0); // did NOT skip/stop — it waits for the action
+    expect(h.last()?.target).toBeNull(); // best-effort highlight: none yet
+    h.present['#panel'] = { left: 5, top: 5, width: 60, height: 20 }; // panel appears
+    tour.refresh();
+    expect(h.last()?.target).toMatchObject({ left: 5, top: 5 }); // now highlighted
+    tour.notifyAction('build'); // the awaited action still advances it
+    expect(tour.index).toBe(1);
+  });
+
   it('renders a centred bubble for a targetless (info) step', () => {
     const steps: SpotlightStep[] = [
       { id: 'intro', target: null, copy: 'Welcome', advance: { on: 'tap' } },

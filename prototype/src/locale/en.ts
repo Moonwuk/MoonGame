@@ -11,6 +11,25 @@ export const en: Record<string, string> = {
   'Начать обучение': 'Start tutorial',
   Пропустить: 'Skip',
   Обучение: 'Tutorial',
+  // --- ONB-2 guided first match (firstMatchTour) -------------------------------
+  'Это твой первый мир, командир. Проведу тебя по главному циклу — пара минут, спокойно, без соперников.':
+    'This is your first world, commander. I will walk you through the core loop — a couple of minutes, calm, no rivals.',
+  'Внизу — панель твоего домашнего мира: здания, гарнизон и стройка. Тапни свой мир, если панель пуста.':
+    'Down here is your homeworld panel: buildings, garrison and construction. Tap your world if the panel is empty.',
+  'Начни с экономики: построй Шахту — она даёт ресурсы, на них строится всё остальное.':
+    'Start with economy: build a Mine — it produces the resources everything else is built from.',
+  'Теперь подними флот из гарнизона родного мира — кнопка «Поднять флот». Так корабли становятся подвижной силой.':
+    'Now raise a fleet from your homeworld garrison — the «Launch fleet» button. That turns ships into a mobile force.',
+  'Выбери свой флот (▲) и тапни соседний мир — задай курс. Флот пойдёт по звёздным трассам, и туман начнёт открываться.':
+    'Select your fleet (▲) and tap a neighbouring world to set a course. It routes along the star lanes and the fog opens.',
+  'Захвати нейтральный мир: выйди на орбиту, а если он защищён — высади десант. Захват двухфазный: сначала небо, потом земля.':
+    'Take a neutral world: enter orbit, and if it is defended, land troops. Capture is two-phase: sky first, then ground.',
+  'Мир взят — и счёт пошёл! Очки капают за миры и сектора; набери порог — и это победа.':
+    'World taken — and the score moves! Points come from worlds and sectors; reach the threshold to win.',
+  'Первая схватка выиграна! Ты прошёл весь цикл: добыча → стройка → движение → захват → счёт. Дальше — настоящий матч.':
+    'First fight won! You ran the whole loop: produce → build → move → capture → score. Next up — a real match.',
+  '✔ Обучение пройдено · +{n} XP — теперь сыграй настоящий матч!':
+    '✔ Tutorial complete · +{n} XP — now play a real match!',
   // --- ONB-1 guide-marks (spotlight) — chrome + HUD orientation tour -----------
   'шаг {k} из {n}': 'step {k} of {n}',
   Далее: 'Next',

@@ -147,14 +147,15 @@ import { initTestMode, openTestMode } from './testmode';
 import { startTour, type RunningTour } from './spotlightDom';
 import type { TourResult } from './spotlight';
 import { HUD_ORIENTATION_TOUR } from './onboardingTour';
+// ONB-2 — the guided first match (a data chain over this same engine).
+import { buildFirstMatchTour } from './firstMatchTour';
 // ONB-0 — first-run onboarding state + funnel (per-callsign localStorage). Pure
 // model; main.ts persists it and drives the hub offer / «Ещё → Обучение» replay.
 import {
-  markCompleted,
+  applyTourOutcome,
   markSkipped,
   markStarted,
   parseOnboardState,
-  reachStep,
   welcomeMode,
   type OnboardState,
 } from './onboarding';
@@ -1862,12 +1863,12 @@ interface TourWindow {
   },
 };
 
-// --- ONB-0 first-run onboarding: per-callsign flag + funnel + hub offer -------
+// --- ONB-0/ONB-2 first-run onboarding: flag + funnel + guided first match -----
 // The "passed onboarding" signal lives per-nick in localStorage (separate from the
 // saved callsign — a returning device can still be new to the guide). A brand-new
-// commander gets a one-time hub offer; accepting arms the ONB-1 tour to fire once
-// the match is live (`pendingTour`, launched from installMatch); ONB-2 will swap the
-// orientation tour for the full guided sandbox on this same seam.
+// commander gets a one-time hub offer; accepting (or «Ещё → Обучение») launches the
+// ONB-2 guided first match: a bot-free solo sandbox with the data-described guide
+// (firstMatchTour) walking produce→build→move→capture→score over the live HUD.
 function onboardKey(): string {
   return 'vd.onboard.' + (nickInput.value.trim() || 'guest');
 }
@@ -1877,21 +1878,45 @@ function loadOnboard(): OnboardState {
 function saveOnboard(st: OnboardState): void {
   localStorage.setItem(onboardKey(), JSON.stringify(st));
 }
-let pendingTour: typeof HUD_ORIENTATION_TOUR | null = null;
-// Fired when a match goes live (installMatch) — runs a queued onboarding tour once.
+// A guide queued to launch once the next match's HUD is live (from installMatch).
+let pendingGuide: (() => void) | null = null;
 function maybeStartPendingTour(): void {
-  if (!pendingTour || NET) return;
-  const steps = pendingTour;
-  pendingTour = null;
-  // Let the fresh HUD paint one frame so selectors resolve, then walk it.
-  requestAnimationFrame(() => launchTour(steps, onboardTourEnded));
+  if (!pendingGuide || NET) return;
+  const run = pendingGuide;
+  pendingGuide = null;
+  requestAnimationFrame(run); // let the fresh HUD paint a frame so selectors resolve
 }
-// Thin funnel + flag writer (no PII; aggregates belong to server OPS-metrics).
-function onboardTourEnded(r: TourResult): void {
-  let st = reachStep(loadOnboard(), r.reachedStep + 1); // 1-based furthest step
-  if (r.completed) st = markCompleted(st);
-  else if (r.skipped) st = markSkipped(st);
-  saveOnboard(st);
+const myScore = (): number => Math.round(s.match?.scores?.[ME]?.total ?? 0);
+const myWorldCount = (): number => Object.values(s.planets).filter((p) => p.owner === ME).length;
+// ONB-2: start a bot-free solo sandbox and arm the guided first match over its HUD.
+function startGuidedMatch(): void {
+  setupSlots = ['human', 'off', 'off', 'off']; // no rivals — a safe, calm sandbox
+  setupStart = START_CANDIDATES[0] ?? MAP[0]!.id; // a deterministic homeworld
+  pendingGuide = () => {
+    const startScore = myScore();
+    const startWorlds = myWorldCount(); // baseline: home only
+    launchTour(
+      buildFirstMatchTour({
+        capturedWorld: () => myWorldCount() > startWorlds,
+        scoreRose: () => myScore() > startScore + 1,
+      }),
+      onGuidedTourEnded,
+    );
+  };
+  showHub(false);
+  showConnect(false);
+  startMatch(buildSetupConfig()); // installMatch → maybeStartPendingTour runs the guide
+}
+// Fold the finished guide into the flag (+funnel); first completion earns XP + a nudge.
+function onGuidedTourEnded(r: TourResult): void {
+  const { state, rewarded } = applyTourOutcome(loadOnboard(), r);
+  saveOnboard(state);
+  if (rewarded) {
+    const cur = loadMeta();
+    const xp = matchXp({ won: false, score: 100 }); // a modest onboarding packet
+    saveMeta({ ...cur, xp: cur.xp + xp });
+    note(t('✔ Обучение пройдено · +{n} XP — теперь сыграй настоящий матч!', { n: xp }));
+  }
   if (DEV_UI)
     console.debug(
       `[onboard] ${r.completed ? 'completed' : r.skipped ? 'skipped' : 'stopped'} @ step ${r.reachedStep + 1}`,
@@ -1902,14 +1927,12 @@ function refreshOnboardOffer(): void {
   const nudge = document.getElementById('onboard-nudge');
   if (nudge) nudge.style.display = welcomeMode(loadOnboard()) === 'new' ? 'flex' : 'none';
 }
-// «Начать обучение» / «Ещё → Обучение»: begin a solo sandbox with the tour armed.
+// «Начать обучение» / «Ещё → Обучение»: launch the guided first match.
 function beginOnboarding(): void {
   saveOnboard(markStarted(loadOnboard()));
   const nudge = document.getElementById('onboard-nudge');
   if (nudge) nudge.style.display = 'none';
-  pendingTour = HUD_ORIENTATION_TOUR;
-  showHub(false);
-  openSetup('hub'); // pick a homeworld; the tour fires from installMatch
+  startGuidedMatch();
 }
 document.getElementById('ob-start')?.addEventListener('click', beginOnboarding);
 document.getElementById('ob-skip')?.addEventListener('click', () => {

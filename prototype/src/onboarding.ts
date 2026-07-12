@@ -81,3 +81,27 @@ export function markCompleted(st: OnboardState): OnboardState {
 export function markSkipped(st: OnboardState): OnboardState {
   return { ...st, started: true, skipped: true };
 }
+
+/** How a guide run ended — the fields `TourResult` (spotlight.ts) already carries. */
+export interface TourOutcome {
+  completed: boolean;
+  skipped: boolean;
+  reachedStep: number; // 0-based furthest step index, or -1
+}
+
+/**
+ * Fold a finished guide run into the persisted state, and say whether THIS run
+ * earns the onboarding reward — granted exactly once, on the first completion
+ * (a replay of an already-completed guide returns `rewarded: false`). A skip
+ * marks skipped; a safe-stop (neither completed nor skipped) only banks progress.
+ */
+export function applyTourOutcome(
+  st: OnboardState,
+  r: TourOutcome,
+): { state: OnboardState; rewarded: boolean } {
+  let next = reachStep(st, r.reachedStep + 1); // -1 → 0 (no progress)
+  const rewarded = r.completed && !st.completed;
+  if (r.completed) next = markCompleted(next);
+  else if (r.skipped) next = markSkipped(next);
+  return { state: next, rewarded };
+}
