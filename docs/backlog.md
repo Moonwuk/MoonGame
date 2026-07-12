@@ -399,10 +399,15 @@
   (союзник=alliance, соперники=war, коалиция из двоих). **Дальше:** NET-2v2 (netserver
   сеет команды), сгруппированный спавн союзников (общий фронт), полный AvA-жизненный цикл
   (`corporation-wars.md`: вызов/принятие/ростер/фазы) — server/meta.
-- **SES-2** ⏳ `[core]` `[srv]` **Награды по итогам сессии (GDD §3.4).** При `match.ended`
-  ядро считает чистую таблицу наград по местам (XP аккаунта / мета-ресурсы; масштаб —
-  данными), сервер записывает на аккаунт (упирается в мета-экономику EC-*, поэтому
-  первый срез — только детерминированная таблица в payload события + сервер-лог).
+- **SES-2** 🔶 `[core]` `[srv]` **Награды по итогам сессии (GDD §3.4).** Первый срез ✅:
+  `victoryModule.endMatch` считает детерминированную таблицу `Record<PlayerId,
+  {place, xp}>` — place = standard competition ranking (1224) по финальным очкам,
+  XP = участие + капнутая доля счёта + win-бонус каждому члену победившей клики;
+  масштаб — данными (`data/rewards.json` → `GameData.rewards`, `RewardsDefSchema`
+  с дефолтами = прото-`matchXp` 40/÷10/cap 100/160; переопределяется бандлом).
+  Таблица в `state.match.rewards` + payload `match.ended` + observe-`end`
+  прото-хоста (JSONL плейтеста). Остаток кирпича: запись на аккаунт — ждёт
+  мета-экономику EC-* и серверный XP/уровень (AC-0.3).
 - **SES-3** ⏳ `[core]` `[data]` **Премиум-добыча (GDD §4.3).** Редкие миры с премиум-
   ресурсом (деф. бонус обороны — горячие точки), слив в ускорение исследований с
   убывающей эффективностью; НЕ юниты/боевая мощь. ⚠ Развилка с ECON-1 (premium_shard
@@ -451,15 +456,26 @@
   (или чистый хелпер) сеет `state.diplomacy` из `slot.team` (та же сторона `alliance`,
   между — по `crossTeamStart`) — сейчас эта логика есть только в прото-`newGame`. Опора
   под серверный AvA-матч. Хвост: **NET-2v2** (прото-хост сеет командные seats).
-- **AVA-2** ⏳ `[srv]` **Очки влияния корпорации.** Корп-валюта в `CorpStore`
-  (`addInfluence`/`spendInfluence` атомарно, `E_INSUFFICIENT`, аудит) — тратится на вызов,
-  начисляется за победу. Отдельно от внутриматчевой казны игрока.
-- **AVA-3** ⏳ `[srv]` **Флаги готовности к AvA.** Корп-флаг (глава → пул готовых) +
-  игровой флаг (игрок → согласие на офлайн-развёртывание); `setCorpReady`/`setPlayerReady`,
-  `GET /ava/pool`. RBAC fail-secure.
-- **AVA-4** ⏳ `[srv]` **Вызов/принятие (S0–S2).** `challengeCorp` (тратит влияние,
-  истечение по таймеру) / `acceptChallenge` / `declineChallenge`; возврат влияния при
-  decline/expire; принятие → матчап (S2). State-машина, коды `E_*`.
+- **AVA-2** ✅ `[srv]` **Очки влияния корпорации.** Корп-валюта `influence` в `CorpStore`
+  (`addInfluence`/`spendInfluence` — списание атомарное, guard `influence >= cost` внутри
+  UPDATE, `E_INSUFFICIENT`, никогда < 0; аудит-действие `influence`). Отдельно от
+  внутриматчевой казны. Memory + Postgres (`ALTER … IF NOT EXISTS` backfill), контракт-тесты
+  обоих адаптеров.
+- **AVA-3** ✅ `[srv]` **Флаги готовности к AvA.** Корп-флаг (глава → пул готовых,
+  `setCorpReady`/`clearCorpReady`) + игровой флаг (член → согласие на офлайн-развёртывание,
+  `setPlayerReady`/`clearPlayerReady`, привязан к текущей корпе — выход/кик/роспуск чистит);
+  `GET /ava/pool`. RBAC fail-secure (`AvaService`). Memory + Postgres (`corp_ready`/
+  `player_ready`) + контракт-тесты.
+- **AVA-4** ✅ `[srv]` **Вызов/принятие (S0–S2).** `AvaService.challenge` (глава готовой
+  корпы, тратит влияние ПЕРЕД созданием заявки — возврат при отказе создания) /
+  `accept` (глава цели → `accepted` = S2-матчап) / `decline` (возврат влияния); истечение —
+  `sweepExpired(now)` на инжектируемом таймере, без клиентов. Инварианты в сторе: одна
+  `pending`-заявка на пару (partial unique index), exactly-once `pending→terminal`
+  (условный UPDATE — гонка double-accept закрыта, без двойного возврата). Коды `E_FORBIDDEN`/
+  `E_NOT_READY`/`E_SELF_CHALLENGE`/`E_ALREADY_CHALLENGED`/`E_INSUFFICIENT`/`E_NO_CHALLENGE`/
+  `E_CHALLENGE_CLOSED`. REST `POST /ava/challenge` + `/:id/(accept|decline)`,
+  `GET /ava/challenges`; session-gated, per-IP rate-limit; свип-интервал в `main.ts`. Memory
+  - Postgres + сервис-тесты (весь state-машинный набор) + HTTP-контракт.
 - **AVA-5** ✅ `[core/data]` **Пул AvA-карт + eligibility.** `MatchMapSchema.avaEligible`
   (bool, дефолт false); форма ВЫВОДИТСЯ из slots хелпером `avaShape` (`sides`/`slotsPerSide`,
   null при <2 сторонах / неравных — тегу и раскладке неоткуда разъехаться);
@@ -730,9 +746,14 @@ requires[], cost, grants{ability?|passive?}}`; ветки **transhuman**/**psion
 > `docs/onboarding-roadmap.md`** (субстрат — фреймворк удержания `engineering-review.md §5`).
 > Крит-путь: ONB-0 → ONB-1 → ONB-2.
 
-- **ONB-0** ⏳ `[proto/srv]` **Флаг первого запуска + воронка.** `void.onboarded` отдельно
-  от сохранённого ника; ветвление new/returning; хуки «докуда дошёл» (агрегаты — OPS,
-  без PII).
+- **ONB-0** ✅ `[proto]` **Флаг первого запуска + воронка.** `onboarding.ts` (пуш-модуль,
+  без DOM/storage — как `meta.ts`): `void.onboarded.<ник>` отдельно от сохранённого
+  `void.nick`; new/returning читается через `isNewPlayer`. `openHub()` — единая точка
+  входа для всех путей (Новый командир/Вход по позывному/соц-стабы/автовход) —
+  помечает нового игрока `started` (переживает перезагрузку, повторно не срабатывает)
+  и показывает разовый hub-note; тонкий `console.debug`-хук на шаг воронки (без PII —
+  реальный OPS-пайплайн подключается отдельным кирпичом). +12 тестов; браузер-проверено
+  (новый ник → nudge, тот же ник повторно → тишина, состояние переживает reload).
 - **ONB-1** ⏳ `[proto]` ★ **Движок гайд-марок (spotlight).** Переиспользуемый примитив:
   оверлей + подсветка узла + пузырь + шаги из данных; продвижение по клику/действию/
   состоянию. На нём строятся ONB-2/3.

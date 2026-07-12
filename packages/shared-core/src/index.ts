@@ -49,6 +49,7 @@ export {
   type MatchEndReason,
   type MatchScore,
   type MatchState,
+  type PlayerReward,
   type DiplomaticStance,
   type IntelGrant,
 } from './state/gameState';
@@ -162,6 +163,7 @@ export {
   TechnologyEffectsSchema,
   TechnologyUnlocksSchema,
   ResourceBagSchema,
+  RewardsDefSchema,
   UnitStatsSchema,
   ModuleDefSchema,
   ModuleEffectsSchema,
@@ -200,6 +202,7 @@ export {
   type TechnologyEffects,
   type TechnologyUnlocks,
   type UnitStats,
+  type RewardsDef,
 } from './data/schemas';
 export { composeGameDataBundle, loadGameData, type JsonReader } from './data/loadGameData';
 
