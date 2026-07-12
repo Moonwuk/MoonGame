@@ -8617,7 +8617,7 @@ function frame(nowReal: number) {
   const score = Math.round(s.match?.scores?.[ME]?.total ?? 0);
   const need = Math.max(0, SCORE_LIMIT - score);
   const statusHtml =
-    `<span id="clock">Day ${d} · ${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}</span>` +
+    `<span id="clock">${t('День {n}', { n: d })} · ${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}</span>` +
     `<span class="dstat${need === 0 ? ' win' : ''}">✦ ${score}/${SCORE_LIMIT}${need === 0 ? ' · ★ ' + t('ПОБЕДА') : ' · ' + t('до победы {n}', { n: need })}</span>` +
     `<span class="dl-donate" title="${t('Суверены — донат-валюта')}"><i>◆</i>${kfmt(SOVEREIGNS)}</span>`;
   if (statusHtml !== lastClockText) {
