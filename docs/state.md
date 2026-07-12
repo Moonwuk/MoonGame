@@ -157,16 +157,21 @@ prototype/       src/game.ts, src/main.ts (UI), src/smoke.ts, build.mjs, uitest.
   МЕЖДУ залпами, уходит невредимым — тайминг рейда мимо ПВО имеет смысл. Каждый залп — событие `aa.fired {planetId, owner, fleetId,
 by, damage}` (эмит до применения урона; прототип рисует трассер+вспышку; фазы боя
   различимы: красные кольца орбиты vs янтарный пунктир десанта).
-  **Ядровой `diplomacyModule` (D2, `modules/diplomacy.ts`)**: понижение стойки одностороннее
-  (`diplomacy.declare`), повышение по согласию — `diplomacy.propose` кладёт оффер в
-  `state.diplomacyOffers` (pairKey → `{from, stance}`, один на пару, новее замещает),
-  `diplomacy.accept`/`diplomacy.reject` его разрешают; любой сдвиг стойки аннулирует оффер
-  пары. **Коалиция — только между людьми**: `alliance` с участием ИИ-игрока
-  (`Player.ai === true`, сеется картой/слотом/`newGame` прототипа) отклоняется с
-  `E_BOT_ALLIANCE` (propose и защитно accept); мир/пакт с ботом разрешены. События
-  `diplomacy.changed`/`proposed`/`rejected`; capability `diplomacy`
-  `{getStance, getRelation}` — методы принимают `state` параметром (war→hostile,
-  peace/pact→neutral, alliance→ally). Офферы фог-чувствительны: `visibleState` отдаёт
+  **Ядровой `diplomacyModule` (D2+D3, `modules/diplomacy.ts`)**: ОДНО действие
+  `diplomacy.declare {target, stance}` на оба направления. К войне (эскалация) —
+  односторонне: стойка флипается сразу, офферы пары стираются (объявление войны
+  обрывает переговоры). К дружбе — consent-протокол: первый дружественный declare
+  кладёт НАПРАВЛЕННЫЙ оффер в `state.diplomacyOffers` (`from>to` → stance, новее
+  замещает, точный повтор — `E_ALREADY_OFFERED`); встречный declare той же стойки
+  коммитит пару и стирает офферы. На `player.eliminated` офферы павшего (в обе
+  стороны) свипаются. **Коалиция — только между людьми**: alliance-ward declare с
+  ИИ-игроком (`Player.ai === true`, сеется картой/слотом/`newGame` прототипа)
+  отклоняется с `E_BOT_ALLIANCE` (ни оффером не встанет, ни коммитом); мир/пакт с
+  ботом разрешены. События `diplomacy.changed {a,b,stance,from}` /
+  `diplomacy.offered {from,to,stance}`; capability `diplomacy` `{getRelation}` —
+  принимает `state` параметром (war→hostile, peace/pact→neutral, alliance→ally);
+  `getStance`/`setStance`/офферные примитивы — чистый state-слой
+  (`state/diplomacy.ts`). Офферы фог-чувствительны: `visibleState` отдаёт
   только пары с участием зрителя; `diplomacyOffers` — в `delta`-META. **Прототип
   использует этот же ЯДРОВЫЙ модуль (D4 ✅):** собственная реализация
   `diplomacy.declare` из `game.ts` удалена, в `MODULES` подключён ядровый (эскалация
