@@ -160,6 +160,7 @@ export {
   HeroBranchSchema,
   TechnologyEffectsSchema,
   TechnologyUnlocksSchema,
+  ResearchBoostDefSchema,
   ResourceBagSchema,
   UnitStatsSchema,
   ModuleDefSchema,
@@ -199,6 +200,7 @@ export {
   type TechnologyEffects,
   type TechnologyUnlocks,
   type UnitStats,
+  type ResearchBoostDef,
 } from './data/schemas';
 export { composeGameDataBundle, loadGameData, type JsonReader } from './data/loadGameData';
 
