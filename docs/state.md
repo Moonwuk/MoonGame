@@ -147,7 +147,12 @@ prototype/       src/game.ts, src/main.ts (UI), src/smoke.ts, build.mjs, uitest.
   утечка никого не винит). +4 core-теста + 1 proto favour-e2e.
 - `diplomacy?: Record<pairKey, DiplomaticStance>` — попарные дип-отношения (`war`/`peace`/
   `pact`/`alliance`), симметрично и **публично** (туман не режет). Дефолт пары без записи —
-  `war` (= FFA). Примитивы в `state/diplomacy.ts`. **`combat.isHostile` читает стойку прямо из
+  `war` (= FFA). Примитивы в `state/diplomacy.ts`. **Посев при сборке с карты (AVA-1):**
+  `buildStateFromMap` сеет стойки из `slot.team` (хелпер `seedTeamDiplomacy`, тот же посев,
+  что прото-`newGame`): карта без команд → peace-FFA; та же сторона → `alliance` (seeded —
+  минует `E_BOT_ALLIANCE`); между сторонами — `BuildFromMapOptions.crossTeamStart`
+  (`war` дефолт / `peace` — мирный старт AvA); пары из отсортированных id — канонический
+  JSON. **`combat.isHostile` читает стойку прямо из
   `state.diplomacy`** (`getStance(...) === 'war'`) — бой идёт только при объявленной войне. **ПВО бьёт залпами, двумя ярусами** (не непрерывно):
   **орбитальное** (здания-батареи, Σ их `aaDamage`) — полный залп раз в игровой час;
   **ближняя** (юниты гарнизона, Σ их `aaDamage`) — залп раз в 15 игровых минут по четверти
@@ -826,7 +831,10 @@ botDiplomacy, market, division, capital, standingOrders])` (26 модулей), 
   читает стойку), **между сторонами WAR** с первого часа; нет команд → классический FFA
   (все пары `peace`). Альянс — посеянное состояние, поэтому ИИ-союзник реальный (в обход
   `E_BOT_ALLIANCE`-гейта декларации; клика-победа читает стойку). Коалиционный чат/пинги/
-  порог победы работают из коробки. `teams.test.ts` (4). Полный AvA-жизненный цикл
+  порог победы работают из коробки. `teams.test.ts` (4). **NET-2v2 (хвост AVA-1):**
+  `TEAMS=2v2` на прото-хосте (`netserver.ts`) сеет 4 командных места — A: p1+p2 (западные
+  углы) vs B: p3+p4 (восточные); пустое кресло играет серверный ИИ, так что 2v2 идёт
+  с 1–4 живыми игроками. Полный AvA-жизненный цикл
   (вызов/ростер/фазы, `corporation-wars.md`) — server/meta, дальше.
   Миры размечены типами (terran/barren/oceanic/volcanic/gas_giant) — карточка планеты
   показывает тип и его бонусы (prod/def), `netIncome` учитывает множитель производства.

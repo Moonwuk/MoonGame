@@ -267,6 +267,49 @@ describe('slot-based maps — team-aware start slots (corporation-wars.md §4)',
     expect(validateMatchMap(avaMap(), data)).toEqual([]);
   });
 
+  it('seeds opposing slots at war by default (AVA-1: team → diplomacy)', () => {
+    const state = buildStateFromMap(avaMap(), data, {
+      slots: { slot_a: { playerId: 'p1' }, slot_b: { playerId: 'p2' } },
+    });
+    expect(state.diplomacy).toEqual({ 'p1|p2': 'war' });
+  });
+
+  it('crossTeamStart:"peace" starts a teamed match peaceful (the AvA peaceful start)', () => {
+    const state = buildStateFromMap(avaMap(), data, {
+      slots: { slot_a: { playerId: 'p1' }, slot_b: { playerId: 'p2' } },
+      crossTeamStart: 'peace',
+    });
+    expect(state.diplomacy).toEqual({ 'p1|p2': 'peace' });
+  });
+
+  it('seeds a 2v2: same side allied, across the sides per crossTeamStart', () => {
+    const map = avaMap();
+    map.slots.slot_a2 = { team: 'A', spawn: 'fixed', resources: {} };
+    map.slots.slot_b2 = { team: 'B', spawn: 'fixed', resources: {} };
+    const slots = {
+      slot_a: { playerId: 'a1' },
+      slot_a2: { playerId: 'a2' },
+      slot_b: { playerId: 'b1' },
+      slot_b2: { playerId: 'b2' },
+    };
+    const state = buildStateFromMap(map, data, { slots });
+    expect(state.diplomacy).toEqual({
+      'a1|a2': 'alliance',
+      'b1|b2': 'alliance',
+      'a1|b1': 'war',
+      'a1|b2': 'war',
+      'a2|b1': 'war',
+      'a2|b2': 'war',
+    });
+    // deterministic: the same seats → an identical (canonically ordered) record
+    expect(buildStateFromMap(map, data, { slots })).toEqual(state);
+  });
+
+  it('a map without teams (plain declared players) seeds a peace free-for-all', () => {
+    const state = buildStateFromMap(exampleMap(), data);
+    expect(state.diplomacy).toEqual({ 'green|red': 'peace' });
+  });
+
   it('flags a slot id that collides with a player id', () => {
     const map = exampleMap(); // has players green/red
     map.slots.green = { team: 'A', spawn: 'fixed', resources: {} };
