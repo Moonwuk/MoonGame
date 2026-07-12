@@ -464,10 +464,14 @@
   (корп-флаг Главы + player-consent) + вызов/принятие (тратит очки влияния, истечение);
   затем ростер (пауза/лок) + оркестрация фаз S3–S7 через существующий MatchRegistry +
   посев команд AVA-0.
-- **AVA-1** ⏳ `[srv/core]` **Командная дипломатия на серверном пути.** `buildStateFromMap`
-  (или чистый хелпер) сеет `state.diplomacy` из `slot.team` (та же сторона `alliance`,
-  между — по `crossTeamStart`) — сейчас эта логика есть только в прото-`newGame`. Опора
-  под серверный AvA-матч. Хвост: **NET-2v2** (прото-хост сеет командные seats).
+- **AVA-1** ✅ `[srv/core]` **Командная дипломатия на серверном пути.** `buildStateFromMap`
+  сеет `state.diplomacy` из `slot.team` (хелпер `seedTeamDiplomacy`, тот же посев, что
+  прото-`newGame`): карта без команд → peace-FFA; та же сторона → `alliance` (seeded —
+  минует `E_BOT_ALLIANCE`); между сторонами — по опции `crossTeamStart` (`war` дефолт /
+  `peace` — мирный старт AvA под AVA-8). Пары из отсортированных id — канонический JSON.
+  Хвост **NET-2v2** тоже: `TEAMS=2v2` на прото-хосте сеет 4 командных seats (A: p1+p2
+  западные углы, B: p3+p4 восточные) — живой 2v2 до оркестратора; пустые кресла играет
+  серверный ИИ. Тесты в `buildFromMap.test.ts` (war/peace/2v2/FFA/детерминизм).
 - **AVA-2** ✅ `[srv]` **Очки влияния корпорации.** Корп-валюта `influence` в `CorpStore`
   (`addInfluence`/`spendInfluence` — списание атомарное, guard `influence >= cost` внутри
   UPDATE, `E_INSUFFICIENT`, никогда < 0; аудит-действие `influence`). Отдельно от
