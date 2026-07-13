@@ -153,6 +153,8 @@ import { buildFirstMatchTour } from './firstMatchTour';
 import { buildCodexIndex, searchCodex, GLOSSARY, type CodexEntry, type CodexCategory } from './codexIndex';
 // ONB-3 — just-in-time mechanic intros (per-nick seen-set, shown once on first contact).
 import { resolveIntro, parseSeenIntros, type IntroCard } from './intros';
+// ONB-5 — return digest ("пока тебя не было"): aggregate the away-window event log.
+import { buildRecap, type RecapEvent } from './recap';
 // ONB-0 — first-run onboarding state + funnel (per-callsign localStorage). Pure
 // model; main.ts persists it and drives the hub offer / «Ещё → Обучение» replay.
 import {
@@ -1411,11 +1413,15 @@ function fleetAnchor(f: Fleet): { x: number; y: number; ang: number } | null {
   const ang = orbitsLive() ? a0 + Math.PI / 2 : a0;
   return { x: pc.x + Math.cos(a0) * r, y: pc.y + Math.sin(a0) * r, ang };
 }
+// ONB-5: a structured, bounded mirror of the event log — feeds the return digest.
+const eventLog: RecapEvent[] = [];
 function note(msg: string, at?: string) {
   const d = floor(s.time / DAY) + 1;
   const h = floor((s.time % DAY) / HOUR);
   logLines.push(`D${d} ${String(h).padStart(2, '0')}h · ${msg}`);
   while (logLines.length > 9) logLines.shift();
+  eventLog.push({ at: s.time, text: msg, anchor: at });
+  while (eventLog.length > 80) eventLog.shift();
   toast(msg, at);
 }
 
@@ -1841,7 +1847,12 @@ function playerOrder(action: Action) {
   const out = order(s, action, s.time);
   apply(out);
   if (out.error) note('✖ ' + errText(out.error));
-  else activeTour?.notifyAction(action.type); // an accepted intent advances `action` steps
+  else {
+    activeTour?.notifyAction(action.type); // an accepted intent advances `action` steps
+    // ONB-5: the first fleet leaving on a course is when "the world runs offline"
+    // becomes real — teach it once (but not mid-guide, where the tour owns the screen).
+    if (action.type === 'fleet.move' && !activeTour?.active) maybeIntro('asyncDelay');
+  }
 }
 
 // --- ONB-1 guide-mark launcher ------------------------------------------------
@@ -5545,6 +5556,67 @@ document.getElementById('intro')?.addEventListener('click', (ev) => {
   if (tg === el || tg.closest('.in-ok')) el.classList.remove('show'); // backdrop / «Понятно»
 });
 
+// --- ONB-5 return digest ("пока тебя не было") -------------------------------
+// The world runs while you're away (a backgrounded tab catches up on return, and
+// on the server it runs 24/7). Rather than a silently-changed map, brief the player
+// on what happened since they left — attention items first, tap to jump to the spot.
+let awayFromGameTime: number | null = null;
+function recapItemHtml(i: { text: string; anchor?: string; high: boolean }): string {
+  const jump = i.anchor ? ` data-jump="${esc(i.anchor)}"` : '';
+  return `<button class="rc-item${i.high ? ' hi' : ''}"${jump}><span class="rc-dot"></span><span>${esc(i.text)}</span></button>`;
+}
+/** Render the digest of events at/after `since`. No-op when nothing happened. */
+function openRecap(since: number): void {
+  const el = document.getElementById('recap');
+  if (!el) return;
+  const r = buildRecap(eventLog, since);
+  if (!r.count) return; // nothing accrued — don't nag with an empty briefing
+  const hi = r.items.filter((i) => i.high);
+  const lo = r.items.filter((i) => !i.high);
+  let body = '';
+  if (hi.length) body += `<div class="rc-sec hi">${t('Требуют внимания · {n}', { n: r.attention })}</div>` + hi.map(recapItemHtml).join('');
+  if (lo.length) body += `<div class="rc-sec">${t('Пока тебя не было')}</div>` + lo.map(recapItemHtml).join('');
+  el.innerHTML =
+    `<div class="rcbox"><div class="rc-head"><span class="cx-ic">🛰</span><b>${t('СВОДКА ВОЗВРАЩЕНИЯ')}</b></div>` +
+    `<div class="rc-body">${body}</div><button class="cx-close" id="rc-close">${t('ЗАКРЫТЬ')}</button></div>`;
+  el.classList.add('show');
+}
+document.getElementById('recap')?.addEventListener('click', (ev) => {
+  const el = document.getElementById('recap')!;
+  const tg = ev.target as HTMLElement;
+  if (tg === el || tg.closest('#rc-close')) {
+    el.classList.remove('show');
+    return;
+  }
+  const jump = tg.closest('.rc-item') as HTMLElement | null;
+  if (jump?.dataset.jump) {
+    el.classList.remove('show');
+    jumpToPing(jump.dataset.jump); // fly the camera to the event's world
+  }
+});
+// The «🛰» button in the log window → the whole-session briefing on demand.
+document.getElementById('lw-recap')?.addEventListener('click', () => openRecap(0));
+// Auto-briefing: mark where we left when the tab hides; on return (after the sim has
+// caught up the elapsed time) summarise what happened — only for a real absence.
+let awayAtRealMs = 0;
+document.addEventListener?.('visibilitychange', () => {
+  if (document.hidden) {
+    if (inMatch()) {
+      awayFromGameTime = s.time;
+      awayAtRealMs = Date.now();
+    }
+    return;
+  }
+  if (awayFromGameTime == null || !inMatch()) return;
+  const since = awayFromGameTime;
+  awayFromGameTime = null;
+  if (Date.now() - awayAtRealMs < 15000) return; // a quick glance away — no briefing
+  // Give the frame loop a beat to catch the world up before we summarise it.
+  window.setTimeout(() => {
+    if (inMatch()) openRecap(since);
+  }, 500);
+});
+
 /** A `b:<id>:<lvl>` key embeds its building level in the title (as `hl(lvl)`) — shared
  *  by the desktop hover pane and the mobile tap modal so both read identically. */
 function dossierTitleHtml(key: string, d: Dossier): string {
@@ -8055,6 +8127,8 @@ function installMatch(state: GameState, aiPlayers: Set<string>): void {
   battleLosses.clear();
   aaShots.length = 0;
   logLines.length = 0; // fresh log — drop notes from the menu-background match
+  eventLog.length = 0; // ONB-5: the return digest belongs to THIS match only
+  awayFromGameTime = null; // reset the away-window baseline for the new match
   banner = null; // clear any end-banner left by the menu-background match (else it sticks)
   endScreen = null; // a fresh match must not open into the previous result
   xpAwarded = false; // a fresh match earns its own meta-XP award

@@ -254,6 +254,25 @@ body.sheet-open #cmdbar{bottom:calc(34vh + 12px);}
 #intro .in-ok{margin-top:14px;width:100%;padding:10px;cursor:pointer;border-radius:7px;border:1px solid var(--cyan-dim);
   background:rgba(53,214,230,.12);color:var(--cyan);font:700 13px ui-monospace,monospace;letter-spacing:1px;}
 #intro .in-ok:active{background:rgba(53,214,230,.24);}
+/* ONB-5 return digest — "пока тебя не было": events since you left, attention first */
+#recap{position:fixed;inset:0;z-index:57;display:none;align-items:center;justify-content:center;padding:18px;
+  background:rgba(1,5,9,.62);-webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px);}
+#recap.show{display:flex;}
+#recap .rcbox{width:min(440px,94vw);max-height:86vh;display:flex;flex-direction:column;background:var(--glass);
+  border:1px solid var(--cyan);border-radius:10px;padding:14px 16px 12px;box-shadow:0 0 40px rgba(0,0,0,.6),inset 0 0 0 1px rgba(53,214,230,.06);}
+#recap .rc-head{display:flex;align-items:center;gap:10px;padding-bottom:10px;margin-bottom:8px;border-bottom:1px solid var(--line-hi);}
+#recap .rc-head .cx-ic{font-size:19px;color:var(--cyan);}
+#recap .rc-head b{font-size:14px;letter-spacing:1.5px;color:#eafffb;flex:1;}
+#recap .rc-body{overflow:auto;}
+#recap .rc-sec{font-size:9px;letter-spacing:2px;text-transform:uppercase;color:var(--cyan-dim);margin:10px 0 6px;}
+#recap .rc-sec.hi{color:var(--amber);}
+#recap .rc-item{display:flex;align-items:center;gap:9px;width:100%;text-align:left;padding:8px 10px;margin-bottom:5px;cursor:pointer;
+  border-radius:7px;border:1px solid var(--line-hi);background:rgba(3,12,16,.6);color:#dfeef2;font:500 12px ui-monospace,monospace;line-height:1.4;}
+#recap .rc-item[data-jump]:active{background:rgba(53,214,230,.12);border-color:var(--cyan);}
+#recap .rc-item .rc-dot{width:6px;height:6px;border-radius:50%;flex:0 0 auto;background:var(--cyan-dim);}
+#recap .rc-item.hi{border-color:rgba(255,180,58,.5);}
+#recap .rc-item.hi .rc-dot{background:var(--amber);box-shadow:0 0 8px rgba(255,180,58,.6);}
+#recap .cx-close{margin-top:10px;}
 
 /* player card — tap the top-left crest for your session dossier */
 #playercard{position:fixed;inset:0;z-index:47;display:none;align-items:center;justify-content:center;padding:18px;
@@ -622,6 +641,9 @@ button.b:disabled{opacity:.32;cursor:not-allowed;color:var(--dim);border-color:v
 .lw-head{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--line-hi);}
 .lw-head b{font-size:12px;letter-spacing:2px;color:var(--cyan);}
 .lw-close{width:28px;height:28px;border-radius:6px;border:1px solid var(--line);background:transparent;color:var(--dim);cursor:pointer;}
+#logwin .lw-head b{flex:1;} /* push the buttons to the right when the recap button is present */
+.lw-recap{width:28px;height:28px;margin-right:6px;border-radius:6px;border:1px solid var(--cyan-dim);background:rgba(53,214,230,.08);color:var(--cyan);cursor:pointer;}
+.lw-recap:active{background:rgba(53,214,230,.2);}
 #log{flex:1;min-height:0;overflow:auto;touch-action:pan-y;padding:10px 14px;
   font:11px/1.6 ui-monospace,Menlo,monospace;color:#73b6a2;scrollbar-width:thin;}
 #log div::before{content:"> ";color:var(--grn-dim);}
@@ -1652,7 +1674,7 @@ const html = `<!doctype html>
 </nav>
 <!-- floating chat window (desktop only) — content rendered by renderChat() in main.ts -->
 <div id="chatwin" class="desk-only"></div>
-<div id="logwin"><div class="lwbox"><div class="lw-head"><b data-i18n>СВОДКИ</b><button class="lw-close">✕</button></div><div id="log"></div></div></div>
+<div id="logwin"><div class="lwbox"><div class="lw-head"><b data-i18n>СВОДКИ</b><button class="lw-recap" id="lw-recap" type="button" title="Сводка возвращения" data-i18n-title>🛰</button><button class="lw-close">✕</button></div><div id="log"></div></div></div>
 <!-- technologies window — content rendered by renderTech() in main.ts -->
 <div id="tech"><div class="twbox"><div class="lw-head"><b data-i18n>ТЕХНОЛОГИИ</b><button class="tw-close">✕</button></div><div id="techbody"></div></div></div>
 <!-- steward («Хранитель») window — content rendered by renderSteward() in main.ts -->
@@ -1677,6 +1699,7 @@ const html = `<!doctype html>
 <div id="codex"></div>
 <div id="codexhub"></div>
 <div id="intro"></div>
+<div id="recap"></div>
 <div id="playercard"></div>
 <div id="settings"></div>
 <div id="warprompt"></div>

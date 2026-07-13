@@ -4,6 +4,14 @@
 // English in game.ts) need no entry here; `tData()` shows them as-is on this locale.
 // One language = one file.
 export const en: Record<string, string> = {
+  // --- ONB-5 async intro + return digest ---------------------------------------
+  'Мир идёт без тебя': 'The world runs without you',
+  'Этот флот прибудет через часы реального времени — мир Void Dominion идёт непрерывно, даже когда ты офлайн. Можешь закрыть игру: приказы выполнятся сами, а к возвращению мы пришлём уведомление и покажем сводку «пока тебя не было».':
+    'This fleet will arrive in real hours — the world of Void Dominion runs continuously, even while you are offline. You can close the game: your orders carry out on their own, and on your return we will send a notification and show a "while you were away" digest.',
+  'Сводка возвращения': 'Return digest',
+  'СВОДКА ВОЗВРАЩЕНИЯ': 'RETURN DIGEST',
+  'Требуют внимания · {n}': 'Needs attention · {n}',
+  'Пока тебя не было': 'While you were away',
   // --- ONB-3 just-in-time mechanic intros --------------------------------------
   впервые: 'first time',
   'Дерево технологий': 'Technology tree',

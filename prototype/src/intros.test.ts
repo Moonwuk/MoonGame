@@ -69,7 +69,7 @@ describe('resolveIntro — shown once', () => {
     expect(r.seen).toContain('tech'); // but recorded, so it stays quiet forever
   });
 
-  it('every intro is a panelOpen card with copy and a unique id', () => {
+  it('every intro is a card with copy and a unique id', () => {
     const ids = INTROS.map((c) => c.id);
     expect(new Set(ids).size).toBe(ids.length);
     for (const c of INTROS) {

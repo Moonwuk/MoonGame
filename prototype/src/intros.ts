@@ -53,6 +53,14 @@ export const INTROS: IntroCard[] = [
     title: 'Дипломатия',
     body: 'Объявляй войну и мир, заключай пакты и союзы. Коалиция ограничена порогом силы — всех против одного не собрать. Следи за стойками сторон: союзник сегодня может стать соперником завтра.',
   },
+  {
+    // ONB-5: fired on the FIRST order that takes real time (a fleet leaving on a
+    // course) — the moment the async model becomes tangible.
+    id: 'asyncDelay',
+    trigger: 'firstAvailable',
+    title: 'Мир идёт без тебя',
+    body: 'Этот флот прибудет через часы реального времени — мир Void Dominion идёт непрерывно, даже когда ты офлайн. Можешь закрыть игру: приказы выполнятся сами, а к возвращению мы пришлём уведомление и покажем сводку «пока тебя не было».',
+  },
 ];
 
 /** Fast lookup by id. */
