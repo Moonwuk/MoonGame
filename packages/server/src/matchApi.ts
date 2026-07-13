@@ -26,8 +26,11 @@ export interface JoinResult {
   token: string;
 }
 
-/** A stable failure from `join`, mapped to an HTTP status by the route. */
-export type JoinFailure = { error: 'E_NO_MATCH' | 'E_MATCH_FULL' | 'E_AUTH_DISABLED' };
+/** A stable failure from `join`, mapped to an HTTP status by the route.
+ *  `E_NOT_ROSTERED` (AVA-7): an AvA session seats only its locked roster. */
+export type JoinFailure = {
+  error: 'E_NO_MATCH' | 'E_MATCH_FULL' | 'E_AUTH_DISABLED' | 'E_NOT_ROSTERED';
+};
 
 /** An authenticated caller, as resolved by the `identify` hook. */
 export interface Identity {
@@ -56,6 +59,7 @@ const STATUS: Record<JoinFailure['error'], number> = {
   E_NO_MATCH: 404,
   E_MATCH_FULL: 409,
   E_AUTH_DISABLED: 501,
+  E_NOT_ROSTERED: 403,
 };
 
 /** Both write routes mutate durable state (seed a match, claim a seat), so both sit

@@ -15,6 +15,7 @@ import {
   marketModule,
   movementModule,
   loadGameData,
+  parseMatchMap,
   orbitalModule,
   planetTypeModule,
   scientistModule,
@@ -29,6 +30,7 @@ import {
   type GameState,
   type Hero,
   type MatchConfig,
+  type MatchMap,
   type Planet,
   type Player,
 } from '@void/shared-core';
@@ -48,6 +50,17 @@ import type { MatchSnapshot, StoredReceipt } from './store';
 export function loadShippedData(): GameData {
   return loadGameData((name) =>
     JSON.parse(readFileSync(new URL(`../../../data/${name}`, import.meta.url), 'utf8')),
+  );
+}
+
+/** The shipped AvA map pool (AVA-5/AVA-7): every `data/maps/*` file tagged
+ *  `avaEligible`, parsed + validated. One list to extend when a new map ships. */
+const SHIPPED_AVA_MAPS = ['ava-duel-1.json', 'ava-2v2-1.json'];
+export function loadShippedAvaMaps(): MatchMap[] {
+  return SHIPPED_AVA_MAPS.map((name) =>
+    parseMatchMap(
+      JSON.parse(readFileSync(new URL(`../../../data/maps/${name}`, import.meta.url), 'utf8')),
+    ),
   );
 }
 

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import rateLimit from '@fastify/rate-limit';
-import { createDevMatch, loadShippedData } from './scenario';
+import { createDevMatch, loadShippedAvaMaps, loadShippedData } from './scenario';
 import { createMultiplayerServer } from './wsServer';
 import { startClockDriver, type ClockDriverHandle } from './clockDriver';
 import { createStores, snapshotOf } from './persistence';
@@ -11,6 +11,7 @@ import { registerCorpApi } from './corpApi';
 import { CorpService } from './corpService';
 import { registerAvaApi } from './avaApi';
 import { AvaService } from './avaService';
+import { AvaOrchestrator } from './avaOrchestrator';
 import { MatchKeeper } from './matchFactory';
 import { LazyRoomRegistry, type LoadedMatch } from './roomRegistry';
 import type { RoomObservation } from './matchRoom';
@@ -145,6 +146,13 @@ const matchApi: MatchApiDeps = {
     const snap = await stores.store.load(matchId);
     if (!snap) return { error: 'E_NO_MATCH' };
     if (!signToken) return { error: 'E_AUTH_DISABLED' }; // no token auth configured
+    // AVA-7: an AvA session seats ONLY its locked roster, each account in its FIXED
+    // seat — never the regular first-free-seat resolver.
+    const ava = await orchestrator.resolveAvaSeat(matchId, accountId);
+    if (ava.ava) {
+      if ('code' in ava) return { error: ava.code };
+      return { playerId: ava.playerId, token: await signToken(matchId, ava.playerId, accountId) };
+    }
     const seat = await accountStore.resolveSeat(matchId, nick, Object.keys(snap.state.players));
     if (!seat) return { error: 'E_MATCH_FULL' };
     return { playerId: seat.playerId, token: await signToken(matchId, seat.playerId, accountId) };
@@ -167,6 +175,18 @@ const avaService = new AvaService({
   corpStore: stores.corpStore,
   challengeStore: stores.challengeStore,
   rosterStore: stores.rosterStore,
+});
+
+// AvA orchestrator (AVA-7): a LOCKED matchup becomes a live session — pick a map,
+// lay the roster onto team slots, persist the seq-0 snapshot (the LazyRoomRegistry
+// loads it on first connect like any match); `resolveAvaSeat` pins joins to the
+// roster (wired into the join path above).
+const orchestrator = new AvaOrchestrator({
+  challenges: stores.challengeStore,
+  roster: stores.rosterStore,
+  maps: loadShippedAvaMaps(),
+  data,
+  saveMatch: (snapshot) => stores.store.save(snapshot),
 });
 
 // Match factory (SV-2.5): keep OPEN_MATCHES joinable matches available so the feed is
@@ -257,11 +277,16 @@ const avaSweep = setInterval(() => {
       `ava expiry sweep failed — ${err instanceof Error ? err.message : String(err)}\n`,
     );
   });
-  void avaService.sweepRosters().catch((err) => {
-    process.stderr.write(
-      `ava roster sweep failed — ${err instanceof Error ? err.message : String(err)}\n`,
-    );
-  });
+  void avaService
+    .sweepRosters()
+    // A fresh lock is launchable immediately — chain the orchestrator pass so a
+    // matchup does not idle a full interval between LOCKED and its live session.
+    .then(() => orchestrator.launchDue())
+    .catch((err) => {
+      process.stderr.write(
+        `ava roster sweep failed — ${err instanceof Error ? err.message : String(err)}\n`,
+      );
+    });
 }, 60_000);
 avaSweep.unref?.();
 

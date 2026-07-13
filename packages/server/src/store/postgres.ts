@@ -141,6 +141,9 @@ export async function migrate(pool: Pool): Promise<void> {
     -- AVA-6: the roster window deadline, stamped on accept (S3 opens at S2).
     -- ALTER … IF NOT EXISTS backfills pre-AVA-6 rows with NULL = window closed.
     ALTER TABLE ava_challenges ADD COLUMN IF NOT EXISTS pause_ends_at bigint;
+    -- AVA-7: the launched session, bound exactly once on a LOCKED matchup.
+    ALTER TABLE ava_challenges ADD COLUMN IF NOT EXISTS match_id text;
+    CREATE INDEX IF NOT EXISTS ava_challenges_match_idx ON ava_challenges (match_id);
 
     -- AvA rosters (AVA-6): one row per (matchup, account) — the PK is the
     -- one-entry-per-account invariant; the per-side cap is guarded inside the
@@ -700,6 +703,7 @@ interface ChallengeRow {
   created_at: string;
   expires_at: string;
   pause_ends_at: string | null;
+  match_id: string | null;
 }
 
 function challengeOf(row: ChallengeRow): AvaChallenge {
@@ -712,8 +716,13 @@ function challengeOf(row: ChallengeRow): AvaChallenge {
     createdAt: Number(row.created_at),
     expiresAt: Number(row.expires_at),
     ...(row.pause_ends_at === null ? {} : { pauseEndsAt: Number(row.pause_ends_at) }),
+    ...(row.match_id === null ? {} : { matchId: row.match_id }),
   };
 }
+
+/** The full challenge column list every SELECT shares (one place to extend). */
+const CHALLENGE_COLS =
+  'id, challenger_corp, target_corp, cost, status, created_at, expires_at, pause_ends_at, match_id';
 
 /** Postgres AvA challenge store (AVA-4). The partial unique index enforces one pending
  *  per pair; the conditional UPDATE makes pending→terminal an exactly-once transition. */
@@ -747,7 +756,7 @@ export class PostgresAvaChallengeStore implements AvaChallengeStore {
 
   async getChallenge(id: string): Promise<AvaChallenge | null> {
     const r = await this.pool.query<ChallengeRow>(
-      `SELECT id, challenger_corp, target_corp, cost, status, created_at, expires_at, pause_ends_at
+      `SELECT ${CHALLENGE_COLS}
        FROM ava_challenges WHERE id = $1`,
       [id],
     );
@@ -756,7 +765,7 @@ export class PostgresAvaChallengeStore implements AvaChallengeStore {
 
   async challengesOf(corpId: string, limit = 50): Promise<AvaChallenge[]> {
     const r = await this.pool.query<ChallengeRow>(
-      `SELECT id, challenger_corp, target_corp, cost, status, created_at, expires_at, pause_ends_at
+      `SELECT ${CHALLENGE_COLS}
        FROM ava_challenges
        WHERE challenger_corp = $1 OR target_corp = $1
        ORDER BY created_at DESC, id LIMIT $2`,
@@ -777,7 +786,7 @@ export class PostgresAvaChallengeStore implements AvaChallengeStore {
 
   async duePending(now: number): Promise<AvaChallenge[]> {
     const r = await this.pool.query<ChallengeRow>(
-      `SELECT id, challenger_corp, target_corp, cost, status, created_at, expires_at, pause_ends_at
+      `SELECT ${CHALLENGE_COLS}
        FROM ava_challenges
        WHERE status = 'pending' AND expires_at <= $1
        ORDER BY expires_at, id`,
@@ -805,13 +814,43 @@ export class PostgresAvaChallengeStore implements AvaChallengeStore {
 
   async dueRosters(now: number): Promise<AvaChallenge[]> {
     const r = await this.pool.query<ChallengeRow>(
-      `SELECT id, challenger_corp, target_corp, cost, status, created_at, expires_at, pause_ends_at
+      `SELECT ${CHALLENGE_COLS}
        FROM ava_challenges
        WHERE status = 'accepted' AND pause_ends_at IS NOT NULL AND pause_ends_at <= $1
        ORDER BY pause_ends_at, id`,
       [now],
     );
     return r.rows.map(challengeOf);
+  }
+
+  async unlaunchedLocked(): Promise<AvaChallenge[]> {
+    const r = await this.pool.query<ChallengeRow>(
+      `SELECT ${CHALLENGE_COLS}
+       FROM ava_challenges
+       WHERE status = 'locked' AND match_id IS NULL
+       ORDER BY id`,
+    );
+    return r.rows.map(challengeOf);
+  }
+
+  async bindMatch(matchupId: string, matchId: string): Promise<boolean> {
+    // Exactly-once launch: only a LOCKED, still-unbound row takes the binding, so
+    // two racing orchestrator passes cannot launch one matchup twice.
+    const r = await this.pool.query(
+      `UPDATE ava_challenges SET match_id = $2
+       WHERE id = $1 AND status = 'locked' AND match_id IS NULL`,
+      [matchupId, matchId],
+    );
+    return (r.rowCount ?? 0) > 0;
+  }
+
+  async matchupByMatch(matchId: string): Promise<AvaChallenge | null> {
+    const r = await this.pool.query<ChallengeRow>(
+      `SELECT ${CHALLENGE_COLS}
+       FROM ava_challenges WHERE match_id = $1`,
+      [matchId],
+    );
+    return r.rows[0] ? challengeOf(r.rows[0]) : null;
   }
 }
 

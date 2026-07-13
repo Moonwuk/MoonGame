@@ -375,6 +375,31 @@ export class MemoryAvaChallengeStore implements AvaChallengeStore {
         .map((r) => ({ ...r })),
     );
   }
+
+  unlaunchedLocked(): Promise<AvaChallenge[]> {
+    return Promise.resolve(
+      [...this.rows.values()]
+        .filter((r) => r.status === 'locked' && r.matchId === undefined)
+        .sort((a, b) => (a.id < b.id ? -1 : 1))
+        .map((r) => ({ ...r })),
+    );
+  }
+
+  bindMatch(matchupId: string, matchId: string): Promise<boolean> {
+    const row = this.rows.get(matchupId);
+    if (!row || row.status !== 'locked' || row.matchId !== undefined) {
+      return Promise.resolve(false);
+    }
+    row.matchId = matchId;
+    return Promise.resolve(true);
+  }
+
+  matchupByMatch(matchId: string): Promise<AvaChallenge | null> {
+    for (const row of this.rows.values()) {
+      if (row.matchId === matchId) return Promise.resolve({ ...row });
+    }
+    return Promise.resolve(null);
+  }
 }
 
 /** In-memory AvA roster store (AVA-6) — `matchupId → accountId → entry`, plus the

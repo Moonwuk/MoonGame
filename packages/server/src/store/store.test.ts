@@ -382,6 +382,24 @@ function avaChallengeStoreContract(
       expect((await store.getChallenge(uniq('ch-f')))?.status).toBe('locked');
       expect((await store.dueRosters(9999)).map((c) => c.id)).not.toContain(uniq('ch-f'));
     });
+
+    it('AVA-7: bindMatch is exactly-once on a LOCKED row; matchupByMatch resolves it', async () => {
+      const store = make();
+      const [a, b] = [uniq('c-a6'), uniq('c-b6')];
+      await store.createChallenge(challenge(uniq('ch-g'), a, b, 1000));
+      // a pending row is not launchable
+      expect(await store.bindMatch(uniq('ch-g'), uniq('m-early'))).toBe(false);
+      await store.closeChallenge(uniq('ch-g'), 'accepted');
+      await store.closeMatchup(uniq('ch-g'), 'locked');
+      // locked + unbound → in the orchestrator queue
+      expect((await store.unlaunchedLocked()).map((c) => c.id)).toContain(uniq('ch-g'));
+      expect(await store.bindMatch(uniq('ch-g'), uniq('m-1'))).toBe(true);
+      expect(await store.bindMatch(uniq('ch-g'), uniq('m-2'))).toBe(false); // lost the race — no rebind
+      expect((await store.getChallenge(uniq('ch-g')))?.matchId).toBe(uniq('m-1'));
+      expect((await store.unlaunchedLocked()).map((c) => c.id)).not.toContain(uniq('ch-g'));
+      expect((await store.matchupByMatch(uniq('m-1')))?.id).toBe(uniq('ch-g'));
+      expect(await store.matchupByMatch(uniq('m-none'))).toBeNull();
+    });
   });
 }
 

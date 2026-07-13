@@ -38,6 +38,12 @@ export {
 } from './matchApi';
 export { MatchKeeper, type MatchKeeperOptions } from './matchFactory';
 export { pickAvaMap } from './avaMapPool';
+export {
+  AvaOrchestrator,
+  type AvaOrchestratorDeps,
+  type AvaSeatVerdict,
+  type LaunchedSession,
+} from './avaOrchestrator';
 export { MetricsAggregator, type MetricsSummary, type SeriesStat } from './metrics';
 export { InMemoryEphemeralStore, type EphemeralStore } from './ephemeral';
 export {

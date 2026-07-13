@@ -514,10 +514,22 @@
   `E_ROSTER_FULL`/`E_ROSTER_LOCKED`/`E_WINDOW_CLOSED`. REST `GET /ava/matchup/:id`,
   `POST …/roster`, `POST …/join`; свип на интервале `main.ts`. Тесты: стор-контракты
   обоих адаптеров + сервис (окно/RBAC/кап/лок/отмена+возврат) + HTTP.
-- **AVA-7** ⏳ `[srv]` ★ **Оркестратор: сессия из ростера (S4).** `pickAvaMap` → раскладка
-  ростера по командным слотам → `buildStateFromMap({slots, crossTeamStart:'peace'})` →
-  `MatchRegistry.register`; AvA-осведомлённая рассадка (аккаунт→фикс-слот, `resolveAvaSeat`,
-  `E_NOT_ROSTERED`).
+- **AVA-7** ✅ `[srv]` ★ **Оркестратор: сессия из ростера (S4).** `AvaOrchestrator.launchDue`:
+  для каждого LOCKED-матчапа без `matchId` — `pickAvaMap` (seed = id матчапа, выбор
+  воспроизводим; карта под бо́льшую сторону), раскладка ростера по командным слотам
+  (challenger → первая команда, союзники сгруппированы раскладкой карты; недобранная
+  сторона добивается ИИ-местами `ai-<slot>` — мир симметричен, офлайн-сторона
+  обороняется гарнизоном), `buildStateFromMap({slots, crossTeamStart:'peace'})` (S5 —
+  бой заперт до AVA-8), seq-0 снапшот в `MatchStore` — `LazyRoomRegistry` поднимает
+  сессию на первом коннекте, нового транспорта нет. Личность места: `playerId =
+  accountId` (ростер и есть карта мест — отдельной таблицы не нужно). Launch
+  exactly-once: `bindMatch` — условный UPDATE (locked ∧ unbound), детерминированный
+  `matchId = ava-<matchupId>` делает проигранную гонку безвредной (тот же снапшот).
+  **`resolveAvaSeat`** встроен в join-путь `main.ts` ПЕРЕД `resolveSeat`: ростерный
+  аккаунт → его фикс-место, остальные → `E_NOT_ROSTERED` (403), обычный матч →
+  фолбэк на штатный резолвер. Карта без пула → матчап остаётся в очереди (ретрай
+  свипом). Тесты: контракт стора (bind exactly-once) + оркестратор (1v1/2v1 с
+  ИИ-добивкой/группировка союзников/peace/фикс-места/exactly-once/пустой пул).
 - **AVA-8** ⏳ `[srv]` ★ **Мир→война→итог (S5–S7).** Мир = кросс-командный `peace`
   (combat-lock бесплатно), война = оркестратор шлёт `diplomacy.declare(war)` по таймеру,
   итог на `match.ended` — влияние победителю + XP + запись результата (MM-3.1 минимум) +

@@ -231,6 +231,9 @@ export interface AvaChallenge {
    *  sides gather their roster until this instant, then the sweep locks or cancels.
    *  Absent on rows accepted before AVA-6 — treated as a closed window (fail-secure). */
   pauseEndsAt?: number;
+  /** The live session created from this matchup (AVA-7), bound exactly once when the
+   *  orchestrator launches a LOCKED matchup. Absent = not launched yet. */
+  matchId?: string;
 }
 
 /** Which party of a matchup an account fights for (AVA-6). */
@@ -273,6 +276,13 @@ export interface AvaChallengeStore {
   closeMatchup(id: string, status: 'locked' | 'cancelled'): Promise<boolean>;
   /** Accepted matchups whose roster window is due at `now` (for the roster sweep). */
   dueRosters(now: number): Promise<AvaChallenge[]>;
+  /** AVA-7: LOCKED matchups not yet launched (no `matchId`) — the orchestrator's queue. */
+  unlaunchedLocked(): Promise<AvaChallenge[]>;
+  /** AVA-7: bind the created session to a LOCKED matchup — exactly once (false when
+   *  the row is not locked or already bound; nothing changes on a lost race). */
+  bindMatch(matchupId: string, matchId: string): Promise<boolean>;
+  /** AVA-7: the matchup a session was launched from, or null (a regular match). */
+  matchupByMatch(matchId: string): Promise<AvaChallenge | null>;
   close?(): Promise<void>;
 }
 
