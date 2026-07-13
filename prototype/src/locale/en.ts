@@ -4,6 +4,35 @@
 // English in game.ts) need no entry here; `tData()` shows them as-is on this locale.
 // One language = one file.
 export const en: Record<string, string> = {
+  // --- ONB-4 codex/help hub (chrome + glossary) --------------------------------
+  Справочник: 'Codex',
+  Справка: 'Help',
+  СПРАВОЧНИК: 'CODEX',
+  'Поиск: юнит, здание, термин…': 'Search: unit, building, term…',
+  'Поиск по справочнику': 'Search the codex',
+  'Ничего не найдено': 'Nothing found',
+  механика: 'mechanic',
+  Механики: 'Mechanics',
+  'Асинхронный мир': 'Asynchronous world',
+  'Мир идёт в реальном времени и продолжается 24/7 — даже когда ты вышел. Приказы занимают реальные часы: отдал курс, закрыл игру, вернулся к результату. Это не пошаговая игра — заходи, отдавай приказы, выходи.':
+    'The world runs in real time and keeps going 24/7 — even after you leave. Orders take real hours: set a course, close the game, come back to the result. This is not turn-based — drop in, issue orders, drop out.',
+  'Туман войны': 'Fog of war',
+  'Ты видишь только то, что рядом с твоими силами и радарами; остальное скрыто туманом или показано по памяти (последнее, что ты там видел). Разведчики и радары раздвигают обзор — держи глаза открытыми.':
+    'You see only what is near your forces and radars; the rest is hidden by fog or shown from memory (the last thing you saw there). Scouts and radar widen your view — keep your eyes open.',
+  'Содержание (upkeep)': 'Upkeep',
+  'Флоты и здания требуют ежедневной платы. Доход от шахт минус содержание = чистый баланс; уйдёшь в минус — казна опустеет. Строй экономику раньше армии.':
+    'Fleets and buildings cost a daily fee. Mine income minus upkeep = your net balance; go negative and the treasury drains. Build economy before army.',
+  'Орбита и высадка': 'Orbit and landing',
+  'Захват мира — двухфазный. Сначала выйди на орбиту и подави оборону в космосе; если мир защищён гарнизоном — высади десант (наземную дивизию из трюма). Небо, потом земля.':
+    'Capturing a world is two-phase. First enter orbit and beat the defenders in space; if the world holds a garrison, land troops (a ground division from the hold). Sky first, then ground.',
+  'Звёздные трассы': 'Star lanes',
+  'Флоты ходят не напрямую, а по звёздным трассам (лэйнам) между мирами — маршрут строится автоматически. Узлы на трассах можно перехватывать: встречный враг на пути — это бой.':
+    'Fleets travel not in straight lines but along star lanes between worlds — the route is built automatically. Lane nodes can be intercepted: an enemy met on the way is a battle.',
+  'Очки капают за то, чем ты владеешь: мир — 50, прочий сектор — 10, здания добавляют по уровню. Набери порог очков — победа. Другой путь к победе — уничтожение соперников или доминирование.':
+    'Points accrue from what you hold: a world — 50, any other sector — 10, buildings add per level. Reach the score threshold to win. Other paths to victory: eliminating rivals or domination.',
+  'Коалиционный порог': 'Coalition cap',
+  'Дипломатия позволяет заключать пакты и союзы, но коалиция ограничена порогом совокупной силы — нельзя собрать всех против одного. Порог держит баланс сил и не даёт «снежному кому» задавить партию.':
+    'Diplomacy lets you sign pacts and alliances, but a coalition is capped by combined strength — you cannot gang everyone up on one player. The cap keeps the balance of power and stops a snowball from crushing the game.',
   // --- ONB-0 first-run offer (hub) + «Ещё → Обучение» --------------------------
   'Впервые в Void Dominion?': 'New to Void Dominion?',
   'Короткое обучение покажет интерфейс и первый ход — пара минут.':

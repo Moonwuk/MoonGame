@@ -215,6 +215,31 @@ body.sheet-open #cmdbar{bottom:calc(34vh + 12px);}
 .cx-close{margin-top:8px;width:100%;padding:9px;cursor:pointer;border-radius:6px;border:1px solid var(--cyan-dim);
   background:rgba(53,214,230,.1);color:var(--cyan);font:600 12px ui-monospace,monospace;letter-spacing:1px;}
 
+/* ONB-4 codex/help hub — searchable index over units/buildings/mechanics (pure
+   index: src/codexIndex.ts). Sits at z-45, one below #codex (46) so tapping a
+   result layers the single-article popup on top of the hub. */
+#codexhub{position:fixed;inset:0;z-index:45;display:none;align-items:center;justify-content:center;padding:18px;
+  background:rgba(1,5,9,.6);-webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px);}
+#codexhub.show{display:flex;}
+#codexhub .chbox{width:min(460px,94vw);max-height:86vh;display:flex;flex-direction:column;background:var(--glass);
+  border:1px solid var(--cyan);border-radius:10px;padding:14px 16px 12px;box-shadow:0 0 40px rgba(0,0,0,.6),inset 0 0 0 1px rgba(53,214,230,.06);}
+#codexhub .ch-head{display:flex;align-items:center;gap:10px;padding-bottom:10px;margin-bottom:10px;border-bottom:1px solid var(--line-hi);}
+#codexhub .ch-head .cx-ic{font-size:20px;color:var(--cyan);}
+#codexhub .ch-head b{font-size:15px;letter-spacing:1.5px;color:#eafffb;flex:1;}
+#codexhub .ch-search{width:100%;box-sizing:border-box;padding:9px 11px;margin-bottom:10px;border-radius:7px;
+  border:1px solid var(--line-hi);background:rgba(3,12,16,.7);color:var(--ink);font:13px ui-monospace,monospace;}
+#codexhub .ch-search:focus{outline:none;border-color:var(--cyan);}
+#codexhub .ch-body{overflow:auto;}
+#codexhub .ch-sec{font-size:9px;letter-spacing:2px;text-transform:uppercase;color:var(--cyan-dim);margin:8px 0 6px;}
+#codexhub .ch-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-bottom:6px;}
+#codexhub .ch-item{display:flex;align-items:center;gap:8px;padding:9px 10px;cursor:pointer;text-align:left;
+  border-radius:7px;border:1px solid var(--line-hi);background:rgba(3,12,16,.6);color:#dfeef2;font:600 12px ui-monospace,monospace;}
+#codexhub .ch-item:active{background:rgba(53,214,230,.12);border-color:var(--cyan);}
+#codexhub .ch-item .ch-ic{color:var(--cyan);flex:0 0 auto;}
+#codexhub .ch-empty{padding:24px 8px;text-align:center;color:var(--dim);font-size:13px;}
+#codexhub .cx-close{margin-top:10px;}
+/* the always-present in-match «?» help button (rail tool) reuses the rail styles */
+
 /* player card — tap the top-left crest for your session dossier */
 #playercard{position:fixed;inset:0;z-index:47;display:none;align-items:center;justify-content:center;padding:18px;
   background:rgba(1,5,9,.55);-webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px);}
@@ -1606,6 +1631,7 @@ const html = `<!doctype html>
     <button id="railcorp" title="Корпорация" data-i18n-title>⬢<span class="rlbl" data-i18n>Корп</span></button>
     <button id="rail-chat" title="Чат" data-i18n-title class="desk-only">🗨<span class="rlbl" data-i18n>Чат</span></button>
     <button id="rail-log" title="Сводки" data-i18n-title>≡<span class="rlbl" data-i18n>Сводки</span><span class="badge" id="alertbadge" style="display:none">0</span></button>
+    <button id="rail-help" title="Справочник" data-i18n-title>?<span class="rlbl" data-i18n>Справка</span></button>
   </div>
   <button id="railtoggle" title="Инструменты" type="button" aria-expanded="false"><span id="railglyph">☰</span><span class="badge" id="railalert" style="display:none">0</span></button>
 </nav>
@@ -1634,6 +1660,7 @@ const html = `<!doctype html>
 </div>
 <div id="cmdbar"></div>
 <div id="codex"></div>
+<div id="codexhub"></div>
 <div id="playercard"></div>
 <div id="settings"></div>
 <div id="warprompt"></div>
@@ -1765,6 +1792,7 @@ const html = `<!doctype html>
     <div class="hub-panel" id="hp-more" style="display:none">
       <div class="hub-grid">
         <button class="hub-tile" id="hub-tutorial" type="button"><span class="ht-ic">◎</span><span data-i18n>Обучение</span></button>
+        <button class="hub-tile" id="hub-help" type="button"><span class="ht-ic">?</span><span data-i18n>Справочник</span></button>
         <button class="hub-tile" id="hub-settings" type="button"><span class="ht-ic">⚙</span><span data-i18n>Настройки</span></button>
         <button class="hub-tile" id="hub-upd" type="button" style="display:none"><span class="ht-ic">⟳</span><span data-i18n>Обновления</span></button>
         <button class="hub-tile" data-more="Аккаунт" type="button"><span class="ht-ic">◉</span><span data-i18n>Аккаунт</span></button>

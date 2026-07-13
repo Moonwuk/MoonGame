@@ -6,7 +6,7 @@
 > `deep-technical-roadmap.md`, `multiplayer.md`, `metagame.md`, `map-roadmap.md`, `security-a06.md` (модель угроз/A06), корневой `CLAUDE.md` / `CONTRIBUTING.md`.
 >
 > **Ветка:** feature-ветка · **PR:** создаётся после изменений.
-> **Гейт:** `pnpm run check` (lint + typecheck + test). **Тесты: 1288 зелёных** (11 skip, 123 файла).
+> **Гейт:** `pnpm run check` (lint + typecheck + test). **Тесты: 1297 зелёных** (11 skip, 124 файла).
 
 ---
 
@@ -953,6 +953,19 @@ botDiplomacy, market, division, capital, standingOrders])` (26 модулей), 
   `serverPatrolActions` + хост-цикл `netserver.runServerStanding`; `autoAssault`/
   `patrols` фильтруются в fog; кнопки «⚔ авто-штурм» и «🛩 дежурный вылет» работают
   в соло и NET.
+- **Help/кодекс-хаб (ONB-4)** — существующий корпус кодекса стал **находимым**: чистый
+  индекс `src/codexIndex.ts` (`buildCodexIndex(data)`→плоский `CodexEntry[]` по всем
+  юнитам/зданиям + `GLOSSARY` из 7 терминов-статей: async, туман, upkeep, орбита/высадка,
+  трассы, очки, коалиц-порог; `searchCodex` — матч по заголовку+тегам, пустой запрос → все,
+  инъектируемый `textOf` для локали) — 9 юнит-тестов (`codexIndex.test.ts`: поиск по
+  заголовку/тегу, регистронезависимость, пустой→категории, глоссарий, ранжирование). UI:
+  оверлей `#codexhub` (z-45, под `#codex`) с поиском + категориями (Юниты/Здания/Механики),
+  результат — deep-link в существующий `openCodex` (глоссарий рендерит новая ветвь
+  `codexHtml('m')`); точки входа — хаб «Ещё → Справочник» + внутриматчевая рельс-кнопка «?».
+  RU/EN, поиск бьёт по локализованному ярлыку (RU «туман» и EN «fog» оба находят). Чистое
+  surfacing (низкий риск). Проверено вживую (headless-бут): хаб открывается, пустой запрос →
+  категории, поиск находит юнит/здание/термин, тап результата открывает статью. _Per-panel
+  контекстная «?» — за последующей доводкой; глобальный хаб + рельс-«?» дают «найти за 2 тапа»._
 - **Первый запуск + воронка (ONB-0)** — признак «прошёл онбординг» отдельно от ника:
   чистая per-nick модель `src/onboarding.ts` (`OnboardState {started, stepReached,
   completed, skipped}`, fail-secure `parseOnboardState`, идемпотентные переходы,

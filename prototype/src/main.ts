@@ -149,6 +149,8 @@ import type { TourResult } from './spotlight';
 import { HUD_ORIENTATION_TOUR } from './onboardingTour';
 // ONB-2 — the guided first match (a data chain over this same engine).
 import { buildFirstMatchTour } from './firstMatchTour';
+// ONB-4 — searchable codex/help index (pure) over the existing article corpus.
+import { buildCodexIndex, searchCodex, GLOSSARY, type CodexEntry, type CodexCategory } from './codexIndex';
 // ONB-0 — first-run onboarding state + funnel (per-callsign localStorage). Pure
 // model; main.ts persists it and drives the hub offer / «Ещё → Обучение» replay.
 import {
@@ -4837,6 +4839,15 @@ function cxRow(k: string, v: string): string {
 }
 /** Full info card — cost + every stat + the lore blurb — for a building ('b') or unit ('u'). */
 function codexHtml(kind: string, id: string): string {
+  if (kind === 'm') {
+    // ONB-4 glossary article — a short mechanic/term explainer (plain text copy).
+    const g = GLOSSARY.find((x) => x.id === id);
+    if (!g) return '';
+    return (
+      `<div class="cx-head"><span class="cx-ic">?</span><b>${esc(t(g.title))}</b><span class="cx-tag">${t('механика')}</span></div>` +
+      `<div class="cx-desc">${esc(t(g.body))}</div>`
+    );
+  }
   if (kind === 'b') {
     const def = data.buildings[id];
     if (!def) return '';
@@ -5426,6 +5437,80 @@ function codexBuildBtn(kind: string, id: string): string {
   }
   return '';
 }
+
+// --- ONB-4 codex/help hub: searchable index over the article corpus ----------
+// The pure index (src/codexIndex.ts) flattens every unit/building + a glossary of
+// tricky terms; here we localise labels and render a searchable «?» surface. A tap
+// on a result deep-links into the single-article codex (openCodex), so any
+// term/unit/mechanic is two taps away. Entry points: hub «Ещё → Справочник» + the
+// in-match rail «?».
+const CODEX_INDEX = buildCodexIndex(data, GLOSSARY);
+const CODEX_SECTIONS: Array<[CodexCategory, string]> = [
+  ['unit', 'Юниты'],
+  ['building', 'Здания'],
+  ['mechanic', 'Механики'],
+];
+function codexEntryLabel(e: CodexEntry): string {
+  const id = e.key.slice(2);
+  if (e.category === 'unit') return unitDossier(id)?.name ?? displayUnit(id);
+  if (e.category === 'building') return buildingName(id);
+  return t(e.title); // mechanic: title is the canonical-Russian msgid
+}
+function codexEntryIcon(e: CodexEntry): string {
+  const id = e.key.slice(2);
+  if (e.category === 'unit') return unitIcon(id);
+  if (e.category === 'building') return BUILD_ICON[id] ?? '▣';
+  return '?';
+}
+function codexItemHtml(e: CodexEntry): string {
+  return `<button class="ch-item" data-codex="${esc(e.key)}"><span class="ch-ic">${codexEntryIcon(e)}</span><span>${esc(codexEntryLabel(e))}</span></button>`;
+}
+// Search folds the LOCALISED label into the haystack so RU and EN queries both hit.
+function renderCodexResults(query: string): void {
+  const host = document.getElementById('ch-results');
+  if (!host) return;
+  const hits = searchCodex(CODEX_INDEX, query, (e) =>
+    (codexEntryLabel(e) + ' ' + e.title + ' ' + e.tags.join(' ')).toLowerCase(),
+  );
+  if (!query.trim()) {
+    // Empty query → browse by category.
+    host.innerHTML = CODEX_SECTIONS.map(([cat, label]) => {
+      const items = hits.filter((e) => e.category === cat);
+      return items.length ? `<div class="ch-sec">${t(label)}</div><div class="ch-grid">${items.map(codexItemHtml).join('')}</div>` : '';
+    }).join('');
+    return;
+  }
+  host.innerHTML = hits.length
+    ? `<div class="ch-grid">${hits.map(codexItemHtml).join('')}</div>`
+    : `<div class="ch-empty">${t('Ничего не найдено')}</div>`;
+}
+function openCodexHub(): void {
+  const box = document.getElementById('codexhub');
+  if (!box) return;
+  box.innerHTML =
+    `<div class="chbox"><div class="ch-head"><span class="cx-ic">?</span><b>${t('СПРАВОЧНИК')}</b></div>` +
+    `<input id="ch-search" class="ch-search" type="text" placeholder="${t('Поиск: юнит, здание, термин…')}" aria-label="${t('Поиск по справочнику')}">` +
+    `<div class="ch-body" id="ch-results"></div>` +
+    `<button class="cx-close" id="ch-close">${t('ЗАКРЫТЬ')}</button></div>`;
+  const input = document.getElementById('ch-search') as HTMLInputElement | null;
+  if (input) input.oninput = () => renderCodexResults(input.value);
+  renderCodexResults('');
+  box.classList.add('show');
+  input?.focus();
+}
+// One delegated handler for the hub (rebuilt each open, so wire the container once).
+document.getElementById('codexhub')?.addEventListener('click', (ev) => {
+  const box = document.getElementById('codexhub')!;
+  const tg = ev.target as HTMLElement;
+  if (tg === box || tg.closest('#ch-close')) {
+    box.classList.remove('show'); // backdrop / CLOSE
+    return;
+  }
+  const item = tg.closest('.ch-item') as HTMLElement | null;
+  if (item?.dataset.codex) openCodex(item.dataset.codex); // deep-link → single article (layers on top)
+});
+document.getElementById('hub-help')?.addEventListener('click', openCodexHub);
+document.getElementById('rail-help')?.addEventListener('click', openCodexHub);
 
 /** A `b:<id>:<lvl>` key embeds its building level in the title (as `hl(lvl)`) — shared
  *  by the desktop hover pane and the mobile tap modal so both read identically. */
