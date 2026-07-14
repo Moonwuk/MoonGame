@@ -29,6 +29,7 @@ import type {
   AvaResultStore,
   AvaRosterEntry,
   AvaRosterStore,
+  AvaSession,
   AvaSessionStore,
   AvaSide,
   CorpStore,
@@ -436,27 +437,36 @@ function resultStoreContract(
   });
 }
 
-// AVA-7 — the session store: one per matchup/instance, read by match or by matchup.
+// AVA-7/8 — the session store: one per matchup/instance; war deadline sweep + open flag.
 function sessionStoreContract(
   name: string,
   make: () => AvaSessionStore,
   uniq: (p: string) => string,
 ): void {
+  const session = (matchId: string, matchupId: string, over: Partial<AvaSession> = {}): AvaSession => ({
+    matchId,
+    matchupId,
+    mapId: 'ava-duel-1',
+    seats: {},
+    sides: {},
+    warAt: 1000,
+    warOpen: false,
+    at: 1,
+    ...over,
+  });
+
   describe(`AvaSessionStore — ${name}`, () => {
-    it('creates a session, reads it by match and by matchup, round-tripping seats', async () => {
+    it('creates a session, reads it by match and by matchup, round-tripping seats + sides', async () => {
       const store = make();
       const [match, matchup] = [uniq('s-match'), uniq('s-mu')];
-      const seats = { [uniq('acc-a')]: 'slot_a', [uniq('acc-b')]: 'slot_b' };
-      expect(await store.create({ matchId: match, matchupId: matchup, mapId: 'ava-duel-1', seats, at: 7 })).toEqual({
-        ok: true,
-      });
-      expect(await store.byMatch(match)).toEqual({
-        matchId: match,
-        matchupId: matchup,
-        mapId: 'ava-duel-1',
-        seats,
+      const row = session(match, matchup, {
+        seats: { [uniq('acc-a')]: 'slot_a', [uniq('acc-b')]: 'slot_b' },
+        sides: { slot_a: 'challenger', slot_b: 'target' },
+        warAt: 500,
         at: 7,
       });
+      expect(await store.create(row)).toEqual({ ok: true });
+      expect(await store.byMatch(match)).toEqual(row);
       expect((await store.byMatchup(matchup))?.matchId).toBe(match);
       expect(await store.byMatch(uniq('missing'))).toBeNull();
     });
@@ -464,15 +474,32 @@ function sessionStoreContract(
     it('rejects a second session for the same matchup or the same match id', async () => {
       const store = make();
       const [match, matchup] = [uniq('s-m2'), uniq('s-mu2')];
-      await store.create({ matchId: match, matchupId: matchup, mapId: 'ava-duel-1', seats: {}, at: 1 });
+      await store.create(session(match, matchup));
       // same matchup, different match id → rejected (one session per matchup)
-      expect(
-        await store.create({ matchId: uniq('s-m3'), matchupId: matchup, mapId: 'ava-duel-1', seats: {}, at: 2 }),
-      ).toEqual({ ok: false, code: 'E_SESSION_EXISTS' });
+      expect(await store.create(session(uniq('s-m3'), matchup))).toEqual({
+        ok: false,
+        code: 'E_SESSION_EXISTS',
+      });
       // same match id, different matchup → rejected (PK)
-      expect(
-        await store.create({ matchId: match, matchupId: uniq('s-mu3'), mapId: 'ava-duel-1', seats: {}, at: 3 }),
-      ).toEqual({ ok: false, code: 'E_SESSION_EXISTS' });
+      expect(await store.create(session(match, uniq('s-mu3')))).toEqual({
+        ok: false,
+        code: 'E_SESSION_EXISTS',
+      });
+    });
+
+    it('dueWars returns only past-deadline, not-yet-opened sessions; openWar removes it', async () => {
+      const store = make();
+      const [m1, m2] = [uniq('s-w1'), uniq('s-w2')];
+      await store.create(session(m1, uniq('s-wmu1'), { warAt: 100 }));
+      await store.create(session(m2, uniq('s-wmu2'), { warAt: 900 }));
+      const due = (now: number): Promise<string[]> =>
+        store.dueWars(now).then((rows) => rows.map((r) => r.matchId));
+      expect(await due(50)).not.toContain(m1); // deadline not reached
+      expect(await due(500)).toContain(m1);
+      expect(await due(500)).not.toContain(m2); // m2's deadline is later
+      await store.openWar(m1);
+      expect(await due(1000)).not.toContain(m1); // opened → no longer due
+      expect((await store.byMatch(m1))?.warOpen).toBe(true);
     });
   });
 }

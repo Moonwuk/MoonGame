@@ -434,7 +434,7 @@ export class MemoryAvaSessionStore implements AvaSessionStore {
     if (this.byMatchId.has(session.matchId) || this.byMatchupId.has(session.matchupId)) {
       return Promise.resolve({ ok: false, code: 'E_SESSION_EXISTS' });
     }
-    const row: AvaSession = { ...session, seats: { ...session.seats } };
+    const row = cloneSession(session);
     this.byMatchId.set(session.matchId, row);
     this.byMatchupId.set(session.matchupId, row);
     return Promise.resolve({ ok: true });
@@ -442,13 +442,34 @@ export class MemoryAvaSessionStore implements AvaSessionStore {
 
   byMatch(matchId: string): Promise<AvaSession | null> {
     const row = this.byMatchId.get(matchId);
-    return Promise.resolve(row ? { ...row, seats: { ...row.seats } } : null);
+    return Promise.resolve(row ? cloneSession(row) : null);
   }
 
   byMatchup(matchupId: string): Promise<AvaSession | null> {
     const row = this.byMatchupId.get(matchupId);
-    return Promise.resolve(row ? { ...row, seats: { ...row.seats } } : null);
+    return Promise.resolve(row ? cloneSession(row) : null);
   }
+
+  dueWars(now: number, limit = 100): Promise<AvaSession[]> {
+    return Promise.resolve(
+      [...this.byMatchId.values()]
+        .filter((r) => !r.warOpen && r.warAt <= now)
+        .sort((a, b) => a.warAt - b.warAt || (a.matchId < b.matchId ? -1 : 1))
+        .slice(0, limit)
+        .map(cloneSession),
+    );
+  }
+
+  openWar(matchId: string): Promise<void> {
+    const row = this.byMatchId.get(matchId);
+    if (row) row.warOpen = true;
+    return Promise.resolve();
+  }
+}
+
+/** Deep-ish clone of a session row (the two nested records are the mutable bits). */
+function cloneSession(s: AvaSession): AvaSession {
+  return { ...s, seats: { ...s.seats }, sides: { ...s.sides } };
 }
 
 /** In-memory AvA roster store (AVA-6) — `matchupId → accountId → entry`, plus the

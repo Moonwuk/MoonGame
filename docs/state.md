@@ -1072,11 +1072,15 @@ MM-3.1: кто с кем/победитель/время) и начисляет 
 exactly-once-гейт, повторный `match.ended` не начисляет дважды. Ничья (`winnerSide=null`)
 — исход пишется, влияние нет. `matchHistory(limit)` — лента исходов newest-first
 (фундамент под AVA-9/медали/рейтинг). Код `E_MATCHUP_CLOSED`. Server-driven (мимо гейта,
-как свипы) — вызывается оркестратором на `match.ended` (проводка ниже). S5 мир уже
-поднимается AVA-7. **Осталось (S6):** системный `diplomacy.declare(war)` по таймеру на
-живом `MatchRoom` + вызов `settleMatch` на `match.ended` (победитель→сторона по
-`AvaSession.seats`). Полный AvA-цикл дальше: эскалация войны (AVA-8 S6) + лента (AVA-9),
-`corporation-wars.md`.
+как свипы). **S6 война:** `AvaSession` несёт `warAt` (дедлайн = создание + `peaceMs`, деф.
+24ч) + `sides`; `sweepWars` по прошедшим дедлайнам грузит комнату (инжектируемый
+`resolveRoom` = реестр `resolve`+`release`, без утечки живой комнаты) и `declareWars` шлёт
+системный `diplomacy.declare(war)` по кросс-командным парам (`submitServerAction`, мимо
+гейта; стабильный id → идемпотентно; союзники целы); `warOpen` — один раз, restart-safe.
+**S7 мост:** `main.ts` на `match.ended` → `outcomeOf` (победитель→сторона по
+`AvaSession.sides`) → `settleMatch`. Правка по пути: `state.time` AvA-сессии = момент
+создания (иначе `advanceTo(now)` прыгал бы от base-time карты на эпоху → мгновенный конец).
+Дальше: публичная лента итогов (AVA-9), `corporation-wars.md`.
 
 ## 9. Статус
 

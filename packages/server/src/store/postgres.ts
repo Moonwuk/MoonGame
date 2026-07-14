@@ -180,8 +180,12 @@ export async function migrate(pool: Pool): Promise<void> {
       matchup_id text NOT NULL UNIQUE,
       map_id     text NOT NULL,
       seats      jsonb NOT NULL,
+      sides      jsonb NOT NULL,
+      war_at     bigint NOT NULL,
+      war_open   boolean NOT NULL,
       at         bigint NOT NULL
     );
+    CREATE INDEX IF NOT EXISTS ava_sessions_war_idx ON ava_sessions (war_at) WHERE NOT war_open;
   `);
 }
 
@@ -1024,8 +1028,14 @@ interface SessionRow {
   matchup_id: string;
   map_id: string;
   seats: Record<string, string>;
+  sides: Record<string, AvaSide>;
+  war_at: string;
+  war_open: boolean;
   at: string;
 }
+
+const SESSION_COLS =
+  'match_id, matchup_id, map_id, seats, sides, war_at, war_open, at';
 
 function sessionOf(row: SessionRow): AvaSession {
   return {
@@ -1033,11 +1043,14 @@ function sessionOf(row: SessionRow): AvaSession {
     matchupId: row.matchup_id,
     mapId: row.map_id,
     seats: row.seats,
+    sides: row.sides,
+    warAt: Number(row.war_at),
+    warOpen: row.war_open,
     at: Number(row.at),
   };
 }
 
-/** Postgres AvA session store (AVA-7). The PK (match_id) + UNIQUE (matchup_id) make
+/** Postgres AvA session store (AVA-7/8). The PK (match_id) + UNIQUE (matchup_id) make
  *  `create` atomically one-per-matchup and one-per-instance; a duplicate raises the
  *  insert conflict → `E_SESSION_EXISTS` (the orchestrator treats that as "already built"). */
 export class PostgresAvaSessionStore implements AvaSessionStore {
@@ -1048,13 +1061,16 @@ export class PostgresAvaSessionStore implements AvaSessionStore {
   ): Promise<{ ok: true } | { ok: false; code: 'E_SESSION_EXISTS' }> {
     try {
       await this.pool.query(
-        `INSERT INTO ava_sessions (match_id, matchup_id, map_id, seats, at)
-         VALUES ($1, $2, $3, $4, $5)`,
+        `INSERT INTO ava_sessions (match_id, matchup_id, map_id, seats, sides, war_at, war_open, at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
         [
           session.matchId,
           session.matchupId,
           session.mapId,
           JSON.stringify(session.seats),
+          JSON.stringify(session.sides),
+          session.warAt,
+          session.warOpen,
           session.at,
         ],
       );
@@ -1067,7 +1083,7 @@ export class PostgresAvaSessionStore implements AvaSessionStore {
 
   async byMatch(matchId: string): Promise<AvaSession | null> {
     const r = await this.pool.query<SessionRow>(
-      `SELECT match_id, matchup_id, map_id, seats, at FROM ava_sessions WHERE match_id = $1`,
+      `SELECT ${SESSION_COLS} FROM ava_sessions WHERE match_id = $1`,
       [matchId],
     );
     return r.rows[0] ? sessionOf(r.rows[0]) : null;
@@ -1075,9 +1091,23 @@ export class PostgresAvaSessionStore implements AvaSessionStore {
 
   async byMatchup(matchupId: string): Promise<AvaSession | null> {
     const r = await this.pool.query<SessionRow>(
-      `SELECT match_id, matchup_id, map_id, seats, at FROM ava_sessions WHERE matchup_id = $1`,
+      `SELECT ${SESSION_COLS} FROM ava_sessions WHERE matchup_id = $1`,
       [matchupId],
     );
     return r.rows[0] ? sessionOf(r.rows[0]) : null;
+  }
+
+  async dueWars(now: number, limit = 100): Promise<AvaSession[]> {
+    const r = await this.pool.query<SessionRow>(
+      `SELECT ${SESSION_COLS} FROM ava_sessions
+       WHERE NOT war_open AND war_at <= $1
+       ORDER BY war_at, match_id LIMIT $2`,
+      [now, limit],
+    );
+    return r.rows.map(sessionOf);
+  }
+
+  async openWar(matchId: string): Promise<void> {
+    await this.pool.query(`UPDATE ava_sessions SET war_open = true WHERE match_id = $1`, [matchId]);
   }
 }

@@ -308,20 +308,26 @@ export interface AvaResultStore {
   close?(): Promise<void>;
 }
 
-/** One raised AvA session (AVA-7) — the link a locked matchup gets once the orchestrator
+/** One raised AvA session (AVA-7/8) — the link a locked matchup gets once the orchestrator
  *  builds a live match from its roster: which match instance runs it (`matchId`), on which
- *  map, and the fixed seating (`seats`: accountId → the concrete `playerId`/slot the account
- *  plays). `seats` is what `resolveAvaSeat` reads to sit each account in THEIR slot (not a
- *  first-free seat); bot-filled empty slots are not in it. */
+ *  map, the fixed seating (`seats`: accountId → the concrete `playerId`/slot the account
+ *  plays), and which side each seated `playerId` (humans AND bots) fights for (`sides`).
+ *  `seats` is what `resolveAvaSeat` reads to sit each account in THEIR slot; `sides` is what
+ *  war escalation (cross-side pairs) and settlement (winner → side) read (AVA-8). `warAt` is
+ *  the wall-clock instant peace escalates to war; `warOpen` flips true once war is declared
+ *  (so the war sweep processes each session once). */
 export interface AvaSession {
   matchId: string;
   matchupId: string;
   mapId: string;
   seats: Record<string, string>;
+  sides: Record<string, AvaSide>;
+  warAt: number;
+  warOpen: boolean;
   at: number;
 }
 
-/** Persistence for AvA sessions (AVA-7). One row per matchup (unique `matchupId`) and per
+/** Persistence for AvA sessions (AVA-7/8). One row per matchup (unique `matchupId`) and per
  *  instance (PK `matchId`) — the orchestrator raises exactly one session per locked matchup;
  *  `create` fails atomically if either already exists so a re-run never double-builds. */
 export interface AvaSessionStore {
@@ -330,6 +336,11 @@ export interface AvaSessionStore {
   ): Promise<{ ok: true } | { ok: false; code: 'E_SESSION_EXISTS' }>;
   byMatch(matchId: string): Promise<AvaSession | null>;
   byMatchup(matchupId: string): Promise<AvaSession | null>;
+  /** AVA-8: sessions whose peace period is over (`warAt <= now`) and war not yet opened —
+   *  the war-escalation sweep reads these, oldest deadline first. */
+  dueWars(now: number, limit?: number): Promise<AvaSession[]>;
+  /** AVA-8: mark a session's war opened (idempotent) so the sweep processes it once. */
+  openWar(matchId: string): Promise<void>;
   close?(): Promise<void>;
 }
 

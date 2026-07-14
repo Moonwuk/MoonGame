@@ -526,20 +526,21 @@
   залоченным без сессии (мимо клиента, рядом с roster-свипом); идемпотентно, seeded по
   matchupId. Тесты: seating (группировка/боты/детерминизм) + orchestrate (state/peace/
   реестр/идемпотентность/коды) + resolveAvaSeat + стор-контракт обоих адаптеров.
-- **AVA-8** ⏳ `[srv]` ★ **Мир→война→итог (S5–S7).** Мир = кросс-командный `peace`
-  (combat-lock бесплатно), война = оркестратор шлёт `diplomacy.declare(war)` по таймеру,
-  итог на `match.ended` — влияние победителю + XP + запись результата (MM-3.1 минимум) +
-  лента. Офлайн: пассив-экономика + оборона гарнизона, без авто-наступления.
-  **Приземлён срез S7 (самодостаточный, без живой сессии):** state-машина продлена
-  терминальным `ended` (`locked`→`ended`, exactly-once); `settleMatch(matchupId,
-  winnerSide)` — архив + `AvaResultStore` (история MM-3.1, Memory+Postgres `ava_results`)
-  + влияние победителю (AVA-2, `winReward` деф. 150) + аудит; ничья → исход без влияния;
-  `matchHistory` newest-first (фундамент AVA-9/медали/рейтинг); код `E_MATCHUP_CLOSED`.
-  XP отложен — нужен серверный аккаунт-XP (AC-0.3, не построен). S5 мир теперь реально
-  поднимается оркестратором (AVA-7, старт `peace`). **Осталось:** S6 эскалация войны —
-  системный `diplomacy.declare(war)` по таймеру на живом `MatchRoom` — и вызов
-  `settleMatch` из оркестратора на `match.ended` (маппинг победителя→сторона по
-  `AvaSession.seats`).
+- **AVA-8** ✅ `[srv]` ★ **Мир→война→итог (S5–S7).** Полный цикл на живой сессии из AVA-7.
+  **S5 мир:** кросс-командный `peace` из посева (combat-lock бесплатно), экономика идёт.
+  **S6 война:** `AvaSession` несёт дедлайн `warAt` + `sides`; свип `sweepWars` по прошедшим
+  дедлайнам грузит комнату (`resolveRoom`) и `declareWars` шлёт системные
+  `diplomacy.declare(war)` по кросс-командным парам (`submitServerAction`, мимо гейта;
+  стабильные id → идемпотентно; союзники не трогаются); `warOpen` — обработка один раз,
+  restart-safe. **S7 итог:** state-машина продлена терминальным `ended` (`locked`→`ended`,
+  exactly-once); мост `match.ended`→`outcomeOf` (победитель `playerId`→сторона по
+  `AvaSession.sides`)→`settleMatch` (архив + `AvaResultStore` история MM-3.1 Memory+Postgres
+  `ava_results` + влияние победителю AVA-2 `winReward` деф. 150 + аудит; ничья → исход без
+  влияния); `matchHistory` newest-first (фундамент AVA-9/медали/рейтинг); код
+  `E_MATCHUP_CLOSED`. Офлайн: пассив-экономика + оборона гарнизона (`resolveBattle`) без
+  авто-наступления. XP отложен — нужен серверный аккаунт-XP (AC-0.3). Тесты: settle
+  (архив/exactly-once/ничья/только-locked) + war (флип кросс-пар/союзники целы/свип по
+  дедлайну один раз) + `outcomeOf` + стор-контракты. Публикация в ленту — AVA-9.
 - **AVA-9** ⏳ `[srv]` **Публичная лента корпораций.** Матчап на S2 + итог на S7, read-model
   без приватного ростера; `GET /ava/feed`.
 - **AVA-C1/C2** ⏳ `[proto]` Клиент: прото-экран корпорации `#corp` → `/corps` (CORP-0);

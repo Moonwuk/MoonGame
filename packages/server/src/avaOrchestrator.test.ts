@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { pairKey } from '@void/shared-core';
 import { AvaOrchestrator, seatAvaRoster, type AvaSessionSpec } from './avaOrchestrator';
-import { loadAvaMaps, loadShippedData } from './scenario';
+import { createDevMatch, loadAvaMaps, loadShippedData } from './scenario';
 import {
   MemoryAvaChallengeStore,
   MemoryAvaRosterStore,
@@ -200,5 +200,95 @@ describe('AvaOrchestrator.sweep (AVA-7) — no client needed', () => {
     expect(h.built).toHaveLength(2);
     expect(await h.orch.sweep()).toEqual({ raised: 0 }); // both already have sessions
     expect(h.built).toHaveLength(2);
+  });
+});
+
+// AVA-8 S6/S7 — war escalation on a LIVE room + the outcome bridge. `createRoom` builds a
+// real MatchRoom the sweep can reach; `resolveRoom` hands it back (no persist → the room's
+// `submitServerAction` is the plain sync submit).
+interface WarHarness extends Harness {
+  rooms: Map<string, ReturnType<typeof createDevMatch>>;
+  clock: { t: number };
+}
+
+function warHarness(peaceMs: number): WarHarness {
+  const challenges = new MemoryAvaChallengeStore();
+  const roster = new MemoryAvaRosterStore();
+  const sessions = new MemoryAvaSessionStore();
+  const built: AvaSessionSpec[] = [];
+  const rooms = new Map<string, ReturnType<typeof createDevMatch>>();
+  const clock = { t: 1000 };
+  const orch = new AvaOrchestrator({
+    challengeStore: challenges,
+    rosterStore: roster,
+    sessionStore: sessions,
+    data,
+    maps,
+    createRoom: (spec) => {
+      built.push(spec);
+      // Share the harness clock with the room so `advanceTo` moves a controlled span
+      // (state.time = the creation instant clock.t), not a jump to wall time.
+      rooms.set(
+        spec.matchId,
+        createDevMatch(data, { id: spec.matchId, initialState: spec.state, now: () => clock.t }),
+      );
+      return Promise.resolve();
+    },
+    resolveRoom: (id) => Promise.resolve(rooms.get(id)),
+    peaceMs,
+    now: () => clock.t,
+  });
+  return { orch, challenges, roster, sessions, built, rooms, clock };
+}
+
+describe('AvaOrchestrator — war escalation (AVA-8 S6)', () => {
+  it('flips only the cross-side pair to war; allies stay at peace', async () => {
+    const h = warHarness(100);
+    await lockedMatchup(h, 'mu-w', ['acc-a1', 'acc-a2'], ['acc-b1', 'acc-b2']);
+    await h.orch.orchestrate('mu-w');
+    const room = h.rooms.get('ava-mu-w')!;
+    // seeded S5: cross-team pair is at peace, allies allied
+    expect(room.state.diplomacy?.[pairKey('slot_a1', 'slot_b1')]).toBe('peace');
+    expect(room.state.diplomacy?.[pairKey('slot_a1', 'slot_a2')]).toBe('alliance');
+    const session = (await h.sessions.byMatch('ava-mu-w'))!;
+    const opened = await h.orch.declareWars(room, session);
+    expect(opened).toBe(4); // 2×2 cross pairs
+    expect(room.state.diplomacy?.[pairKey('slot_a1', 'slot_b1')]).toBe('war');
+    expect(room.state.diplomacy?.[pairKey('slot_a2', 'slot_b2')]).toBe('war');
+    expect(room.state.diplomacy?.[pairKey('slot_a1', 'slot_a2')]).toBe('alliance'); // allies untouched
+  });
+
+  it('sweepWars opens war after the peace deadline, once', async () => {
+    const h = warHarness(100); // warAt = now(1000) + 100 = 1100
+    await lockedMatchup(h, 'mu-s', ['acc-a'], ['acc-b']);
+    await h.orch.orchestrate('mu-s');
+    const room = h.rooms.get('ava-mu-s')!;
+    h.clock.t = 1050;
+    expect(await h.orch.sweepWars()).toEqual({ escalated: 0 }); // peace not over yet
+    expect(room.state.diplomacy?.[pairKey('slot_a', 'slot_b')]).toBe('peace');
+    h.clock.t = 1200;
+    expect(await h.orch.sweepWars()).toEqual({ escalated: 1 });
+    expect(room.state.diplomacy?.[pairKey('slot_a', 'slot_b')]).toBe('war');
+    expect((await h.sessions.byMatch('ava-mu-s'))?.warOpen).toBe(true);
+    expect(await h.orch.sweepWars()).toEqual({ escalated: 0 }); // already opened
+  });
+});
+
+describe('AvaOrchestrator.outcomeOf (AVA-8 S7) — winner → side bridge', () => {
+  it('maps the winning playerId to its side; draw/unknown → null; non-AvA → null', async () => {
+    const h = harness();
+    await lockedMatchup(h, 'mu-o', ['acc-a'], ['acc-b']);
+    await h.orch.orchestrate('mu-o');
+    expect(await h.orch.outcomeOf('ava-mu-o', 'slot_a')).toEqual({
+      matchupId: 'mu-o',
+      winnerSide: 'challenger',
+    });
+    expect(await h.orch.outcomeOf('ava-mu-o', 'slot_b')).toEqual({
+      matchupId: 'mu-o',
+      winnerSide: 'target',
+    });
+    expect(await h.orch.outcomeOf('ava-mu-o', null)).toEqual({ matchupId: 'mu-o', winnerSide: null });
+    expect(await h.orch.outcomeOf('ava-mu-o', 'ghost')).toEqual({ matchupId: 'mu-o', winnerSide: null });
+    expect(await h.orch.outcomeOf('not-ava', 'slot_a')).toBeNull();
   });
 });

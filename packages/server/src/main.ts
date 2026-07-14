@@ -67,10 +67,22 @@ async function loadMatch(matchId: string): Promise<LoadedMatch | null> {
     await stores.store.save(snapshot);
     await stores.receiptStore.save(matchId, receipt);
   };
-  // The committed path already persists each action; `observe` only re-arms the driver, as
-  // an action may have scheduled a new event the sleeping timer can't see.
+  // The committed path already persists each action; `observe` re-arms the driver (an action
+  // may have scheduled a new event the sleeping timer can't see) and, on `match.ended`,
+  // settles an AvA match (AVA-8 S7): winner → side → influence + result. `settleMatch` and
+  // the matchup's locked→ended transition are exactly-once, so a re-fired end can't double-pay.
   const observe = (event: RoomObservation): void => {
     if (event.kind === 'action') driver?.reschedule();
+    if (event.kind === 'end') {
+      void (async (): Promise<void> => {
+        const outcome = await avaOrchestrator.outcomeOf(matchId, event.winner);
+        if (outcome) await avaService.settleMatch(outcome.matchupId, outcome.winnerSide);
+      })().catch((err) =>
+        process.stderr.write(
+          `ava settle failed for ${matchId} — ${err instanceof Error ? err.message : String(err)}\n`,
+        ),
+      );
+    }
   };
 
   const room = createDevMatch(data, {
@@ -121,11 +133,12 @@ const accountStore = stores.accountStore; // durable alongside the match when DA
 const MAX_MATCHES = 1000;
 let matchCount = 1; // the seeded 'dev' match
 
-// AvA orchestrator (AVA-7): turns a LOCKED matchup into a live AvA session — pick a map,
+// AvA orchestrator (AVA-7/8): turns a LOCKED matchup into a live AvA session — pick a map,
 // seat the roster into fixed slots (allies grouped, empty slots → AI), build a peaceful
 // (S5) state, and raise the room by persisting its first snapshot (the lazy registry loads
 // it on connect, like any match). `resolveAvaSeat` then sits each rostered account in ITS
-// slot on join; the sweep raises sessions for freshly-locked matchups with no client needed.
+// slot on join. Sweeps (no client needed): raise sessions for freshly-locked matchups, and
+// (AVA-8 S6) open war on a live room once its peace period is over.
 const avaOrchestrator = new AvaOrchestrator({
   challengeStore: stores.challengeStore,
   rosterStore: stores.rosterStore,
@@ -135,6 +148,13 @@ const avaOrchestrator = new AvaOrchestrator({
   createRoom: async ({ matchId, state }) => {
     const room = createDevMatch(data, { id: matchId, initialState: state, time: state.time });
     await stores.store.save(snapshotOf(room));
+  },
+  // Reach a (possibly hibernated) room to open war, then let it hibernate again — `release`
+  // schedules eviction if no socket is watching, so the war sweep never leaks a live room.
+  resolveRoom: async (matchId) => {
+    const room = await registry.resolve(matchId);
+    if (room) registry.release(matchId);
+    return room;
   },
 });
 
@@ -285,14 +305,14 @@ const avaSweep = setInterval(() => {
   });
   void avaService
     .sweepRosters()
-    .then(() =>
-      // Raise a live session for every freshly-locked matchup (AVA-7) — after the roster
-      // sweep in the same tick, so a lock and its session land together.
-      avaOrchestrator.sweep(),
-    )
+    // Raise a live session for every freshly-locked matchup (AVA-7), then open war on any
+    // session whose peace period is over (AVA-8 S6) — after the roster sweep in the same
+    // tick, so a lock and its session land together.
+    .then(() => avaOrchestrator.sweep())
+    .then(() => avaOrchestrator.sweepWars())
     .catch((err) => {
       process.stderr.write(
-        `ava roster/session sweep failed — ${err instanceof Error ? err.message : String(err)}\n`,
+        `ava roster/session/war sweep failed — ${err instanceof Error ? err.message : String(err)}\n`,
       );
     });
 }, 60_000);
