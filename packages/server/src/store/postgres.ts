@@ -27,6 +27,12 @@ import type {
   UserRecord,
   UserStore,
 } from './types';
+import {
+  DEFAULT_AUDIT_LIMIT,
+  DEFAULT_CHALLENGES_LIMIT,
+  DEFAULT_LOCKED_MATCHUPS_LIMIT,
+  DEFAULT_RESULTS_LIMIT,
+} from './types';
 
 /** Create the tables (idempotent). JSONB discipline: the queryable fields (status,
  *  data_version, seq) are normalized COLUMNS; only the opaque match `state` is JSONB,
@@ -665,7 +671,7 @@ export class PostgresCorpStore implements CorpStore {
     );
   }
 
-  async auditOf(corpId: string, limit = 50): Promise<CorpAuditEntry[]> {
+  async auditOf(corpId: string, limit = DEFAULT_AUDIT_LIMIT): Promise<CorpAuditEntry[]> {
     const r = await this.pool.query<{
       corp_id: string;
       at: string;
@@ -789,7 +795,7 @@ export class PostgresAvaChallengeStore implements AvaChallengeStore {
     return r.rows[0] ? challengeOf(r.rows[0]) : null;
   }
 
-  async challengesOf(corpId: string, limit = 50): Promise<AvaChallenge[]> {
+  async challengesOf(corpId: string, limit = DEFAULT_CHALLENGES_LIMIT): Promise<AvaChallenge[]> {
     const r = await this.pool.query<ChallengeRow>(
       `SELECT id, challenger_corp, target_corp, cost, status, created_at, expires_at, pause_ends_at
        FROM ava_challenges
@@ -849,7 +855,7 @@ export class PostgresAvaChallengeStore implements AvaChallengeStore {
     return r.rows.map(challengeOf);
   }
 
-  async lockedMatchups(limit = 100): Promise<AvaChallenge[]> {
+  async lockedMatchups(limit = DEFAULT_LOCKED_MATCHUPS_LIMIT): Promise<AvaChallenge[]> {
     const r = await this.pool.query<ChallengeRow>(
       `SELECT id, challenger_corp, target_corp, cost, status, created_at, expires_at, pause_ends_at
        FROM ava_challenges
@@ -1016,7 +1022,7 @@ export class PostgresAvaResultStore implements AvaResultStore {
     return r.rows[0] ? resultOf(r.rows[0]) : null;
   }
 
-  async recent(limit = 50): Promise<AvaResult[]> {
+  async recent(limit = DEFAULT_RESULTS_LIMIT): Promise<AvaResult[]> {
     const r = await this.pool.query<ResultRow>(
       `SELECT matchup_id, challenger_corp, target_corp, winner_corp, at
        FROM ava_results ORDER BY at DESC, matchup_id LIMIT $1`,
