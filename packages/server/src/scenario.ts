@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import {
   armyModule,
   artilleryModule,
@@ -15,6 +15,7 @@ import {
   marketModule,
   movementModule,
   loadGameData,
+  parseMatchMap,
   orbitalModule,
   planetTypeModule,
   scientistModule,
@@ -29,6 +30,7 @@ import {
   type GameState,
   type Hero,
   type MatchConfig,
+  type MatchMap,
   type Planet,
   type Player,
 } from '@void/shared-core';
@@ -49,6 +51,17 @@ export function loadShippedData(): GameData {
   return loadGameData((name) =>
     JSON.parse(readFileSync(new URL(`../../../data/${name}`, import.meta.url), 'utf8')),
   );
+}
+
+/** The AvA-eligible map pool (AVA-5/7): every validated map in `data/maps` tagged
+ *  `avaEligible`, the candidate set the orchestrator picks from by requested shape. */
+export function loadAvaMaps(): MatchMap[] {
+  const dir = new URL('../../../data/maps/', import.meta.url);
+  return readdirSync(dir)
+    .filter((name) => name.endsWith('.json'))
+    .sort()
+    .map((name) => parseMatchMap(JSON.parse(readFileSync(new URL(name, dir), 'utf8'))))
+    .filter((map) => map.avaEligible);
 }
 
 /** Full base-module manifest, in a fixed order (invariant #6: execution order =

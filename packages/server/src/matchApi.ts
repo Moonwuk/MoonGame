@@ -26,8 +26,11 @@ export interface JoinResult {
   token: string;
 }
 
-/** A stable failure from `join`, mapped to an HTTP status by the route. */
-export type JoinFailure = { error: 'E_NO_MATCH' | 'E_MATCH_FULL' | 'E_AUTH_DISABLED' };
+/** A stable failure from `join`, mapped to an HTTP status by the route. `E_NOT_ROSTERED`
+ *  is the AvA path (AVA-7): the match is an AvA session and the caller is not on its roster. */
+export type JoinFailure = {
+  error: 'E_NO_MATCH' | 'E_MATCH_FULL' | 'E_AUTH_DISABLED' | 'E_NOT_ROSTERED';
+};
 
 /** An authenticated caller, as resolved by the `identify` hook. */
 export interface Identity {
@@ -55,6 +58,7 @@ export interface MatchApiDeps {
 const STATUS: Record<JoinFailure['error'], number> = {
   E_NO_MATCH: 404,
   E_MATCH_FULL: 409,
+  E_NOT_ROSTERED: 403,
   E_AUTH_DISABLED: 501,
 };
 

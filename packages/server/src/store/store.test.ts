@@ -4,7 +4,9 @@ import { createInitialState, type GameState } from '@void/shared-core';
 import {
   MemoryAccountStore,
   MemoryAvaChallengeStore,
+  MemoryAvaResultStore,
   MemoryAvaRosterStore,
+  MemoryAvaSessionStore,
   MemoryCorpStore,
   MemoryMatchStore,
   MemoryReceiptStore,
@@ -12,7 +14,9 @@ import {
 import {
   PostgresAccountStore,
   PostgresAvaChallengeStore,
+  PostgresAvaResultStore,
   PostgresAvaRosterStore,
+  PostgresAvaSessionStore,
   PostgresCorpStore,
   PostgresMatchStore,
   PostgresReceiptStore,
@@ -22,8 +26,10 @@ import type {
   AccountStore,
   AvaChallenge,
   AvaChallengeStore,
+  AvaResultStore,
   AvaRosterEntry,
   AvaRosterStore,
+  AvaSessionStore,
   AvaSide,
   CorpStore,
   MatchSnapshot,
@@ -369,6 +375,7 @@ function avaChallengeStoreContract(
       expect((await store.getChallenge(uniq('ch-f')))?.pauseEndsAt).toBeUndefined();
       // and no matchup close either — the row is not accepted
       expect(await store.closeMatchup(uniq('ch-f'), 'locked')).toBe(false);
+      expect(await store.endMatchup(uniq('ch-f'))).toBe(false); // AVA-8: not locked
 
       await store.closeChallenge(uniq('ch-f'), 'accepted');
       await store.openRosterWindow(uniq('ch-f'), 5000);
@@ -381,6 +388,91 @@ function avaChallengeStoreContract(
       expect(await store.closeMatchup(uniq('ch-f'), 'cancelled')).toBe(false);
       expect((await store.getChallenge(uniq('ch-f')))?.status).toBe('locked');
       expect((await store.dueRosters(9999)).map((c) => c.id)).not.toContain(uniq('ch-f'));
+      // AVA-7: a locked matchup shows up for the orchestrator sweep…
+      expect((await store.lockedMatchups()).map((c) => c.id)).toContain(uniq('ch-f'));
+      // AVA-8: locked → ended, exactly once (settlement's exactly-once gate)
+      expect(await store.endMatchup(uniq('ch-f'))).toBe(true);
+      expect(await store.endMatchup(uniq('ch-f'))).toBe(false);
+      expect((await store.getChallenge(uniq('ch-f')))?.status).toBe('ended');
+      // …and drops out once it is archived (ended).
+      expect((await store.lockedMatchups()).map((c) => c.id)).not.toContain(uniq('ch-f'));
+    });
+  });
+}
+
+// AVA-8 — the result store: idempotent record keyed by matchup, newest-first reads.
+function resultStoreContract(
+  name: string,
+  make: () => AvaResultStore,
+  uniq: (p: string) => string,
+): void {
+  describe(`AvaResultStore — ${name}`, () => {
+    it('records an outcome, reads it back, and is idempotent by matchup', async () => {
+      const store = make();
+      const [mu, a, b] = [uniq('r-mu'), uniq('r-a'), uniq('r-b')];
+      await store.record({ matchupId: mu, challengerCorp: a, targetCorp: b, winnerCorp: a, at: 10 });
+      expect(await store.get(mu)).toEqual({
+        matchupId: mu,
+        challengerCorp: a,
+        targetCorp: b,
+        winnerCorp: a,
+        at: 10,
+      });
+      // A second record for the same matchup keeps the first (belt-and-braces).
+      await store.record({ matchupId: mu, challengerCorp: a, targetCorp: b, winnerCorp: b, at: 20 });
+      expect((await store.get(mu))?.winnerCorp).toBe(a);
+      expect(await store.get(uniq('missing'))).toBeNull();
+    });
+
+    it('a draw stores a null winner; recent() returns newest first', async () => {
+      const store = make();
+      const [m1, m2, a, b] = [uniq('r-m1'), uniq('r-m2'), uniq('r-c'), uniq('r-d')];
+      await store.record({ matchupId: m1, challengerCorp: a, targetCorp: b, winnerCorp: null, at: 5 });
+      await store.record({ matchupId: m2, challengerCorp: a, targetCorp: b, winnerCorp: b, at: 9 });
+      const recent = (await store.recent()).filter((r) => r.matchupId === m1 || r.matchupId === m2);
+      expect(recent.map((r) => r.matchupId)).toEqual([m2, m1]); // newest (at=9) first
+      expect(recent[1]?.winnerCorp).toBeNull();
+    });
+  });
+}
+
+// AVA-7 — the session store: one per matchup/instance, read by match or by matchup.
+function sessionStoreContract(
+  name: string,
+  make: () => AvaSessionStore,
+  uniq: (p: string) => string,
+): void {
+  describe(`AvaSessionStore — ${name}`, () => {
+    it('creates a session, reads it by match and by matchup, round-tripping seats', async () => {
+      const store = make();
+      const [match, matchup] = [uniq('s-match'), uniq('s-mu')];
+      const seats = { [uniq('acc-a')]: 'slot_a', [uniq('acc-b')]: 'slot_b' };
+      expect(await store.create({ matchId: match, matchupId: matchup, mapId: 'ava-duel-1', seats, at: 7 })).toEqual({
+        ok: true,
+      });
+      expect(await store.byMatch(match)).toEqual({
+        matchId: match,
+        matchupId: matchup,
+        mapId: 'ava-duel-1',
+        seats,
+        at: 7,
+      });
+      expect((await store.byMatchup(matchup))?.matchId).toBe(match);
+      expect(await store.byMatch(uniq('missing'))).toBeNull();
+    });
+
+    it('rejects a second session for the same matchup or the same match id', async () => {
+      const store = make();
+      const [match, matchup] = [uniq('s-m2'), uniq('s-mu2')];
+      await store.create({ matchId: match, matchupId: matchup, mapId: 'ava-duel-1', seats: {}, at: 1 });
+      // same matchup, different match id → rejected (one session per matchup)
+      expect(
+        await store.create({ matchId: uniq('s-m3'), matchupId: matchup, mapId: 'ava-duel-1', seats: {}, at: 2 }),
+      ).toEqual({ ok: false, code: 'E_SESSION_EXISTS' });
+      // same match id, different matchup → rejected (PK)
+      expect(
+        await store.create({ matchId: match, matchupId: uniq('s-mu3'), mapId: 'ava-duel-1', seats: {}, at: 3 }),
+      ).toEqual({ ok: false, code: 'E_SESSION_EXISTS' });
     });
   });
 }
@@ -469,6 +561,8 @@ rosterStoreContract(
   () => ({ challenges: new MemoryAvaChallengeStore(), roster: new MemoryAvaRosterStore() }),
   (p) => p,
 );
+resultStoreContract('memory', () => new MemoryAvaResultStore(), (p) => p);
+sessionStoreContract('memory', () => new MemoryAvaSessionStore(), (p) => p);
 
 // Postgres adapters — only when a DATABASE_URL is provided (skipped in CI without a
 // DB, so the gate stays green). Verified locally against a real Postgres 16.
@@ -508,6 +602,8 @@ describe.skipIf(!DB)('Postgres adapters', () => {
     }),
     (p) => `${p}_${stamp}`,
   );
+  resultStoreContract('postgres', () => new PostgresAvaResultStore(pool), (p) => `${p}_${stamp}`);
+  sessionStoreContract('postgres', () => new PostgresAvaSessionStore(pool), (p) => `${p}_${stamp}`);
 
   it('migrates idempotently', async () => {
     await migrate(pool);

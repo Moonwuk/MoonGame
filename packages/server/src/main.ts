@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import rateLimit from '@fastify/rate-limit';
-import { createDevMatch, loadShippedData } from './scenario';
+import { createDevMatch, loadAvaMaps, loadShippedData } from './scenario';
 import { createMultiplayerServer } from './wsServer';
 import { startClockDriver, type ClockDriverHandle } from './clockDriver';
 import { createStores, snapshotOf } from './persistence';
@@ -11,6 +11,7 @@ import { registerCorpApi } from './corpApi';
 import { CorpService } from './corpService';
 import { registerAvaApi } from './avaApi';
 import { AvaService } from './avaService';
+import { AvaOrchestrator } from './avaOrchestrator';
 import { MatchKeeper } from './matchFactory';
 import { LazyRoomRegistry, type LoadedMatch } from './roomRegistry';
 import type { RoomObservation } from './matchRoom';
@@ -120,6 +121,23 @@ const accountStore = stores.accountStore; // durable alongside the match when DA
 const MAX_MATCHES = 1000;
 let matchCount = 1; // the seeded 'dev' match
 
+// AvA orchestrator (AVA-7): turns a LOCKED matchup into a live AvA session — pick a map,
+// seat the roster into fixed slots (allies grouped, empty slots → AI), build a peaceful
+// (S5) state, and raise the room by persisting its first snapshot (the lazy registry loads
+// it on connect, like any match). `resolveAvaSeat` then sits each rostered account in ITS
+// slot on join; the sweep raises sessions for freshly-locked matchups with no client needed.
+const avaOrchestrator = new AvaOrchestrator({
+  challengeStore: stores.challengeStore,
+  rosterStore: stores.rosterStore,
+  sessionStore: stores.sessionStore,
+  data,
+  maps: loadAvaMaps(),
+  createRoom: async ({ matchId, state }) => {
+    const room = createDevMatch(data, { id: matchId, initialState: state, time: state.time });
+    await stores.store.save(snapshotOf(room));
+  },
+});
+
 // Identity gate (SE-1.x): resolve the caller from the session token. Shared by the
 // match API (create/join claim seats for the session's account) and the corp API
 // (every corp intent acts as the session's account).
@@ -145,9 +163,15 @@ const matchApi: MatchApiDeps = {
     const snap = await stores.store.load(matchId);
     if (!snap) return { error: 'E_NO_MATCH' };
     if (!signToken) return { error: 'E_AUTH_DISABLED' }; // no token auth configured
-    const seat = await accountStore.resolveSeat(matchId, nick, Object.keys(snap.state.players));
-    if (!seat) return { error: 'E_MATCH_FULL' };
-    return { playerId: seat.playerId, token: await signToken(matchId, seat.playerId, accountId) };
+    // AvA session (AVA-7): a rostered account plays its FIXED slot; a non-rostered one is
+    // refused. `null` ⇒ an ordinary match → the normal first-come seat resolver.
+    const ava = accountId ? await avaOrchestrator.resolveAvaSeat(matchId, accountId) : null;
+    if (ava && !ava.ok) return { error: 'E_NOT_ROSTERED' };
+    const playerId = ava
+      ? ava.playerId
+      : (await accountStore.resolveSeat(matchId, nick, Object.keys(snap.state.players)))?.playerId;
+    if (playerId === undefined) return { error: 'E_MATCH_FULL' };
+    return { playerId, token: await signToken(matchId, playerId, accountId) };
   },
   // Wired ⇒ create/join require a session from /auth/login — the session's login IS
   // the seat nick, so nobody claims a seat as somebody else.
@@ -161,12 +185,14 @@ if (auth && !allowedOrigins) {
   );
 }
 
-// AvA service (AVA-2/3/4/6): readiness pool + challenge state machine + roster window
-// over the durable stores. One instance is shared by the HTTP API and the sweeps.
+// AvA service (AVA-2/3/4/6/8): readiness pool + challenge state machine + roster window
+// + settlement over the durable stores. One instance is shared by the HTTP API and the
+// sweeps.
 const avaService = new AvaService({
   corpStore: stores.corpStore,
   challengeStore: stores.challengeStore,
   rosterStore: stores.rosterStore,
+  resultStore: stores.resultStore,
 });
 
 // Match factory (SV-2.5): keep OPEN_MATCHES joinable matches available so the feed is
@@ -257,11 +283,18 @@ const avaSweep = setInterval(() => {
       `ava expiry sweep failed — ${err instanceof Error ? err.message : String(err)}\n`,
     );
   });
-  void avaService.sweepRosters().catch((err) => {
-    process.stderr.write(
-      `ava roster sweep failed — ${err instanceof Error ? err.message : String(err)}\n`,
-    );
-  });
+  void avaService
+    .sweepRosters()
+    .then(() =>
+      // Raise a live session for every freshly-locked matchup (AVA-7) — after the roster
+      // sweep in the same tick, so a lock and its session land together.
+      avaOrchestrator.sweep(),
+    )
+    .catch((err) => {
+      process.stderr.write(
+        `ava roster/session sweep failed — ${err instanceof Error ? err.message : String(err)}\n`,
+      );
+    });
 }, 60_000);
 avaSweep.unref?.();
 
