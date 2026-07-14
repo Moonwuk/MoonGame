@@ -4,6 +4,8 @@ import type {
   AccountStore,
   AvaChallenge,
   AvaChallengeStore,
+  AvaFeedEntry,
+  AvaFeedStore,
   AvaResult,
   AvaResultStore,
   AvaRosterEntry,
@@ -418,6 +420,26 @@ export class MemoryAvaResultStore implements AvaResultStore {
     return Promise.resolve(
       [...this.rows.values()]
         .sort((a, b) => b.at - a.at || (a.matchupId < b.matchupId ? -1 : 1))
+        .slice(0, limit)
+        .map((r) => ({ ...r })),
+    );
+  }
+}
+
+/** In-memory AvA feed store (AVA-9) — an append-only list, read newest-first. */
+export class MemoryAvaFeedStore implements AvaFeedStore {
+  private readonly rows: AvaFeedEntry[] = [];
+
+  append(entry: AvaFeedEntry): Promise<void> {
+    this.rows.push({ ...entry });
+    return Promise.resolve();
+  }
+
+  recent(limit = 50, before?: number): Promise<AvaFeedEntry[]> {
+    return Promise.resolve(
+      this.rows
+        .filter((r) => before === undefined || r.at < before)
+        .sort((a, b) => b.at - a.at || (a.id < b.id ? 1 : -1))
         .slice(0, limit)
         .map((r) => ({ ...r })),
     );

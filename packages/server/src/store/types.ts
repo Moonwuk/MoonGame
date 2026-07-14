@@ -308,6 +308,32 @@ export interface AvaResultStore {
   close?(): Promise<void>;
 }
 
+/** One public AvA feed entry (AVA-9): a confirmed matchup (S2, on accept) or its result
+ *  (S7, on settlement). PUBLIC facts only — corp names + winner, NEVER the private roster.
+ *  Corp names are snapshotted at publish so the feed reads standalone (a later rename or
+ *  disband doesn't rewrite history). `winnerCorp` is set on a `result` (null = draw). */
+export type AvaFeedKind = 'matchup' | 'result';
+export interface AvaFeedEntry {
+  id: string;
+  at: number;
+  kind: AvaFeedKind;
+  challengerCorp: string;
+  challengerName: string;
+  targetCorp: string;
+  targetName: string;
+  /** `result` only: winning corp id, or null for a draw. */
+  winnerCorp?: string | null;
+}
+
+/** Persistence for the public AvA feed (AVA-9). Append-only; read newest-first with a
+ *  simple `before`-`at` cursor for pagination. No private data ever enters it. */
+export interface AvaFeedStore {
+  append(entry: AvaFeedEntry): Promise<void>;
+  /** Newest-first page (bounded by `limit`); `before` = an `at` cursor (exclusive). */
+  recent(limit?: number, before?: number): Promise<AvaFeedEntry[]>;
+  close?(): Promise<void>;
+}
+
 /** One raised AvA session (AVA-7/8) — the link a locked matchup gets once the orchestrator
  *  builds a live match from its roster: which match instance runs it (`matchId`), on which
  *  map, the fixed seating (`seats`: accountId → the concrete `playerId`/slot the account

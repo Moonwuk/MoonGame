@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import type {
   AvaChallenge,
   AvaChallengeStore,
+  AvaFeedEntry,
+  AvaFeedStore,
   AvaResult,
   AvaResultStore,
   AvaRosterEntry,
@@ -78,6 +80,8 @@ export interface AvaServiceDeps {
   rosterStore: AvaRosterStore;
   /** Recorded outcomes (AVA-8, MM-3.1). */
   resultStore: AvaResultStore;
+  /** Public feed (AVA-9) — confirmed matchups + results, no private data. */
+  feedStore: AvaFeedStore;
   /** Injectable clock (deterministic tests + the expiry sweep). */
   now?: () => number;
   challengeCost?: number;
@@ -97,6 +101,7 @@ export class AvaService {
   private readonly challenges: AvaChallengeStore;
   private readonly roster: AvaRosterStore;
   private readonly results: AvaResultStore;
+  private readonly feed: AvaFeedStore;
   private readonly now: () => number;
   private readonly cost: number;
   private readonly expiryMs: number;
@@ -110,6 +115,7 @@ export class AvaService {
     this.challenges = deps.challengeStore;
     this.roster = deps.rosterStore;
     this.results = deps.resultStore;
+    this.feed = deps.feedStore;
     this.now = deps.now ?? ((): number => Date.now());
     this.cost = deps.challengeCost ?? DEFAULT_CHALLENGE_COST;
     this.expiryMs = deps.expiryMs ?? DEFAULT_EXPIRY_MS;
@@ -234,6 +240,8 @@ export class AvaService {
       action: 'ready',
       detail: `accept ${gate.challenge.challengerCorp}`,
     });
+    // AVA-9: the confirmed matchup goes public (S2). Only the two corp names — no roster.
+    await this.publishFeed('matchup', gate.challenge);
     return { ok: true };
   }
 
@@ -420,6 +428,9 @@ export class AvaService {
         detail: `+${this.winReward}: победа ${matchupId}`,
       });
     }
+    // AVA-9: publish the outcome to the public feed (S7). The endMatchup gate above ran
+    // exactly once, so this can't double-publish a result for one matchup.
+    await this.publishFeed('result', matchup, winnerCorp);
     return { ok: true, winnerCorp };
   }
 
@@ -427,6 +438,38 @@ export class AvaService {
    *  foundation the public feed (AVA-9), medal conditions and rating read from. */
   matchHistory(limit?: number): Promise<AvaResult[]> {
     return this.results.recent(limit);
+  }
+
+  // ---- AVA-9 · public feed -------------------------------------------------
+
+  /** The public AvA feed (AVA-9): confirmed matchups + results, newest first, paginated by
+   *  a `before`-`at` cursor. Public facts only — the store never holds any private roster. */
+  publicFeed(limit?: number, before?: number): Promise<AvaFeedEntry[]> {
+    return this.feed.recent(limit, before);
+  }
+
+  /** Append a public feed row for a matchup/result, snapshotting the two corp names so the
+   *  feed reads standalone. Best-effort: a feed write never fails the state transition that
+   *  triggered it (the challenge/settlement already committed) — so it is called last. */
+  private async publishFeed(
+    kind: AvaFeedEntry['kind'],
+    matchup: AvaChallenge,
+    winnerCorp: string | null = null,
+  ): Promise<void> {
+    const [challenger, target] = await Promise.all([
+      this.corps.getCorp(matchup.challengerCorp),
+      this.corps.getCorp(matchup.targetCorp),
+    ]);
+    await this.feed.append({
+      id: randomUUID(),
+      at: this.now(),
+      kind,
+      challengerCorp: matchup.challengerCorp,
+      challengerName: challenger?.name ?? matchup.challengerCorp,
+      targetCorp: matchup.targetCorp,
+      targetName: target?.name ?? matchup.targetCorp,
+      ...(kind === 'result' ? { winnerCorp } : {}),
+    });
   }
 
   private async refund(challenge: AvaChallenge): Promise<void> {

@@ -1080,7 +1080,12 @@ exactly-once-гейт, повторный `match.ended` не начисляет 
 **S7 мост:** `main.ts` на `match.ended` → `outcomeOf` (победитель→сторона по
 `AvaSession.sides`) → `settleMatch`. Правка по пути: `state.time` AvA-сессии = момент
 создания (иначе `advanceTo(now)` прыгал бы от base-time карты на эпоху → мгновенный конец).
-Дальше: публичная лента итогов (AVA-9), `corporation-wars.md`.
+**AVA-9 публичная лента:** `AvaFeedStore` (append-only, Memory+Postgres `ava_feed`) —
+`matchup` на `accept` (S2) + `result` на `settleMatch` (S7); публичные факты (имена корп
+снапшотом + победитель, БЕЗ ростера). Публикация последним шагом best-effort;
+`publicFeed(limit, before)` newest-first по курсору `at`; публичный `GET /ava/feed` (без
+сессии, рядом с open-matches feed). **Блок AVA закрыт (AVA-1…9).** Клиент — AVA-C1/C2,
+`corporation-wars.md`.
 
 ## 9. Статус
 

@@ -4,6 +4,7 @@ import { createInitialState, type GameState } from '@void/shared-core';
 import {
   MemoryAccountStore,
   MemoryAvaChallengeStore,
+  MemoryAvaFeedStore,
   MemoryAvaResultStore,
   MemoryAvaRosterStore,
   MemoryAvaSessionStore,
@@ -14,6 +15,7 @@ import {
 import {
   PostgresAccountStore,
   PostgresAvaChallengeStore,
+  PostgresAvaFeedStore,
   PostgresAvaResultStore,
   PostgresAvaRosterStore,
   PostgresAvaSessionStore,
@@ -26,6 +28,7 @@ import type {
   AccountStore,
   AvaChallenge,
   AvaChallengeStore,
+  AvaFeedStore,
   AvaResultStore,
   AvaRosterEntry,
   AvaRosterStore,
@@ -437,6 +440,29 @@ function resultStoreContract(
   });
 }
 
+// AVA-9 — the public feed store: append-only, newest-first, `before`-`at` pagination.
+function feedStoreContract(name: string, make: () => AvaFeedStore, uniq: (p: string) => string): void {
+  describe(`AvaFeedStore — ${name}`, () => {
+    it('appends matchup + result rows and reads them newest-first, paginating by `before`', async () => {
+      const store = make();
+      const [a, b] = [uniq('A'), uniq('B')];
+      const tag = uniq('t');
+      await store.append({ id: uniq('f1'), at: 10, kind: 'matchup', challengerCorp: a, challengerName: `${tag}-A`, targetCorp: b, targetName: `${tag}-B` });
+      await store.append({ id: uniq('f2'), at: 20, kind: 'result', challengerCorp: a, challengerName: `${tag}-A`, targetCorp: b, targetName: `${tag}-B`, winnerCorp: a });
+      const mine = (rows: Awaited<ReturnType<AvaFeedStore['recent']>>): typeof rows =>
+        rows.filter((r) => r.challengerName === `${tag}-A`);
+      const all = mine(await store.recent());
+      expect(all.map((r) => r.kind)).toEqual(['result', 'matchup']); // newest (at=20) first
+      expect(all[0]).toMatchObject({ kind: 'result', winnerCorp: a });
+      expect(all[1]).toMatchObject({ kind: 'matchup' }); // a matchup carries no winner
+      expect(all[1]?.winnerCorp).toBeUndefined();
+      // `before` cursor excludes rows at/after the cursor `at`
+      const page = mine(await store.recent(10, 20));
+      expect(page.map((r) => r.kind)).toEqual(['matchup']);
+    });
+  });
+}
+
 // AVA-7/8 — the session store: one per matchup/instance; war deadline sweep + open flag.
 function sessionStoreContract(
   name: string,
@@ -590,6 +616,7 @@ rosterStoreContract(
 );
 resultStoreContract('memory', () => new MemoryAvaResultStore(), (p) => p);
 sessionStoreContract('memory', () => new MemoryAvaSessionStore(), (p) => p);
+feedStoreContract('memory', () => new MemoryAvaFeedStore(), (p) => p);
 
 // Postgres adapters — only when a DATABASE_URL is provided (skipped in CI without a
 // DB, so the gate stays green). Verified locally against a real Postgres 16.
@@ -631,6 +658,7 @@ describe.skipIf(!DB)('Postgres adapters', () => {
   );
   resultStoreContract('postgres', () => new PostgresAvaResultStore(pool), (p) => `${p}_${stamp}`);
   sessionStoreContract('postgres', () => new PostgresAvaSessionStore(pool), (p) => `${p}_${stamp}`);
+  feedStoreContract('postgres', () => new PostgresAvaFeedStore(pool), (p) => `${p}_${stamp}`);
 
   it('migrates idempotently', async () => {
     await migrate(pool);
