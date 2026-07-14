@@ -1818,6 +1818,40 @@ export const DEFAULT_SETUP: SetupConfig = {
   ],
 };
 
+export type NetworkMatchMode = 'ffa' | '2v2' | '5v5';
+
+const NETWORK_HOUSES = [
+  { name: 'Azure Compact', faction: 'blue' },
+  { name: 'Crimson Hegemony', faction: 'red' },
+  { name: 'Amber Concord', faction: 'amber' },
+  { name: 'Violet Ascendancy', faction: 'violet' },
+] as const;
+
+export function parseNetworkMatchMode(value: string | undefined): NetworkMatchMode {
+  if (value === undefined) return 'ffa';
+  if (value === '2v2' || value === '5v5') return value;
+  throw new Error(`TEAMS must be 2v2 or 5v5, got: ${value}`);
+}
+
+/** Claimable human chairs for the prototype host. Empty chairs are driven by server AI. */
+export function networkSeats(mode: NetworkMatchMode = 'ffa'): SeatConfig[] {
+  const startIndexes = mode === '2v2' ? [9, 8, 3, 4] : START_CANDIDATES.map((_, i) => i);
+  return startIndexes.map((startIndex, i) => {
+    const house = NETWORK_HOUSES[i % NETWORK_HOUSES.length]!;
+    const cycle = Math.floor(i / NETWORK_HOUSES.length) + 1;
+    const suffix = cycle === 1 ? '' : cycle === 2 ? ' II' : ' III';
+    return {
+      id: `p${i + 1}`,
+      name: `${house.name}${suffix}`,
+      faction: house.faction,
+      start: START_CANDIDATES[startIndex]!,
+      ai: false,
+      ...(mode === '2v2' ? { team: i < 2 ? 'A' : 'B' } : {}),
+      ...(mode === '5v5' ? { team: i < 5 ? 'A' : 'B' } : {}),
+    };
+  });
+}
+
 export function newGame(setup: SetupConfig = DEFAULT_SETUP): GameState {
   const base = createInitialState({
     seed: setup.seed ?? 'prototype-1',

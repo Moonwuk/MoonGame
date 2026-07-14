@@ -1094,11 +1094,13 @@ button.b:disabled{opacity:.32;cursor:not-allowed;color:var(--dim);border-color:v
 #lobby{position:fixed;inset:0;z-index:55;display:none;align-items:center;justify-content:center;
   background:rgba(2,8,11,.66);}
 #lobby .lbox{width:min(420px,94vw);background:var(--glass);border:1px solid var(--line-hi);
-  border-radius:14px;padding:22px;box-shadow:0 0 40px rgba(0,0,0,.6);}
+  border-radius:14px;padding:22px;box-shadow:0 0 40px rgba(0,0,0,.6);max-height:94vh;
+  display:flex;flex-direction:column;}
 #lobby .ltitle{display:flex;align-items:center;gap:10px;font-size:18px;letter-spacing:3px;color:var(--cyan);}
 #lobby .ltitle .dia{width:12px;height:12px;transform:rotate(45deg);background:var(--cyan);box-shadow:0 0 10px var(--cyan);border:none;}
 #lobby .lsub{margin:8px 0 16px;color:var(--dim);font-size:12px;line-height:1.5;}
-#lobby .lroster{display:flex;flex-direction:column;gap:8px;margin-bottom:16px;}
+#lobby .lroster{display:flex;flex-direction:column;gap:8px;margin-bottom:16px;min-height:0;
+  max-height:min(58vh,520px);overflow:auto;padding-right:3px;}
 #lobby .lrow{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--line-hi);
   border-radius:8px;font:13px ui-monospace,monospace;color:var(--ink);}
 #lobby .lrow .dot{width:10px;height:10px;border-radius:50%;flex:none;box-shadow:0 0 8px currentColor;}
