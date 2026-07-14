@@ -8047,7 +8047,7 @@ function connect(): void {
         // old "⏳ waiting" banner; fall back to the banner only if no roster is sent.
         lobbyInfo = snap.lobby ?? null;
         if (!lobbyInfo && snap.waiting) {
-          banner = t('⏳ Ждём подключения {who}…', { who: NAME[ME === 'p1' ? 'p2' : 'p1'] ?? '' });
+          banner = '⏳ ' + t('Ждём, пока хост начнёт…');
         } else if (banner && banner.startsWith('⏳')) {
           banner = null;
         }

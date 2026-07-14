@@ -99,10 +99,10 @@ const sameLan = ipv4.find((ip) => classify(ip)[0] === 'lan');
 const publicIp = ipv4.find((ip) => classify(ip)[0] === 'public');
 out.push('');
 if (publicIp) {
-  out.push(`  share   : http://${publicIp}:${PORT}/   (friend opens this → Connect → Crimson/p2)`);
+  out.push(`  share   : http://${publicIp}:${PORT}/   (players open this → enter unique callsigns)`);
 } else if (sameLan) {
   out.push(
-    `  share   : http://${sameLan}:${PORT}/   (SAME-LAN devices only → Connect → Crimson/p2)`,
+    `  share   : http://${sameLan}:${PORT}/   (SAME-LAN devices only → enter unique callsigns)`,
     `            A friend on another network can't use this — run a tunnel instead:`,
     `              cloudflared tunnel --url http://localhost:${PORT}   (share the wss:// URL)`,
   );

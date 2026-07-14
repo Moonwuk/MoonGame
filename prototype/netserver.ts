@@ -37,10 +37,9 @@ import {
   newGame,
   kernel,
   data,
-  DEFAULT_SETUP,
-  START_CANDIDATES,
+  networkSeats,
+  parseNetworkMatchMode,
   SCORE_LIMIT,
-  type SeatConfig,
   aiOrders,
   stewardActive,
   HOUR,
@@ -191,25 +190,11 @@ if (DATABASE_URL) {
   receiptStore = new MemoryReceiptStore();
 }
 const restored = await matchStore.load('proto');
-// NET-2v2 (AVA-1 tail): TEAMS=2v2 seats two sides of two — p1+p2 (team A, the two
-// west corners) vs p3+p4 (team B, the east ones), so allies share a flank. Same
-// team is seeded ALLIED, across teams — WAR (the AVA-0 seeding inside `newGame`);
-// a live team playtest before the meta-orchestrator (AVA-7) exists. Any seat
-// without a live human is played by the server AI after the grace window, so
-// 1–4 humans can run it. Ignored when resuming a saved match (restored wins).
-const TEAMS_2V2 = process.env.TEAMS === '2v2';
-const NET_SEATS: SeatConfig[] = TEAMS_2V2
-  ? [
-      { id: 'p1', name: 'Azure Compact', faction: 'blue', start: START_CANDIDATES[0]!, ai: false, team: 'A' },
-      { id: 'p2', name: 'Violet Ascendancy', faction: 'violet', start: START_CANDIDATES[2]!, ai: false, team: 'A' },
-      { id: 'p3', name: 'Crimson Hegemony', faction: 'red', start: START_CANDIDATES[1]!, ai: false, team: 'B' },
-      { id: 'p4', name: 'Amber Combine', faction: 'amber', start: START_CANDIDATES[3]!, ai: false, team: 'B' },
-    ]
-  : // NET seats are all HUMAN chairs (the server AI only stands in for an EMPTY one), so
-    // seed the world with every seat un-branded ai:false — newGame then deals each seat
-    // its research council and start kit symmetrically. Seeding the solo default here
-    // left a live player on p2 without scientists (the «Хранитель» line unreachable).
-    DEFAULT_SETUP.seats.map((seat) => ({ ...seat, ai: false }));
+// The prototype host defaults to a ten-chair FFA. `TEAMS=5v5` keeps all ten chairs and
+// seeds two allied flanks; `TEAMS=2v2` preserves the smaller four-chair playtest. Every
+// chair is claimable by a human, while the server AI stands in after the reconnect grace.
+const NETWORK_MODE = parseNetworkMatchMode(process.env.TEAMS);
+const NET_SEATS = networkSeats(NETWORK_MODE);
 const initialState = restored?.state ?? newGame({ seats: NET_SEATS });
 // A NET seat is not a bot: every seat here is claimable by a human, and the
 // server-side AI merely stands in for an empty chair (`humans` is the live truth).
@@ -229,7 +214,7 @@ const room = new MatchRoom({
   now: () => Date.now(),
   manualStart: true, // lobby: clock frozen until the host (first in) presses Start
   initiallyStarted: !!restored, // restored snapshot → resume into the game, skip lobby
-  singlePeerPerPlayer: true, // 1v1: each side is one connection — no two-people-as-Azure
+  singlePeerPerPlayer: true, // one live connection per chair — no two people command one empire
   emitStateHash: true, // attach hashState(view) so the client overlay can flag desync
   observe, // M0: log every room event to JSONL + count for the on-exit summary
   initialReceipts, // rehydrated idempotency (deduped action stays deduped after restart)
@@ -457,6 +442,9 @@ const onLan = shareIp !== null;
 const unreachableOnly = host === '0.0.0.0' && !onLan && addrs.length > 0;
 const localHttp = httpUrl.replace('0.0.0.0', 'localhost'); // 0.0.0.0 isn't openable
 const friendUrl = onLan ? `http://${shareIp}:${port}/` : null;
+const liveSeatIds = Object.keys(initialState.players);
+const firstSeat = liveSeatIds[0] ?? 'p1';
+const lastSeat = liveSeatIds.at(-1) ?? firstSeat;
 
 const lines = [
   'Void Dominion — prototype dev server (real core)',
@@ -476,15 +464,19 @@ const lines = [
   TIME_SCALE > 1
     ? `  time   : ×${TIME_SCALE} fast-forward (1 real min ≈ ${(TIME_SCALE / 60).toFixed(1)} game-hours) — playtest mode`
     : '  time   : ×1 real-time (set TIME_SCALE=100 to fast-forward a playtest)',
-  TEAMS_2V2
-    ? '  mode   : 2v2 team battle — Azure+Violet (A) vs Crimson+Amber (B); an empty seat is AI-driven'
-    : '  mode   : 1v1 skirmish (set TEAMS=2v2 for a team battle)',
+  restored
+    ? `  mode   : resumed match — ${liveSeatIds.length} claimable chairs; empty chairs are AI-driven`
+    : NETWORK_MODE === '2v2'
+      ? '  mode   : 2v2 team battle — 4 claimable chairs; empty chairs are AI-driven'
+      : NETWORK_MODE === '5v5'
+        ? '  mode   : 5v5 team battle — 10 claimable chairs; empty chairs are AI-driven'
+        : '  mode   : 10-player FFA — empty chairs are AI-driven (set TEAMS=5v5 for teams)',
   '',
-  '  Two-person test:',
-  `   • You:    open ${localHttp}/  → Connect → Azure (p1)`,
+  '  Multiplayer test:',
+  `   • You:     open ${localHttp}/  → enter a callsign → join`,
   onLan
-    ? `   • Friend: open ${friendUrl}  (same Wi-Fi) → Connect → ${TEAMS_2V2 ? 'a free seat (p2–p4)' : 'Crimson (p2)'}`
-    : '   • Friend: run `pnpm host` (binds 0.0.0.0 → prints a LAN URL), or tunnel the port for a remote friend — see docs/multiplayer.md',
+    ? `   • Friends: open ${friendUrl}  (same Wi-Fi) → enter unique callsigns → join a free chair`
+    : '   • Friends: run `pnpm host` (binds 0.0.0.0 → prints a LAN URL), or tunnel the port for remote players — see docs/multiplayer.md',
 ];
 if (unreachableOnly) {
   lines.push(
@@ -496,7 +488,7 @@ lines.push(
   '',
   SEAT_LOCK
     ? `  raw ws : ${wsUrl.replace('0.0.0.0', 'localhost')}?nick=<name>  (seat lock on — ?player= is refused)`
-    : `  raw ws : ${wsUrl.replace('0.0.0.0', 'localhost')}?player=p1  ·  …?player=p2`,
+    : `  raw ws : ${wsUrl.replace('0.0.0.0', 'localhost')}?player=${firstSeat}  ·  …?player=${lastSeat}`,
   '',
 );
 process.stdout.write(lines.join('\n'));

@@ -1,4 +1,4 @@
-// One-command host for a real two-person test (`pnpm host`, run from repo root).
+// One-command host for a real multiplayer test (`pnpm host`, run from repo root).
 //
 // Builds the prototype HTML, then serves it + the authoritative match on every
 // network interface (0.0.0.0) so a friend on the same Wi-Fi can join by opening

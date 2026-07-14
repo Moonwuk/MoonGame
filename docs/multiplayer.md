@@ -49,14 +49,14 @@ peers and that a peer reconstructs the exact authoritative state from `welcome` 
 deltas. The construction (data loader + `createDevMatch`) lives in
 `packages/server/src/scenario.ts`, reused by both the runner and the test.
 
-## Playing the real prototype together — the 2-person test
+## Playing the real prototype together — up to 10 players
 
 The section above connects to a minimal core harness (`dev:server`, green/red). To
 play the **actual prototype** — the map, the HUD, the whole console — as a
-two-player session, use the prototype dev server. It hosts the prototype's _own_
-world (same `kernel` + `data` + `newGame()`), so the client renders the live
-session exactly like single-player, and it **serves the game HTML at `/`** so a
-peer needs no file at all.
+multiplayer session, use the prototype dev server. It hosts the prototype's _own_
+world (same `kernel` + `data` + `newGame()`), defaults to ten claimable FFA seats,
+and **serves the game HTML at `/`** so peers need no file at all. Empty seats are
+driven by server AI after the reconnect grace window.
 
 ### One command to host
 
@@ -68,9 +68,10 @@ It prints the URLs and detects your LAN IP, e.g.:
 
 ```
   game   : http://localhost:8788/   (open in a browser → Connect)
-  Two-person test:
-   • You:    open http://localhost:8788/   → Connect → Azure (p1)
-   • Friend: open http://192.168.1.23:8788/  (same Wi-Fi) → Connect → Crimson (p2)
+  mode   : 10-player FFA — empty chairs are AI-driven
+  Multiplayer test:
+   • You:     open http://localhost:8788/   → enter a callsign → join
+   • Friends: open http://192.168.1.23:8788/  → enter unique callsigns → join
 ```
 
 (Under the hood that's `pnpm prototype` + `HOST=0.0.0.0 pnpm dev:proto-server`;
@@ -80,17 +81,30 @@ The game opens on a **connect overlay**:
 
 - **Single player** — the local skirmish vs the AI, exactly as before.
 - **Connect** — the server URL is **pre-filled from the page's origin**, so just
-  pick **Azure** (p1) or **Crimson** (p2) and tap **Connect**. Whoever you join as
-  renders **green** ("you"); the opponent is red. The URL is remembered (the APK
-  reconnects in one tap).
+  enter a unique callsign and join. The server assigns the first free chair and
+  maps that callsign back to the same chair on reconnect. The URL is remembered
+  (the APK reconnects in one tap).
+
+Match modes are selected when starting the host:
+
+```bash
+pnpm host                    # 10-player FFA
+TEAMS=5v5 pnpm host          # ten chairs: p1–p5 vs p6–p10
+TEAMS=2v2 pnpm host          # compact four-chair team test
+```
+
+Unsupported `TEAMS` values fail at startup. A durable saved match keeps its
+original roster; remove the saved `proto` snapshot or use an empty database before
+expecting a new mode.
 
 ### Path A — same Wi-Fi, zero install (easiest)
 
-1. Host runs `pnpm host` and reads off the two URLs.
-2. **You** open the `localhost` URL in a browser → Connect → Azure.
-3. **Friend** (same Wi-Fi) opens the `http://<LAN-IP>:8788/` URL in their phone/laptop
-   browser → Connect → Crimson.
-4. You're in one live session. (If the friend can't reach it, allow port 8788 through
+1. Host runs `pnpm host` and reads off the local and LAN URLs.
+2. **You** open the `localhost` URL and enter a callsign.
+3. Up to nine **friends** on the same Wi-Fi open `http://<LAN-IP>:8788/` and enter
+   different callsigns.
+4. The first player is lobby host and presses **Start** when the roster is ready.
+   (If a friend can't reach it, allow port 8788 through
    the host's firewall.)
 
 ### Path B — same Wi-Fi, via the APK
@@ -102,8 +116,8 @@ the debug build allows cleartext (`usesCleartextTraffic`), so it connects over p
 1. Host runs `pnpm host`.
 2. Get the APK: **Actions → "Android APK (prototype)" → download `void-dominion-debug-apk`**
    (or trigger it manually via _Run workflow_); send `app-debug.apk` to your friend.
-3. Both sideload it. In the overlay each types `ws://<host-LAN-IP>:8788` (the host can
-   use `ws://localhost:8788`), one picks Azure, the other Crimson → **Connect**.
+3. Players sideload it. In the overlay each types `ws://<host-LAN-IP>:8788` (the
+   host can use `ws://localhost:8788`), enters a unique callsign, and connects.
 
 ### Path C — remote friend (different network)
 
@@ -114,8 +128,8 @@ that works from anywhere (and from a mobile WebView):
 cloudflared tunnel --url http://localhost:8788   # or: ngrok http 8788
 ```
 
-Both (browser **or** APK) paste the printed `wss://…trycloudflare.com` URL; one picks
-Azure, the other Crimson.
+Every player (browser **or** APK) pastes the printed
+`wss://…trycloudflare.com` URL and enters a unique callsign.
 
 Keep the server (and tunnel) running for the session — state is in-memory, so a restart
 loses the match. Do **not** leave an unauthenticated server tunnelled long-term (enable
@@ -128,8 +142,8 @@ URL. The repo ships a `Dockerfile` (builds the prototype + runs the proto-server
 serving the game at `/`) and a `render.yaml` blueprint:
 
 - **Render (free):** New → Blueprint → point at this repo → it builds the Dockerfile
-  and gives `https://<app>.onrender.com`. Share it; both open it, pick Azure / Crimson.
-  The overlay auto-fills the same-origin `wss://`, so there's nothing to type.
+  and gives `https://<app>.onrender.com`. Share it; players open it and enter unique
+  callsigns. The overlay auto-fills the same-origin `wss://`, so there's nothing to type.
 - **Any Docker host / Fly.io / Railway:** `docker build -t void-dominion . && docker run -p 8788:8788 void-dominion`, or push the image. The server reads `$PORT`.
 
 Free hosts sleep when idle (cold start on first hit) and state is in-memory (a restart
@@ -152,7 +166,7 @@ VirtualBox `10.0.2.x`). If you're still stuck, walk this top-to-bottom and stop 
 first failing step:
 
 1. **Launched the right way?** Use `pnpm host` (binds `0.0.0.0`); **never**
-   `pnpm dev:proto-server` for a two-person test (it binds `127.0.0.1` = loopback only,
+   `pnpm dev:proto-server` for a LAN test (it binds `127.0.0.1` = loopback only,
    so only the host machine can connect — the literal "works for me, friend can't join").
    On Windows the POSIX prefix `HOST=0.0.0.0 pnpm …` is **ignored** — use `pnpm host`, or
    PowerShell `$env:HOST='0.0.0.0'; $env:PORT='8788'; pnpm dev:proto-server`.
@@ -187,19 +201,20 @@ first failing step:
    `cloudflared tunnel --url http://localhost:8788` and share the printed `https://…` URL.
 
 7. **Page loads but the WebSocket won't connect?** Open DevTools → Console/Network (filter WS).
-   A **403** means `?player=` isn't `p1`/`p2` (pick Azure/Crimson in the overlay, don't hand-type).
+   A **403** on raw `?player=` means the id is outside the configured range (default
+   `p1`–`p10`, `TEAMS=2v2`: `p1`–`p4`); normal clients should enter a callsign instead.
    A **404** means a stray path — the connect field wants an **origin only** (`ws://host:8788`),
    not a `/matches/…` URL. A **mixed-content** block means an `https` page tried `ws://` — the
    overlay now auto-upgrades to `wss://`, but a stale saved value can linger:
    `localStorage.removeItem('void.server')` then reload.
 
-### Lobby — the match waits for both players
+### Lobby — the host decides when to start
 
 However you connect, the world starts **paused** ("⏳ Waiting for … to join"): the
-server freezes the clock until BOTH Azure and Crimson are connected, and re-freezes if
-one drops. So whoever opens the link first just waits on the start screen; the match
-clock begins the moment the second player joins. (You can pre-position fleets while
-waiting — orders apply, but no time passes until both are in.)
+first player becomes lobby host. The roster shows every configured chair and who is
+connected; the host presses **Start** when enough players have joined. The clock then
+runs and does not re-freeze when somebody disconnects. Empty/offline chairs are driven
+by server AI after their reconnect grace window.
 
 ### Net-mode scope (first MP test)
 
@@ -210,7 +225,8 @@ the authoritative server those are suspended; the server only enforces the
 - **Capture** is via the kernel's combat: orbit **near** → **assault** (the
   walk-into-an-undefended-neutral-sector shortcut is a client-only convenience
   and does not apply in MP).
-- **No AI** — the opponent is a human (the local red AI is off in net mode).
+- **Server AI fills empty chairs** after a reconnect grace period; a live player always
+  commands their own chair unless they explicitly delegate it to the Steward.
 - **Builds** send one order per tap (the server times construction); the local
   multi-item build queue is single-player only.
 - Starfort auto-AA and in-MP event toast notifications are not wired yet.

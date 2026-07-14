@@ -60,10 +60,9 @@ export interface MatchRoomOptions {
   /** Attach `hashState(view)` to each snapshot so the client can detect desync.
    *  Opt-in (it hashes the per-player view on every broadcast). */
   emitStateHash?: boolean;
-  /** 1v1 lobby guard: reject a second LIVE connection to an already-occupied
-   *  player slot, so two people can't both take the same side (which would leave
-   *  the lobby waiting forever for the empty side). A slot frees the moment its
-   *  peer disconnects, so reconnect-after-drop still works. Default false. */
+  /** Reject a second LIVE connection to an already-occupied player slot, so two
+   *  people cannot command the same empire. A slot frees the moment its peer
+   *  disconnects, so reconnect-after-drop still works. Default false. */
   singlePeerPerPlayer?: boolean;
   /** Static team assignment (playerId → teamId): same team = allies who see each
    *  other's pings. Omit ⇒ no allies (only self sees own pings). Stopgap until a
@@ -494,8 +493,7 @@ export class MatchRoom {
       return false;
     }
     if (this.singlePeerPerPlayer && (this.peers.get(playerId)?.size ?? 0) > 0) {
-      // That side is already controlled by a live connection — refuse so the two
-      // players can't both take the same slot (which strands the lobby).
+      // That side is already controlled by a live connection.
       this.send(peer, { type: 'error', matchId: this.id, code: 'E_SLOT_TAKEN' });
       peer.close?.(1008, 'slot taken');
       return false;
