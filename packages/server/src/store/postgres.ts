@@ -10,6 +10,8 @@ import type {
   AvaResultStore,
   AvaRosterEntry,
   AvaRosterStore,
+  AvaSession,
+  AvaSessionStore,
   AvaSide,
   CorpAuditEntry,
   CorpMembership,
@@ -169,6 +171,17 @@ export async function migrate(pool: Pool): Promise<void> {
       at              bigint NOT NULL
     );
     CREATE INDEX IF NOT EXISTS ava_results_at_idx ON ava_results (at DESC);
+
+    -- AvA sessions (AVA-7): the live match a locked matchup was raised into. PK match_id +
+    -- a UNIQUE matchup_id enforce one session per matchup and per instance (the orchestrator
+    -- never double-builds). seats is the fixed accountId -> playerId map resolveAvaSeat reads.
+    CREATE TABLE IF NOT EXISTS ava_sessions (
+      match_id   text PRIMARY KEY,
+      matchup_id text NOT NULL UNIQUE,
+      map_id     text NOT NULL,
+      seats      jsonb NOT NULL,
+      at         bigint NOT NULL
+    );
   `);
 }
 
@@ -829,6 +842,17 @@ export class PostgresAvaChallengeStore implements AvaChallengeStore {
     return r.rows.map(challengeOf);
   }
 
+  async lockedMatchups(limit = 100): Promise<AvaChallenge[]> {
+    const r = await this.pool.query<ChallengeRow>(
+      `SELECT id, challenger_corp, target_corp, cost, status, created_at, expires_at, pause_ends_at
+       FROM ava_challenges
+       WHERE status = 'locked'
+       ORDER BY created_at DESC, id LIMIT $1`,
+      [limit],
+    );
+    return r.rows.map(challengeOf);
+  }
+
   async endMatchup(id: string): Promise<boolean> {
     // Same exactly-once contract as closeMatchup, over the locked state: only a
     // still-locked matchup transitions, so settlement can't award influence twice.
@@ -992,5 +1016,68 @@ export class PostgresAvaResultStore implements AvaResultStore {
       [limit],
     );
     return r.rows.map(resultOf);
+  }
+}
+
+interface SessionRow {
+  match_id: string;
+  matchup_id: string;
+  map_id: string;
+  seats: Record<string, string>;
+  at: string;
+}
+
+function sessionOf(row: SessionRow): AvaSession {
+  return {
+    matchId: row.match_id,
+    matchupId: row.matchup_id,
+    mapId: row.map_id,
+    seats: row.seats,
+    at: Number(row.at),
+  };
+}
+
+/** Postgres AvA session store (AVA-7). The PK (match_id) + UNIQUE (matchup_id) make
+ *  `create` atomically one-per-matchup and one-per-instance; a duplicate raises the
+ *  insert conflict → `E_SESSION_EXISTS` (the orchestrator treats that as "already built"). */
+export class PostgresAvaSessionStore implements AvaSessionStore {
+  constructor(private readonly pool: Pool) {}
+
+  async create(
+    session: AvaSession,
+  ): Promise<{ ok: true } | { ok: false; code: 'E_SESSION_EXISTS' }> {
+    try {
+      await this.pool.query(
+        `INSERT INTO ava_sessions (match_id, matchup_id, map_id, seats, at)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [
+          session.matchId,
+          session.matchupId,
+          session.mapId,
+          JSON.stringify(session.seats),
+          session.at,
+        ],
+      );
+      return { ok: true };
+    } catch {
+      // PK (match_id) or UNIQUE (matchup_id) collision — a session already exists.
+      return { ok: false, code: 'E_SESSION_EXISTS' };
+    }
+  }
+
+  async byMatch(matchId: string): Promise<AvaSession | null> {
+    const r = await this.pool.query<SessionRow>(
+      `SELECT match_id, matchup_id, map_id, seats, at FROM ava_sessions WHERE match_id = $1`,
+      [matchId],
+    );
+    return r.rows[0] ? sessionOf(r.rows[0]) : null;
+  }
+
+  async byMatchup(matchupId: string): Promise<AvaSession | null> {
+    const r = await this.pool.query<SessionRow>(
+      `SELECT match_id, matchup_id, map_id, seats, at FROM ava_sessions WHERE matchup_id = $1`,
+      [matchupId],
+    );
+    return r.rows[0] ? sessionOf(r.rows[0]) : null;
   }
 }

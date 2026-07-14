@@ -8,6 +8,8 @@ import type {
   AvaResultStore,
   AvaRosterEntry,
   AvaRosterStore,
+  AvaSession,
+  AvaSessionStore,
   AvaSide,
   CorpAuditEntry,
   CorpMembership,
@@ -378,6 +380,16 @@ export class MemoryAvaChallengeStore implements AvaChallengeStore {
     );
   }
 
+  lockedMatchups(limit = 100): Promise<AvaChallenge[]> {
+    return Promise.resolve(
+      [...this.rows.values()]
+        .filter((r) => r.status === 'locked')
+        .sort((a, b) => b.createdAt - a.createdAt || (a.id < b.id ? -1 : 1))
+        .slice(0, limit)
+        .map((r) => ({ ...r })),
+    );
+  }
+
   endMatchup(id: string): Promise<boolean> {
     const row = this.rows.get(id);
     if (!row || row.status !== 'locked') return Promise.resolve(false);
@@ -409,6 +421,33 @@ export class MemoryAvaResultStore implements AvaResultStore {
         .slice(0, limit)
         .map((r) => ({ ...r })),
     );
+  }
+}
+
+/** In-memory AvA session store (AVA-7) — `matchId → session`, with a secondary index by
+ *  matchup so `create` can enforce one session per matchup as well as per match. */
+export class MemoryAvaSessionStore implements AvaSessionStore {
+  private readonly byMatchId = new Map<string, AvaSession>();
+  private readonly byMatchupId = new Map<string, AvaSession>();
+
+  create(session: AvaSession): Promise<{ ok: true } | { ok: false; code: 'E_SESSION_EXISTS' }> {
+    if (this.byMatchId.has(session.matchId) || this.byMatchupId.has(session.matchupId)) {
+      return Promise.resolve({ ok: false, code: 'E_SESSION_EXISTS' });
+    }
+    const row: AvaSession = { ...session, seats: { ...session.seats } };
+    this.byMatchId.set(session.matchId, row);
+    this.byMatchupId.set(session.matchupId, row);
+    return Promise.resolve({ ok: true });
+  }
+
+  byMatch(matchId: string): Promise<AvaSession | null> {
+    const row = this.byMatchId.get(matchId);
+    return Promise.resolve(row ? { ...row, seats: { ...row.seats } } : null);
+  }
+
+  byMatchup(matchupId: string): Promise<AvaSession | null> {
+    const row = this.byMatchupId.get(matchupId);
+    return Promise.resolve(row ? { ...row, seats: { ...row.seats } } : null);
   }
 }
 

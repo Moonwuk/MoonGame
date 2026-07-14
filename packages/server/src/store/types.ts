@@ -276,6 +276,9 @@ export interface AvaChallengeStore {
   closeMatchup(id: string, status: 'locked' | 'cancelled'): Promise<boolean>;
   /** Accepted matchups whose roster window is due at `now` (for the roster sweep). */
   dueRosters(now: number): Promise<AvaChallenge[]>;
+  /** AVA-7: every LOCKED matchup (roster frozen), newest first — the orchestrator sweep
+   *  reads these and raises a session for each one that has none yet. */
+  lockedMatchups(limit?: number): Promise<AvaChallenge[]>;
   /** AVA-8: atomic locked→ended transition (S7 archive). False = the row was NOT
    *  locked and NOTHING changed — the exactly-once gate for settlement, so a replayed
    *  `match.ended` can't award influence twice. */
@@ -302,6 +305,31 @@ export interface AvaResultStore {
   get(matchupId: string): Promise<AvaResult | null>;
   /** Recorded outcomes, newest first (bounded by `limit`). */
   recent(limit?: number): Promise<AvaResult[]>;
+  close?(): Promise<void>;
+}
+
+/** One raised AvA session (AVA-7) — the link a locked matchup gets once the orchestrator
+ *  builds a live match from its roster: which match instance runs it (`matchId`), on which
+ *  map, and the fixed seating (`seats`: accountId → the concrete `playerId`/slot the account
+ *  plays). `seats` is what `resolveAvaSeat` reads to sit each account in THEIR slot (not a
+ *  first-free seat); bot-filled empty slots are not in it. */
+export interface AvaSession {
+  matchId: string;
+  matchupId: string;
+  mapId: string;
+  seats: Record<string, string>;
+  at: number;
+}
+
+/** Persistence for AvA sessions (AVA-7). One row per matchup (unique `matchupId`) and per
+ *  instance (PK `matchId`) — the orchestrator raises exactly one session per locked matchup;
+ *  `create` fails atomically if either already exists so a re-run never double-builds. */
+export interface AvaSessionStore {
+  create(
+    session: AvaSession,
+  ): Promise<{ ok: true } | { ok: false; code: 'E_SESSION_EXISTS' }>;
+  byMatch(matchId: string): Promise<AvaSession | null>;
+  byMatchup(matchupId: string): Promise<AvaSession | null>;
   close?(): Promise<void>;
 }
 

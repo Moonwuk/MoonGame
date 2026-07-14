@@ -514,10 +514,18 @@
   `E_ROSTER_FULL`/`E_ROSTER_LOCKED`/`E_WINDOW_CLOSED`. REST `GET /ava/matchup/:id`,
   `POST …/roster`, `POST …/join`; свип на интервале `main.ts`. Тесты: стор-контракты
   обоих адаптеров + сервис (окно/RBAC/кап/лок/отмена+возврат) + HTTP.
-- **AVA-7** ⏳ `[srv]` ★ **Оркестратор: сессия из ростера (S4).** `pickAvaMap` → раскладка
-  ростера по командным слотам → `buildStateFromMap({slots, crossTeamStart:'peace'})` →
-  `MatchRegistry.register`; AvA-осведомлённая рассадка (аккаунт→фикс-слот, `resolveAvaSeat`,
-  `E_NOT_ROSTERED`).
+- **AVA-7** ✅ `[srv]` ★ **Оркестратор: сессия из ростера (S4).** `AvaOrchestrator`:
+  `pickAvaMap` (размер = бо́льшая сторона ростера) → чистая рассадка `seatAvaRoster`
+  (каждая сторона на слоты своей команды, союзники сгруппированы, пустые кресла →
+  серверный ИИ; `playerId = slotId`) → `buildStateFromMap({slots, crossTeamStart:'peace'})`
+  (мирный старт S5) → комната поднимается через инжектируемый `createRoom` (снапшот в стор,
+  ленивый реестр грузит на коннекте). `AvaSessionStore` (Memory+Postgres `ava_sessions`):
+  связка matchup↔match_id + фикс-рассадка `account→slot`, restart-safe. AvA-осведомлённая
+  рассадка: `resolveAvaSeat(matchId, accountId)` → фикс-место / `E_NOT_ROSTERED` / `null`
+  (не-AvA матч → обычный путь), встроен в `join` (`main.ts`). Свип `orchestrate` по
+  залоченным без сессии (мимо клиента, рядом с roster-свипом); идемпотентно, seeded по
+  matchupId. Тесты: seating (группировка/боты/детерминизм) + orchestrate (state/peace/
+  реестр/идемпотентность/коды) + resolveAvaSeat + стор-контракт обоих адаптеров.
 - **AVA-8** ⏳ `[srv]` ★ **Мир→война→итог (S5–S7).** Мир = кросс-командный `peace`
   (combat-lock бесплатно), война = оркестратор шлёт `diplomacy.declare(war)` по таймеру,
   итог на `match.ended` — влияние победителю + XP + запись результата (MM-3.1 минимум) +
@@ -527,9 +535,11 @@
   winnerSide)` — архив + `AvaResultStore` (история MM-3.1, Memory+Postgres `ava_results`)
   + влияние победителю (AVA-2, `winReward` деф. 150) + аудит; ничья → исход без влияния;
   `matchHistory` newest-first (фундамент AVA-9/медали/рейтинг); код `E_MATCHUP_CLOSED`.
-  XP отложен — нужен серверный аккаунт-XP (AC-0.3, не построен). **Ждут AVA-7 (живая
-  сессия):** S5 мир (посев `peace` уже в ядре) и S6 эскалация войны `diplomacy.declare`
-  по таймеру на `MatchRoom` + вызов `settleMatch` из оркестратора на `match.ended`.
+  XP отложен — нужен серверный аккаунт-XP (AC-0.3, не построен). S5 мир теперь реально
+  поднимается оркестратором (AVA-7, старт `peace`). **Осталось:** S6 эскалация войны —
+  системный `diplomacy.declare(war)` по таймеру на живом `MatchRoom` — и вызов
+  `settleMatch` из оркестратора на `match.ended` (маппинг победителя→сторона по
+  `AvaSession.seats`).
 - **AVA-9** ⏳ `[srv]` **Публичная лента корпораций.** Матчап на S2 + итог на S7, read-model
   без приватного ростера; `GET /ava/feed`.
 - **AVA-C1/C2** ⏳ `[proto]` Клиент: прото-экран корпорации `#corp` → `/corps` (CORP-0);
