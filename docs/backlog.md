@@ -500,9 +500,20 @@
   нейтральные призы west/east). `pickAvaMap(maps, sides, slotsPerSide, rng)` в server/meta:
   фильтр тег+форма, канонический порядок по id, один draw seeded-Rng — выбор карты
   воспроизводим для реплеев. Тесты: `buildFromMap.test.ts` + `avaMapPool.test.ts`.
-- **AVA-6** ⏳ `[srv]` **Сбор ростера + лок (S3).** Окно паузы; `setRoster` (глава/офицер
-  из флагнутых) + `joinAva`/`readyUp` (самозапись); в конце лок (GDD §2), недобор →
-  отмена+возврат.
+- **AVA-6** ✅ `[srv]` **Сбор ростера + лок (S3).** `accept` теперь ОТКРЫВАЕТ окно паузы
+  (`pauseEndsAt` на матчапе, деф. 24ч); статусы матчапа расширены: `accepted` →
+  `locked`/`cancelled` (exactly-once через условный UPDATE, как AVA-4). `AvaRosterStore`
+  (Memory+Postgres, таблица `ava_roster`): одна запись на (matchup, account) — PK,
+  пер-сайд кап atomically-guarded (FOR UPDATE на строке матчапа сериализует гонку за
+  последний слот). Сервис: `setRoster` (глава/офицер, ТОЛЬКО из флагнутого пула AVA-3,
+  кап, replace-side целиком), `join` (самозапись члена в окне, нефлагнутый тоже —
+  явка и есть согласие; идемпотентно), `rosterView` (свой состав + только счётчики
+  чужого — приватность до боя), `sweepRosters` (обе стороны ≥ minPerSide → `locked`,
+  недобор → `cancelled` + возврат цены вызова ровно один раз). Кап = слоты карты
+  придёт из AVA-7 (пока инжектируемый параметр, деф. 4). Коды `E_NOT_FLAGGED`/
+  `E_ROSTER_FULL`/`E_ROSTER_LOCKED`/`E_WINDOW_CLOSED`. REST `GET /ava/matchup/:id`,
+  `POST …/roster`, `POST …/join`; свип на интервале `main.ts`. Тесты: стор-контракты
+  обоих адаптеров + сервис (окно/RBAC/кап/лок/отмена+возврат) + HTTP.
 - **AVA-7** ⏳ `[srv]` ★ **Оркестратор: сессия из ростера (S4).** `pickAvaMap` → раскладка
   ростера по командным слотам → `buildStateFromMap({slots, crossTeamStart:'peace'})` →
   `MatchRegistry.register`; AvA-осведомлённая рассадка (аккаунт→фикс-слот, `resolveAvaSeat`,
