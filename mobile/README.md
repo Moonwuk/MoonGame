@@ -15,15 +15,25 @@ the friend-test runbook (server + `wss://` tunnel → sideload → both connect)
 
 ## Install on a phone (easiest)
 
-Every push to `main` that touches the game refreshes a rolling **`alpha`** prerelease
-with the latest build, at a stable link:
+Every push to `main` that touches the game refreshes **two rolling prereleases**
+(one per client profile, see `prototype/build.mjs`) at stable links:
 
-- **Releases page:** https://github.com/Moonwuk/Nygame/releases/tag/alpha
-- **Direct APK:** https://github.com/Moonwuk/Nygame/releases/download/alpha/void-dominion-alpha.apk
+- **Player client** (`appId com.voiddominion.player`) — for regular players: no dev
+  test mode, no single-player skirmish, no time controls; the main path is
+  callsign → match browser → join a running session. Tutorial works offline.
+  - Releases page: https://github.com/Moonwuk/Nygame/releases/tag/player
+  - Direct APK: https://github.com/Moonwuk/Nygame/releases/download/player/void-dominion-player.apk
+- **Dev client** (`appId com.voiddominion.prototype`) — everything, as before:
+  - Releases page: https://github.com/Moonwuk/Nygame/releases/tag/alpha
+  - Direct APK: https://github.com/Moonwuk/Nygame/releases/download/alpha/void-dominion-alpha.apk
+
+The two APKs have **different application ids**, so a host can install both side by
+side; each updates from its own release lane (the in-app updater picks the lane baked
+into the build — `prototype/src/updater.ts`).
 
 On the phone: open the direct link → download → open the APK → allow "install from
-unknown sources" if prompted → launch. **Single-player runs fully offline**; rotate
-freely on a phone or tablet.
+unknown sources" if prompted → launch. In the **dev** APK single-player runs fully
+offline; rotate freely on a phone or tablet.
 
 It is a **debug** APK, signed with a **committed debug keystore** (`mobile/debug.keystore`,
 standard `android`/`android` credentials — not a secret) so every build shares one
@@ -44,7 +54,8 @@ needs a real (secret) keystore — a later step.
 
 Install once; after that the app checks for updates itself — no need to hunt the release
 page. On launch (when online) and via **«Проверить обновления»** on the welcome screen,
-the app checks the rolling `alpha` release and, if a newer build exists, shows a
+the app checks its own rolling release lane (`alpha` for the dev APK, `player` for the
+player APK) and, if a newer build exists, shows a
 **«Доступна новая сборка»** banner. Tapping **«Обновить»** opens the APK in the **system
 browser**, which downloads it and offers to install; because every build shares the
 committed debug signature, it installs straight over the top, keeping your data.
@@ -57,9 +68,10 @@ committed debug signature, it installs straight over the top, keeping your data.
 How it's wired (all four pieces ship together so the running build and the published
 build are compared on the same integer):
 
-- **versionCode = git commit count** (monotonic), `versionName = alpha-<sha>` — stamped
-  into the APK by `patch-updater.mjs` and baked into the web layer as `window.__BUILD__`
-  by `inject-build.mjs` (CI `Compute build version` step → `$GITHUB_ENV`).
+- **versionCode = git commit count** (monotonic), `versionName = <lane>-<sha>` (lane =
+  `alpha` | `player`) — stamped into the APK by `patch-updater.mjs` and baked into the
+  web layer as `window.__BUILD__` by `inject-build.mjs` (CI `Compute build version`
+  step → `$GITHUB_ENV`).
 - The release **body** carries a machine marker `<!-- void:versionCode=N void:sha=X -->`.
 - `prototype/src/updater.ts` reads `window.__BUILD__`, fetches the release via the
   CORS-enabled GitHub REST API, compares versionCode, and surfaces the banner. It is
@@ -75,11 +87,12 @@ build are compared on the same integer):
 
 ## Get the APK as a CI artifact (any branch build)
 
-Each run also uploads the APK as an artifact (handy for `claude/*` branch builds that
+Each run also uploads both APKs as artifacts (handy for `claude/*` branch builds that
 don't publish a release):
 
 1. Actions tab → "Android APK (prototype)" → open the run (or **Run workflow**).
-2. Download the **`void-dominion-debug-apk`** artifact.
+2. Download the **`void-dominion-debug-apk`** (dev client) or
+   **`void-dominion-player-apk`** (player client) artifact.
 3. Sideload `app-debug.apk` (enable "install from unknown sources").
 
 ## Build locally (needs JDK 17 + Android SDK)

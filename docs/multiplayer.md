@@ -120,8 +120,11 @@ the debug build allows cleartext (`usesCleartextTraffic`), so it connects over p
 `ws://` on a LAN — no tunnel needed.
 
 1. Host runs `pnpm host`.
-2. Get the APK: **Actions → "Android APK (prototype)" → download `void-dominion-debug-apk`**
-   (or trigger it manually via _Run workflow_); send `app-debug.apk` to your friend.
+2. Get the APK — for regular players use the **player** build:
+   https://github.com/Moonwuk/Nygame/releases/download/player/void-dominion-player.apk
+   (dev build with test tools: the `alpha` release, or the
+   `void-dominion-debug-apk` / `void-dominion-player-apk` CI artifacts from
+   **Actions → "Android APK (prototype)"**).
 3. Players sideload it. In the overlay each types `ws://<host-LAN-IP>:8788` (the
    host can use `ws://localhost:8788`), enters a unique callsign, and connects.
 

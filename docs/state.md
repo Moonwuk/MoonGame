@@ -213,8 +213,9 @@ by, damage}` (эмит до применения урона; прототип р
   влезает в узкий экран (подписи 10px, перенос), пинч-зум страницы разрешён (a11y —
   жесты карты и так живут на canvas/touch-action:none).
   **Автообновление (плейтест):** APK сравнивает свой baked `window.__BUILD__`
-  (versionCode = счётчик коммитов, инжект CI) с маркером rolling-релиза `alpha`
-  (`updater.ts`, GitHub REST, все отказы → «нет обновления»); `#updbar` —
+  (versionCode = счётчик коммитов, инжект CI) с маркером СВОЕГО rolling-релиза —
+  `alpha` для дев-APK, `player` для player-APK (`updater.ts` резолвит лейн из
+  `__PLAYER_BUILD__`-define; GitHub REST, все отказы → «нет обновления»); `#updbar` —
   **глобальный fixed-баннер** (z-96, поверх welcome/хаба/матча — раньше жил внутри
   `#connect`, и путь возвращающегося игрока через хаб его никогда не видел), «Обновить»
   отдаёт APK-ассет системному браузеру через `window.VoidNative.open`
@@ -852,6 +853,10 @@ HTML (открываются с диска, без сервера): `dist/void-d
 разметку); главный путь игрока — позывной → браузер запущенных сессий (`GET /matches`).
 Прото-хост отдаёт player-клиент на `/`, дев-клиент — на `/dev`. Обучение (ONB-2
 guided sandbox) в player-клиенте живо — идёт на фикс-темпе без ручки скорости.
+APK собирается в двух лейнах (matrix в `android.yml`): дев — rolling-релиз `alpha`
+(`com.voiddominion.prototype`, как раньше), player — rolling-релиз `player`
+(`void-dominion-player.apk`, свой `com.voiddominion.player` — ставится рядом с
+дев-версией); каждый APK автообновляется из своего лейна.
 
 - **Реальное ядро** в браузере: `createKernel([sector, planetType, tax, faction, economy,
 movement, hero, heroEffects, orbital, combat, artillery, intercept, captureOnArrival,
