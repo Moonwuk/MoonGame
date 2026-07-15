@@ -114,6 +114,8 @@ import {
   pairHas,
   hashState,
   planRoute,
+  previewBattle,
+  previewLossCount,
   thresholdRamp,
   type PausedConstructionSite,
 } from '../../packages/shared-core/src/index';
@@ -4485,6 +4487,29 @@ function fleetPanelHtml(f: Fleet): string {
       at += btn('assault', '', t('⚔ Штурм'), inOrbit);
       at += `</div>`;
       at += `<div class="hint">${t('С орбиты можно бомбардировать (изнашивает здания и замораживает их выпуск), но ПВО гарнизона достаёт до вас. Штурм высаживает десант против гарнизона.')}</div>`;
+      // Combat forecast (ONB-6): «если атакую — что будет?» — the pure base-model
+      // sim over the landing force vs the garrison the viewer SEES (the fleet is
+      // docked here, so the world is identified — no fog leak). A forecast, not an
+      // oracle: terrain/fortification/tech bonuses of the live fight are not folded
+      // in — the hedge in the copy says so.
+      const landing = f.landing ?? [];
+      const garrison = here!.garrison;
+      if (landing.some((u) => u.count > 0) && garrison.some((u) => u.count > 0)) {
+        const pv = previewBattle(landing, garrison, data);
+        const verdict =
+          pv.outcome === 'attacker'
+            ? t('десант возьмёт мир')
+            : pv.outcome === 'defender'
+              ? t('гарнизон устоит')
+              : t('затяжной пат');
+        at += `<div class="row dim">${t('Прогноз штурма: {v} · ~{r} р. · потери {a} дес. / {d} гарн.', {
+          v: `<b>${verdict}</b>`,
+          r: pv.roundsEst,
+          a: previewLossCount(pv.attacker),
+          d: previewLossCount(pv.defender),
+        })}</div>`;
+        at += `<div class="hint">${t('Прогноз по видимым составам, без бонусов местности, укреплений и технологий — реальный бой может отличаться.')}</div>`;
+      }
       cols.push(at);
     }
     // load / unload ground army at your own world

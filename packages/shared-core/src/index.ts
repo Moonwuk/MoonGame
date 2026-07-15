@@ -91,6 +91,12 @@ export { diffState, applyDelta, type StateDelta } from './state/delta';
 export { visibleState, visibleView, identifiedNodes, isVisibleTo } from './state/visibility';
 export type { VisibleState, VisibleView, SignatureContact, SignatureSize } from './state/visibility';
 export { hashState } from './state/hash';
+export {
+  previewBattle,
+  previewLossCount,
+  type BattlePreview,
+  type BattlePreviewSide,
+} from './state/previewBattle';
 
 // Action contract
 export {
