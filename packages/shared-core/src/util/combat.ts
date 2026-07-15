@@ -14,6 +14,11 @@ import { getStance, type DiplomacyCapability } from '../state/diplomacy';
  * functions, exactly like `util/fleet.ts` / `state/route.ts`.
  */
 
+/** Stalemate safety valve: a battle is force-resolved (winner null) once its round
+ *  counter EXCEEDS this — shared by the live combat module and the previewBattle
+ *  forecast so the two can never drift apart. */
+export const MAX_COMBAT_ROUNDS = 240;
+
 export type Tier = 'front' | 'mid' | 'rear' | 'artillery';
 /** Damage-receiving order (GDD §7.2): artillery is only reachable once the
  *  front, mid and rear lines are gone. */

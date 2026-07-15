@@ -728,6 +728,14 @@ export const en: Record<string, string> = {
   '☠️ флот {who} уничтожен': '☠️ a {who} fleet was destroyed',
   '⚔ + штурм': '⚔ + assault',
   '⚔ Бой — {phase} · раунд {r}': '⚔ Battle — {phase} · round {r}',
+  // combat forecast (ONB-6, fleet panel strike section)
+  'десант возьмёт мир': 'the landing takes the world',
+  'гарнизон устоит': 'the garrison holds',
+  'затяжной пат': 'a drawn-out stalemate',
+  'Прогноз штурма: {v} · ~{r} р. · потери {a} дес. / {d} гарн.':
+    'Assault forecast: {v} · ~{r} rounds · losses {a} landing / {d} garrison',
+  'Прогноз по видимым составам, без бонусов местности, укреплений и технологий — реальный бой может отличаться.':
+    'Forecast from visible compositions only — terrain, fortification and technology bonuses are not included; the real battle may differ.',
   '⚔ Война объявлена — флоты выдвигаются': '⚔ War declared — fleets advancing',
   '⚔ Уничтожено юнитов врага': '⚔ Enemy units destroyed',
   '⚔ Штурм': '⚔ Assault',

@@ -11,15 +11,13 @@ import {
   INTERCEPT_TOL,
   isHostile,
   laneOccupancy,
+  MAX_COMBAT_ROUNDS,
   ownFleet,
   posAt,
   sideAlive,
   sideDamage,
   sideUnits,
 } from '../util/combat';
-
-/** Hard cap on rounds so a zero-damage stalemate can't run forever (fail-secure). */
-const MAX_COMBAT_ROUNDS = 240;
 
 /** Keep a pinned crossing point off the lane's endpoints (avoids a degenerate
  *  node-equivalent edge); mirrors movement's own EPS. */
