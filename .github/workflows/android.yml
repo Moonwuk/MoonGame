@@ -1,10 +1,18 @@
 name: Android APK (prototype)
 
-# Builds an installable debug APK of the prototype by wrapping the self-contained
+# Builds installable debug APKs of the prototype by wrapping the self-contained
 # prototype HTML in a Capacitor WebView (branded icon/splash, rotates freely).
+# TWO APKs from one matrix (см. prototype/build.mjs — профили клиента):
+#   • dev    — the full dev client (test mode, single-player, time controls);
+#     rolling "alpha" release, appId com.voiddominion.prototype (как раньше).
+#   • player — the player client (no dev affordances; match browser is the main
+#     path); rolling "player" release, appId com.voiddominion.player — свой
+#     applicationId, so a host can install BOTH side by side.
+# Each APK's in-app updater checks ITS OWN release lane (prototype/src/updater.ts
+# resolves tag/asset from the baked __PLAYER_BUILD__ define).
 # Runs on GitHub's ubuntu runner, which has the Android SDK preinstalled. On main it
-# also publishes the APK to a rolling "alpha" prerelease for a stable download link;
-# every run still uploads the APK as a build artifact too.
+# also publishes each APK to its rolling prerelease for a stable download link;
+# every run still uploads the APKs as build artifacts too.
 # Actions are SHA-pinned (SD-6.1 / F-16); the trailing `# vN` comments track versions.
 
 on:
@@ -16,14 +24,44 @@ on:
       - 'mobile/**'
       - '.github/workflows/android.yml'
 
-# contents: write lets the build publish the APK to the rolling "alpha" release.
+# contents: write lets the build publish the APKs to the rolling releases.
 permissions:
   contents: write
 
 jobs:
   build-apk:
-    name: Assemble debug APK
+    name: Assemble debug APK (${{ matrix.profile }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - profile: dev
+            html: void-dominion.html
+            vn_prefix: alpha
+            app_id: com.voiddominion.prototype
+            artifact: void-dominion-debug-apk
+            release_tag: alpha
+            asset: void-dominion-alpha.apk
+            release_title: Void Dominion — Alpha (rolling, dev client)
+          - profile: player
+            html: void-dominion-player.html
+            vn_prefix: player
+            app_id: com.voiddominion.player
+            artifact: void-dominion-player-apk
+            release_tag: player
+            asset: void-dominion-player.apk
+            release_title: Void Dominion — Player (rolling)
+    # Matrix values are consumed through env (never inline ${{ }} in run bodies) —
+    # keeps run scripts injection-free by construction (zizmor template-injection).
+    env:
+      PROFILE: ${{ matrix.profile }}
+      HTML: ${{ matrix.html }}
+      VN_PREFIX: ${{ matrix.vn_prefix }}
+      APP_ID: ${{ matrix.app_id }}
+      RELEASE_TAG: ${{ matrix.release_tag }}
+      ASSET: ${{ matrix.asset }}
+      RELEASE_TITLE: ${{ matrix.release_title }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -40,9 +78,9 @@ jobs:
           {
             echo "VOID_VC=$VC"
             echo "VOID_SHA=$SHA"
-            echo "VOID_VN=alpha-$SHA"
+            echo "VOID_VN=${VN_PREFIX}-$SHA"
           } >> "$GITHUB_ENV"
-          echo "build version: versionCode=$VC versionName=alpha-$SHA"
+          echo "build version: versionCode=$VC versionName=${VN_PREFIX}-$SHA"
 
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v4 (version from package.json "packageManager")
 
@@ -59,7 +97,7 @@ jobs:
           # fails with "invalid source release: 21".
           java-version: '21'
 
-      - name: Build the prototype (self-contained HTML)
+      - name: Build the prototype (self-contained HTML, both profiles)
         run: |
           pnpm install --frozen-lockfile
           pnpm run prototype
@@ -68,9 +106,20 @@ jobs:
         working-directory: mobile
         run: |
           mkdir -p www
-          cp ../prototype/dist/void-dominion.html www/index.html
+          cp "../prototype/dist/${HTML}" www/index.html
           # Bake window.__BUILD__ into the packaged HTML so the APK knows its own version.
           node inject-build.mjs www/index.html "$VOID_VC" "$VOID_SHA"
+          # The player APK gets its own applicationId so it installs SIDE BY SIDE with
+          # the dev alpha (same display name; different app). The dev profile stamps the
+          # same appId that is committed (a no-op) — existing alpha installs keep
+          # updating in place.
+          node -e "
+            const fs = require('node:fs');
+            const cfg = JSON.parse(fs.readFileSync('capacitor.config.json', 'utf8'));
+            cfg.appId = process.env.APP_ID;
+            fs.writeFileSync('capacitor.config.json', JSON.stringify(cfg, null, 2) + '\n');
+            console.log('profile', process.env.PROFILE, '→ appId', cfg.appId);
+          "
           # `npm ci` (not `npm install`) installs exactly the committed package-lock.json and
           # fails on drift, so the sideloaded APK is built from the reviewed, locked dep set.
           # Runs the postinstall tar-interop patch the same as install.
@@ -107,39 +156,49 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: void-dominion-debug-apk
+          name: ${{ matrix.artifact }}
           path: mobile/android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
 
-      # A stable, shareable download link for the alpha: keep one rolling prerelease
-      # tagged "alpha" whose asset URL never changes, refreshed on every main build.
-      # Only from main — branch builds still produce the artifact above, just no release.
-      - name: Publish to the rolling "alpha" release
+      # A stable, shareable download link per lane: keep one rolling prerelease per tag
+      # ("alpha" = dev client, "player" = player client) whose asset URL never changes,
+      # refreshed on every main build. Only from main — branch builds still produce the
+      # artifact above, just no release.
+      - name: Publish to the rolling release
         if: github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          cp mobile/android/app/build/outputs/apk/debug/app-debug.apk void-dominion-alpha.apk
+          cp mobile/android/app/build/outputs/apk/debug/app-debug.apk "$ASSET"
           {
-            echo "Rolling alpha — the latest debug APK built from main (${VOID_SHA})."
+            if [ "$PROFILE" = "player" ]; then
+              echo "Rolling player build — the latest PLAYER-client APK built from main (${VOID_SHA})."
+            else
+              echo "Rolling alpha — the latest dev-client APK built from main (${VOID_SHA})."
+            fi
             echo
             # Machine-readable marker the in-app updater parses (prototype/src/updater.ts):
             # it compares this versionCode against the installed build's baked one.
             echo "<!-- void:versionCode=${VOID_VC} void:sha=${VOID_SHA} -->"
-            echo "Build: alpha-${VOID_SHA} · versionCode ${VOID_VC}."
+            echo "Build: ${VOID_VN} · versionCode ${VOID_VC}."
             echo
             echo "Install on Android:"
-            echo "1. Download void-dominion-alpha.apk below."
+            echo "1. Download ${ASSET} below."
             echo "2. Open it; allow \"install from unknown sources\" if prompted."
-            echo "3. Launch — single-player works fully offline. Rotates freely (phone / tablet)."
+            if [ "$PROFILE" = "player" ]; then
+              echo "3. Launch → enter the session server URL from your host → pick a running match."
+              echo "   This is the PLAYER client: no single-player, no dev tools; the tutorial works offline."
+            else
+              echo "3. Launch — single-player works fully offline. Rotates freely (phone / tablet)."
+            fi
             echo "Once installed, the app checks this release on launch and offers a one-tap update."
             echo
             echo "Debug-signed (testing only, not Play-Store ready). For multiplayer, point the"
             echo "connect screen at a host running pnpm dev:proto-server (see docs/multiplayer.md)."
           } > release-notes.md
-          gh release delete alpha --cleanup-tag --yes 2>/dev/null || true
-          gh release create alpha void-dominion-alpha.apk \
+          gh release delete "$RELEASE_TAG" --cleanup-tag --yes 2>/dev/null || true
+          gh release create "$RELEASE_TAG" "$ASSET" \
             --target "$GITHUB_SHA" \
             --prerelease \
-            --title "Void Dominion — Alpha (rolling)" \
+            --title "$RELEASE_TITLE" \
             --notes-file release-notes.md

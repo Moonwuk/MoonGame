@@ -44,4 +44,7 @@ a natural future addition to the core).
 - `src/main.ts` — canvas rendering, input, the Red AI and the real-time loop.
 - `src/smoke.ts` — Node scenario test of the wiring (`node` + esbuild).
 - `uitest.mjs` — headless DOM smoke test of the UI bundle.
-- `build.mjs` — bundles `src/main.ts` into `dist/void-dominion.html`.
+- `build.mjs` — bundles `src/main.ts` into two artifacts: `dist/void-dominion.html`
+  (dev client — everything) and `dist/void-dominion-player.html` (player client — no
+  test mode, no single-player skirmish, no time-acceleration controls; the netserver
+  serves it at `/`, keeping the dev client at `/dev`).

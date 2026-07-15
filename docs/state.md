@@ -6,7 +6,14 @@
 > `deep-technical-roadmap.md`, `multiplayer.md`, `metagame.md`, `map-roadmap.md`, `security-a06.md` (модель угроз/A06), корневой `CLAUDE.md` / `CONTRIBUTING.md`.
 >
 > **Ветка:** feature-ветка · **PR:** создаётся после изменений.
-> **Гейт:** `pnpm run check` (lint + typecheck + test). **Тесты: 1465 зелёных** (35 skip, 136 файлов).
+> **Гейт:** `pnpm run check` (lint + typecheck + test + docs-check). **Тесты: 1465 зелёных** (35 skip, 136 файлов).
+
+**Быстрый старт сессии** (навигация — факты живут в секциях и не дублируются здесь):
+
+- Возобновить работу → **§11** (внизу) · статус этапов → **§9** · команды/качество → **§10**.
+- Что брать в работу → `backlog.md` (кирпичики со статусами и зонами; 1 кирпич ≈ 1 PR).
+- Инварианты и рабочие правила → корневой `CLAUDE.md` (Claude Code подгружает его сам).
+- Как устроено ядро/сервер/прототип → §2–§7 этого файла; полный индекс доков → `README.md`.
 
 ---
 
@@ -206,8 +213,9 @@ by, damage}` (эмит до применения урона; прототип р
   влезает в узкий экран (подписи 10px, перенос), пинч-зум страницы разрешён (a11y —
   жесты карты и так живут на canvas/touch-action:none).
   **Автообновление (плейтест):** APK сравнивает свой baked `window.__BUILD__`
-  (versionCode = счётчик коммитов, инжект CI) с маркером rolling-релиза `alpha`
-  (`updater.ts`, GitHub REST, все отказы → «нет обновления»); `#updbar` —
+  (versionCode = счётчик коммитов, инжект CI) с маркером СВОЕГО rolling-релиза —
+  `alpha` для дев-APK, `player` для player-APK (`updater.ts` резолвит лейн из
+  `__PLAYER_BUILD__`-define; GitHub REST, все отказы → «нет обновления»); `#updbar` —
   **глобальный fixed-баннер** (z-96, поверх welcome/хаба/матча — раньше жил внутри
   `#connect`, и путь возвращающегося игрока через хаб его никогда не видел), «Обновить»
   отдаёт APK-ассет системному браузеру через `window.VoidNative.open`
@@ -837,8 +845,18 @@ grants}`), `heroFittings.json` (`{statMods, grants, cost}`). Движок ПОЛ
 
 ## 7. Прототип (`prototype/`)
 
-`pnpm run prototype` → esbuild собирает всё (ядро + zod + UI) в один
-self-contained `dist/void-dominion.html` (открывается с диска, без сервера).
+`pnpm run prototype` → esbuild собирает всё (ядро + zod + UI) в **два** self-contained
+HTML (открываются с диска, без сервера): `dist/void-dominion.html` — дев-клиент
+(всё как раньше) и `dist/void-dominion-player.html` — **клиент обычного игрока**:
+тест-режим, одиночный скирмиш и контролы ускорения времени вырезаны (esbuild-define
+`__PLAYER_BUILD__` выкидывает ветки из бандла, `build.mjs` вырезает `<!--dev-only-->`
+разметку); главный путь игрока — позывной → браузер запущенных сессий (`GET /matches`).
+Прото-хост отдаёт player-клиент на `/`, дев-клиент — на `/dev`. Обучение (ONB-2
+guided sandbox) в player-клиенте живо — идёт на фикс-темпе без ручки скорости.
+APK собирается в двух лейнах (matrix в `android.yml`): дев — rolling-релиз `alpha`
+(`com.voiddominion.prototype`, как раньше), player — rolling-релиз `player`
+(`void-dominion-player.apk`, свой `com.voiddominion.player` — ставится рядом с
+дев-версией); каждый APK автообновляется из своего лейна.
 
 - **Реальное ядро** в браузере: `createKernel([sector, planetType, tax, faction, economy,
 movement, hero, heroEffects, orbital, combat, artillery, intercept, captureOnArrival,
@@ -1239,9 +1257,9 @@ ONB-1/ONB-2, следующие кирпичи (`docs/onboarding-roadmap.md`).
 
 ```bash
 pnpm install
-pnpm run check       # lint + typecheck + test (гейт)
+pnpm run check       # lint + typecheck + test + docs-check (гейт)
 pnpm test            # vitest
-pnpm run prototype   # собрать prototype/dist/void-dominion.html
+pnpm run prototype   # собрать prototype/dist/void-dominion{,-player}.html
 ```
 
 Тесты лежат рядом с кодом (`*.test.ts`) — и в пакетах, и в `prototype/src` (Vitest

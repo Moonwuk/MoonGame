@@ -29,7 +29,8 @@
     "selfplay": "node prototype/selfplay.mjs",
     "dev:client": "node testclient/build.mjs",
     "audit": "pnpm audit --audit-level=high",
-    "check": "pnpm run lint && pnpm run typecheck && pnpm run test"
+    "check": "pnpm run lint && pnpm run typecheck && pnpm run test && pnpm run docs-check",
+    "docs-check": "node scripts/docs-check.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

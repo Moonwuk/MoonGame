@@ -1,5 +1,6 @@
 # Deploys the Void Dominion prototype multiplayer server — the in-memory proto
-# server that hosts the prototype's own world AND serves the game HTML at `/`. One
+# server that hosts the prototype's own world AND serves the game HTML (the player
+# client at `/`, the dev client at `/dev` — see prototype/build.mjs). One
 # deploy gives a permanent URL: both players just open it (the connect overlay
 # auto-fills the same-origin wss://), pick Azure / Crimson, and play. State is
 # in-memory and the handshake is unauthenticated — this is for testing, not prod.
@@ -44,7 +45,7 @@ COPY packages/action-layer/package.json packages/action-layer/
 RUN pnpm install --frozen-lockfile
 
 COPY . .
-RUN pnpm run prototype # bake prototype/dist/void-dominion.html (served at /)
+RUN pnpm run prototype # bake dist/void-dominion{,-player}.html (player at /, dev at /dev)
 
 # Pre-create the two dirs the server writes at runtime so they exist (and, after the
 # COPY --chown below, are owned by the non-root user) before the server starts:

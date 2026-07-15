@@ -67,7 +67,7 @@ pnpm host        # builds the prototype HTML, serves it + the match on 0.0.0.0:8
 It prints the URLs and detects your LAN IP, e.g.:
 
 ```
-  game   : http://localhost:8788/   (open in a browser → Connect)
+  game   : http://localhost:8788/   (player client · dev client with test tools: http://localhost:8788/dev)
   mode   : 10-player FFA — empty chairs are AI-driven
   Multiplayer test:
    • You:     open http://localhost:8788/   → enter a callsign → join
@@ -77,9 +77,15 @@ It prints the URLs and detects your LAN IP, e.g.:
 (Under the hood that's `pnpm prototype` + `HOST=0.0.0.0 pnpm dev:proto-server`;
 `PORT=… pnpm host` changes the port.)
 
+`/` serves the **player client** (`dist/void-dominion-player.html`): no dev test
+mode, no single-player skirmish, no time-acceleration controls — a regular player
+lands on the welcome screen, enters a callsign and picks a running session from
+the match browser. The full **dev client** (everything, including «Тесты» and the
+local skirmish) stays at **`/dev`** for the host.
+
 The game opens on a **connect overlay**:
 
-- **Single player** — the local skirmish vs the AI, exactly as before.
+- **Single player** — the local skirmish vs the AI (dev client only).
 - **Connect** — the server URL is **pre-filled from the page's origin**, so just
   enter a unique callsign and join. The server assigns the first free chair and
   maps that callsign back to the same chair on reconnect. The URL is remembered
@@ -114,8 +120,11 @@ the debug build allows cleartext (`usesCleartextTraffic`), so it connects over p
 `ws://` on a LAN — no tunnel needed.
 
 1. Host runs `pnpm host`.
-2. Get the APK: **Actions → "Android APK (prototype)" → download `void-dominion-debug-apk`**
-   (or trigger it manually via _Run workflow_); send `app-debug.apk` to your friend.
+2. Get the APK — for regular players use the **player** build:
+   https://github.com/Moonwuk/Nygame/releases/download/player/void-dominion-player.apk
+   (dev build with test tools: the `alpha` release, or the
+   `void-dominion-debug-apk` / `void-dominion-player-apk` CI artifacts from
+   **Actions → "Android APK (prototype)"**).
 3. Players sideload it. In the overlay each types `ws://<host-LAN-IP>:8788` (the
    host can use `ws://localhost:8788`), enters a unique callsign, and connects.
 

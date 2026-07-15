@@ -43,14 +43,16 @@ Monorepo (pnpm workspaces):
 
 ```bash
 pnpm install
-pnpm run check        # lint + typecheck + test — run this before committing
+pnpm run check        # lint + typecheck + test + docs-check — run this before committing
 pnpm test             # Vitest
 pnpm run lint         # ESLint (flat config)
 pnpm run typecheck    # tsc --noEmit, all packages
 pnpm run format       # Prettier --write
 ```
 
-Run the gate locally before committing — `pnpm run check` = lint + typecheck + test
+Run the gate locally before committing — `pnpm run check` = lint + typecheck + test +
+docs-check (`scripts/docs-check.mjs`: целостность `.md`-ссылок в docs/ + словарь зон
+backlog'а — исполняемая часть правила «verify docs against reality»)
 (CI additionally runs an OSV-Scanner SCA pass over the lockfiles; `pnpm audit` is
 retired — npm shut down its audit endpoints, 2026-07). CI mirrors it on every push:
 `.github/workflows/ci.yml` runs the gate + audit against a service Postgres (so the
@@ -130,6 +132,10 @@ data. You should not need to touch the kernel.
   the code you'll touch (read the relevant modules/data). Make the change and get the
   gate green, _then_ update the state artifact (`docs/state.md`) so it matches what
   actually landed — documentation follows the working code, not the other way around.
+- **Reconcile, don't append.** When updating `docs/state.md` (or any living doc),
+  RESOLVE what the new text supersedes — rewrite or delete the stale claim — instead
+  of appending a fresh paragraph next to an old truth. Two live versions of one fact
+  are worse than none: the anchor only works while every claim in it is current.
 - **Verify docs against reality before writing them.** Any documentation change or new
   doc is gated on checking it against the actual code/behaviour first: read the source,
   run the gate, confirm names / counts / signatures. Never document from memory or

@@ -142,6 +142,8 @@ import { t, tData, LOCALE, LOCALE_LABEL, setLocale, localizeStaticDom } from './
 import { META_TREE, META_BRANCH_RU, metaLevel, metaLevelProgress, metaPoints, canUnlock, unlockNode, matchXp, metaGrant, parseMetaState, type MetaState, type MetaBranch } from './meta';
 // DEV TEST MODE — self-contained dev-only scenarios; remove this import + the
 // initTestMode(...) call below + the #testmode HTML/CSS to cut it cleanly.
+// (The player build already does: the only uses sit under `!__PLAYER_BUILD__`, so
+// esbuild tree-shakes the whole module out of that bundle.)
 import { initTestMode, openTestMode } from './testmode';
 // ONB-1 — the reusable guide-mark (spotlight) engine + its browser adapter.
 // `playerOrder` feeds it real actions so `action` steps advance; ONB-2 builds
@@ -223,10 +225,20 @@ function ownerColor(owner: string | null | undefined): string {
   const i = rivals.indexOf(owner);
   return i >= 0 ? RIVAL_COLORS[i % RIVAL_COLORS.length]! : RIVAL_COLORS[0]!;
 }
-// Player builds hide the dev chrome (FPS overlay, the welcome-screen «Тесты» button):
-// it reads as debug noise to a newcomer. Flip it on with `?dev` in the URL or
-// localStorage 'vd.dev'='1' (persists per device). A live DESYNC still surfaces the
-// overlay to everyone — that's a bug players must see and report, not diagnostics.
+// Build profile. `__PLAYER_BUILD__` is an esbuild define — REQUIRED by every bundler
+// of this file (build.mjs sets it for both artifacts, uitest.mjs pins `false`); a
+// missing define fails loudly at boot with this exact name. `true` bakes the PLAYER
+// artifact (void-dominion-player.html): the dev affordances gated on it below (test
+// mode, single-player skirmish, time acceleration) are compiled OUT of the bundle
+// (the literal define is what lets esbuild dead-code-eliminate the branches — a
+// `const` alias would fold but not propagate), and build.mjs strips their markup.
+// `false` = the full dev client, today's behavior unchanged.
+declare const __PLAYER_BUILD__: boolean;
+// Runtime dev chrome (FPS overlay, the welcome-screen «Тесты» button): hidden from
+// players, flipped on with `?dev` in the URL or localStorage 'vd.dev'='1' (persists
+// per device). A live DESYNC still surfaces the overlay to everyone — that's a bug
+// players must see and report, not diagnostics. Independent of __PLAYER_BUILD__: `?dev`
+// on a player build only re-reveals diagnostics (FPS), never the compiled-out tools.
 const DEV_UI = ((): boolean => {
   try {
     if (typeof location !== 'undefined' && new URLSearchParams(location.search).has('dev')) return true;
@@ -1891,7 +1903,13 @@ function playerOrder(action: Action) {
 // as the reusable seam ONB-0/ONB-2 (auto-offer, «Ещё → Обучение») and headless
 // e2e drive — starting a HUD tour needs an active match, which those own.
 let activeTour: RunningTour | null = null;
-function launchTour(steps = HUD_ORIENTATION_TOUR, onEnd?: (r: TourResult) => void): void {
+// Player build: the 'clock' step points at the pause/acceleration controls, which are
+// stripped there (the server owns the clock in a net match) — drop it so the tour
+// never narrates a control that doesn't exist. Dev client keeps the full chain.
+const ORIENTATION_TOUR = __PLAYER_BUILD__
+  ? HUD_ORIENTATION_TOUR.filter((step) => step.id !== 'clock')
+  : HUD_ORIENTATION_TOUR;
+function launchTour(steps = ORIENTATION_TOUR, onEnd?: (r: TourResult) => void): void {
   activeTour = startTour(steps, (r) => {
     activeTour = null;
     onEnd?.(r);
@@ -6661,7 +6679,8 @@ function applyTimeSpeed(mult: number): void {
 
 // Restart → back to the skirmish setup (bot selection). The speedbar button serves the
 // no-bots sandbox; the end-banner button (delegated) serves a finished bot match.
-restartBtn.addEventListener('click', () => openSetup());
+// Player build: the button is stripped with the rest of the time controls (no skirmish).
+if (!__PLAYER_BUILD__) restartBtn.addEventListener('click', () => openSetup());
 bannerEl.addEventListener('click', (ev) => {
   if ((ev.target as Element).closest('[data-restart]')) openSetup();
 });
@@ -7634,39 +7653,44 @@ srvInput.value =
 // faction (nick-login; full accounts in docs/persistence-accounts-roadmap.md).
 nickInput.value = localStorage.getItem('void.nick') ?? '';
 
-$('csolo').addEventListener('click', () => {
-  userClosed = true; // intentional leave → don't auto-reconnect
-  NET = false;
-  openSetup(); // pick start + rivals before the skirmish begins
-});
+// Local skirmish + dev test mode are DEV-CLIENT features: the player build compiles
+// them out (and build.mjs strips their buttons/markup), so a regular player's client
+// has no single-player entry and no test overlay at all.
+if (!__PLAYER_BUILD__) {
+  $('csolo').addEventListener('click', () => {
+    userClosed = true; // intentional leave → don't auto-reconnect
+    NET = false;
+    openSetup(); // pick start + rivals before the skirmish begins
+  });
 
-// DEV TEST MODE — fenced hook. The "Тесты" button opens the dev test overlay;
-// initTestMode wires it to the host with two tiny callbacks. Cut this whole block
-// (and the import + #testmode HTML/CSS) to remove the feature without a trace.
-// Player builds hide the button entirely (dev chrome) — `?dev` / vd.dev restores it.
-if (!DEV_UI) $('ctest').style.display = 'none';
-$('ctest')?.addEventListener('click', () => {
-  userClosed = true;
-  NET = false;
-  showConnect(false);
-  openTestMode();
-});
-initTestMode({
-  startScenario: (state, resumeSpeed) => {
-    installMatch(state, new Set()); // scenarios drive themselves — no AI
-    speed = 0; // start paused at t=0
-    // prime the fast-forward (▶▶) control to the chosen multiplier and show paused
-    const spd = Array.from(document.querySelectorAll('[data-speed]')) as HTMLElement[];
-    const fast = spd[spd.length - 1];
-    if (fast) {
-      fast.dataset.speed = String(resumeSpeed);
-      fast.textContent = `${resumeSpeed}×`;
-    }
-    for (const x of spd) x.classList.toggle('on', Number(x.dataset.speed) === 0);
-    connectEl.style.display = 'none';
-  },
-  back: () => showConnect(true),
-});
+  // DEV TEST MODE — fenced hook. The "Тесты" button opens the dev test overlay;
+  // initTestMode wires it to the host with two tiny callbacks. Cut this whole block
+  // (and the import + #testmode HTML/CSS) to remove the feature without a trace.
+  // The dev client hides the button behind `?dev` / vd.dev (dev chrome).
+  if (!DEV_UI) $('ctest').style.display = 'none';
+  $('ctest')?.addEventListener('click', () => {
+    userClosed = true;
+    NET = false;
+    showConnect(false);
+    openTestMode();
+  });
+  initTestMode({
+    startScenario: (state, resumeSpeed) => {
+      installMatch(state, new Set()); // scenarios drive themselves — no AI
+      speed = 0; // start paused at t=0
+      // prime the fast-forward (▶▶) control to the chosen multiplier and show paused
+      const spd = Array.from(document.querySelectorAll('[data-speed]')) as HTMLElement[];
+      const fast = spd[spd.length - 1];
+      if (fast) {
+        fast.dataset.speed = String(resumeSpeed);
+        fast.textContent = `${resumeSpeed}×`;
+      }
+      for (const x of spd) x.classList.toggle('on', Number(x.dataset.speed) === 0);
+      connectEl.style.display = 'none';
+    },
+    back: () => showConnect(true),
+  });
+}
 
 // --- welcome stage: first-launch identity screen → match browser ------------
 // The entry overlay opens on a clean welcome (new commander / sign-in / single-
@@ -7822,10 +7846,13 @@ for (const a of Array.from(document.querySelectorAll('.cfoot a'))) {
 
 // hub interactions
 $('hub-play').addEventListener('click', () => hubTab('games'));
-$('hub-solo').addEventListener('click', () => {
-  showHub(false);
-  openSetup('hub');
-});
+// Single-player entry — dev client only (the player build strips the tile + this hook).
+if (!__PLAYER_BUILD__) {
+  $('hub-solo').addEventListener('click', () => {
+    showHub(false);
+    openSetup('hub');
+  });
+}
 $('hub-msg').addEventListener('click', () => {
   hubNote.textContent = t('Сообщения — скоро');
 });
@@ -8141,6 +8168,12 @@ sciWin.addEventListener('click', (e) => {
 });
 
 function openSetup(from: 'welcome' | 'hub' = 'welcome'): void {
+  // Player build: no single-player — every entry point is stripped, but if a stray
+  // path still lands here (e.g. a future rematch hook), fail safe into the hub.
+  if (__PLAYER_BUILD__) {
+    openHub();
+    return;
+  }
   setupReturn = from;
   setupSlots = freshSetupSlots();
   setupTeams = false; // a fresh setup opens on the classic free-for-all
@@ -8702,9 +8735,14 @@ async function toggleArchive(id: string, restore: boolean): Promise<void> {
 
 function renderMatches(): void {
   const el = $('mlist');
-  // Never a dead end: whatever the server says (unreachable / empty list), the
-  // browser always offers the path that ALWAYS works — a solo skirmish offline.
+  // Never a dead end: whatever the server says (unreachable / empty list), the dev
+  // client offers the path that ALWAYS works — a solo skirmish offline. The player
+  // build has no single-player, so it states the situation honestly instead.
   const soloCard = (msg: string): void => {
+    if (__PLAYER_BUILD__) {
+      el.innerHTML = `<div class="mempty">${msg}</div>`;
+      return;
+    }
     el.innerHTML =
       `<div class="mempty">${msg}</div>` +
       `<div class="msolo"><button class="mbtn" id="msolo-go">▶ ${t('Начать одиночный скирмиш')}</button>` +
@@ -8850,9 +8888,10 @@ function renderLobby(): void {
 // --- loop --------------------------------------------------------------------
 
 const fpsEl = $('fps');
-// Dev FX lab (DEV_UI only): push a demo siege volley between two nodes without
-// staging a real standoff duel — for design review and the FX screenshot tests.
-if (DEV_UI && typeof window !== 'undefined') {
+// Dev FX lab (dev client + DEV_UI only): push a demo siege volley between two nodes
+// without staging a real standoff duel — for design review and the FX screenshot
+// tests. Compiled out of the player build (dev tooling, not diagnostics).
+if (!__PLAYER_BUILD__ && DEV_UI && typeof window !== 'undefined') {
   (window as unknown as { __vdFx?: object }).__vdFx = {
     pushSiege(fromId: string, toId: string): boolean {
       const a = s.planets[fromId]?.position;
@@ -9198,9 +9237,12 @@ function frame(nowReal: number) {
   renderEndScreen();
   // Speedbar restart — only the no-bots sandbox (no match end to restart from); other
   // modes use the end-banner button instead. Toggle each frame as the mode can change.
-  const soloNoBots = !NET && AI_PLAYERS.size === 0;
-  restartBtn.style.display = soloNoBots ? '' : 'none';
-  restartSep.style.display = soloNoBots ? '' : 'none';
+  // Player build: the button (and the skirmish it restarts into) doesn't exist.
+  if (!__PLAYER_BUILD__) {
+    const soloNoBots = !NET && AI_PLAYERS.size === 0;
+    restartBtn.style.display = soloNoBots ? '' : 'none';
+    restartSep.style.display = soloNoBots ? '' : 'none';
+  }
   // Keep the tech window live while open (research progress bar / eta), throttled.
   if (techWin.classList.contains('show') && nowReal - lastTechAt > 500) {
     lastTechAt = nowReal;

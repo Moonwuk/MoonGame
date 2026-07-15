@@ -114,6 +114,9 @@ const res = await build({
   format: 'cjs',
   target: 'es2020',
   write: false,
+  // The build profile is a REQUIRED define (see main.ts) — the smoke test drives
+  // the full dev client, same as dist/void-dominion.html.
+  define: { __PLAYER_BUILD__: 'false' },
 });
 
 const mod = { exports: {} };

@@ -141,10 +141,16 @@ const GATE = process.env.GATE === '1' || process.env.GATE === 'true';
 const SEAT_LOCK = process.env.SEAT_LOCK === '1' || process.env.SEAT_LOCK === 'true';
 const TIME_SCALE = Math.max(1, Number(process.env.TIME_SCALE ?? 1) || 1);
 
-// Serve the built prototype HTML at `/` so a peer just opens `http://host:port/`
-// (no file transfer; the connect overlay auto-fills the same-origin ws:// URL).
-const htmlPath = 'prototype/dist/void-dominion.html';
-const indexHtml = existsSync(htmlPath) ? readFileSync(htmlPath, 'utf8') : undefined;
+// Serve the built prototype HTML so a peer just opens `http://host:port/` (no file
+// transfer; the connect overlay auto-fills the same-origin ws:// URL). Regular players
+// get the PLAYER client at `/` (no test mode / single-player / time controls — see
+// build.mjs); the full dev client stays one step away at `/dev` for the host. If the
+// player artifact hasn't been built yet (stale dist), `/` falls back to the dev client.
+const devHtmlPath = 'prototype/dist/void-dominion.html';
+const playerHtmlPath = 'prototype/dist/void-dominion-player.html';
+const devHtml = existsSync(devHtmlPath) ? readFileSync(devHtmlPath, 'utf8') : undefined;
+const playerHtml = existsSync(playerHtmlPath) ? readFileSync(playerHtmlPath, 'utf8') : undefined;
+const indexHtml = playerHtml ?? devHtml;
 
 // Every non-internal IPv4 this host owns (the candidates other devices could dial).
 function ipv4s(): string[] {
@@ -413,8 +419,19 @@ const server = createMultiplayerServer({
   indexHtml,
   accountStore, // `?nick=` WS login resolves its seat here
   seatLock: SEAT_LOCK, // REL-5: nick+ticket identity; `?player=` refused when on
-  // The match-browser read-model + archive intents (GET /matches, POST …/archive).
-  httpRoutes: (app) => registerBrowserApi(app, registry),
+  // The match-browser read-model + archive intents (GET /matches, POST …/archive),
+  // plus the dev client at `/dev` when the player build owns `/` (same no-store
+  // headers as `/` — a stale dev client is as confusing as a stale player one).
+  httpRoutes: (app) => {
+    registerBrowserApi(app, registry);
+    if (playerHtml !== undefined && devHtml !== undefined) {
+      app.get('/dev', async (_request, reply) => {
+        void reply.header('content-type', 'text/html; charset=utf-8');
+        void reply.header('cache-control', 'no-store, must-revalidate');
+        return devHtml;
+      });
+    }
+  },
 });
 let wsUrl: string;
 try {
@@ -449,7 +466,9 @@ const lastSeat = liveSeatIds.at(-1) ?? firstSeat;
 const lines = [
   'Void Dominion — prototype dev server (real core)',
   indexHtml
-    ? `  game   : ${localHttp}/   (open in a browser → Connect)`
+    ? playerHtml
+      ? `  game   : ${localHttp}/   (player client · dev client with test tools: ${localHttp}/dev)`
+      : `  game   : ${localHttp}/   (open in a browser → Connect)`
     : `  game   : run \`pnpm prototype\` first to serve the HTML at /`,
   `  health : ${localHttp}/health`,
   DATABASE_URL

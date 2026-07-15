@@ -35,9 +35,18 @@ export interface UpdateInfo extends BuildInfo {
   notes: string;
 }
 
-/** Rolling "alpha" prerelease — a stable tag whose APK asset URL never changes. */
-const RELEASE_API = 'https://api.github.com/repos/moonwuk/nygame/releases/tags/alpha';
-const APK_ASSET = 'void-dominion-alpha.apk';
+// Release lane: the PLAYER APK updates from its own rolling release (tag `player`,
+// asset `void-dominion-player.apk`), the dev APK from `alpha` — same repo, same body
+// marker format, published side by side by .github/workflows/android.yml.
+// `__PLAYER_BUILD__` is the build-profile define (see main.ts); vitest imports this
+// module with NO define, so resolve it defensively — tests exercise the dev lane.
+declare const __PLAYER_BUILD__: boolean | undefined;
+const RELEASE_TAG =
+  typeof __PLAYER_BUILD__ !== 'undefined' && __PLAYER_BUILD__ === true ? 'player' : 'alpha';
+
+/** Rolling prerelease of this build's lane — a stable tag whose APK asset URL never changes. */
+const RELEASE_API = `https://api.github.com/repos/moonwuk/nygame/releases/tags/${RELEASE_TAG}`;
+const APK_ASSET = `void-dominion-${RELEASE_TAG}.apk`;
 
 /**
  * The APK download must come from GitHub's own release-asset hosts over HTTPS. The version
@@ -82,7 +91,7 @@ interface ReleaseAsset {
 /**
  * Parse the GitHub release JSON into the fields we need, or null if it is unusable.
  * The versionCode is read from a machine marker the build embeds in the release body
- * (`void:versionCode=<n>`); the APK URL from the asset named `void-dominion-alpha.apk`.
+ * (`void:versionCode=<n>`); the APK URL from this lane's asset (`APK_ASSET`).
  */
 export function parseRelease(release: unknown): UpdateInfo | null {
   if (!release || typeof release !== 'object') return null;
@@ -161,7 +170,7 @@ export async function checkForUpdateDetailed(fetchImpl: typeof fetch = fetch): P
     : { kind: 'current', local: local.versionCode, remote: remote.versionCode };
 }
 
-/** Human label for a build ("alpha-1a2b3c4", or "сборка N" when no SHA). */
+/** Human label for a build ("alpha-1a2b3c4" / "player-1a2b3c4", or "сборка N" when no SHA). */
 export function buildLabel(b: BuildInfo): string {
-  return b.sha ? `alpha-${b.sha}` : `сборка ${b.versionCode}`;
+  return b.sha ? `${RELEASE_TAG}-${b.sha}` : `сборка ${b.versionCode}`;
 }
