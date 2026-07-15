@@ -9,5 +9,5 @@
 process.env.HOST = process.env.HOST ?? '0.0.0.0';
 process.env.PORT = process.env.PORT ?? '8788';
 
-await import('./build.mjs'); // → prototype/dist/void-dominion.html
+await import('./build.mjs'); // → dist/void-dominion.html + void-dominion-player.html
 await import('./netserver.mjs'); // bundle + run the proto-server (serves that HTML)

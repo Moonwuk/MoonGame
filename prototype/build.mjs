@@ -1,19 +1,27 @@
-// Bundles the prototype into a single self-contained HTML file you can open
-// straight from disk (no server). Run: node prototype/build.mjs
+// Bundles the prototype into self-contained HTML files you can open straight
+// from disk (no server). Run: node prototype/build.mjs
+// Two artifacts from one source (the `__PLAYER_BUILD__` define, see main.ts):
+//   dist/void-dominion.html        — dev client, today's full behavior;
+//   dist/void-dominion-player.html — player client: test mode, single-player skirmish
+//     and time-acceleration controls are compiled out of the JS, and the matching
+//     markup (fenced with <!--dev-only--> … <!--/dev-only--> below) is stripped.
 import { build } from 'esbuild';
 import { writeFileSync, mkdirSync } from 'node:fs';
 
-const res = await build({
-  entryPoints: ['prototype/src/main.ts'],
-  bundle: true,
-  format: 'iife',
-  platform: 'browser',
-  target: 'es2020',
-  minify: true,
-  legalComments: 'none',
-  write: false,
-});
-const js = res.outputFiles[0].text;
+const bundle = async (playerBuild) => {
+  const res = await build({
+    entryPoints: ['prototype/src/main.ts'],
+    bundle: true,
+    format: 'iife',
+    platform: 'browser',
+    target: 'es2020',
+    minify: true,
+    legalComments: 'none',
+    write: false,
+    define: { __PLAYER_BUILD__: String(playerBuild) },
+  });
+  return res.outputFiles[0].text;
+};
 
 // --- Tactical command-console chrome (DEFCON vibe): vector/wireframe, neon
 // --- glow, monospace, minimalist HUD on near-black. Responsive. -------------
@@ -1659,7 +1667,7 @@ button.b:disabled{opacity:.32;cursor:not-allowed;color:var(--dim);border-color:v
 #corp .cinput input:focus{outline:none;border-color:var(--cyan);}
 `;
 
-const html = `<!doctype html>
+const page = (js) => `<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <link rel="icon" href="data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="6" fill="#061318"/><rect x="9" y="9" width="14" height="14" rx="2" transform="rotate(45 16 16)" fill="none" stroke="#35d6e6" stroke-width="2.5"/></svg>')}">
@@ -1710,9 +1718,9 @@ const html = `<!doctype html>
 <aside id="side"></aside>
 <div id="toasts"></div>
 <div id="speedbar" class="spd">
-  <button id="spd-pause" data-speed="0">‖</button><button id="spd-play" data-speed="1" class="on">▶</button><button id="spd-fast" data-speed="3">▶▶</button><span class="spddiv"></span><button class="spdmini" data-mult="1" title="реальное время" data-i18n-title>×1</button><button class="spdmini" data-mult="10">×10</button><button class="spdmini" data-mult="50">×50</button><button class="spdmini" data-mult="100">×100</button>
+  <!--dev-only--><button id="spd-pause" data-speed="0">‖</button><button id="spd-play" data-speed="1" class="on">▶</button><button id="spd-fast" data-speed="3">▶▶</button><span class="spddiv"></span><button class="spdmini" data-mult="1" title="реальное время" data-i18n-title>×1</button><button class="spdmini" data-mult="10">×10</button><button class="spdmini" data-mult="50">×50</button><button class="spdmini" data-mult="100">×100</button>
   <span class="sep" id="restart-sep" style="display:none"></span><button id="restart" title="Перезапуск — к выбору ботов" data-i18n-title style="display:none">⟳</button>
-  <span class="sep"></span><button id="tomenu" title="Выход в меню" data-i18n-title>⌂</button>
+  <span class="sep"></span><!--/dev-only--><button id="tomenu" title="Выход в меню" data-i18n-title>⌂</button>
 </div>
 <div id="cmdbar"></div>
 <div id="codex"></div>
@@ -1748,7 +1756,7 @@ const html = `<!doctype html>
         </div>
         <div class="cstack">
           <button id="clogin" class="cbtn ghost" type="button" data-i18n>Вход по позывному</button>
-          <button id="csolo" class="cbtn ghost" type="button" data-i18n>Одиночная игра</button>
+          <!--dev-only--><button id="csolo" class="cbtn ghost" type="button" data-i18n>Одиночная игра</button><!--/dev-only-->
         </div>
         <div id="cwlogin" class="cwlogin" style="display:none">
           <input id="cwnick" type="text" autocapitalize="off" autocomplete="off" spellcheck="false" maxlength="24" placeholder="позывной" data-i18n-ph>
@@ -1780,7 +1788,7 @@ const html = `<!doctype html>
     <button id="cupd" class="cupd" type="button" style="display:none" data-i18n>Проверить обновления</button>
     <div id="cver" class="cver"></div>
     <!-- DEV TEST MODE — remove this button (and the #testmode block + CSS + main.ts hook) to cut the feature -->
-    <button id="ctest" class="cbtn ghost tm-open" data-i18n>🧪 Тесты · режим разработчика</button>
+    <!--dev-only--><button id="ctest" class="cbtn ghost tm-open" data-i18n>🧪 Тесты · режим разработчика</button><!--/dev-only-->
     <!-- /DEV TEST MODE -->
     <div class="cfoot">
       <a id="cl-imprint" data-i18n>Выходные данные</a>
@@ -1817,7 +1825,7 @@ const html = `<!doctype html>
   <div class="hub-body">
     <div class="hub-panel" id="hp-home">
       <button id="hub-play" class="hub-play" type="button" data-i18n>ИГРАТЬ СЕЙЧАС</button>
-      <button id="hub-solo" class="hub-solo" type="button" data-i18n>Одиночная игра</button>
+      <!--dev-only--><button id="hub-solo" class="hub-solo" type="button" data-i18n>Одиночная игра</button><!--/dev-only-->
       <!-- ONB-0 first-run offer: shown only to a not-yet-onboarded commander -->
       <div class="hub-card ob-nudge" id="onboard-nudge" style="display:none">
         <div class="hc-ic">◎</div>
@@ -1919,10 +1927,18 @@ const html = `<!doctype html>
 </div>
 <!-- hero fitting: the module "on the cursor" — follows the pointer (heroes setup tab) -->
 <!-- DEV TEST MODE — content rendered by testmode.ts; delete this one line to cut the markup -->
-<div id="testmode"></div>
+<!--dev-only--><div id="testmode"></div><!--/dev-only-->
 <script>${js}</script>
 </body></html>`;
 
+// Player artifact: drop every <!--dev-only--> … <!--/dev-only--> fence. The matching
+// JS is already compiled out by the define, so no handler is left pointing at a hole.
+const stripDevMarkup = (html) => html.replace(/<!--dev-only-->[\s\S]*?<!--\/dev-only-->/g, '');
+
 mkdirSync('prototype/dist', { recursive: true });
-writeFileSync('prototype/dist/void-dominion.html', html);
-console.log('wrote prototype/dist/void-dominion.html (' + (html.length / 1024).toFixed(0) + ' KB)');
+const devHtml = page(await bundle(false));
+const playerHtml = stripDevMarkup(page(await bundle(true)));
+writeFileSync('prototype/dist/void-dominion.html', devHtml);
+writeFileSync('prototype/dist/void-dominion-player.html', playerHtml);
+console.log('wrote prototype/dist/void-dominion.html (' + (devHtml.length / 1024).toFixed(0) + ' KB)');
+console.log('wrote prototype/dist/void-dominion-player.html (' + (playerHtml.length / 1024).toFixed(0) + ' KB)');

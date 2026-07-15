@@ -844,8 +844,14 @@ grants}`), `heroFittings.json` (`{statMods, grants, cost}`). Движок ПОЛ
 
 ## 7. Прототип (`prototype/`)
 
-`pnpm run prototype` → esbuild собирает всё (ядро + zod + UI) в один
-self-contained `dist/void-dominion.html` (открывается с диска, без сервера).
+`pnpm run prototype` → esbuild собирает всё (ядро + zod + UI) в **два** self-contained
+HTML (открываются с диска, без сервера): `dist/void-dominion.html` — дев-клиент
+(всё как раньше) и `dist/void-dominion-player.html` — **клиент обычного игрока**:
+тест-режим, одиночный скирмиш и контролы ускорения времени вырезаны (esbuild-define
+`__PLAYER_BUILD__` выкидывает ветки из бандла, `build.mjs` вырезает `<!--dev-only-->`
+разметку); главный путь игрока — позывной → браузер запущенных сессий (`GET /matches`).
+Прото-хост отдаёт player-клиент на `/`, дев-клиент — на `/dev`. Обучение (ONB-2
+guided sandbox) в player-клиенте живо — идёт на фикс-темпе без ручки скорости.
 
 - **Реальное ядро** в браузере: `createKernel([sector, planetType, tax, faction, economy,
 movement, hero, heroEffects, orbital, combat, artillery, intercept, captureOnArrival,
@@ -1246,9 +1252,9 @@ ONB-1/ONB-2, следующие кирпичи (`docs/onboarding-roadmap.md`).
 
 ```bash
 pnpm install
-pnpm run check       # lint + typecheck + test (гейт)
+pnpm run check       # lint + typecheck + test + docs-check (гейт)
 pnpm test            # vitest
-pnpm run prototype   # собрать prototype/dist/void-dominion.html
+pnpm run prototype   # собрать prototype/dist/void-dominion{,-player}.html
 ```
 
 Тесты лежат рядом с кодом (`*.test.ts`) — и в пакетах, и в `prototype/src` (Vitest
