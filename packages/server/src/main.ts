@@ -12,6 +12,9 @@ import { CorpService } from './corpService';
 import { registerAvaApi, registerAvaFeed } from './avaApi';
 import { AvaService } from './avaService';
 import { AvaOrchestrator } from './avaOrchestrator';
+import { MedalService } from './medalService';
+import { registerMedalApi } from './medalApi';
+import { loadMedalCatalog } from './medalCatalog';
 import { MatchKeeper } from './matchFactory';
 import { LazyRoomRegistry, type LoadedMatch } from './roomRegistry';
 import type { RoomObservation } from './matchRoom';
@@ -216,6 +219,15 @@ const avaService = new AvaService({
   feedStore: stores.feedStore,
 });
 
+// Medals (corporations.md §3): a head/officer awards catalog medals whose objective
+// conditions the server checks against the AvA match history. Catalog validated at boot.
+const medalService = new MedalService({
+  corpStore: stores.corpStore,
+  resultStore: stores.resultStore,
+  medalStore: stores.medalStore,
+  catalog: loadMedalCatalog(),
+});
+
 // Match factory (SV-2.5): keep OPEN_MATCHES joinable matches available so the feed is
 // never empty — when one fills or ends, seed another. The open count is read from the
 // durable store, so a restart reconciles instead of over-creating. OPEN_MATCHES=0 off.
@@ -283,6 +295,8 @@ const server = createMultiplayerServer({
           });
           // AvA readiness + challenges (AVA-2/3/4) — the same session gate.
           registerAvaApi(scope, { service: avaService, identify });
+          // Medals (corporations.md §3) — session-gated; grant is a head/officer action.
+          registerMedalApi(scope, { service: medalService, identify });
         }
       });
     }

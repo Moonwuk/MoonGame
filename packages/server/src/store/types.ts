@@ -136,7 +136,8 @@ export interface CorpAuditEntry {
     | 'leave'
     | 'disband'
     | 'influence'
-    | 'ready';
+    | 'ready'
+    | 'medal';
   /** Subject account id, when the action has one. */
   target?: string;
   /** Extra context, e.g. the new role for `role`. */
@@ -305,6 +306,31 @@ export interface AvaResultStore {
   get(matchupId: string): Promise<AvaResult | null>;
   /** Recorded outcomes, newest first (bounded by `limit`). */
   recent(limit?: number): Promise<AvaResult[]>;
+  /** AVA / medals: a corp's aggregate AvA record — matches it fought (as either side)
+   *  and matches it won. The objective source medal conditions (corporations.md §3) are
+   *  checked against — server-side, never in the core. */
+  statsForCorp(corpId: string): Promise<{ matches: number; wins: number }>;
+  close?(): Promise<void>;
+}
+
+/** One earned medal/achievement (corporations.md §3) — a PERMANENT account record. Corp
+ *  medals snapshot the corp it was earned with (`corpId`) so it reads "earned with X" even
+ *  after the player leaves. In MVP medals are never revoked and a grant is idempotent. */
+export interface Medal {
+  accountId: string;
+  medalId: string;
+  corpId: string | null;
+  at: number;
+}
+
+/** Persistence for earned medals. The PK (account, medal) is the idempotency + permanence
+ *  invariant: one row per (account, medal), never a duplicate, never removed in MVP. */
+export interface MedalStore {
+  /** Idempotent grant: false = the account already holds this medal (nothing changed). */
+  grant(medal: Medal): Promise<boolean>;
+  has(accountId: string, medalId: string): Promise<boolean>;
+  /** Every medal an account has earned, newest first. */
+  medalsOf(accountId: string): Promise<Medal[]>;
   close?(): Promise<void>;
 }
 

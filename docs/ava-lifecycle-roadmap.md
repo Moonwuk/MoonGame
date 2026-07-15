@@ -465,9 +465,14 @@ challenger, target, winner?)`. **Без** ростера/приватных да
 
 ## Отложено (осознанно, не спекулятивно)
 
-- **Медали/достижения** (`corporations.md` §3) — нужны история матчей (AVA-8 даёт
-  минимум) + каталог `data/medals.json`; гибрид-выдача (auto/eligible+manual),
-  идемпотентно, перманентно. Отдельный блок после AVA-8.
+- **Медали/достижения** (`corporations.md` §3) — **ручной корп-срез сделан (MED-1):**
+  каталог-данные `data/medals.json` + fail-secure парсер, `MedalStore` (Memory+Postgres,
+  идемпотентно+перманентно), `AvaResultStore.statsForCorp`, `MedalService` — глава/офицер
+  вручает корп-медаль члену, сервер перепроверяет условие (`corp_wins`/`corp_matches`),
+  `E_NOT_ELIGIBLE`, аудит; HTTP `GET /medals[/me|/eligible]` + `POST /medals/grant`.
+  **Осталось:** auto/`scope:account`-достижения и пер-аккаунт условия
+  (`ava_matches_for_corp`) — нужен пер-аккаунт леджер участия (сейчас история — corp-уровня);
+  витрина (showcase/pin) — клиент.
 - **Гейт `createCorp` по уровню аккаунта** (`E_LEVEL_TOO_LOW`) — нужен серверный XP/уровень
   (AC-0.3).
 - **Ставка мета-сектора / территориальный слой** (`metagame.md` Контур 2) — вся

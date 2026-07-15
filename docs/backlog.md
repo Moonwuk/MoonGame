@@ -549,6 +549,16 @@
   `GET /ava/feed` (без сессии, рядом с open-matches feed). Тесты: стор-контракт обоих
   адаптеров + сервис (матчап на accept/итог на settle/без утечки ростера) + HTTP (публичный,
   без заголовка сессии).
+- **MED-1** ✅ `[srv][data]` **Медали/достижения — корп-медали (MVP).** `corporations.md`
+  §3: каталог-данные `data/medals.json` + fail-secure парсер (`medalCatalog.ts`, вне ядра);
+  `MedalStore` (Memory+Postgres `medals`, PK account+medal — идемпотентно, перманентно);
+  агрегат `AvaResultStore.statsForCorp` (матчи/победы корпы из истории AVA-8); `MedalService`
+  — **ручные корп-медали** (`scope:corp`,`grant:manual`): глава/офицер вручает члену, сервер
+  перепроверяет объективное условие (`corp_wins`/`corp_matches`) → `E_NOT_ELIGIBLE`, аудит,
+  идемпотентно; `eligibleMedals`, `medalsOf`. HTTP session-gated `GET /medals`,`/medals/me`,
+  `/medals/eligible`, `POST /medals/grant`. **Отложено:** auto/`scope:account`-достижения и
+  пер-аккаунт условия (`ava_matches_for_corp`) — нужен пер-аккаунт леджер участия; витрина
+  (showcase/pin) — клиент.
 - **AVA-C1/C2** ⏳ `[proto]` Клиент: прото-экран корпорации `#corp` → `/corps` (CORP-0);
   UI флагов/вызова/ростера/ленты поверх AVA-3…9.
 

@@ -6,7 +6,7 @@
 > `deep-technical-roadmap.md`, `multiplayer.md`, `metagame.md`, `map-roadmap.md`, `security-a06.md` (модель угроз/A06), корневой `CLAUDE.md` / `CONTRIBUTING.md`.
 >
 > **Ветка:** feature-ветка · **PR:** создаётся после изменений.
-> **Гейт:** `pnpm run check` (lint + typecheck + test). **Тесты: 1209 зелёных** (5 skip, 117 файлов).
+> **Гейт:** `pnpm run check` (lint + typecheck + test). **Тесты: 1352 зелёных** (28 skip, 128 файлов).
 
 ---
 
@@ -1084,8 +1084,16 @@ exactly-once-гейт, повторный `match.ended` не начисляет 
 `matchup` на `accept` (S2) + `result` на `settleMatch` (S7); публичные факты (имена корп
 снапшотом + победитель, БЕЗ ростера). Публикация последним шагом best-effort;
 `publicFeed(limit, before)` newest-first по курсору `at`; публичный `GET /ava/feed` (без
-сессии, рядом с open-matches feed). **Блок AVA закрыт (AVA-1…9).** Клиент — AVA-C1/C2,
-`corporation-wars.md`.
+сессии, рядом с open-matches feed). **Блок AVA закрыт (AVA-1…9).**
+**MED-1 медали (корп-срез, `corporations.md` §3):** каталог-данные `data/medals.json` +
+fail-secure парсер `medalCatalog.ts` (вне ядра); `MedalStore` (Memory+Postgres `medals`,
+PK account+medal — идемпотентно/перманентно); агрегат `AvaResultStore.statsForCorp`
+(матчи/победы корпы из истории AVA-8); `MedalService` — глава/офицер вручает **ручную
+корп-медаль** члену, сервер перепроверяет объективное условие (`corp_wins`/`corp_matches`)
+→ `E_NOT_ELIGIBLE`, аудит `medal`, идемпотентно; `eligibleMedals`/`medalsOf`. HTTP
+session-gated `GET /medals[/me|/eligible]` + `POST /medals/grant`. Отложено: auto/account-
+достижения + пер-аккаунт условия (нужен леджер участия), витрина — клиент.
+Клиент — AVA-C1/C2, `corporation-wars.md`.
 
 ## 9. Статус
 

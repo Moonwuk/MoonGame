@@ -6,6 +6,7 @@ import {
   MemoryAvaResultStore,
   MemoryAvaRosterStore,
   MemoryAvaSessionStore,
+  MemoryMedalStore,
   MemoryCorpStore,
   MemoryMatchStore,
   MemoryReceiptStore,
@@ -16,6 +17,7 @@ import {
   PostgresAvaResultStore,
   PostgresAvaRosterStore,
   PostgresAvaSessionStore,
+  PostgresMedalStore,
   PostgresCorpStore,
   PostgresMatchStore,
   PostgresReceiptStore,
@@ -27,6 +29,7 @@ import {
   type AvaResultStore,
   type AvaRosterStore,
   type AvaSessionStore,
+  type MedalStore,
   type CorpStore,
   type MatchSnapshot,
   type MatchStore,
@@ -63,6 +66,8 @@ export interface Stores {
   sessionStore: AvaSessionStore;
   /** AvA public feed (AVA-9) — confirmed matchups + results, no private data. */
   feedStore: AvaFeedStore;
+  /** Earned medals (corporations.md §3) — permanent per-account record. */
+  medalStore: MedalStore;
   /** Which backend is active — for the boot log ('memory' loses state on restart). */
   kind: 'memory' | 'postgres';
   close(): Promise<void>;
@@ -82,6 +87,7 @@ export async function createStores(env: NodeJS.ProcessEnv = process.env): Promis
       resultStore: new MemoryAvaResultStore(),
       sessionStore: new MemoryAvaSessionStore(),
       feedStore: new MemoryAvaFeedStore(),
+      medalStore: new MemoryMedalStore(),
       kind: 'memory',
       close: () => Promise.resolve(),
     };
@@ -102,6 +108,7 @@ export async function createStores(env: NodeJS.ProcessEnv = process.env): Promis
     resultStore: new PostgresAvaResultStore(pool),
     sessionStore: new PostgresAvaSessionStore(pool),
     feedStore: new PostgresAvaFeedStore(pool),
+    medalStore: new PostgresMedalStore(pool),
     kind: 'postgres',
     close: () => pool.end(),
   };

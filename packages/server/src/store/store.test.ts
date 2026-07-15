@@ -8,6 +8,7 @@ import {
   MemoryAvaResultStore,
   MemoryAvaRosterStore,
   MemoryAvaSessionStore,
+  MemoryMedalStore,
   MemoryCorpStore,
   MemoryMatchStore,
   MemoryReceiptStore,
@@ -19,6 +20,7 @@ import {
   PostgresAvaResultStore,
   PostgresAvaRosterStore,
   PostgresAvaSessionStore,
+  PostgresMedalStore,
   PostgresCorpStore,
   PostgresMatchStore,
   PostgresReceiptStore,
@@ -35,6 +37,7 @@ import type {
   AvaSession,
   AvaSessionStore,
   AvaSide,
+  MedalStore,
   CorpStore,
   MatchSnapshot,
   MatchStore,
@@ -437,6 +440,36 @@ function resultStoreContract(
       expect(recent.map((r) => r.matchupId)).toEqual([m2, m1]); // newest (at=9) first
       expect(recent[1]?.winnerCorp).toBeNull();
     });
+
+    it('statsForCorp counts a corp matches (either side) and its wins', async () => {
+      const store = make();
+      const [a, b, c] = [uniq('s-a'), uniq('s-b'), uniq('s-c')];
+      await store.record({ matchupId: uniq('sm1'), challengerCorp: a, targetCorp: b, winnerCorp: a, at: 1 });
+      await store.record({ matchupId: uniq('sm2'), challengerCorp: b, targetCorp: a, winnerCorp: b, at: 2 });
+      await store.record({ matchupId: uniq('sm3'), challengerCorp: a, targetCorp: c, winnerCorp: null, at: 3 });
+      expect(await store.statsForCorp(a)).toEqual({ matches: 3, wins: 1 }); // 3 matches, 1 win
+      expect(await store.statsForCorp(b)).toEqual({ matches: 2, wins: 1 });
+      expect(await store.statsForCorp(uniq('none'))).toEqual({ matches: 0, wins: 0 });
+    });
+  });
+}
+
+// Medals (corporations.md §3) — permanent, idempotent per (account, medal).
+function medalStoreContract(name: string, make: () => MedalStore, uniq: (p: string) => string): void {
+  describe(`MedalStore — ${name}`, () => {
+    it('grants idempotently, reads back newest-first, and reports `has`', async () => {
+      const store = make();
+      const acc = uniq('acc');
+      expect(await store.grant({ accountId: acc, medalId: 'm1', corpId: uniq('c'), at: 10 })).toBe(true);
+      expect(await store.grant({ accountId: acc, medalId: 'm1', corpId: uniq('c'), at: 20 })).toBe(false); // dup
+      expect(await store.grant({ accountId: acc, medalId: 'm2', corpId: null, at: 30 })).toBe(true);
+      expect(await store.has(acc, 'm1')).toBe(true);
+      expect(await store.has(acc, 'nope')).toBe(false);
+      const mine = await store.medalsOf(acc);
+      expect(mine.map((m) => m.medalId)).toEqual(['m2', 'm1']); // newest (at=30) first
+      expect(mine.find((m) => m.medalId === 'm1')?.at).toBe(10); // first grant kept, not overwritten
+      expect(await store.medalsOf(uniq('other'))).toEqual([]);
+    });
   });
 }
 
@@ -617,6 +650,7 @@ rosterStoreContract(
 resultStoreContract('memory', () => new MemoryAvaResultStore(), (p) => p);
 sessionStoreContract('memory', () => new MemoryAvaSessionStore(), (p) => p);
 feedStoreContract('memory', () => new MemoryAvaFeedStore(), (p) => p);
+medalStoreContract('memory', () => new MemoryMedalStore(), (p) => p);
 
 // Postgres adapters — only when a DATABASE_URL is provided (skipped in CI without a
 // DB, so the gate stays green). Verified locally against a real Postgres 16.
@@ -659,6 +693,7 @@ describe.skipIf(!DB)('Postgres adapters', () => {
   resultStoreContract('postgres', () => new PostgresAvaResultStore(pool), (p) => `${p}_${stamp}`);
   sessionStoreContract('postgres', () => new PostgresAvaSessionStore(pool), (p) => `${p}_${stamp}`);
   feedStoreContract('postgres', () => new PostgresAvaFeedStore(pool), (p) => `${p}_${stamp}`);
+  medalStoreContract('postgres', () => new PostgresMedalStore(pool), (p) => `${p}_${stamp}`);
 
   it('migrates idempotently', async () => {
     await migrate(pool);
