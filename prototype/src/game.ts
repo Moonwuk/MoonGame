@@ -20,6 +20,7 @@ import {
   factionModule,
   heroModule,
   heroEffectsModule,
+  effectsModule,
   combatModule,
   orbitalModule,
   artilleryModule,
@@ -3022,6 +3023,7 @@ export const MODULES: GameModule[] = [
   divisionModule, // ground divisions: mobilise from a template + daily restoration
   capitalModule, // designatable capital (hero respawn / module re-fit anchor)
   standingOrdersModule, // CC-2/CC-4 standing orders (auto-storm / дежурный вылет), server-driven
+  effectsModule, // EFX-1: интерпретатор data.events (трейт→триггер→эффект); данные прототипа пусты → инертен до контента
 ];
 
 export const kernel = createKernel(MODULES);

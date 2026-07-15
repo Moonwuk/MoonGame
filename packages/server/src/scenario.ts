@@ -9,6 +9,7 @@ import {
   createKernel,
   diplomacyModule,
   economyModule,
+  effectsModule,
   factionModule,
   heroModule,
   interceptModule,
@@ -78,6 +79,7 @@ export const DEV_MODULES: GameModule[] = [
   armyModule,
   victoryModule,
   visibilityModule, // fog-of-war memory (variant B): records last-seen worlds
+  effectsModule, // EFX-1: data-driven trait→trigger→effect rules from data/events.json
 ];
 
 export interface DevMatchOptions {

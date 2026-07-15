@@ -6,7 +6,7 @@
 > `deep-technical-roadmap.md`, `multiplayer.md`, `metagame.md`, `map-roadmap.md`, `security-a06.md` (модель угроз/A06), корневой `CLAUDE.md` / `CONTRIBUTING.md`.
 >
 > **Ветка:** feature-ветка · **PR:** создаётся после изменений.
-> **Гейт:** `pnpm run check` (lint + typecheck + test). **Тесты: 1177 зелёных** (5 skip, 114 файлов).
+> **Гейт:** `pnpm run check` (lint + typecheck + test). **Тесты: 1194 зелёных** (5 skip, 116 файлов).
 
 ---
 
@@ -783,8 +783,14 @@ shipyard, biomass_pit, barracks, spaceport, radar, fort, metal_station, power_pl
 nebula(score 3)`. **planetTypes** дают `scoreValue` (terran 40, oceanic 35,
   volcanic 20, gas_giant 10, barren 5).
 - **factions:** `vanguard, swarm` (пока флейвор/трейты).
-- **events:** `infect_planet, void_anomaly` (правила
-  trigger→effect; движок трейтов пока не построен).
+- **events:** `infect_planet, void_anomaly` — правила trigger→effect, исполняются
+  `effectsModule` (EFX-1): ключ правила = id трейта, носитель трейта исполняет правило
+  по триггеру. Каталоги курируемые: триггеры `planet_captured` (носитель — юнит
+  захватившей стороны на узле) и `schedule` (каденс-петля по мирам-носителям,
+  ленивый арм + точный офлайн-догон цепочкой), эффекты `add_trait` (дедуп) и
+  `modify_resource` (казна владельца, клэмп на 0); `chance` — через seeded RNG
+  (0/1 не тратят поток). Неизвестный триггер/эффект/кривые params → правило
+  инертно. Носителей в контенте пока нет → правила ждут дизайнера.
 - **technologies:** сессионное дерево (`industrial_automation`,
   `orbital_logistics`, `siege_doctrine`, `fortified_infrastructure`,
   `microelectronics_fabrication`): стоимость,
