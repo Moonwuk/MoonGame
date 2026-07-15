@@ -53,13 +53,13 @@ function fleet(id: string, owner: string, location: string, units: UnitStack[]):
 function world(id: string, owner: string | null): Planet {
   return { id, owner, kind: 'planet', position: { x: 0, y: 0 }, resources: {}, buildings: [], garrison: [], traits: [] };
 }
-function baseState(fleets: Fleet[]): GameState {
+function baseState(fleets: Fleet[], aOwner: string | null = null): GameState {
   const s = createInitialState({ seed: 'pv', version: { data: '0.1.0', manifest: '1' } });
   const f: Record<string, Fleet> = {};
   for (const x of fleets) f[x.id] = x;
   return {
     ...s,
-    planets: { A: world('A', null) },
+    planets: { A: world('A', aOwner) },
     fleets: f,
     players: {
       p1: { id: 'p1', name: 'p1', faction: 'x', status: 'active', resources: {} },
@@ -78,12 +78,16 @@ function realBattle(
   attacker: UnitStack[],
   defender: UnitStack[],
   extraModules: GameModule[] = [],
+  aOwner: string | null = null,
 ): { winner: string | null; rounds: number; aSurvivors: UnitStack[]; dSurvivors: UnitStack[] } {
   const kernel = createKernel([orbitalModule, combatModule, ...extraModules, arrivalModule]);
-  const state = baseState([
-    fleet('D', 'p2', 'A', defender.map((s) => ({ ...s }))),
-    fleet('F', 'p1', 'A', attacker.map((s) => ({ ...s }))),
-  ]);
+  const state = baseState(
+    [
+      fleet('D', 'p2', 'A', defender.map((s) => ({ ...s }))),
+      fleet('F', 'p1', 'A', attacker.map((s) => ({ ...s }))),
+    ],
+    aOwner,
+  );
   const started = kernel.applyAction(
     state,
     { id: 'a1', type: 'test.arrive', playerId: 'p1', payload: { fleetId: 'F' }, issuedAt: 0 },
@@ -107,6 +111,9 @@ describe('previewBattle — parity with the real battle on a hook-free kernel', 
     { name: 'guardians out-tank fighters', a: [['fighter', 3]], d: [['guardian', 4]] },
     { name: 'shields blunt the alpha strike', a: [['fighter', 4]], d: [['aegis', 3]] },
     { name: 'mixed lines fall in tier order', a: [['fighter', 5], ['backliner', 4]], d: [['guardian', 2], ['backliner', 6]] },
+    // Zero-damage matchup: the live valve resolves at round 241 (the counter
+    // exceeds the 240 cap before the round is fought) — parity must include it.
+    { name: 'zero-damage stalemate hits the 241-round valve', a: [['pacifist', 2]], d: [['pacifist', 2]] },
   ];
   for (const c of CASES) {
     it(`matches winner, rounds and survivors: ${c.name}`, () => {
@@ -125,14 +132,22 @@ describe('previewBattle — parity with the real battle on a hook-free kernel', 
   }
 
   it('agrees in SIGN even when a combat.damage hook skews the real fight (sector home bonus)', () => {
-    // Sector home-ground bonus (+25% to the side owning the node) helps p2 — the
-    // preview does not know it, but a NON-marginal matchup must not flip.
-    const a: Array<[string, number]> = [['fighter', 8]];
-    const d: Array<[string, number]> = [['fighter', 2]];
-    const kernelReal = realBattle(stacks(a), stacks(d), [sectorModule]);
+    // p2 OWNS node A → sector's home-ground bonus multiplies p2's return fire
+    // ×1.25 (guardians actually have a defense stat, so there is a number to
+    // skew). The preview does not know the bonus — a non-marginal matchup must
+    // not flip, and the skew must demonstrably bite (no vacuous pass).
+    const a: Array<[string, number]> = [['fighter', 12]];
+    const d: Array<[string, number]> = [['guardian', 3]];
+    const skewed = realBattle(stacks(a), stacks(d), [sectorModule], 'p2');
+    const baseline = realBattle(stacks(a), stacks(d), [], 'p2');
     const pv = previewBattle(stacks(a), stacks(d), data);
     expect(pv.outcome).toBe('attacker');
-    expect(kernelReal.winner).toBe('p1'); // sign agreement — the forecast holds
+    expect(skewed.winner).toBe('p1'); // sign agreement — the forecast holds
+    // Prove the hook really skewed the fight: the boosted return fire costs the
+    // attacker more ships than both the hook-free run and the forecast predict.
+    const total = (u: UnitStack[]): number => u.reduce((n, s) => n + s.count, 0);
+    expect(total(skewed.aSurvivors)).toBeLessThan(total(baseline.aSurvivors));
+    expect(total(pv.attacker.survivors)).toBe(total(baseline.aSurvivors));
   });
 });
 
@@ -151,10 +166,11 @@ describe('previewBattle — contract', () => {
     expect(walkover.roundsEst).toBe(0);
   });
 
-  it('a zero-damage matchup forecasts stalemate at the 240-round valve, never hangs', () => {
+  it('a zero-damage matchup forecasts stalemate at the valve, never hangs', () => {
     const pv = previewBattle(stacks([['pacifist', 2]]), stacks([['pacifist', 2]]), data);
     expect(pv.outcome).toBe('stalemate');
-    expect(pv.roundsEst).toBe(240);
+    // Mirrors the live battle.resolved: the counter exceeds the 240 cap → 241.
+    expect(pv.roundsEst).toBe(241);
   });
 
   it('reports losses per unit id and previewLossCount totals them', () => {

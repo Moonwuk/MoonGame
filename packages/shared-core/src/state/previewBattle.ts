@@ -1,6 +1,6 @@
 import type { UnitStack } from './gameState';
 import type { GameData } from '../data/schemas';
-import { damageUnits } from '../util/combat';
+import { damageUnits, MAX_COMBAT_ROUNDS } from '../util/combat';
 import { sumUnitStat } from '../util/stacks';
 import { deepClone } from '../util/clone';
 
@@ -28,10 +28,6 @@ import { deepClone } from '../util/clone';
  * (own units vs an identified world's garrison / an identified fleet; a client
  * naturally holds only the fog-projected state, so this is structural there).
  */
-
-/** Pinned to the combat module's MAX_COMBAT_ROUNDS stalemate valve (combat.ts):
- *  a zero-damage matchup forecasts «stalemate», it never spins the loop forever. */
-const MAX_PREVIEW_ROUNDS = 240;
 
 /** One side's forecast: what's left and what it cost. */
 export interface BattlePreviewSide {
@@ -89,8 +85,9 @@ export function previewBattle(
   let stalemate = false;
   while (alive(a) && alive(d)) {
     rounds += 1;
-    if (rounds > MAX_PREVIEW_ROUNDS) {
-      rounds = MAX_PREVIEW_ROUNDS;
+    // Same as the live valve: the counter EXCEEDS the cap (battle.resolved reports
+    // 241 for a stalemate), the round itself is not fought.
+    if (rounds > MAX_COMBAT_ROUNDS) {
       stalemate = true;
       break;
     }
