@@ -17,7 +17,12 @@
 
 `[core]` `packages/shared-core/src/modules` (+ `data`) · `[act]` `action-layer` ·
 `[srv]` `server` · `[cli]` `client` · `[proto]` `prototype` · `[data]` `data/*.json` ·
-`[docs]` `docs` · `[sec]` CI/сканеры (`.github/workflows/security.yml`, `docs/security`, конфиги сканеров)
+`[docs]` `docs` · `[sec]` CI/сканеры (`.github/workflows/security.yml`, `docs/security`, конфиги сканеров) ·
+`[ops]` эксплуатация/хостинг (запуск сервера, автообновление, инфраструктура плейтестов)
+
+Словарь зон машинно проверяется гейтом (`scripts/docs-check.mjs`) — вместе с
+целостностью всех `.md`-ссылок в docs/: новая зона сначала добавляется сюда и в
+`ZONES` скрипта, иначе `pnpm run check` красный.
 
 ## Статусы
 
@@ -262,7 +267,7 @@
   билет невосстановим с сервера (hash-only) — потерянный localStorage = владелец чистит
   ряд `seats`; второй девайс того же игрока требует перенести билет; archive-интенты
   match-браузера всё ещё доверяют нику (read-model, не игровое место). Гейт 1081.
-- **REL-4** ✅ `[server]` `[ops]` **Action-гейт включён на играбельном пути (netserver).**
+- **REL-4** ✅ `[srv]` `[ops]` **Action-гейт включён на играбельном пути (netserver).**
   Прото-хост `prototype/netserver.ts` принимает `GATE=1|true` — комната получает тот же
   `ActionGate({payloadValidator: isValidActionPayload})`, что и боевой вход `main.ts`
   (зеркало serverConfig; баннер печатает `gate: ON/off`). В compose релиз-постура —
