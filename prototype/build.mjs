@@ -118,6 +118,23 @@ body::before{content:"";position:fixed;inset:0;z-index:1;pointer-events:none;mix
 #toasts .toast.jump{border-color:var(--cyan);}
 #toasts .toast.out{opacity:0;transform:translateY(-6px);transition:opacity .4s ease,transform .4s ease;}
 @keyframes toast-in{from{opacity:0;transform:translateY(-8px);}to{opacity:1;transform:none;}}
+/* ONB-1 spotlight: overlay above the HUD (z 44) but below critical modals (codex 46).
+   Click-through by default so the highlighted control stays live; the bubble re-enables. */
+.vd-spotlight{position:fixed;inset:0;z-index:44;display:none;pointer-events:none;}
+.vd-spotlight-ring{position:absolute;border:2px solid var(--cyan);border-radius:4px;pointer-events:none;
+  box-shadow:0 0 0 9999px rgba(2,8,11,.62),0 0 16px rgba(53,214,230,.55);
+  transition:left .16s ease,top .16s ease,width .16s ease,height .16s ease;}
+.vd-spotlight-bubble{position:absolute;pointer-events:auto;max-width:min(78vw,320px);
+  background:rgba(3,14,18,.94);border:1px solid var(--cyan);border-radius:4px;padding:11px 13px;
+  box-shadow:0 0 22px rgba(40,200,210,.22);font:12px ui-monospace,Menlo,monospace;color:var(--fg);}
+.vd-spotlight-copy{margin:0 0 9px;line-height:1.4;}
+.vd-spotlight-footer{display:flex;align-items:center;gap:8px;}
+.vd-spotlight-counter{font-size:10px;opacity:.7;letter-spacing:.5px;margin-right:auto;}
+.vd-spotlight-skip,.vd-spotlight-next{cursor:pointer;font:11px ui-monospace,monospace;border-radius:2px;
+  padding:4px 9px;background:transparent;border:1px solid var(--line-hi);color:var(--cyan-dim);}
+.vd-spotlight-next{background:rgba(53,214,230,.16);color:var(--cyan);border-color:var(--cyan);
+  box-shadow:0 0 10px rgba(53,214,230,.35);}
+.vd-spotlight-skip:hover,.vd-spotlight-next:hover{border-color:var(--cyan);color:var(--cyan);}
 #speedbar{position:fixed;right:14px;bottom:14px;z-index:24;display:flex;align-items:center;gap:4px;
   padding:5px 7px;background:rgba(3,12,16,.78);border:1px solid var(--line-hi);border-radius:3px;
   box-shadow:0 0 16px rgba(40,200,210,.10);transition:bottom .2s ease;}

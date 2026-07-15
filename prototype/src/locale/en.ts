@@ -4,6 +4,10 @@
 // English in game.ts) need no entry here; `tData()` shows them as-is on this locale.
 // One language = one file.
 export const en: Record<string, string> = {
+  // --- onboarding / spotlight (ONB-1) ------------------------------------------
+  'Шаг {k} из {n}': 'Step {k} of {n}',
+  'Пропустить обучение': 'Skip tutorial',
+  'Далее': 'Next',
   // --- placeholders / small fragments ------------------------------------------
   ' · потери: {tally}': ' · losses: {tally}',
   '+{n} десанта': '+{n} troops',
