@@ -6,7 +6,7 @@
 > `deep-technical-roadmap.md`, `multiplayer.md`, `metagame.md`, `map-roadmap.md`, `security-a06.md` (модель угроз/A06), корневой `CLAUDE.md` / `CONTRIBUTING.md`.
 >
 > **Ветка:** feature-ветка · **PR:** создаётся после изменений.
-> **Гейт:** `pnpm run check` (lint + typecheck + test). **Тесты: 1194 зелёных** (5 skip, 116 файлов).
+> **Гейт:** `pnpm run check` (lint + typecheck + test). **Тесты: 1197 зелёных** (5 skip, 116 файлов).
 
 ---
 
@@ -79,7 +79,7 @@ packages/action-layer/src/
   data/          schemas.ts (zod-схемы + parseGameData, buildingLevel/buildingMaxLevel)
   rng/           rng.ts (sfc32)
   util/          clone.ts (deepClone/deepFreeze), treasury.ts (canAfford/payCost — shared by construction & technology), fitting.ts (генерик-гейт «слоты+предметы», SHIP-4) + loadout.ts (ship-обёртка над ним)
-  modules/       army, artillery, captureOnArrival, combat, construction, diplomacy, economy, espionage, faction, hero, heroEffects, intercept, market, movement, orbital, planetType, scientist, sector, station, steward, technology, victory, visibility  (23 модуля, + *.test.ts)
+  modules/       army, artillery, captureOnArrival, combat, construction, diplomacy, economy, effects, espionage, faction, hero, heroEffects, intercept, market, movement, orbital, planetType, scientist, sector, station, steward, technology, victory, visibility  (24 модуля, + *.test.ts)
   examples/      skirmish.test.ts (демо-сценарий + SVG)
   index.ts       баррель (экспорт публичного API)
 data/            manifest, resources, units, buildings, factions, events, sectors, planetTypes, technologies (.json)
@@ -786,11 +786,14 @@ nebula(score 3)`. **planetTypes** дают `scoreValue` (terran 40, oceanic 35,
 - **events:** `infect_planet, void_anomaly` — правила trigger→effect, исполняются
   `effectsModule` (EFX-1): ключ правила = id трейта, носитель трейта исполняет правило
   по триггеру. Каталоги курируемые: триггеры `planet_captured` (носитель — юнит
-  захватившей стороны на узле) и `schedule` (каденс-петля по мирам-носителям,
-  ленивый арм + точный офлайн-догон цепочкой), эффекты `add_trait` (дедуп) и
-  `modify_resource` (казна владельца, клэмп на 0); `chance` — через seeded RNG
-  (0/1 не тратят поток). Неизвестный триггер/эффект/кривые params → правило
-  инертно. Носителей в контенте пока нет → правила ждут дизайнера.
+  захватившей стороны на узле: флот или севший десант) и `schedule` (тики по
+  фиксированной сетке `startedAt + k·cadence`, исполняются спаном `time.advanced`,
+  который их накрыл, — гранулярность advanceTo не влияет на результат, дискретный
+  близнец интеграла экономики; в `state.scheduled` ничего не пишется), эффекты
+  `add_trait` (дедуп) и `modify_resource` (казна владельца, клэмп на 0); `chance` —
+  через seeded RNG (0/1 не тратят поток; тик без миров-носителей не тратит ничего).
+  Неизвестный триггер/эффект/кривые params → правило инертно. Носителей в контенте
+  пока нет → правила ждут дизайнера.
 - **technologies:** сессионное дерево (`industrial_automation`,
   `orbital_logistics`, `siege_doctrine`, `fortified_infrastructure`,
   `microelectronics_fabrication`): стоимость,
@@ -814,7 +817,7 @@ self-contained `dist/void-dominion.html` (открывается с диска, 
 - **Реальное ядро** в браузере: `createKernel([sector, planetType, tax, faction, economy,
 movement, hero, heroEffects, orbital, combat, artillery, intercept, captureOnArrival,
 construction, technology, steward, army, victory, fleetLaunch, diplomacy, espionage,
-botDiplomacy, market, division, capital, standingOrders])` (26 модулей), тик в реальном
+botDiplomacy, market, division, capital, standingOrders, effects])` (27 модулей), тик в реальном
   времени (скорость ⏸/▶/⏩). Концовка матча — из авторитетного `state.match` (`victoryModule`),
   полноэкранный экран итогов победы/поражения/ничьи (счёт+место+статы+XP, рематч; см.
   раздел victory) — а не хардкод по узлам.
@@ -980,7 +983,7 @@ botDiplomacy, market, division, capital, standingOrders])` (26 модулей), 
 > Компактный агрегат; помашинная матрица — [`readiness.md`](readiness.md),
 > запуск для живых игроков — [`launch-runbook.md`](launch-runbook.md).
 
-**✅ Этап 1 (ядро) — готово целиком:** 23 модуля на микроядре (шина/хуки/манифест,
+**✅ Этап 1 (ядро) — готово целиком:** 24 модуля на микроядре (шина/хуки/манифест,
 seeded RNG + golden, `advanceTo`): экономика + рынок, карта/движение/перехват, типы
 секторов и планет, бой (мелэ + орбитальное ПВО/бомбардировка + артиллерия) с двухфазным
 захватом, здания + станции, флот ⊕ армия + транспорт, технологии + учёные, фракции,

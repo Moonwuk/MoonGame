@@ -246,7 +246,7 @@ export { visibilityModule } from './modules/visibility';
 export { heroModule } from './modules/hero';
 export type { HeroEffect, HeroEffectArgs } from './modules/hero';
 export { heroEffectsModule } from './modules/heroEffects';
-export { effectsModule, EFFECTS_CADENCE } from './modules/effects';
+export { effectsModule } from './modules/effects';
 export {
   stewardModule,
   stewardActive,

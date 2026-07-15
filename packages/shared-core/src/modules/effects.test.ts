@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { createKernel } from '../kernel/kernel';
+import type { GameModule } from '../kernel/module';
 import { movementModule } from './movement';
 import { captureOnArrivalModule } from './captureOnArrival';
-import { effectsModule, EFFECTS_CADENCE } from './effects';
+import { effectsModule } from './effects';
 import { createInitialState, type Fleet, type GameState, type Planet, type Player } from '../state/gameState';
 import { parseGameData, type GameData } from '../data/schemas';
 import type { AdvanceResult, ApplyResult, Action, Context } from '../action/types';
@@ -148,40 +149,87 @@ describe('effectsModule — planet_captured rules (trait carrier → effect)', (
     });
     const dep = okApply(kernel.applyAction(state, move('F', 'B'), never));
     const arr = okAdvance(kernel.advanceTo(dep.state, { ...never, now: 3 * HOUR }));
+    expect(arr.state.planets.B!.owner).toBe('p1'); // the capture DID happen — the rule was reached
     expect(arr.state.planets.B!.traits).not.toContain('infected');
     expect(arr.state.rng).toEqual(state.rng); // no draw consumed
   });
+
+  it('a GARRISON carrier triggers the rule (ground-assault capture: landing → garrison)', () => {
+    // Mirrors combat.ts capturePlanet: owner flips and the landed force becomes the
+    // garrison BEFORE planet.captured is emitted — no fleet of the capturer at the node.
+    const assaultModule: GameModule = {
+      id: 'test-assault',
+      version: '0',
+      setup(api) {
+        api.onAction('test.capture', (action, h) => {
+          const { planetId, owner } = action.payload as { planetId: string; owner: string };
+          const planet = h.state.planets[planetId]!;
+          planet.owner = owner;
+          planet.garrison = [{ unit: 'infected_cruiser', count: 1 }];
+          h.emit('planet.captured', { planetId, owner, by: 'F', from: 'p2' });
+        });
+      },
+    };
+    const kernel = createKernel([assaultModule, effectsModule]);
+    const state = baseState([planet('B', 'p2', 0)]);
+    const res = okApply(
+      kernel.applyAction(
+        state,
+        { id: 'a1', type: 'test.capture', playerId: 'p1', payload: { planetId: 'B', owner: 'p1' }, issuedAt: 0 },
+        ctx(0),
+      ),
+    );
+    expect(res.state.planets.B!.traits).toContain('infected');
+  });
 });
 
-describe('effectsModule — schedule rules (cadence loop over carrier worlds)', () => {
+describe('effectsModule — schedule rules (fixed grid over carrier worlds)', () => {
   const anomalyWorld = (): GameState => baseState([planet('P', 'p1', 0, ['void_anomaly'])]);
 
-  it('lazy-arms on the first advance and pays out on each cadence tick', () => {
+  it('pays out on each grid tick (startedAt + k·cadence), nothing before the first', () => {
     const kernel = createKernel([effectsModule]);
-    // First advance (1h): arms the chain, no tick due yet.
-    const armed = okAdvance(kernel.advanceTo(anomalyWorld(), ctx(1 * HOUR)));
-    expect(armed.state.scheduled.some((e) => e.type === EFFECTS_CADENCE)).toBe(true);
-    expect(armed.state.players.p1!.resources['energy'] ?? 0).toBe(0);
-    // Reaching the first cadence instant (1h arm + 8h) pays exactly once…
-    const one = okAdvance(kernel.advanceTo(armed.state, ctx(9 * HOUR)));
+    // 7h: the first 8h grid tick has not been reached.
+    const early = okAdvance(kernel.advanceTo(anomalyWorld(), ctx(7 * HOUR)));
+    expect(early.state.players.p1!.resources['energy'] ?? 0).toBe(0);
+    // 9h: the 8h tick fired exactly once — and left NOTHING in the schedule.
+    const one = okAdvance(kernel.advanceTo(early.state, ctx(9 * HOUR)));
     expect(one.state.players.p1!.resources['energy']).toBe(50);
-    // …and the chain re-armed itself for the next tick.
-    expect(one.state.scheduled.some((e) => e.type === EFFECTS_CADENCE)).toBe(true);
+    expect(one.state.scheduled).toHaveLength(0);
   });
 
-  it('offline catch-up replays EVERY missed tick (chained re-arm, no clamping-skip)', () => {
+  it('offline catch-up executes EVERY missed grid tick', () => {
     const kernel = createKernel([effectsModule]);
-    const armed = okAdvance(kernel.advanceTo(anomalyWorld(), ctx(1 * HOUR)));
-    // Sleep three cadences: ticks at 9h, 17h, 25h all land inside one advance.
-    const woke = okAdvance(kernel.advanceTo(armed.state, ctx(26 * HOUR)));
+    // Sleep straight to 26h: ticks at 8h, 16h, 24h all land inside one advance.
+    const woke = okAdvance(kernel.advanceTo(anomalyWorld(), ctx(26 * HOUR)));
     expect(woke.state.players.p1!.resources['energy']).toBe(150);
+  });
+
+  it('advance decomposition does not matter: one jump ≡ many small steps (incl. RNG)', () => {
+    const flaky = (now: number) =>
+      ({ ...ctx(0, {
+        void_anomaly: {
+          trigger: 'schedule',
+          effect: 'modify_resource',
+          params: { resource: 'energy', amount: 50, cadenceHours: 8 },
+          chance: 0.5, // draws too — the stream position must match across paths
+        },
+      }), now });
+    const kernel = createKernel([effectsModule]);
+    const oneJump = okAdvance(kernel.advanceTo(anomalyWorld(), flaky(26 * HOUR))).state;
+    let steps = anomalyWorld();
+    for (const t of [1, 9, 17, 26]) {
+      steps = okAdvance(kernel.advanceTo(steps, flaky(t * HOUR))).state;
+    }
+    expect(steps.players.p1!.resources['energy'] ?? 0).toBe(
+      oneJump.players.p1!.resources['energy'] ?? 0,
+    );
+    expect(steps.rng).toEqual(oneJump.rng); // identical draw count and stream position
   });
 
   it('an unowned carrier world pays nobody (and does not crash)', () => {
     const kernel = createKernel([effectsModule]);
     const state = baseState([planet('P', null, 0, ['void_anomaly'])]);
-    const armed = okAdvance(kernel.advanceTo(state, ctx(1 * HOUR)));
-    const one = okAdvance(kernel.advanceTo(armed.state, ctx(9 * HOUR)));
+    const one = okAdvance(kernel.advanceTo(state, ctx(9 * HOUR)));
     expect(one.state.players.p1!.resources['energy'] ?? 0).toBe(0);
   });
 
@@ -197,12 +245,11 @@ describe('effectsModule — schedule rules (cadence loop over carrier worlds)', 
     });
     const state = anomalyWorld();
     state.players.p1!.resources['energy'] = 30;
-    const armed = okAdvance(kernel.advanceTo(state, { ...drain, now: 1 * HOUR }));
-    const one = okAdvance(kernel.advanceTo(armed.state, { ...drain, now: 9 * HOUR }));
+    const one = okAdvance(kernel.advanceTo(state, { ...drain, now: 9 * HOUR }));
     expect(one.state.players.p1!.resources['energy']).toBe(0);
   });
 
-  it('a zero/negative cadence is floored fail-secure (no runaway schedule)', () => {
+  it('a zero/negative cadence is floored fail-secure (no runaway tick loop)', () => {
     const kernel = createKernel([effectsModule]);
     const rapid = ctx(0, {
       void_anomaly: {
@@ -212,10 +259,21 @@ describe('effectsModule — schedule rules (cadence loop over carrier worlds)', 
         chance: 1,
       },
     });
-    const armed = okAdvance(kernel.advanceTo(anomalyWorld(), { ...rapid, now: 1000 }));
-    // 2h of world time with a 1h floor → at most 2 ticks, never thousands.
-    const run = okAdvance(kernel.advanceTo(armed.state, { ...rapid, now: 2 * HOUR }));
-    expect(run.state.players.p1!.resources['energy'] ?? 0).toBeLessThanOrEqual(2);
+    // Floored to 1h: 2h of world time = grid ticks at 1h and 2h — two, not thousands.
+    const run = okAdvance(kernel.advanceTo(anomalyWorld(), { ...rapid, now: 2 * HOUR }));
+    expect(run.state.players.p1!.resources['energy'] ?? 0).toBe(2);
+  });
+
+  it('cadence respects timeScale (compressed matches tick proportionally faster)', () => {
+    // timeScale 2 halves every real-time duration: the 8h cadence grid lands every 4h.
+    const fast = (now: number) => ({ ...ctx(0), config: { timeScale: 2 }, now });
+    const kernel = createKernel([effectsModule]);
+    // 3.5h: the first grid tick (4h) has NOT fired yet…
+    const early = okAdvance(kernel.advanceTo(anomalyWorld(), fast(3.5 * HOUR)));
+    expect(early.state.players.p1!.resources['energy'] ?? 0).toBe(0);
+    // …4.5h: it has (and only once).
+    const due = okAdvance(kernel.advanceTo(early.state, fast(4.5 * HOUR)));
+    expect(due.state.players.p1!.resources['energy']).toBe(50);
   });
 
   it('chance draws are deterministic: same seed → identical outcome', () => {
@@ -229,21 +287,20 @@ describe('effectsModule — schedule rules (cadence loop over carrier worlds)', 
     });
     const run = (): number => {
       const kernel = createKernel([effectsModule]);
-      const armed = okAdvance(kernel.advanceTo(anomalyWorld(), { ...flaky, now: 1 * HOUR }));
-      const woke = okAdvance(kernel.advanceTo(armed.state, { ...flaky, now: 80 * HOUR }));
+      const woke = okAdvance(kernel.advanceTo(anomalyWorld(), { ...flaky, now: 80 * HOUR }));
       return woke.state.players.p1!.resources['energy'] ?? 0;
     };
     expect(run()).toBe(run());
   });
 
-  it('a rule removed from data lets its chain die gracefully (then nothing fires)', () => {
+  it('a rule removed from data simply stops ticking (no residue in the schedule)', () => {
     const kernel = createKernel([effectsModule]);
-    const armed = okAdvance(kernel.advanceTo(anomalyWorld(), ctx(1 * HOUR)));
-    // Same match, data hot-swapped without the rule: the due tick is a no-op…
-    const gone = okAdvance(kernel.advanceTo(armed.state, { ...ctx(9 * HOUR, {}), now: 9 * HOUR }));
-    expect(gone.state.players.p1!.resources['energy'] ?? 0).toBe(0);
-    // …and it did not re-arm itself.
-    expect(gone.state.scheduled.some((e) => e.type === EFFECTS_CADENCE)).toBe(false);
+    const some = okAdvance(kernel.advanceTo(anomalyWorld(), ctx(9 * HOUR)));
+    expect(some.state.players.p1!.resources['energy']).toBe(50);
+    // Same match, data hot-swapped without the rule: later grid instants are no-ops.
+    const gone = okAdvance(kernel.advanceTo(some.state, { ...ctx(0, {}), now: 26 * HOUR }));
+    expect(gone.state.players.p1!.resources['energy']).toBe(50);
+    expect(gone.state.scheduled).toHaveLength(0);
   });
 });
 

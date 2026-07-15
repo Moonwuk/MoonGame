@@ -19,32 +19,36 @@ import { hoursToMs } from '../action/types';
  * crash):
  *   - triggers: `planet_captured` (bus `planet.captured` — fires for rules whose
  *     trait rides a unit of the CAPTURING side present at the world), `schedule`
- *     (a self-sustaining cadence loop over PLANETS carrying the trait).
+ *     (a fixed cadence over PLANETS carrying the trait).
  *   - effects: `add_trait { trait }` (stamp a trait onto the target world),
  *     `modify_resource { resource, amount }` (credit/charge the target world's
  *     owner treasury; clamped at zero like upkeep).
  *
- * Determinism: rules evaluate in sorted-key order and carriers in sorted-id
- * order, so `chance` draws consume the RNG stream identically on every replay;
- * chance 0 / 1 never draws. The cadence loop lives in `state.scheduled` (no new
- * state field): each tick re-arms the next at `at + cadence` BEFORE applying, so
- * offline catch-up replays every missed tick in (at, seq) order; if the chain is
- * ever lost (rule removed, dead-letter) the lazy arm on `time.advanced` restores
- * it at the present.
+ * Data-authoring hazard: a `planet_captured` rule fires on EVERY qualifying
+ * capture — `add_trait` is idempotent, but a PAYING `modify_resource` rule would
+ * be farmable by capture flip-flop (lose → recapture). Prefer idempotent effects
+ * on this trigger, or price the loop into the amount.
+ *
+ * Schedule semantics — granularity-independent by construction (the discrete twin
+ * of the economy module's span integral): a rule's ticks live on a fixed grid
+ * `startedAt + k·cadence` (k ≥ 1), and each contiguous `time.advanced` span
+ * (from, to] executes exactly the grid ticks it covers, in timeline order. The
+ * kernel guarantees spans are contiguous and never straddle a due event, so ANY
+ * decomposition of the same advance — one jump or many small steps — executes the
+ * same ticks at the same points of the event timeline (advanceTo composability /
+ * client-preview ≡ server replay). Nothing is written to `state.scheduled`.
+ *
+ * Determinism: rules evaluate in sorted-key order, grid ticks in ascending order,
+ * and carrier worlds in sorted-id order, so `chance` draws consume the RNG stream
+ * identically on every replay; chance 0 / 1 never draws, and a tick with no
+ * carrier worlds draws nothing (empty worlds cost nothing).
  */
 
-/** Scheduled event type carrying one cadence tick of a `schedule`-trigger rule. */
-export const EFFECTS_CADENCE = 'effects.cadence';
 /** Cadence floor (game-hours) — fail-secure: a zero/negative data typo must not
- *  melt the timeline into a runaway schedule. */
+ *  melt a span into a runaway tick loop. */
 const MIN_CADENCE_HOURS = 1;
 /** Cadence used when `params.cadenceHours` is absent or not a finite number. */
 const DEFAULT_CADENCE_HOURS = 24;
-
-interface CadencePayload {
-  rule?: unknown;
-  at?: unknown;
-}
 
 /** Rules in deterministic (sorted-key) order — JSON key order must not matter. */
 function sortedRules(h: HandlerContext): Array<[string, EffectRule]> {
@@ -64,6 +68,14 @@ function passesChance(rule: EffectRule, h: HandlerContext): boolean {
   if (rule.chance >= 1) return true;
   if (rule.chance <= 0) return false;
   return h.rng.nextFloat() < rule.chance;
+}
+
+/** Worlds carrying the rule's trait, in sorted-id order (pinned RNG draw order). */
+function carrierWorlds(h: HandlerContext, trait: string): string[] {
+  return Object.values(h.state.planets)
+    .filter((p) => p.traits.includes(trait))
+    .map((p) => p.id)
+    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
 }
 
 /** Does the capturing side carry the rule's trait at the captured world? Checks
@@ -141,40 +153,26 @@ export const effectsModule: GameModule = {
       }
     });
 
-    // Lazy arm — the first advance plants each schedule-rule's cadence chain; the
-    // "already armed" check makes every later span a no-op, and it also RESTORES
-    // a chain that died (rule re-added to data, or a dead-lettered tick).
-    api.on('time.advanced', (_event, h) => {
+    // schedule — execute the grid ticks this exact span covers. Ticks are the
+    // instants `startedAt + k·cadence` (k ≥ 1) in (from, to]; k is computed by
+    // multiplication (no accumulation drift), and carriers are re-read per tick
+    // (an earlier tick's add_trait legitimately changes later carriers).
+    api.on('time.advanced', (event, h) => {
+      const { from, to } = (event.payload ?? {}) as { from?: unknown; to?: unknown };
+      if (typeof from !== 'number' || typeof to !== 'number' || !(to > from)) return;
+      const epoch = h.state.startedAt ?? 0;
       for (const [ruleId, rule] of sortedRules(h)) {
         if (rule.trigger !== 'schedule') continue;
-        const armed = h.state.scheduled.some(
-          (e) => e.type === EFFECTS_CADENCE && (e.payload as CadencePayload)?.rule === ruleId,
-        );
-        if (armed) continue;
-        const at = h.ctx.now + hoursToMs(h.ctx, cadenceHoursOf(rule));
-        h.schedule(at, EFFECTS_CADENCE, { rule: ruleId, at });
-      }
-    });
-
-    // One cadence tick: re-arm FIRST (anchored to the tick's own `at`, so offline
-    // catch-up replays every missed tick in order — the kernel clamps against the
-    // firing instant, not the target now), then roll each carrier world.
-    api.on(EFFECTS_CADENCE, (event, h) => {
-      const payload = (event.payload ?? {}) as CadencePayload;
-      const ruleId = payload.rule;
-      if (typeof ruleId !== 'string') return;
-      const rule = h.ctx.data.events[ruleId];
-      // Rule gone from data (or re-purposed off `schedule`) → let the chain die.
-      if (!rule || rule.trigger !== 'schedule') return;
-      const firedAt = typeof payload.at === 'number' && Number.isFinite(payload.at) ? payload.at : h.ctx.now;
-      const nextAt = firedAt + hoursToMs(h.ctx, cadenceHoursOf(rule));
-      h.schedule(nextAt, EFFECTS_CADENCE, { rule: ruleId, at: nextAt });
-      const carriers = Object.values(h.state.planets)
-        .filter((p) => p.traits.includes(ruleId))
-        .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-      for (const planet of carriers) {
-        if (!passesChance(rule, h)) continue;
-        applyEffect(h, ruleId, rule, planet.id);
+        const cadence = hoursToMs(h.ctx, cadenceHoursOf(rule));
+        // First grid index whose instant lies STRICTLY after `from` (a tick on the
+        // span seam belongs to the earlier span), never below 1 (no tick at start).
+        let k = Math.max(1, Math.floor((from - epoch) / cadence) + 1);
+        for (; epoch + k * cadence <= to; k++) {
+          for (const planetId of carrierWorlds(h, ruleId)) {
+            if (!passesChance(rule, h)) continue;
+            applyEffect(h, ruleId, rule, planetId);
+          }
+        }
       }
     });
   },
