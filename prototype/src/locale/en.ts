@@ -241,6 +241,7 @@ export const en: Record<string, string> = {
   Коалиция: 'Coalition',
   'Командный бой: ВКЛ': 'Team battle: ON',
   'Командный бой: выкл': 'Team battle: off',
+  'Компактный режим меню': 'Compact panel mode',
   'одна сторона — союзники': 'one side = allies',
   Командир: 'Commander',
   'Конвейер верфи': 'Shipyard conveyor',
@@ -287,7 +288,6 @@ export const en: Record<string, string> = {
     "An imperial-style tax office: produces nothing itself, but registers the world's population and lifts its credit take by {b}. Built once — bureaucracy isn't scaled, it's tolerated.",
   'Напишите первое сообщение.': 'Write the first message.',
   Настройки: 'Settings',
-  'Начать одиночный скирмиш': 'Start a solo skirmish',
   'Не исследовано — вне сенсоров и радаров. Содержимое неизвестно.':
     'Unexplored — outside sensor and radar range. Contents unknown.',
   Нейтрал: 'Neutral',
@@ -351,6 +351,7 @@ export const en: Record<string, string> = {
   'Под фильтр никто не подходит.': 'Nobody matches the filter.',
   Подтвердить: 'Confirm',
   'Покинуть лобби': 'Leave lobby',
+  'Покинуть сессию': 'Leave session',
   Покупка: 'Buy',
   'Построенные корабли сперва встают в гарнизон; запуск создаёт мобильный флот.':
     'Built spacecraft join the garrison first; launch creates a mobile fleet.',
@@ -451,7 +452,7 @@ export const en: Record<string, string> = {
   '+{n}% скорость флотов': '+{n}% fleet speed',
   '+{n}% радар': '+{n}% radar',
   ХОСТ: 'HOST',
-  ХП: 'HP',
+  ОЗ: 'HP',
   'Цвет шрифта': 'Font color',
   Цензура: 'Censorship',
   'ЧАТ — {ch}': 'CHAT — {ch}',
@@ -695,7 +696,7 @@ export const en: Record<string, string> = {
   флот: 'fleet',
   флоты: 'fleets',
   'флоты {who}': "{who}'s fleets",
-  хп: 'hp',
+  оз: 'hp',
   цена: 'price',
   '— здесь возродятся и сменят модули герои': '— heroes respawn and re-fit modules here',
   '— проекция · +5% атаки/обороны этому флоту': '— projection · +5% attack/defense to this fleet',
@@ -793,6 +794,7 @@ export const en: Record<string, string> = {
   '🏗️ {b}: построено на {at}': '🏗️ {b} built at {at}',
   '💀 ПОРАЖЕНИЕ — {why}': '💀 DEFEAT — {why}',
   '💥 {b}: разрушено на {at}': '💥 {b} destroyed at {at}',
+  '📍 Пинг': '📍 Ping',
   '📍 Пинг — отметить и отправить…': '📍 Ping — mark and send…',
   '📍 Пинг → {who}': '📍 Ping → {who}',
   '📍 Пинг → Коалиция': '📍 Ping → Coalition',
@@ -850,6 +852,9 @@ export const en: Record<string, string> = {
   Обновить: 'Update',
   'Обновить список': 'Refresh list',
   'Одиночная игра': 'Solo game',
+  'Одиночный режим': 'Solo mode',
+  'Ожидание заказов': 'Awaiting orders',
+  Выйти: 'Exit',
   'Ожидание в секторе сбора. Хост начнёт матч, когда будет готов.':
     'Waiting in the staging sector. The host starts the match when ready.',
   Поддержка: 'Support',
@@ -1119,6 +1124,8 @@ export const en: Record<string, string> = {
   'Свои метки на карте': 'My map markers',
   'булавки 📍 ваших пингов — метки союзников видны всегда':
     "your own 📍 ping pins — allies' markers always show",
+  'плотная панель сектора — меньше отступов, мельче шрифт (на ПК)':
+    'a denser sector panel — smaller paddings and type (PC)',
   Графика: 'Graphics',
   'Свечение и ореолы': 'Glow & haloes',
   'мягкое сияние вокруг миров, флотов и границ — выключите ради чёткой карты и скорости':

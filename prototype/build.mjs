@@ -1666,6 +1666,127 @@ button.b:disabled{opacity:.32;cursor:not-allowed;color:var(--dim);border-color:v
 #corp .cinput input{flex:1;padding:9px 11px;border-radius:7px;border:1px solid var(--line-hi);
   background:rgba(2,10,13,.7);color:var(--ink);font:12px ui-monospace,monospace;}
 #corp .cinput input:focus{outline:none;border-color:var(--cyan);}
+
+/* === PC (mouse-driven desktop): the whole HUD at 1.5× ==========================
+   The UI was sized for phones — on a monitor the 12px console text is unreadably
+   small. zoom:1.5 scales every font/control coherently. Two gotchas, both handled
+   here: (1) vw/vh units inside a zoomed element are ALSO scaled visually (67vw
+   renders as the full screen; calc(100vh - N) overflows it), so every vw/vh used
+   inside a zoomed layer is re-declared below at 1/1.5 of its base value — keep
+   this list in sync when adding vw/vh rules; (2) layers whose position/size is
+   set in px from JS (#map canvas, #chatwin drag geometry, #pingpop / #holdtip /
+   the #spotlight ring anchored to getBoundingClientRect) must stay UNZOOMED, or
+   the JS px and the visual px disagree by 1.5× — they are deliberately absent
+   from the zoom list. Percentages resolve against the (zoomed) parent, so they
+   need no compensation — which is why the hub column below uses % and not vw. */
+@media (min-width:900px) and (hover:hover) and (pointer:fine){
+  #top,#devline,#toasts,#speedbar,#cmdbar,#rail,#side,#logwin,#tech,#steward,#scipick,
+  #divdesign,#market,#constructor,#codex,#codexhub,#intro,#recap,#goals,#playercard,
+  #settings,#warprompt,#diplo,#splitdlg,#pingmenu,#banner,#endscreen,#connect,#updbar,
+  #hub,#emblempick,#corp,#lobby,#setup,#testmode{zoom:1.5;}
+  /* vw/vh compensations (base values ÷ 1.5 — see the note above) */
+  #toasts{max-width:min(61vw,520px);}
+  #railtools{max-height:calc(66.7vh - 120px);max-height:calc(66.7dvh - 120px);}
+  #goals{max-width:min(230px,40vw);}
+  #codex .cxbox{width:min(440px,62.5vw);max-height:56vh;}
+  #codexhub .chbox{width:min(460px,62.5vw);max-height:57vh;}
+  #intro .inbox{width:min(400px,61vw);max-height:56vh;}
+  #recap .rcbox{width:min(440px,62.5vw);max-height:57vh;}
+  #playercard .pcbox{width:min(380px,61vw);max-height:57vh;}
+  #settings .setbox{width:min(380px,61vw);max-height:57vh;}
+  #warprompt .wpbox{width:min(360px,61vw);}
+  #diplo .dpbox{width:min(460px,64vw);max-height:58.5vh;}
+  .dp-convo{height:min(41vh,440px);}
+  #splitdlg .sbox{width:min(440px,62.5vw);max-height:56vh;}
+  #logwin .lwbox{width:min(440px,62.5vw);max-height:46.5vh;}
+  #tech .twbox,#steward .twbox,#hero .twbox,#divdesign .twbox{width:min(460px,62.5vw);max-height:54.5vh;}
+  #scipick .twbox{width:min(560px,64vw);max-height:58.5vh;}
+  #market .mkbox{width:min(460px,62.5vw);max-height:54.5vh;}
+  #constructor .cnbox{width:min(960px,64vw);max-height:60vh;}
+  #endscreen .es-box{width:min(440px,62.5vw);max-height:61vh;}
+  #connect .cbox,#connect .cwrap{width:min(520px,62.5vw);}
+  #connect .mlist{max-height:30.5vh;}
+  #connect .ccrest .wm{font-size:clamp(20px,4.33vw,26px);letter-spacing:clamp(3px,1.33vw,8px);}
+  #connect .ccrest .wtag{letter-spacing:clamp(2px,.93vw,5px);}
+  #lobby .lbox{width:min(420px,62.5vw);max-height:62.5vh;}
+  #lobby .lroster{max-height:min(38.5vh,520px);}
+  /* skirmish setup on PC: two side-by-side card-columns (map+faction | seats+speed)
+     instead of one narrow scrolling stack — the box widens to fit both. Each column
+     scrolls on its own; the title and the LAUNCH/Back buttons never leave the screen. */
+  #setup .sbox{width:min(1080px,62vw);max-height:61vh;display:flex;flex-direction:column;overflow:hidden;}
+  #setup .spane{flex:1 1 auto;min-height:0;display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:12px;}
+  #setup .scol{min-height:0;overflow-y:auto;border:1px solid var(--line-hi);border-radius:12px;
+    padding:14px 16px;background:rgba(255,255,255,.015);}
+  #setup .scol .ssub{margin-top:0;}
+  #setup .scol .fpick,#setup .scol .sspeed{margin-bottom:2px;}
+  #setup .sgo{margin-top:14px;}
+  #setup .sgo,#setup .scancel{flex:0 0 auto;}
+  #updbar{width:min(440px,calc(66.7vw - 20px));}
+  #testmode .tmbox{width:min(620px,64vw);max-height:61vh;}
+  #emblempick .ep-box{width:min(340px,61vw);}
+  #corp .corpbox{width:min(760px,64vw);max-height:61vh;}
+  /* base (portrait) bottom-sheet panel + the bars it lifts */
+  #side{max-height:22.5vh;}
+  body.sheet-open #cmdbar,body.sheet-open #speedbar{bottom:calc(22.5vh + 12px);}
+  #fps{top:120px;}
+  /* PC: the docked dossier pane is retired — the dossier follows the cursor as a
+     translucent tooltip instead (#objtip, filled/positioned by main.ts). The tooltip
+     is deliberately NOT in the zoom list (JS places it at pointer coords, and zoom
+     would double them) — its type is therefore sized at 1.5× directly. */
+  #side .pdesc{display:none;}
+  #objtip{position:fixed;left:0;top:0;z-index:29;display:none;pointer-events:none;opacity:.8;
+    width:max-content;max-width:min(460px,32vw);padding:12px 15px;
+    background:rgba(3,14,18,.95);border:1px solid var(--line-hi);border-radius:9px;
+    box-shadow:0 6px 24px rgba(0,0,0,.55),inset 0 0 0 1px rgba(53,214,230,.06);}
+  #objtip .pd-title{font-size:18px;font-weight:700;letter-spacing:1.5px;color:#eafffb;
+    margin-bottom:8px;padding-bottom:7px;border-bottom:1px solid var(--line);}
+  #objtip .pd-body{font-size:16px;line-height:1.55;color:#9fc9c4;}
+  #objtip .hl{font-style:normal;font-weight:700;color:var(--amber);text-shadow:0 0 7px rgba(255,180,58,.35);}
+  /* main menu (hub): don't stretch the console across the whole monitor — a
+     centred column at 80% of the screen; the hub's backdrop still fills it all */
+  #hub .hub-banner,#hub .hub-id,#hub .hub-body,#hub .hub-note,#hub .hub-nav{
+    width:80%;margin-left:auto;margin-right:auto;
+    border-left:1px solid var(--line-hi);border-right:1px solid var(--line-hi);}
+}
+/* the right-dock panel layout (the ≥900px landscape query above) re-stated at
+   vw/vh ÷ 1.5 for the zoomed PC HUD — those base rules would otherwise scale
+   to 60vw-wide panels and off-screen heights */
+@media (min-width:900px) and (hover:hover) and (pointer:fine) and (orientation:landscape){
+  #side{width:min(380px,26.7vw);max-height:calc(66.7vh - 88px);}
+  #cmdbar{left:calc((100% - min(380px,26.7vw)) / 2);}
+  #speedbar,body.sheet-open #speedbar{right:calc(min(380px,26.7vw) + 14px);}
+  body.sheet-open #cmdbar,body.sheet-open #speedbar{bottom:14px;}
+}
+/* «Компактный режим меню» (settings toggle, PC only): a denser sector panel — the
+   same content with the air squeezed out: tighter paddings, smaller chips/rows/tiles,
+   the head subtitle inlined after the world's name, a lower bottom dossier strip.
+   Pure restyle over body.compact-panel — panel markup and behaviour untouched. */
+@media (min-width:900px) and (hover:hover) and (pointer:fine){
+  body.compact-panel #side .pscroll{padding:8px 10px;}
+  body.compact-panel #side .phead{gap:8px;margin:0 0 6px;padding-bottom:6px;}
+  body.compact-panel #side .phead .pflag{width:12px;height:12px;}
+  body.compact-panel #side .ptitle{display:flex;align-items:baseline;gap:8px;min-width:0;}
+  body.compact-panel #side .ptitle b{display:inline;font-size:13px;letter-spacing:1.5px;flex:0 0 auto;}
+  body.compact-panel #side .ptitle span{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;
+    white-space:nowrap;font-size:8px;}
+  body.compact-panel #side .pclose{width:22px;height:22px;font-size:10px;}
+  body.compact-panel #side .pstats{gap:5px;margin:2px 0 3px;}
+  body.compact-panel #side .pstats span{padding:2px 7px;font-size:10px;}
+  body.compact-panel #side .pstats .pl{display:none;} /* icon+number chips, as mocked */
+  body.compact-panel #side .sec{margin:8px 0 4px;font-size:9px;padding-bottom:3px;}
+  body.compact-panel #side .row{margin:2px 0;}
+  body.compact-panel #side .asset-row{gap:6px;margin:3px 0;min-height:20px;padding:3px 7px;}
+  body.compact-panel #side .asset-row b{min-width:80px;font-size:11px;}
+  body.compact-panel #side .bicon{width:17px;height:17px;font-size:11px;}
+  body.compact-panel #side button.b{padding:3px 8px;font-size:10px;}
+  body.compact-panel #side .ptabs{gap:5px;margin:7px 0 3px;}
+  body.compact-panel #side .ptab{padding:4px 8px;}
+  body.compact-panel #side .ptiles{gap:5px;margin:3px 0 6px;}
+  body.compact-panel #side .ptile{min-width:46px;min-height:40px;padding:4px 5px;}
+  body.compact-panel #side .ptile .pt-ic{font-size:15px;}
+  body.compact-panel #side .conveyor{margin:4px 0 6px;padding:6px;}
+  body.compact-panel #side .hint{font-size:10px;margin-top:6px;}
+}
 `;
 
 const page = (js) => `<!doctype html>
@@ -1697,6 +1818,8 @@ const page = (js) => `<!doctype html>
     <button id="rail-chat" title="Чат" data-i18n-title class="desk-only">🗨<span class="rlbl" data-i18n>Чат</span></button>
     <button id="rail-log" title="Сводки" data-i18n-title>≡<span class="rlbl" data-i18n>Сводки</span><span class="badge" id="alertbadge" style="display:none">0</span></button>
     <button id="rail-help" title="Справочник" data-i18n-title>?<span class="rlbl" data-i18n>Справка</span></button>
+    <button id="rail-settings" title="Настройки" data-i18n-title>⚙<span class="rlbl" data-i18n>Настройки</span></button>
+    <button id="rail-exit" title="Покинуть сессию" data-i18n-title>⌂<span class="rlbl" data-i18n>Выйти</span></button>
   </div>
   <button id="railtoggle" title="Инструменты" type="button" aria-expanded="false"><span id="railglyph">☰</span><span class="badge" id="railalert" style="display:none">0</span></button>
 </nav>
@@ -1734,6 +1857,7 @@ const page = (js) => `<!doctype html>
 <div id="warprompt"></div>
 <div id="diplo"></div>
 <div id="pingpop"></div>
+<div id="objtip"></div>
 <div id="splitdlg"></div>
 <div id="pingmenu"></div>
 <div id="fps"></div>
@@ -1907,19 +2031,24 @@ const page = (js) => `<!doctype html>
   <div class="sbox">
     <div class="stitle"><span class="dia"></span><b data-i18n>НАСТРОЙКА СХВАТКИ</b></div>
     <div id="setup-start" class="spane">
-      <p class="ssub" data-i18n>Выберите свой домашний мир на карте, задайте число соперников-ботов и запускайте. Пустые места займут боты — выключите место, чтобы командовать меньшим сектором, или выключите все ради мирной одиночной песочницы для знакомства с интерфейсом.</p>
-      <svg id="setupmap" class="smap" preserveAspectRatio="xMidYMid meet"></svg>
-      <p class="smaphint" id="setuphint" data-i18n>Тапните светящийся мир, чтобы выбрать старт</p>
-      <div id="setupslots" class="sslots"></div>
-      <div class="sspeedlabel" data-i18n>Скорость времени</div>
-      <p class="sspeedhint" data-i18n>×1 — реальное время (час пути = час жизни, мир живёт и офлайн). Для быстрой партии выбери ×10–×100.</p>
-      <div id="setupspeed" class="sspeed">
-        <button class="spdchip" type="button" data-spd="1">×1</button>
-        <button class="spdchip" type="button" data-spd="2">×2</button>
-        <button class="spdchip" type="button" data-spd="5">×5</button>
-        <button class="spdchip" type="button" data-spd="10">×10</button>
-        <button class="spdchip" type="button" data-spd="50">×50</button>
-        <button class="spdchip" type="button" data-spd="100">×100</button>
+      <div class="scol">
+        <p class="ssub" data-i18n>Выберите свой домашний мир на карте, задайте число соперников-ботов и запускайте. Пустые места займут боты — выключите место, чтобы командовать меньшим сектором, или выключите все ради мирной одиночной песочницы для знакомства с интерфейсом.</p>
+        <svg id="setupmap" class="smap" preserveAspectRatio="xMidYMid meet"></svg>
+        <p class="smaphint" id="setuphint" data-i18n>Тапните светящийся мир, чтобы выбрать старт</p>
+        <div id="setupfactions"></div>
+      </div>
+      <div class="scol">
+        <div id="setupslots" class="sslots"></div>
+        <div class="sspeedlabel" data-i18n>Скорость времени</div>
+        <p class="sspeedhint" data-i18n>×1 — реальное время (час пути = час жизни, мир живёт и офлайн). Для быстрой партии выбери ×10–×100.</p>
+        <div id="setupspeed" class="sspeed">
+          <button class="spdchip" type="button" data-spd="1">×1</button>
+          <button class="spdchip" type="button" data-spd="2">×2</button>
+          <button class="spdchip" type="button" data-spd="5">×5</button>
+          <button class="spdchip" type="button" data-spd="10">×10</button>
+          <button class="spdchip" type="button" data-spd="50">×50</button>
+          <button class="spdchip" type="button" data-spd="100">×100</button>
+        </div>
       </div>
     </div>
     <button id="setupgo" class="sgo" disabled data-i18n>ЗАПУСК</button>
