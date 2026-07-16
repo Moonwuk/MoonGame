@@ -208,6 +208,68 @@ describe('stewardGuardOrders — эвакуация под угрозой (ST-3.
     expect(stewardGuardOrders(s, 'p1')).toEqual([]);
   });
 
+  it('«Активная оборона»: a parked intruder the wing beats cheaply is engaged; «Оборона» never engages', () => {
+    // 2 scouts sit at H (war declared after they docked — no auto-battle). The
+    // docked cruisers win the strike outright at ~7% hull cost — under the limit.
+    const s = guardState({
+      fleets: [fl('E1', 'p2', { location: 'H', units: stacks([['scout', 2]]) }), fl('F1', 'p1', { location: 'H', units: stacks([['cruiser', 2]]) })],
+    });
+    const active = stewardGuardOrders(s, 'p1', 'active_defend');
+    expect(active.map((a) => a.type)).toEqual(['fleet.engage']);
+    expect(active[0]!.payload).toMatchObject({ fleetId: 'F1', targetId: 'E1' });
+    expect(stewardGuardOrders(s, 'p1', 'defend')).toEqual([]);
+  });
+
+  it('«Активная оборона» does not start a strike the wing loses — holding is not a license to bleed', () => {
+    // A shielded carrier out-tanks 2 scouts in a strike (they lose), while the
+    // heavy garrison makes the STAND safe (holds) — so: no engage, no evac, quiet.
+    const s = guardState({
+      fleets: [fl('E1', 'p2', { location: 'H', units: stacks([['strike_carrier', 1]]) }), fl('F1', 'p1', { location: 'H', units: stacks([['scout', 2]]) })],
+      hGarrison: stacks([['heavy_infantry', 6]]),
+    });
+    expect(stewardGuardOrders(s, 'p1', 'active_defend')).toEqual([]);
+  });
+
+  it('the strike gate prices the WHOLE ladder: a cheap first intruder does not bait the wing into the deadly second', () => {
+    // Combat auto-re-engages a battle's victor into the next parked hostile —
+    // so beating 2 scouts cheaply would chain the damaged cruisers straight
+    // into 4 enemy cruisers. The heavy garrison keeps the STAND safe (hold),
+    // but no strike may start: the cumulative ladder breaches the limit.
+    const s = guardState({
+      fleets: [
+        fl('E1', 'p2', { location: 'H', units: stacks([['scout', 2]]) }),
+        fl('E2', 'p2', { location: 'H', units: stacks([['cruiser', 4]]) }),
+        fl('F1', 'p1', { location: 'H', units: stacks([['cruiser', 2]]) }),
+      ],
+      hGarrison: stacks([['heavy_infantry', 8]]),
+    });
+    expect(stewardGuardOrders(s, 'p1', 'active_defend')).toEqual([]);
+  });
+
+  it('«Активная оборона» stands a fire-watch: docked squadron wings at own worlds get a CC-4 patrol', () => {
+    // No threat anywhere — the fire-watch is a standing readiness order, and it
+    // is exclusive to the active posture.
+    const s = guardState({
+      fleets: [fl('F1', 'p1', { location: 'H', units: stacks([['fighter_squadron', 2]]) })],
+    });
+    const active = stewardGuardOrders(s, 'p1', 'active_defend');
+    expect(active.map((a) => a.type)).toEqual(['order.scramble']);
+    expect(active[0]!.payload).toMatchObject({ fleetId: 'F1', on: true });
+    expect(stewardGuardOrders(s, 'p1', 'defend')).toEqual([]);
+  });
+
+  it('an evacuating wing stands its patrol down before flying out (no stale patrol record)', () => {
+    const base = guardState({
+      fleets: [raider(inboundToH(10)), fl('F1', 'p1', { location: 'H', units: stacks([['fighter_squadron', 2]]) })],
+    });
+    const s = base as GameState & { patrols?: Record<string, unknown> };
+    s.patrols = { F1: { center: { x: 100, y: 0 }, radius: 180, sortie: { fuel: 3, rearming: 0 }, rearmAt: NOW } };
+    const orders = stewardGuardOrders(s, 'p1', 'active_defend');
+    expect(orders.map((a) => a.type)).toEqual(['order.scramble', 'fleet.move']);
+    expect(orders[0]!.payload).toMatchObject({ fleetId: 'F1', on: false });
+    expect(orders[1]!.payload).toMatchObject({ fleetId: 'F1', to: 'S' });
+  });
+
   it('under an active assault the garrison is locked — fleets still fly out, nothing is loaded', () => {
     const s = guardState({
       fleets: [raider({ location: 'H' }), fl('F1', 'p1', { location: 'H', units: stacks([['cruiser', 1]]) })],

@@ -1076,6 +1076,9 @@ export const en: Record<string, string> = {
 
   // --- steward window («Хранитель») + settings + end-of-match ---------------------
   'Хранитель ведёт оборону.': 'The Steward holds the line.',
+  'Хранитель ведёт активную оборону.': 'The Steward runs an active defense.',
+  'Пока вы спите: держит рубежи, поднимает дежурные эскадрильи и контратакует у своих миров, когда прогноз потерь приемлем.':
+    'While you sleep: holds the borders, stands squadron patrols and counterstrikes at your own worlds when the loss forecast is acceptable.',
   'Управление вернётся через <b>{dur}</b>.': 'Control returns in <b>{dur}</b>.',
   'Пока вы спите: держит рубежи и отбивает атаки, застраивает очередь и торгует — без наступлений.':
     'While you sleep: holds the borders and repels attacks, keeps building and trading — no offensives.',
@@ -1089,16 +1092,25 @@ export const en: Record<string, string> = {
     'Research it in the technology window — then you can hand your seat to the AI while you sleep.',
   'Открыть технологии': 'Open technologies',
   'Хранитель готов.': 'The Steward is ready.',
-  'Передайте место доверенному ИИ (поза «Оборона»), пока вы офлайн — он удержит рубежи и вернёт управление к сроку.':
-    'Hand your seat to a trusted AI (the “Defend” posture) while you are offline — it holds the line and returns control on time.',
+  'Передайте место доверенному ИИ, пока вы офлайн — он удержит рубежи и вернёт управление к сроку.':
+    'Hand your seat to a trusted AI while you are offline — it holds the line and returns control on time.',
+  Поза: 'Posture',
+  'Активная оборона': 'Active defense',
+  'Активная оборона: всё то же, плюс контрудар по врагу у своих миров при приемлемом прогнозе потерь (до 35%) и дежурные вылеты эскадрилий. Свою территорию не покидает.':
+    'Active defense: everything above, plus a counterstrike at your own worlds when the loss forecast is acceptable (under 35%) and standing squadron patrols. It never leaves your territory.',
   'Передать на': 'Delegate for',
   '{h} ч': '{h} h',
   'Поза «Оборона»: держит и отбивает, застраивает очередь, торгует — без наступлений и дипломатии. Управление вернётся автоматически, с утренней сводкой.':
     'The “Defend” posture: holds and repels, keeps building and trading — no offensives, no diplomacy. Control returns automatically, with a morning report.',
   '😴 Хранитель принял командование (Оборона) — держит рубежи, пока вы спите.':
     '😴 The Steward took command (Defend) — holding the line while you sleep.',
+  '😴 Хранитель принял командование (Активная оборона) — держит рубежи и контратакует у своих миров.':
+    '😴 The Steward took command (Active defense) — holding the line and counterstriking at your own worlds.',
+  '🎮 Вы вернули командование себе.': '🎮 You took command back.',
   '🌅 Хранитель вернул вам управление (была «Оборона»).':
     '🌅 The Steward returned control to you (posture was “Defend”).',
+  '🌅 Хранитель вернул вам управление (была «Активная оборона»).':
+    '🌅 The Steward returned control to you (posture was “Active defense”).',
   интерфейс: 'interface',
   'Радарная развёртка': 'Radar sweep',
   'вращающийся луч на карте — только вид, не влияет на обнаружение':

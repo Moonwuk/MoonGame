@@ -56,6 +56,19 @@ describe('steward delegation through the prototype kernel (bricks 1+2+3a)', () =
     expect(stewardActive(r2.state, 'p1', r2.state.time + HOUR)).toBeNull();
   });
 
+  it('accepts the «Активная оборона» posture (ST-3.3) through the same delegate action', () => {
+    const s = game2();
+    s.players.p1!.technologies = { completed: ['ai_stewardship'] };
+    const r = kernel.applyAction(
+      s,
+      delegateSteward('p1', s.time + 8 * HOUR, 'active_defend'),
+      { now: s.time, data },
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(stewardActive(r.state, 'p1', s.time + 4 * HOUR)).toBe('active_defend');
+  });
+
   it('is refused (E_STEWARD_LOCKED) before the Steward tech is researched', () => {
     const s = game2(); // p1 chose «Куратор» but has NOT researched the tech yet
     const r = kernel.applyAction(s, delegateSteward('p1', s.time + 8 * HOUR), { now: s.time, data });
