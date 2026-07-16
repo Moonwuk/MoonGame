@@ -3431,6 +3431,10 @@ function render(now: number) {
     const STAGGER = 130; // ms between shell launches
     const BURST = 520; // ms an impact burst lives
     const LIFE = FLIGHT + STAGGER * (SHELLS - 1) + BURST;
+    // LOD: the volley stays visible on the schematic view (a battle is a signal),
+    // but compact — arcs/bursts shrink with the node art so they can't swallow a
+    // zoomed-out province.
+    const sk = 0.45 + 0.55 * detail;
     cx.save();
     for (let i = siegeShots.length - 1; i >= 0; i--) {
       const shot = siegeShots[i]!;
@@ -3445,7 +3449,7 @@ function render(now: number) {
       // Ballistic lob: the mid-point lifts straight up in screen space, scaled by
       // the span — long-range fire arches higher, point-blank stays flat-ish.
       const dist = Math.hypot(b.x - a.x, b.y - a.y);
-      const lift = Math.min(64, Math.max(16, dist * 0.24));
+      const lift = Math.min(64 * sk, Math.max(16 * sk, dist * 0.24));
       const c = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 - lift };
       const q = (t: number) => ({
         x: (1 - t) * (1 - t) * a.x + 2 * (1 - t) * t * c.x + t * t * b.x,
@@ -3500,21 +3504,21 @@ function render(now: number) {
           cx.shadowColor = '#ff8a3d';
           cx.shadowBlur = 10;
           cx.beginPath();
-          cx.arc(b.x, b.y, 3.2 - k * 3, 0, TAU);
+          cx.arc(b.x, b.y, (3.2 - k * 3) * sk, 0, TAU);
           cx.fill();
           cx.shadowBlur = 0;
         }
         cx.strokeStyle = rgba('#ff8a3d', 0.75 * burstFade);
         cx.lineWidth = 1.6;
         cx.beginPath();
-        cx.arc(b.x, b.y, 2 + k * 14, 0, TAU);
+        cx.arc(b.x, b.y, (2 + k * 14) * sk, 0, TAU);
         cx.stroke();
         cx.fillStyle = rgba('#ffd29b', 0.85 * burstFade);
         for (let spk = 0; spk < 5; spk++) {
           const ang = ((shot.seed * 7 + sh * 5 + spk) % 12) * (TAU / 12) + 0.35;
-          const r = 4 + k * 14;
+          const r = (4 + k * 14) * sk;
           cx.beginPath();
-          cx.arc(b.x + Math.cos(ang) * r, b.y + Math.sin(ang) * r * 0.8, 1.3, 0, TAU);
+          cx.arc(b.x + Math.cos(ang) * r, b.y + Math.sin(ang) * r * 0.8, Math.max(0.8, 1.3 * sk), 0, TAU);
           cx.fill();
         }
       }
@@ -3549,9 +3553,14 @@ function render(now: number) {
     cx.restore();
   }
 
-  // planets — wireframe blips with sensor rings + monospace callouts
+  // planets — wireframe blips with sensor rings + monospace callouts.
+  // LOD: the blip and every screen-space satellite around it (aura, sensor ring,
+  // badges, sphere, ticks) draw at R×ns — 45% on the schematic view, so far-out
+  // provinces aren't swallowed by their own markers (owner-reported APK pile-up
+  // at min zoom: node art + badges + fx stacked on top of each other).
   cx.textAlign = 'left';
-  const R = 13;
+  const ns = 0.45 + 0.55 * detail; // node scale: schematic → detail
+  const R = 13 * ns;
   for (const n of MAP) {
     const p = s.planets[n.id];
     if (!p) continue;
@@ -3719,7 +3728,7 @@ function render(now: number) {
     }
 
     // territory aura — cached glow disc (no per-node gradient)
-    blitGlow(col, c.x, c.y, R + 34, showOwner ? 0.3 : 0.1);
+    blitGlow(col, c.x, c.y, R + 34 * ns, showOwner ? 0.3 : 0.1);
 
     // sensor-range ring (dashed, faint)
     cx.save();
@@ -3728,7 +3737,7 @@ function render(now: number) {
     cx.strokeStyle = rgba(col, 0.18 + 0.13 * ownerPulse);
     cx.lineWidth = 1;
     cx.beginPath();
-    cx.arc(c.x, c.y, R + 14 + 2 * ownerPulse, 0, TAU);
+    cx.arc(c.x, c.y, R + (14 + 2 * ownerPulse) * ns, 0, TAU);
     cx.stroke();
     cx.restore();
 
@@ -3736,26 +3745,32 @@ function render(now: number) {
     if (kn && p.buildings.some((b) => b.type === 'fort')) {
       cx.strokeStyle = rgba(col, 0.5);
       cx.lineWidth = 1;
-      poly(c.x, c.y, R + 6, 6, Math.PI / 6);
+      poly(c.x, c.y, R + 6 * ns, 6, Math.PI / 6);
       cx.stroke();
     }
 
-    if (kn && p.buildings.length) {
+    // building badges are detail-only: on the schematic view the province colour
+    // and score already tell the story — a row of 10px chips just piles onto the
+    // shrunken blip (the APK min-zoom overlap).
+    if (kn && p.buildings.length && detail > 0) {
       cx.save();
-      cx.font = '11px ui-monospace,Menlo,monospace';
+      cx.globalAlpha = detail;
+      cx.font = `${Math.max(7, Math.round(11 * ns))}px ui-monospace,Menlo,monospace`;
       cx.textAlign = 'center';
       cx.textBaseline = 'middle';
-      const start = c.x - ((p.buildings.length - 1) * 13) / 2;
+      const step = 13 * ns;
+      const half = 5 * ns;
+      const start = c.x - ((p.buildings.length - 1) * step) / 2;
       for (let i = 0; i < p.buildings.length; i++) {
         const b = p.buildings[i];
         if (!b) continue;
-        const bx = start + i * 13;
-        const by = c.y + R + 19;
+        const bx = start + i * step;
+        const by = c.y + R + 19 * ns;
         cx.fillStyle = 'rgba(2,9,13,.78)';
         cx.strokeStyle = rgba(col, 0.55);
         cx.lineWidth = 1;
         cx.beginPath();
-        cx.rect(bx - 5, by - 5, 10, 10);
+        cx.rect(bx - half, by - half, half * 2, half * 2);
         cx.fill();
         cx.stroke();
         cx.fillStyle = rgba(col, 0.9);
