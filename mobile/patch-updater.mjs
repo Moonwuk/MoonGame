@@ -83,6 +83,42 @@ public class MainActivity extends BridgeActivity {
   console.log('patch-updater: MainActivity.java — installed the VoidNative browser-open bridge.');
 }
 
+// --- 2a. app/build.gradle (pinned debug signing) ------------------------------
+// The COMMITTED mobile/debug.keystore must be the signer NO MATTER what the build
+// host's HOME / ANDROID_USER_HOME point at. Copying it to ~/.android proved
+// UNRELIABLE — CI's signature assert caught real drift (the APK came out signed by
+// a different, runner-generated key, which is exactly the "conflicts with another
+// package" update-breaker on phones) — so pin it EXPLICITLY in gradle: an explicit
+// signingConfig wins over every default-keystore lookup path.
+{
+  let gradle = read(buildGradlePath);
+  const MARK = '// void: pinned debug signing (mobile/debug.keystore — stable update signature)';
+  if (gradle.includes(MARK)) {
+    console.log('patch-updater: debug signingConfig already pinned — leaving as-is.');
+  } else {
+    if (!/^android \{\n/m.test(gradle)) {
+      throw new Error('patch-updater: could not find the android {} block in app/build.gradle');
+    }
+    // Forward slashes keep the gradle string literal portable (file() accepts them anywhere).
+    const ksPath = here('./debug.keystore').replace(/\\/g, '/');
+    // AGP pre-creates signingConfigs.debug; setting its fields here re-points the
+    // default debug buildType at the committed keystore — no buildTypes edit needed.
+    const block =
+      `    ${MARK}\n` +
+      `    signingConfigs {\n` +
+      `        debug {\n` +
+      `            storeFile file('${ksPath}')\n` +
+      `            storePassword 'android'\n` +
+      `            keyAlias 'androiddebugkey'\n` +
+      `            keyPassword 'android'\n` +
+      `        }\n` +
+      `    }\n`;
+    gradle = gradle.replace(/^android \{\n/m, (m) => m + block);
+    writeFileSync(buildGradlePath, gradle);
+    console.log('patch-updater: build.gradle — pinned the debug signingConfig to mobile/debug.keystore.');
+  }
+}
+
 // --- 2. app/build.gradle (versionCode / versionName) ------------------------
 {
   const vc = process.env.VOID_VC;
