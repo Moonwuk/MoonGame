@@ -2376,7 +2376,11 @@ function handleEvents(events: DomainEvent[]) {
       case 'steward.delegated':
         if (p.playerId === ME) {
           stewSnapshot = stewMetrics();
-          note(t('😴 Хранитель принял командование (Оборона) — держит рубежи, пока вы спите.'));
+          note(
+            (p as { posture?: string }).posture === 'active_defend'
+              ? t('😴 Хранитель принял командование (Активная оборона) — держит рубежи и контратакует у своих миров.')
+              : t('😴 Хранитель принял командование (Оборона) — держит рубежи, пока вы спите.'),
+          );
           if (stewWin.classList.contains('show')) renderSteward();
         }
         break;
@@ -2396,7 +2400,11 @@ function handleEvents(events: DomainEvent[]) {
           const diff = base
             ? ` Пока вы спали: планет ${base.planets}→${now.planets}, металл ${sign(now.metal - base.metal)}, кредиты ${sign(now.credits - base.credits)}.`
             : '';
-          note(t('🌅 Хранитель вернул вам управление (была «Оборона»).') + diff);
+          note(
+            ((p as { posture?: string }).posture === 'active_defend'
+              ? t('🌅 Хранитель вернул вам управление (была «Активная оборона»).')
+              : t('🌅 Хранитель вернул вам управление (была «Оборона»).')) + diff,
+          );
           if (stewWin.classList.contains('show')) renderSteward();
         }
         break;
@@ -7048,6 +7056,9 @@ let lastStewAt = 0;
 const STEW_DURATIONS = [4, 8, 12]; // game-hours a single delegation can run
 // Snapshot of my standing at delegation time, diffed on expiry for the morning report.
 let stewSnapshot: { planets: number; metal: number; credits: number } | null = null;
+// The posture the next delegation will run (ST-3.3): «Оборона» is the safe default,
+// «Активная оборона» adds the forecast-gated counterstrike + squadron fire-watch.
+let stewPosture: 'defend' | 'active_defend' = 'defend';
 function stewMetrics(): { planets: number; metal: number; credits: number } {
   let planets = 0;
   for (const pl of Object.values(s.planets)) if (pl.owner === ME) planets += 1;
@@ -7069,10 +7080,10 @@ function renderSteward(): void {
   let html = '';
   if (posture && cur) {
     html +=
-      `<div class="st-status on">🤖 <b>${t('Хранитель ведёт оборону.')}</b><br>` +
+      `<div class="st-status on">🤖 <b>${posture === 'active_defend' ? t('Хранитель ведёт активную оборону.') : t('Хранитель ведёт оборону.')}</b><br>` +
       t('Управление вернётся через <b>{dur}</b>.', { dur: stewFmtDur(cur.until - s.time) }) +
       `<br>` +
-      `${t('Пока вы спите: держит рубежи и отбивает атаки, застраивает очередь и торгует — без наступлений.')}</div>` +
+      `${posture === 'active_defend' ? t('Пока вы спите: держит рубежи, поднимает дежурные эскадрильи и контратакует у своих миров, когда прогноз потерь приемлем.') : t('Пока вы спите: держит рубежи и отбивает атаки, застраивает очередь и торгует — без наступлений.')}</div>` +
       `<div class="st-row"><button class="st-btn warn" data-stew="recall">${t('Вернуть управление')}</button></div>` +
       `<div class="st-note">${t('«Автопилот держит вас в игре — побеждает активная игра.» Оборонительная поза не ходит в атаку и не ведёт дипломатию.')}</div>`;
   } else if (!stewardTechDone()) {
@@ -7086,13 +7097,25 @@ function renderSteward(): void {
   } else {
     html +=
       `<div class="st-status">😴 <b>${t('Хранитель готов.')}</b><br>` +
-      `${t('Передайте место доверенному ИИ (поза «Оборона»), пока вы офлайн — он удержит рубежи и вернёт управление к сроку.')}</div>` +
+      `${t('Передайте место доверенному ИИ, пока вы офлайн — он удержит рубежи и вернёт управление к сроку.')}</div>` +
+      `<div class="st-h">${t('Поза')}</div><div class="st-row">` +
+      (['defend', 'active_defend'] as const)
+        .map(
+          (p) =>
+            `<button class="st-btn${stewPosture === p ? ' sel' : ''}" data-stew="posture" data-p="${p}">${p === 'defend' ? t('Оборона') : t('Активная оборона')}</button>`,
+        )
+        .join('') +
+      `</div>` +
       `<div class="st-h">${t('Передать на')}</div><div class="st-row">` +
       STEW_DURATIONS.map(
         (h) => `<button class="st-btn" data-stew="go" data-h="${h}">${t('{h} ч', { h: String(h) })}</button>`,
       ).join('') +
       `</div>` +
-      `<div class="st-note">${t('Поза «Оборона»: держит и отбивает, застраивает очередь, торгует — без наступлений и дипломатии. Управление вернётся автоматически, с утренней сводкой.')}</div>`;
+      `<div class="st-note">${
+        stewPosture === 'active_defend'
+          ? t('Активная оборона: всё то же, плюс контрудар по врагу у своих миров при приемлемом прогнозе потерь (до 35%) и дежурные вылеты эскадрилий. Свою территорию не покидает.')
+          : t('Поза «Оборона»: держит и отбивает, застраивает очередь, торгует — без наступлений и дипломатии. Управление вернётся автоматически, с утренней сводкой.')
+      }</div>`;
   }
   body.innerHTML = html;
 }
@@ -7110,9 +7133,11 @@ stewWin.addEventListener('click', (e) => {
   const btn = tg.closest('[data-stew]') as HTMLElement | null;
   if (!btn) return;
   const kind = btn.dataset.stew;
-  if (kind === 'go') {
+  if (kind === 'posture') {
+    stewPosture = btn.dataset.p === 'active_defend' ? 'active_defend' : 'defend';
+  } else if (kind === 'go') {
     const h = Number(btn.dataset.h) || 8;
-    playerOrder(delegateSteward(ME, s.time + h * HOUR));
+    playerOrder(delegateSteward(ME, s.time + h * HOUR, stewPosture));
   } else if (kind === 'recall') {
     playerOrder(recallSteward(ME));
   } else if (kind === 'tech') {

@@ -41,6 +41,7 @@ import {
   STEWARD_LOSS_LIMIT,
   scanNodeThreats,
   previewBattle,
+  hullPool,
   journeyDestination,
   planRoute,
   routeDistance,
@@ -3614,7 +3615,11 @@ const liftable = (unit: string): boolean => {
  * The forecast is the base model (no `combat.damage` hooks) over one combined
  * engagement — a retreat heuristic, not an oracle (ONB-6 semantics).
  */
-export function stewardGuardOrders(state: GameState, ai: string): Action[] {
+export function stewardGuardOrders(
+  state: GameState,
+  ai: string,
+  posture: StewardPosture = 'defend',
+): Action[] {
   const out: Action[] = [];
   const c = ctx(state.time);
   const identified = identifiedNodes(state, ai, data);
@@ -3652,8 +3657,37 @@ export function stewardGuardOrders(state: GameState, ai: string): Action[] {
     // won fight gifts the world to a cheap feint (three scouts «push» a cruiser
     // off an empty rock and walk in). The loss limit judges only losing/pyrrhic
     // stands — the wing bails when it would be wiped or ground down for nothing.
-    if (stand.outcome === 'defender') continue;
-    if (stand.defender.damageFraction < STEWARD_LOSS_LIMIT) continue; // acceptable — hold
+    const holds =
+      stand.outcome === 'defender' || stand.defender.damageFraction < STEWARD_LOSS_LIMIT;
+    if (holds) {
+      // Counterstrike (ST-3.3, «Активная оборона» only): a war-stance intruder
+      // PARKED at our node that auto-engage didn't already lock (war declared
+      // after it docked; a resolved battle's leftovers) is engaged by the
+      // strongest docked wing whose OWN strike forecast wins with hull losses
+      // under the limit — «потери ≤ 35% — приемлемо». The fight happens where
+      // the wing already stands: the Steward never leaves own territory.
+      if (posture !== 'active_defend') continue;
+      const byStrength = [...docked].sort(
+        (a, b) =>
+          hullPool(b.units, data) - hullPool(a.units, data) ||
+          (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+      );
+      for (const t of threats) {
+        if (t.kind !== 'present') continue;
+        const target = state.fleets[t.fleetId];
+        if (!target || target.battleId) continue;
+        for (const f of byStrength) {
+          if (tasked.has(f.id)) continue;
+          const strike = previewBattle(f.units, target.units, data);
+          if (strike.outcome !== 'attacker') continue;
+          if (strike.attacker.damageFraction >= STEWARD_LOSS_LIMIT) continue;
+          out.push(engageFleet(ai, f.id, target.id));
+          tasked.add(f.id);
+          break; // one engager per target
+        }
+      }
+      continue;
+    }
     // Bad trade — evacuate to the nearest reachable own world nothing bears on.
     let haven: string | null = null;
     let havenDist = Infinity;
@@ -3697,6 +3731,9 @@ export function stewardGuardOrders(state: GameState, ai: string): Action[] {
           free -= n * size;
         }
       }
+      // A standing patrol flies out with its carrier: stand it down first (the
+      // sortie is stashed, BF-26) so no stale patrol record points at this node.
+      if ((state as DivState).patrols?.[f.id]) out.push(orderScramble(ai, f.id, false));
       out.push(moveFleet(ai, f.id, haven));
       tasked.add(f.id);
     }
@@ -3730,6 +3767,19 @@ export function stewardGuardOrders(state: GameState, ai: string): Action[] {
       }
     }
   }
+  // Fire-watch (ST-3.3, «Активная оборона» only): stand a CC-4 reactive patrol on
+  // every wing docked at an OWN world that isn't patrolling yet — the дежурный
+  // вылет then answers raiders inside its radius on its own cadence (including
+  // the mid-lane standoff campers `fleet.engage` can't reach). Never on foreign
+  // soil; a wing the evac branch just tasked is not re-ordered.
+  if (posture === 'active_defend') {
+    const patrols = (state as DivState).patrols;
+    for (const f of Object.values(state.fleets)) {
+      if (!idleOwn(f) || !fleetHasSquadron(f) || patrols?.[f.id]) continue;
+      if (state.planets[f.location!]?.owner !== ai) continue;
+      out.push(orderScramble(ai, f.id, true));
+    }
+  }
   return out;
 }
 
@@ -3744,9 +3794,14 @@ export function aiOrders(
 ): Action[] {
   const out: Action[] = [];
   if (!state.players[ai]) return out; // seat not in play / eliminated
-  // Steward guard duty (ST-3.2): a delegated «Оборона» seat watches its worlds and
-  // evacuates a wing the forecast says it would lose ≥ STEWARD_LOSS_LIMIT of.
-  if (posture === 'defend') out.push(...stewardGuardOrders(state, ai));
+  // The defensive family: both Steward postures HOLD (no expansion, no war
+  // declarations); «Активная оборона» merely adds the counterstrike/fire-watch
+  // inside the guard-duty tick below.
+  const defensive = posture === 'defend' || posture === 'active_defend';
+  // Steward guard duty (ST-3.2/3.3): a delegated defensive seat watches its worlds,
+  // evacuates a wing the forecast says it would lose ≥ STEWARD_LOSS_LIMIT of, and —
+  // under «Активная оборона» — counterstrikes what it beats cheaply on own soil.
+  if (defensive) out.push(...stewardGuardOrders(state, ai, posture as StewardPosture));
   const isShipUnit = (u: string): boolean => !data.units[u]?.traits.includes('ground');
   const capturable = (p: Planet): boolean => SECTOR_TYPES[p.kind ?? '']?.capturable ?? false;
   const d = (a: { x: number; y: number }, b: { x: number; y: number }): number =>
@@ -3769,7 +3824,7 @@ export function aiOrders(
     Object.values(state.planets).find((p) => p.owner === ai);
   const shipCount = (f: Fleet): number =>
     f.units.reduce((n, s) => n + (isShipUnit(s.unit) ? s.count : 0), 0);
-  const expandFleets: Fleet[] = posture === 'defend' ? [] : Object.values(state.fleets);
+  const expandFleets: Fleet[] = defensive ? [] : Object.values(state.fleets);
   // Consolidate BEFORE moving (self-play M4): two idle fleets sharing a location fuse
   // into one — without this, battle remnants and rally leftovers accumulate into a
   // hundreds-strong swarm of one-ship fleets that grinds the whole sim (and feeds
@@ -3838,7 +3893,7 @@ export function aiOrders(
   // provinces swing back. A bot that IS ahead stays quiet — it wins by holding.
   // Declared only from a clean 'peace' stance: pacts/alliances are never betrayed,
   // and favour-driven war (botDiplomacyModule) keeps working on top unchanged.
-  if (posture !== 'defend') {
+  if (!defensive) {
     const scoreOf = (who: string): number =>
       Object.values(state.planets).reduce(
         (s, p) => (p.owner === who ? s + provinceScore(data, p) : s),
