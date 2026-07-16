@@ -38,6 +38,13 @@ import {
   diplomacyModule,
   stewardActive,
   STEWARD_POSTURES,
+  STEWARD_LOSS_LIMIT,
+  scanNodeThreats,
+  previewBattle,
+  journeyDestination,
+  planRoute,
+  routeDistance,
+  estimateTravelHours,
   getStance,
   clearOffers,
   setStance,
@@ -65,7 +72,7 @@ import {
 } from '../../packages/shared-core/src/index';
 import { canAfford, payCost } from '../../packages/shared-core/src/util/treasury';
 import { provinceScore } from '../../packages/shared-core/src/state/sectorKind';
-import { sumUnitStat } from '../../packages/shared-core/src/util/stacks';
+import { sumUnitStat, findHealthyStack } from '../../packages/shared-core/src/util/stacks';
 import { garrisonUnderAssault, requireOwnedIdleFleet } from '../../packages/shared-core/src/util/fleet';
 import type { HandlerContext } from '../../packages/shared-core/src/kernel/module';
 import {
@@ -3584,6 +3591,148 @@ export function canTraverse(state: GameState, mover: string, owner: string | nul
 
 // --- AI ----------------------------------------------------------------------
 
+/** A garrison unit the evacuation can actually lift: the same gate `army.load`
+ *  enforces (ground cargo only, fixed emplacements stay). */
+const liftable = (unit: string): boolean => {
+  const def = data.units[unit];
+  return !!def && def.domain === 'ground' && !def.traits.includes('immobile');
+};
+
+/**
+ * One guard-duty tick of the Steward for a delegated seat (posture «Оборона»,
+ * ST-3.2 / steward-roadmap §ST-3): for every owned world a VISIBLE hostile
+ * bears on, forecast the stand (`previewBattle`: every bearing force strikes,
+ * the node's whole defense — docked fleets + garrison — answers). Forecast own
+ * losses at/over `STEWARD_LOSS_LIMIT` mean the fight is a bad trade, so the
+ * wing is pulled out to the nearest SAFE own world: self-moving fleets fly out
+ * (lifting what garrison fits their holds on the way), and for the rest the
+ * nearest idle transport with a free hold is summoned — only if it can arrive
+ * with a tick to spare BEFORE the threat lands, because `army.load` locks the
+ * moment the assault starts (`E_UNDER_ASSAULT`). Evacuation is loss-avoidance:
+ * the autopilot saves what it cannot profitably defend, it never fights better
+ * than the player would. Pure builder like `aiOrders`: returns actions only.
+ * The forecast is the base model (no `combat.damage` hooks) over one combined
+ * engagement — a retreat heuristic, not an oracle (ONB-6 semantics).
+ */
+export function stewardGuardOrders(state: GameState, ai: string): Action[] {
+  const out: Action[] = [];
+  const c = ctx(state.time);
+  const identified = identifiedNodes(state, ai, data);
+  const mine = Object.values(state.planets).filter((p) => p.owner === ai);
+  // Threat scans are per-node; cache them — the haven search re-reads them.
+  const threatCache = new Map<string, ReturnType<typeof scanNodeThreats>>();
+  const threatsOf = (node: string): ReturnType<typeof scanNodeThreats> => {
+    let t = threatCache.get(node);
+    if (t === undefined) {
+      t = scanNodeThreats(state, node, ai, c, identified);
+      threatCache.set(node, t);
+    }
+    return t;
+  };
+  // A fleet gets ONE task per tick (evacuate or ferry) — never two nodes' errands.
+  const tasked = new Set<string>();
+  const idleOwn = (f: Fleet): boolean =>
+    f.owner === ai && f.location != null && !f.movement && !f.battleId && !tasked.has(f.id);
+  // fleetCargoFree, not a local re-count: the hold is shared with carried DIVISIONS
+  // too — a transport already ferrying a formation must not be over-filled.
+  const freeHold = (f: Fleet): number => fleetCargoFree(state, f);
+
+  for (const p of mine) {
+    const threats = threatsOf(p.id);
+    if (threats.length === 0) continue;
+    const docked = Object.values(state.fleets).filter((f) => idleOwn(f) && f.location === p.id);
+    const defenders: UnitStack[] = [...docked.flatMap((f) => f.units), ...p.garrison];
+    if (!defenders.some((s) => s.count > 0)) continue; // nothing here to save
+    const attackers: UnitStack[] = threats.flatMap((t) => {
+      const f = state.fleets[t.fleetId];
+      return f ? [...f.units, ...(f.landing ?? [])] : [];
+    });
+    const stand = previewBattle(attackers, defenders, data);
+    // A stand the forecast says we WIN is held regardless of its price: fleeing a
+    // won fight gifts the world to a cheap feint (three scouts «push» a cruiser
+    // off an empty rock and walk in). The loss limit judges only losing/pyrrhic
+    // stands — the wing bails when it would be wiped or ground down for nothing.
+    if (stand.outcome === 'defender') continue;
+    if (stand.defender.damageFraction < STEWARD_LOSS_LIMIT) continue; // acceptable — hold
+    // Bad trade — evacuate to the nearest reachable own world nothing bears on.
+    let haven: string | null = null;
+    let havenDist = Infinity;
+    for (const q of mine) {
+      if (q.id === p.id || threatsOf(q.id).length > 0) continue;
+      const route = planRoute(state, p.id, q.id);
+      if (!route) continue;
+      const dist = routeDistance(state, p.id, route);
+      if (dist < havenDist) {
+        havenDist = dist;
+        haven = q.id;
+      }
+    }
+    if (haven === null) continue; // nowhere safer — stand and fight
+    const earliest = threats[0]!.eta;
+    const assaulted = garrisonUnderAssault(state, p.id);
+    // What the garrison still holds after the loads planned below (state is
+    // read-only). Counted EXACTLY as `army.load` will resolve it — via
+    // findHealthyStack: only a full-health, default-loadout stack embarks.
+    // Battle-worn troops cannot be lifted (they hold the line; hospitals mend
+    // them) — planning them would bounce off E_NO_ARMY and, worse, mark the
+    // garrison as handled so no ferry would come for anyone.
+    const left = new Map<string, number>();
+    for (const s of p.garrison) {
+      if (s.count <= 0 || !liftable(s.unit) || left.has(s.unit)) continue;
+      const healthy = findHealthyStack(p.garrison, s.unit);
+      if (healthy) left.set(s.unit, healthy.count);
+    }
+    // Docked fleets fly out — lifting what garrison fits their holds first
+    // (load and move stack in one tick: actions apply in order while docked).
+    for (const f of docked) {
+      if (!assaulted) {
+        let free = freeHold(f);
+        for (const [unit, have] of left) {
+          if (free <= 0 || have <= 0) continue;
+          const size = data.units[unit]?.stats.cargoSize ?? 0;
+          const n = size > 0 ? Math.min(have, Math.floor(free / size)) : have;
+          if (n <= 0) continue;
+          out.push(loadArmy(ai, f.id, unit, n));
+          left.set(unit, have - n);
+          free -= n * size;
+        }
+      }
+      out.push(moveFleet(ai, f.id, haven));
+      tasked.add(f.id);
+    }
+    // Garrison still stranded → summon the nearest idle transport with a free
+    // hold, but only when it beats the threat with one AI tick (2h) to spare —
+    // a transport that would arrive into the assault is not sent at all.
+    const stranded = [...left.values()].some((n) => n > 0);
+    const inboundAlready = Object.values(state.fleets).some(
+      (f) => f.owner === ai && f.movement != null && journeyDestination(f.movement) === p.id,
+    );
+    if (stranded && !inboundAlready && !assaulted) {
+      let ferry: Fleet | null = null;
+      let ferryEta = Infinity;
+      for (const f of Object.values(state.fleets)) {
+        if (!idleOwn(f) || f.location === p.id || freeHold(f) <= 0) continue;
+        // Never poach a transport off ANOTHER threatened node: it is needed where
+        // it stands (that node's own evac branch tasks it) — no cross-node theft.
+        if (threatsOf(f.location!).length > 0) continue;
+        const hours = estimateTravelHours(state, data, f.location!, p.id, f);
+        if (hours === null) continue;
+        const arrives = state.time + hoursToMs(c, hours);
+        if (arrives + hoursToMs(c, 2) > earliest) continue; // too late to load — don't feed it in
+        if (arrives < ferryEta) {
+          ferryEta = arrives;
+          ferry = f;
+        }
+      }
+      if (ferry) {
+        out.push(moveFleet(ai, ferry.id, p.id));
+        tasked.add(ferry.id);
+      }
+    }
+  }
+  return out;
+}
+
 /** One decision tick's orders for an AI-driven seat, evaluated against `state`.
  *  Read-only: it builds and returns the actions; the caller applies them — the
  *  client to its local sim, the server through the authoritative room. Drives
@@ -3595,6 +3744,9 @@ export function aiOrders(
 ): Action[] {
   const out: Action[] = [];
   if (!state.players[ai]) return out; // seat not in play / eliminated
+  // Steward guard duty (ST-3.2): a delegated «Оборона» seat watches its worlds and
+  // evacuates a wing the forecast says it would lose ≥ STEWARD_LOSS_LIMIT of.
+  if (posture === 'defend') out.push(...stewardGuardOrders(state, ai));
   const isShipUnit = (u: string): boolean => !data.units[u]?.traits.includes('ground');
   const capturable = (p: Planet): boolean => SECTOR_TYPES[p.kind ?? '']?.capturable ?? false;
   const d = (a: { x: number; y: number }, b: { x: number; y: number }): number =>
