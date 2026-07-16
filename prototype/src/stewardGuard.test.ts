@@ -230,6 +230,22 @@ describe('stewardGuardOrders — эвакуация под угрозой (ST-3.
     expect(stewardGuardOrders(s, 'p1', 'active_defend')).toEqual([]);
   });
 
+  it('the strike gate prices the WHOLE ladder: a cheap first intruder does not bait the wing into the deadly second', () => {
+    // Combat auto-re-engages a battle's victor into the next parked hostile —
+    // so beating 2 scouts cheaply would chain the damaged cruisers straight
+    // into 4 enemy cruisers. The heavy garrison keeps the STAND safe (hold),
+    // but no strike may start: the cumulative ladder breaches the limit.
+    const s = guardState({
+      fleets: [
+        fl('E1', 'p2', { location: 'H', units: stacks([['scout', 2]]) }),
+        fl('E2', 'p2', { location: 'H', units: stacks([['cruiser', 4]]) }),
+        fl('F1', 'p1', { location: 'H', units: stacks([['cruiser', 2]]) }),
+      ],
+      hGarrison: stacks([['heavy_infantry', 8]]),
+    });
+    expect(stewardGuardOrders(s, 'p1', 'active_defend')).toEqual([]);
+  });
+
   it('«Активная оборона» stands a fire-watch: docked squadron wings at own worlds get a CC-4 patrol', () => {
     // No threat anywhere — the fire-watch is a standing readiness order, and it
     // is exclusive to the active posture.

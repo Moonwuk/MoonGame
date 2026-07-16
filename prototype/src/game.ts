@@ -3662,31 +3662,47 @@ export function stewardGuardOrders(
     const holds =
       stand.outcome === 'defender' || stand.defender.damageFraction < STEWARD_LOSS_LIMIT;
     if (holds) {
-      // Counterstrike (ST-3.3, «Активная оборона» only): a war-stance intruder
+      // Counterstrike (ST-3.3, «Активная оборона» only): war-stance intruders
       // PARKED at our node that auto-engage didn't already lock (war declared
-      // after it docked; a resolved battle's leftovers) is engaged by the
-      // strongest docked wing whose OWN strike forecast wins with hull losses
-      // under the limit — «потери ≤ 35% — приемлемо». The fight happens where
-      // the wing already stands: the Steward never leaves own territory.
+      // after they docked; a resolved battle's leftovers). The combat module
+      // AUTO-re-engages a battle's victor into the NEXT parked hostile, so the
+      // gate must price the WHOLE ladder, not the first rung: the wing has to
+      // clear EVERY parked intruder, chained in scan order, with CUMULATIVE
+      // hull losses under the limit — else a cheap first fight would drag the
+      // damaged wing into one its forecast declined («держим, но не
+      // кровоточим»). One engager, one order — the victor chain does the rest;
+      // the fight happens where the wing stands: own territory only.
       if (posture !== 'active_defend') continue;
+      const ladder: Fleet[] = [];
+      for (const t of threats) {
+        if (t.kind !== 'present') continue;
+        const tf = state.fleets[t.fleetId];
+        if (tf && !tf.battleId) ladder.push(tf);
+      }
+      if (ladder.length === 0) continue;
       const byStrength = [...docked].sort(
         (a, b) =>
           hullPool(b.units, data) - hullPool(a.units, data) ||
           (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
       );
-      for (const t of threats) {
-        if (t.kind !== 'present') continue;
-        const target = state.fleets[t.fleetId];
-        if (!target || target.battleId) continue;
-        for (const f of byStrength) {
-          if (tasked.has(f.id)) continue;
-          const strike = previewBattle(f.units, target.units, data);
-          if (strike.outcome !== 'attacker') continue;
-          if (strike.attacker.damageFraction >= STEWARD_LOSS_LIMIT) continue;
-          out.push(engageFleet(ai, f.id, target.id));
-          tasked.add(f.id);
-          break; // one engager per target
+      for (const f of byStrength) {
+        if (tasked.has(f.id)) continue;
+        let wing = f.units;
+        let clears = true;
+        for (const tf of ladder) {
+          const rung = previewBattle(wing, tf.units, data);
+          if (rung.outcome !== 'attacker') {
+            clears = false;
+            break;
+          }
+          wing = rung.attacker.survivors; // carry the hull damage into the next rung
         }
+        const before = hullPool(f.units, data);
+        if (!clears || before <= 0) continue;
+        if (1 - hullPool(wing, data) / before >= STEWARD_LOSS_LIMIT) continue;
+        out.push(engageFleet(ai, f.id, ladder[0]!.id));
+        tasked.add(f.id);
+        break;
       }
       continue;
     }
