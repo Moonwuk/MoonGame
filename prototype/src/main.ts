@@ -777,6 +777,23 @@ function setStarfield(v: boolean): void {
     /* private-mode / storage-full: keep the in-memory value, just don't persist */
   }
 }
+// «Компактный режим меню» (PC): a denser sector panel — tighter paddings, smaller
+// type/chips/tiles. Rides a body class so pure CSS restyles the panel live; the
+// panel markup and behaviour are untouched. Default off.
+let compactPanel = typeof localStorage !== 'undefined' && localStorage.getItem('void.compactPanel') === '1';
+function applyCompactPanel(): void {
+  document.body.classList.toggle('compact-panel', compactPanel);
+}
+applyCompactPanel();
+function setCompactPanel(v: boolean): void {
+  compactPanel = v;
+  applyCompactPanel();
+  try {
+    localStorage.setItem('void.compactPanel', v ? '1' : '0');
+  } catch {
+    /* private-mode / storage-full: keep the in-memory value, just don't persist */
+  }
+}
 const SWEEP_DIV = 1600; // sweep angular rate: ang = now / SWEEP_DIV
 const SWEEP_PERIOD = TAU * SWEEP_DIV; // ms for a full rotation (~10s) — the radar refresh tick
 /** Radar contacts as PAINTED BY THE SWEEP: a signature is refreshed only as the arm
@@ -4644,7 +4661,7 @@ function planetPanelHtml(p: Planet): string {
   const here = Object.values(s.fleets).filter((f) => f.location === p.id);
   let h =
     cardHeader(ownerColor(p.owner), p.id, `${p.owner ? NAME[p.owner] : t('Нейтрал')} · ${kindName} · ${ptName} · ${sec}`) +
-    `<div class="pstats"><span>⚔ ${gcount} ${t('гарнизон')}</span><span>${unitIcon('heavy_infantry')} ${sumUnits(ground)} ${t('наземных')}</span><span>${unitIcon('cruiser')} ${sumUnits(ships)} ${t('кораблей')}</span><span>▣ ${p.buildings.length} ${t('построек')}</span></div>`;
+    `<div class="pstats"><span>⚔ ${gcount} <span class="pl">${t('гарнизон')}</span></span><span>${unitIcon('heavy_infantry')} ${sumUnits(ground)} <span class="pl">${t('наземных')}</span></span><span>${unitIcon('cruiser')} ${sumUnits(ships)} <span class="pl">${t('кораблей')}</span></span><span>▣ ${p.buildings.length} <span class="pl">${t('построек')}</span></span></div>`;
   if (pt && (pt.productionBonus !== 0 || pt.defenseBonus !== 0)) {
     const pct = (n: number) => (n >= 0 ? '+' : '') + Math.round(n * 100) + '%';
     const parts: string[] = [];
@@ -7923,6 +7940,10 @@ function renderSettings(): void {
     `<div class="set-lbl">${t('Свои метки на карте')}<span class="set-sub">${t('булавки 📍 ваших пингов — метки союзников видны всегда')}</span></div>` +
     `<div class="set-ctl"><label class="set-switch"><input id="set-ownpings" type="checkbox"${showOwnPings ? ' checked' : ''} aria-label="${t('Свои метки на карте')}"><span class="sw-track"></span><span class="sw-knob"></span></label><span id="set-ownpings-val" class="set-val">${showOwnPings ? t('вкл') : t('выкл')}</span></div>` +
     `</div>` +
+    `<div class="set-row">` +
+    `<div class="set-lbl">${t('Компактный режим меню')}<span class="set-sub">${t('плотная панель сектора — меньше отступов, мельче шрифт (на ПК)')}</span></div>` +
+    `<div class="set-ctl"><label class="set-switch"><input id="set-compact" type="checkbox"${compactPanel ? ' checked' : ''} aria-label="${t('Компактный режим меню')}"><span class="sw-track"></span><span class="sw-knob"></span></label><span id="set-compact-val" class="set-val">${compactPanel ? t('вкл') : t('выкл')}</span></div>` +
+    `</div>` +
     `<div class="pc-sec">${t('Графика')}</div>` +
     `<div class="set-row">` +
     `<div class="set-lbl">${t('Свечение и ореолы')}<span class="set-sub">${t('мягкое сияние вокруг миров, флотов и границ — выключите ради чёткой карты и скорости')}</span></div>` +
@@ -7945,6 +7966,12 @@ function renderSettings(): void {
   own?.addEventListener('change', () => {
     setShowOwnPings(own.checked);
     if (ownVal) ownVal.textContent = own.checked ? t('вкл') : t('выкл');
+  });
+  const compact = document.getElementById('set-compact') as HTMLInputElement | null;
+  const compactVal = document.getElementById('set-compact-val');
+  compact?.addEventListener('change', () => {
+    setCompactPanel(compact.checked);
+    if (compactVal) compactVal.textContent = compact.checked ? t('вкл') : t('выкл');
   });
   const glow = document.getElementById('set-glow') as HTMLInputElement | null;
   const glowVal = document.getElementById('set-glow-val');

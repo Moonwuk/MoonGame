@@ -241,6 +241,7 @@ export const en: Record<string, string> = {
   Коалиция: 'Coalition',
   'Командный бой: ВКЛ': 'Team battle: ON',
   'Командный бой: выкл': 'Team battle: off',
+  'Компактный режим меню': 'Compact panel mode',
   'одна сторона — союзники': 'one side = allies',
   Командир: 'Commander',
   'Конвейер верфи': 'Shipyard conveyor',
@@ -1107,6 +1108,8 @@ export const en: Record<string, string> = {
   'Свои метки на карте': 'My map markers',
   'булавки 📍 ваших пингов — метки союзников видны всегда':
     "your own 📍 ping pins — allies' markers always show",
+  'плотная панель сектора — меньше отступов, мельче шрифт (на ПК)':
+    'a denser sector panel — smaller paddings and type (PC)',
   Графика: 'Graphics',
   'Свечение и ореолы': 'Glow & haloes',
   'мягкое сияние вокруг миров, флотов и границ — выключите ради чёткой карты и скорости':

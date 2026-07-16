@@ -1743,6 +1743,41 @@ button.b:disabled{opacity:.32;cursor:not-allowed;color:var(--dim);border-color:v
   #speedbar,body.sheet-open #speedbar{right:calc(min(380px,26.7vw) + 14px);}
   body.sheet-open #cmdbar,body.sheet-open #speedbar{bottom:14px;}
 }
+/* «Компактный режим меню» (settings toggle, PC only): a denser sector panel — the
+   same content with the air squeezed out: tighter paddings, smaller chips/rows/tiles,
+   the head subtitle inlined after the world's name, a lower bottom dossier strip.
+   Pure restyle over body.compact-panel — panel markup and behaviour untouched. */
+@media (min-width:900px) and (hover:hover) and (pointer:fine){
+  body.compact-panel #side .pscroll{padding:8px 10px;}
+  body.compact-panel #side .phead{gap:8px;margin:0 0 6px;padding-bottom:6px;}
+  body.compact-panel #side .phead .pflag{width:12px;height:12px;}
+  body.compact-panel #side .ptitle{display:flex;align-items:baseline;gap:8px;min-width:0;}
+  body.compact-panel #side .ptitle b{display:inline;font-size:13px;letter-spacing:1.5px;flex:0 0 auto;}
+  body.compact-panel #side .ptitle span{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;
+    white-space:nowrap;font-size:8px;}
+  body.compact-panel #side .pclose{width:22px;height:22px;font-size:10px;}
+  body.compact-panel #side .pstats{gap:5px;margin:2px 0 3px;}
+  body.compact-panel #side .pstats span{padding:2px 7px;font-size:10px;}
+  body.compact-panel #side .pstats .pl{display:none;} /* icon+number chips, as mocked */
+  body.compact-panel #side .sec{margin:8px 0 4px;font-size:9px;padding-bottom:3px;}
+  body.compact-panel #side .row{margin:2px 0;}
+  body.compact-panel #side .asset-row{gap:6px;margin:3px 0;min-height:20px;padding:3px 7px;}
+  body.compact-panel #side .asset-row b{min-width:80px;font-size:11px;}
+  body.compact-panel #side .bicon{width:17px;height:17px;font-size:11px;}
+  body.compact-panel #side button.b{padding:3px 8px;font-size:10px;}
+  body.compact-panel #side .ptabs{gap:5px;margin:7px 0 3px;}
+  body.compact-panel #side .ptab{padding:4px 8px;}
+  body.compact-panel #side .ptiles{gap:5px;margin:3px 0 6px;}
+  body.compact-panel #side .ptile{min-width:46px;min-height:40px;padding:4px 5px;}
+  body.compact-panel #side .ptile .pt-ic{font-size:15px;}
+  body.compact-panel #side .conveyor{margin:4px 0 6px;padding:6px;}
+  body.compact-panel #side .hint{font-size:10px;margin-top:6px;}
+  body.compact-panel #side .pdesc{padding:9px 12px;}
+  body.compact-panel #side .pdesc .pd-body{font-size:11px;}
+}
+@media (min-width:900px) and (hover:hover) and (pointer:fine) and (orientation:landscape){
+  body.compact-panel #side .pdesc{height:112px;}
+}
 `;
 
 const page = (js) => `<!doctype html>
