@@ -1728,6 +1728,19 @@ button.b:disabled{opacity:.32;cursor:not-allowed;color:var(--dim);border-color:v
   #side{max-height:22.5vh;}
   body.sheet-open #cmdbar,body.sheet-open #speedbar{bottom:calc(22.5vh + 12px);}
   #fps{top:120px;}
+  /* PC: the docked dossier pane is retired — the dossier follows the cursor as a
+     translucent tooltip instead (#objtip, filled/positioned by main.ts). The tooltip
+     is deliberately NOT in the zoom list (JS places it at pointer coords, and zoom
+     would double them) — its type is therefore sized at 1.5× directly. */
+  #side .pdesc{display:none;}
+  #objtip{position:fixed;left:0;top:0;z-index:29;display:none;pointer-events:none;opacity:.8;
+    width:max-content;max-width:min(460px,32vw);padding:12px 15px;
+    background:rgba(3,14,18,.95);border:1px solid var(--line-hi);border-radius:9px;
+    box-shadow:0 6px 24px rgba(0,0,0,.55),inset 0 0 0 1px rgba(53,214,230,.06);}
+  #objtip .pd-title{font-size:18px;font-weight:700;letter-spacing:1.5px;color:#eafffb;
+    margin-bottom:8px;padding-bottom:7px;border-bottom:1px solid var(--line);}
+  #objtip .pd-body{font-size:16px;line-height:1.55;color:#9fc9c4;}
+  #objtip .hl{font-style:normal;font-weight:700;color:var(--amber);text-shadow:0 0 7px rgba(255,180,58,.35);}
   /* main menu (hub): don't stretch the console across the whole monitor — a
      centred column at 80% of the screen; the hub's backdrop still fills it all */
   #hub .hub-banner,#hub .hub-id,#hub .hub-body,#hub .hub-note,#hub .hub-nav{
@@ -1772,11 +1785,6 @@ button.b:disabled{opacity:.32;cursor:not-allowed;color:var(--dim);border-color:v
   body.compact-panel #side .ptile .pt-ic{font-size:15px;}
   body.compact-panel #side .conveyor{margin:4px 0 6px;padding:6px;}
   body.compact-panel #side .hint{font-size:10px;margin-top:6px;}
-  body.compact-panel #side .pdesc{padding:9px 12px;}
-  body.compact-panel #side .pdesc .pd-body{font-size:11px;}
-}
-@media (min-width:900px) and (hover:hover) and (pointer:fine) and (orientation:landscape){
-  body.compact-panel #side .pdesc{height:112px;}
 }
 `;
 
@@ -1809,6 +1817,8 @@ const page = (js) => `<!doctype html>
     <button id="rail-chat" title="Чат" data-i18n-title class="desk-only">🗨<span class="rlbl" data-i18n>Чат</span></button>
     <button id="rail-log" title="Сводки" data-i18n-title>≡<span class="rlbl" data-i18n>Сводки</span><span class="badge" id="alertbadge" style="display:none">0</span></button>
     <button id="rail-help" title="Справочник" data-i18n-title>?<span class="rlbl" data-i18n>Справка</span></button>
+    <button id="rail-settings" title="Настройки" data-i18n-title>⚙<span class="rlbl" data-i18n>Настройки</span></button>
+    <button id="rail-exit" title="Покинуть сессию" data-i18n-title>⌂<span class="rlbl" data-i18n>Выйти</span></button>
   </div>
   <button id="railtoggle" title="Инструменты" type="button" aria-expanded="false"><span id="railglyph">☰</span><span class="badge" id="railalert" style="display:none">0</span></button>
 </nav>
@@ -1846,6 +1856,7 @@ const page = (js) => `<!doctype html>
 <div id="warprompt"></div>
 <div id="diplo"></div>
 <div id="pingpop"></div>
+<div id="objtip"></div>
 <div id="splitdlg"></div>
 <div id="pingmenu"></div>
 <div id="fps"></div>

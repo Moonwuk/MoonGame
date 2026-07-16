@@ -794,6 +794,13 @@ function setCompactPanel(v: boolean): void {
     /* private-mode / storage-full: keep the in-memory value, just don't persist */
   }
 }
+// The compact-mode CSS is gated on the PC media query — JS-side string shortening
+// (ping button, conveyor idle line, upgrade buttons) must follow the same gate, or
+// a phone with the pref on would get PC-compact wording under phone styling.
+const PC_FINE = typeof matchMedia !== 'undefined' ? matchMedia('(min-width:900px) and (hover:hover) and (pointer:fine)') : null;
+function compactUi(): boolean {
+  return compactPanel && (PC_FINE?.matches ?? false);
+}
 const SWEEP_DIV = 1600; // sweep angular rate: ang = now / SWEEP_DIV
 const SWEEP_PERIOD = TAU * SWEEP_DIV; // ms for a full rotation (~10s) — the radar refresh tick
 /** Radar contacts as PAINTED BY THE SWEEP: a signature is refreshed only as the arm
@@ -4332,6 +4339,9 @@ function conveyorHtml(planetId: string, lane: BuildLane): string {
     html += `<div class="current" data-desc="c:${planetId}:${lane}:active:${active.seq}"><span>${t('СЕЙЧАС')}</span><b>${constructionLabel(active.payload)}</b><em class="conv-time" data-at="${active.at}">—</em>`;
     html += `<button class="conv-cancel" data-act="cancelbuild" data-arg="${active.seq}" title="${t('Отменить — вернёт часть ресурсов и поставит на паузу')}">✕</button></div>`;
     html += `<div class="bar"><i class="conv-fill" data-at="${active.at}" data-dur="${dur}" style="width:0%"></i></div>`;
+  } else if (compactUi()) {
+    html += `<div class="current idle"><b>${t('Ожидание заказов')}</b></div>`;
+    html += `<div class="bar"><i style="width:0%"></i></div>`;
   } else {
     html += `<div class="current idle"><span>${t('ПРОСТОЙ')}</span><b>${t('готов к следующему заказу')}</b><em>—</em></div>`;
     html += `<div class="bar"><i style="width:0%"></i></div>`;
@@ -4343,7 +4353,7 @@ function conveyorHtml(planetId: string, lane: BuildLane): string {
           `<span data-desc="c:${planetId}:${lane}:queued:${i}"><em>${i + 1}</em>${queuedLabel(q)}<button class="q-x" data-act="dequeue" data-arg="${lane}:${i}" title="${t('Убрать из очереди')}">✕</button></span>`,
       )
       .join('')}</div>`;
-  } else {
+  } else if (!compactUi()) {
     html += `<div class="queue empty">${t('очередь пуста')}</div>`;
   }
   if (paused.length) {
@@ -4440,7 +4450,7 @@ function fleetPanelHtml(f: Fleet): string {
       ? t('Пустая группа корпусов — кораблей на борту нет.')
       : t('Эскадра из {n} корабл.{fl} Суммарный вес ниже; идёт со скоростью самого медленного корпуса.', { n: nShips, fl: flavor.length ? ' — ' + flavor.join(', ') + '.' : '.' });
   h += `<div class="row dim">${blurb}</div>`;
-  h += `<div class="pstats"><span>⚔ ${t('АТК')} ${atk}</span><span>🛡 ${t('ЗАЩ')} ${def}</span><span>❤ ${t('ХП')} ${hpTot}</span><span>⚡ ${t('СКР')} ${spdTxt}</span></div>`;
+  h += `<div class="pstats"><span>⚔ ${t('АТК')} ${atk}</span><span>🛡 ${t('ЗАЩ')} ${def}</span><span>❤ ${t('ОЗ')} ${hpTot}</span><span>⚡ ${t('СКР')} ${spdTxt}</span></div>`;
   h += nShips ? `<div class="sec">${t('Корабли — тап для характеристик')}</div>` + unitTilesHtml(f.units) : '';
   if (nTr > 0) h += `<div class="sec">${t('Десант на борту')}</div>` + unitTilesHtml(f.landing ?? []);
 
@@ -4673,14 +4683,14 @@ function planetPanelHtml(p: Planet): string {
   // Capital marker / designate — heroes respawn here (and re-fit modules, Phase C).
   if (mine) {
     if (capitalOf(s, ME) === p.id) {
-      h += `<div class="row"><b style="color:var(--grn)">★ ${t('Столица')}</b> <span class="dim">${t('— здесь возродятся и сменят модули герои')}</span></div>`;
+      h += `<div class="row"><b style="color:var(--grn)">★ ${t('Столица')}</b>${compactUi() ? '' : ` <span class="dim">${t('— здесь возродятся и сменят модули герои')}</span>`}</div>`;
     } else if (isInhabited(p)) {
       h += `<div class="row">${btn('capital', '', t('★ Сделать столицей'), true)}</div>`;
     }
   }
 
   // Tactical ping — mark this province and share it (coalition chat, or a player's DM).
-  h += `<div class="row">${btn('ping', '', t('📍 Пинг — отметить и отправить…'), true)}</div>`;
+  h += `<div class="row">${btn('ping', '', compactUi() ? t('📍 Пинг') : t('📍 Пинг — отметить и отправить…'), true)}</div>`;
 
   // Espionage: steal a 24h intel window on this enemy world (SPY-1). While a
   // window lives its countdown replaces the button — the node stays identified.
@@ -4771,11 +4781,17 @@ function planetPanelHtml(p: Planet): string {
       const def = data.buildings[b.type];
       const max = def ? buildingMaxLevel(def) : 1;
       const prod = def ? producesLine(buildingLevel(def, b.level).produces) : '';
-      blds += `<div class="asset-row" data-desc="b:${b.type}:${b.level}"><span class="bicon">${BUILD_ICON[b.type] ?? '▪'}</span><b>${buildingName(b.type)}</b><span class="dim">L${b.level}/${max} · ${t('хп')} ${floor(b.hp)}/${hpOfLevel(b.type, b.level)}${prod ? ` · <span class="prod">${prod}</span>` : ''}</span>`;
+      blds += `<div class="asset-row" data-desc="b:${b.type}:${b.level}"><span class="bicon">${BUILD_ICON[b.type] ?? '▪'}</span><b>${buildingName(b.type)}</b><span class="dim">L${b.level}/${max} · ${t('оз')} ${floor(b.hp)}/${hpOfLevel(b.type, b.level)}${prod ? ` · <span class="prod">${prod}</span>` : ''}</span>`;
       if (mine && b.level < max) {
         const c = def?.upgrades[b.level - 1]?.cost;
         // hovering Upgrade previews the NEXT level's dossier (output it will unlock)
-        blds += btn('upgrade', b.type, t('▲ Улучшить {c}', { c: cost(c) }), afford(c), `b:${b.type}:${b.level + 1}`);
+        blds += btn(
+          'upgrade',
+          b.type,
+          compactUi() ? `▲ ${cost(c)}` : t('▲ Улучшить {c}', { c: cost(c) }),
+          afford(c),
+          `b:${b.type}:${b.level + 1}`,
+        );
       }
       blds += `</div>`;
     }
@@ -6217,22 +6233,53 @@ side.addEventListener('click', (ev) => {
   renderPanel();
 });
 
-// Side-panel object hover → live dossier in the right-docked pane (desktop only;
-// touch has no hover, so the pane just stays on its default prompt there).
+// Side-panel object hover → dossier. On PC the docked pane is hidden (it ate a slab
+// of the panel) — the dossier follows the cursor as a translucent tooltip (#objtip)
+// that sizes to its text. Below the PC breakpoint the old right-docked pane behaviour
+// stays. Touch has no hover — phones keep the tap-to-open modal.
+const objTipEl = document.getElementById('objtip');
+function placeObjTip(ev: PointerEvent): void {
+  if (!objTipEl) return;
+  const pad = 14;
+  const w = objTipEl.offsetWidth;
+  const hgt = objTipEl.offsetHeight;
+  let x = ev.clientX + pad;
+  let y = ev.clientY + pad;
+  if (x + w > window.innerWidth - 8) x = ev.clientX - w - pad; // flip left of the cursor
+  if (y + hgt > window.innerHeight - 8) y = ev.clientY - hgt - pad; // flip above
+  objTipEl.style.left = `${Math.max(8, x)}px`;
+  objTipEl.style.top = `${Math.max(8, y)}px`;
+}
 side.addEventListener('pointermove', (ev) => {
   if (MOBILE) return;
   const t = ev.target as HTMLElement;
-  if (t.closest('#pdesc')) return; // over the dossier itself — keep what's shown
+  if (t.closest('#pdesc')) return; // over the docked pane itself — keep what's shown
   const key = (t.closest('[data-desc]') as HTMLElement | null)?.dataset.desc ?? null;
-  // Only swap when landing on a DIFFERENT object; passing over a gap (key === null)
-  // keeps the last dossier shown, so the pane never flashes empty (and shrinks) while
-  // the cursor travels from one row to the next. pointerleave clears it on real exit.
+  if (PC_FINE?.matches && objTipEl) {
+    // Cursor tooltip: shown only while an object is actually under the pointer.
+    if (key !== hoverObj) {
+      hoverObj = key;
+      const d = key ? objDossier(key) : null;
+      if (d) {
+        objTipEl.innerHTML = `<div class="pd-title">${dossierTitleHtml(key!, d)}</div><div class="pd-body">${d.body}</div>`;
+        objTipEl.style.display = 'block';
+      } else {
+        objTipEl.style.display = 'none';
+      }
+    }
+    if (objTipEl.style.display === 'block') placeObjTip(ev);
+    return;
+  }
+  // Docked-pane path (narrow desktop windows): only swap when landing on a DIFFERENT
+  // object; passing over a gap (key === null) keeps the last dossier shown, so the pane
+  // never flashes empty while the cursor travels between rows. pointerleave clears it.
   if (key !== null && key !== hoverObj) {
     hoverObj = key;
     renderObjDesc();
   }
 });
 side.addEventListener('pointerleave', () => {
+  if (objTipEl) objTipEl.style.display = 'none';
   if (hoverObj !== null) {
     hoverObj = null;
     renderObjDesc();
@@ -6843,6 +6890,8 @@ $('tomenu').addEventListener('click', () => {
   stopFirstGoals(); // ONB-7: leaving the match ends the onboarding checklist
   openHub();
 });
+// Rail: «Покинуть сессию» — same exit as the speedbar ⌂, reachable from the rail too.
+document.getElementById('rail-exit')?.addEventListener('click', () => $('tomenu').click());
 
 // Event-log window: the rail's ≡ opens it; ✕ or the backdrop closes it. The feed
 // (#log) updates in place each frame whether the window is open or not.
@@ -7988,6 +8037,11 @@ function renderSettings(): void {
   document.getElementById('set-close')?.addEventListener('click', () => settingsEl.classList.remove('show'));
 }
 $('hub-settings').addEventListener('click', () => {
+  renderSettings();
+  settingsEl.classList.add('show');
+});
+// Rail: settings are reachable mid-match too, not only from the hub's «Ещё» tab.
+document.getElementById('rail-settings')?.addEventListener('click', () => {
   renderSettings();
   settingsEl.classList.add('show');
 });
