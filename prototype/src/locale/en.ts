@@ -1106,6 +1106,7 @@ export const en: Record<string, string> = {
     '😴 The Steward took command (Defend) — holding the line while you sleep.',
   '😴 Хранитель принял командование (Активная оборона) — держит рубежи и контратакует у своих миров.':
     '😴 The Steward took command (Active defense) — holding the line and counterstriking at your own worlds.',
+  '🎮 Вы вернули командование себе.': '🎮 You took command back.',
   '🌅 Хранитель вернул вам управление (была «Оборона»).':
     '🌅 The Steward returned control to you (posture was “Defend”).',
   '🌅 Хранитель вернул вам управление (была «Активная оборона»).':

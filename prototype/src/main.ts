@@ -2387,7 +2387,7 @@ function handleEvents(events: DomainEvent[]) {
       case 'steward.recalled':
         if (p.playerId === ME) {
           stewSnapshot = null;
-          note('🎮 Вы вернули командование себе.');
+          note(t('🎮 Вы вернули командование себе.'));
           if (stewWin.classList.contains('show')) renderSteward();
         }
         break;

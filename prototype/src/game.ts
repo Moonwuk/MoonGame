@@ -3216,8 +3216,10 @@ export const engageFleet = (playerId: string, fleetId: string, targetId: string)
 /** Begin researching a session technology (one active at a time — technologyModule). */
 export const researchTech = (playerId: string, technology: string) =>
   act(playerId, 'technology.research', { technology });
-/** «Хранитель»: hand this seat to the AI until game-time `until`, running `posture`
- *  (v1: 'defend'). Rejected (E_STEWARD_LOCKED) until the Steward tech is researched. */
+/** «Хранитель»: hand this seat to the AI until game-time `until`, running `posture` —
+ *  'defend' («Оборона», the safe default) or 'active_defend' («Активная оборона»,
+ *  ST-3.3: + forecast-gated counterstrike and squadron fire-watch on own soil).
+ *  Rejected (E_STEWARD_LOCKED) until the Steward tech is researched. */
 export const delegateSteward = (
   playerId: string,
   until: number,
