@@ -72,7 +72,7 @@ import {
 } from '../../packages/shared-core/src/index';
 import { canAfford, payCost } from '../../packages/shared-core/src/util/treasury';
 import { provinceScore } from '../../packages/shared-core/src/state/sectorKind';
-import { sumUnitStat } from '../../packages/shared-core/src/util/stacks';
+import { sumUnitStat, findHealthyStack } from '../../packages/shared-core/src/util/stacks';
 import { garrisonUnderAssault, requireOwnedIdleFleet } from '../../packages/shared-core/src/util/fleet';
 import type { HandlerContext } from '../../packages/shared-core/src/kernel/module';
 import {
@@ -3648,6 +3648,11 @@ export function stewardGuardOrders(state: GameState, ai: string): Action[] {
       return f ? [...f.units, ...(f.landing ?? [])] : [];
     });
     const stand = previewBattle(attackers, defenders, data);
+    // A stand the forecast says we WIN is held regardless of its price: fleeing a
+    // won fight gifts the world to a cheap feint (three scouts «push» a cruiser
+    // off an empty rock and walk in). The loss limit judges only losing/pyrrhic
+    // stands — the wing bails when it would be wiped or ground down for nothing.
+    if (stand.outcome === 'defender') continue;
     if (stand.defender.damageFraction < STEWARD_LOSS_LIMIT) continue; // acceptable — hold
     // Bad trade — evacuate to the nearest reachable own world nothing bears on.
     let haven: string | null = null;
@@ -3665,10 +3670,17 @@ export function stewardGuardOrders(state: GameState, ai: string): Action[] {
     if (haven === null) continue; // nowhere safer — stand and fight
     const earliest = threats[0]!.eta;
     const assaulted = garrisonUnderAssault(state, p.id);
-    // What the garrison still holds after the loads planned below (state is read-only).
+    // What the garrison still holds after the loads planned below (state is
+    // read-only). Counted EXACTLY as `army.load` will resolve it — via
+    // findHealthyStack: only a full-health, default-loadout stack embarks.
+    // Battle-worn troops cannot be lifted (they hold the line; hospitals mend
+    // them) — planning them would bounce off E_NO_ARMY and, worse, mark the
+    // garrison as handled so no ferry would come for anyone.
     const left = new Map<string, number>();
     for (const s of p.garrison) {
-      if (s.count > 0 && liftable(s.unit)) left.set(s.unit, (left.get(s.unit) ?? 0) + s.count);
+      if (s.count <= 0 || !liftable(s.unit) || left.has(s.unit)) continue;
+      const healthy = findHealthyStack(p.garrison, s.unit);
+      if (healthy) left.set(s.unit, healthy.count);
     }
     // Docked fleets fly out — lifting what garrison fits their holds first
     // (load and move stack in one tick: actions apply in order while docked).
@@ -3700,6 +3712,9 @@ export function stewardGuardOrders(state: GameState, ai: string): Action[] {
       let ferryEta = Infinity;
       for (const f of Object.values(state.fleets)) {
         if (!idleOwn(f) || f.location === p.id || freeHold(f) <= 0) continue;
+        // Never poach a transport off ANOTHER threatened node: it is needed where
+        // it stands (that node's own evac branch tasks it) — no cross-node theft.
+        if (threatsOf(f.location!).length > 0) continue;
         const hours = estimateTravelHours(state, data, f.location!, p.id, f);
         if (hours === null) continue;
         const arrives = state.time + hoursToMs(c, hours);

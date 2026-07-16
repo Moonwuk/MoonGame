@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { stewardGuardOrders, aiOrders, data, HOUR } from './game';
+import { stewardGuardOrders, aiOrders, order, advance, data, HOUR } from './game';
 import {
   createInitialState,
   type Fleet,
@@ -23,7 +23,9 @@ function fl(id: string, owner: string, patch: Partial<Fleet>): Fleet {
 function guardState(opts: {
   fleets: Fleet[];
   hGarrison?: UnitStack[];
+  sGarrison?: UnitStack[];
   ownS?: boolean;
+  withR?: boolean;
   battles?: GameState['battles'];
 }): GameState {
   const s = createInitialState({ seed: 'sg', version: { data: '0.1.0', manifest: '1' } });
@@ -34,9 +36,16 @@ function guardState(opts: {
     ...s,
     time: NOW,
     planets: {
-      E: world('E', null, 0, ['H']),
+      // E belongs to the hostile — else an advance() through the real kernel
+      // eliminates a landless p2 (victory: no-territory) and deletes its fleets.
+      E: world('E', 'p2', 0, ['H']),
       H: world('H', 'p1', 100, ['E', 'S'], opts.hGarrison ?? []),
-      S: world('S', opts.ownS === false ? null : 'p1', 200, ['H']),
+      S: world('S', opts.ownS === false ? null : 'p1', 200, opts.withR ? ['H', 'R'] : ['H'], opts.sGarrison ?? []),
+      ...(opts.withR ? { R: world('R', 'p1', 300, ['S']) } : {}),
+      // Far neutral island: dilutes p1's ownership share so an advance() through
+      // the real kernel doesn't end the match by domination mid-test.
+      N1: world('N1', null, 1000, ['N2']),
+      N2: world('N2', null, 1100, ['N1']),
     },
     fleets: f,
     players: { p1: player('p1'), p2: player('p2') },
@@ -118,6 +127,84 @@ describe('stewardGuardOrders — эвакуация под угрозой (ST-3.
       ],
       hGarrison: stacks([['militia', 4]]),
     });
+    expect(stewardGuardOrders(s, 'p1')).toEqual([]);
+  });
+
+  it('a stand the forecast WINS is held at any price — a cheap feint cannot push the wing off', () => {
+    // 3 scouts (~60 metal) vs a docked cruiser: the cruiser wins outright but
+    // loses 50% hull — over the 35% limit. Fleeing would gift the world to the
+    // feint (walk-in capture of an empty rock); the outcome gate holds instead.
+    const s = guardState({
+      fleets: [fl('E1', 'p2', { units: stacks([['scout', 3]]), ...inboundToH(10) }), fl('F1', 'p1', { location: 'H', units: stacks([['cruiser', 1]]) })],
+    });
+    expect(stewardGuardOrders(s, 'p1')).toEqual([]);
+  });
+
+  it('never poaches the ferry off ANOTHER threatened node — that node lifts its own garrison in place', () => {
+    // H and S are both threatened (S by a through-H journey), R is the safe rear.
+    // H has a stranded garrison and no transport; the only free hold is the
+    // dropship docked at S. It must serve S (load + fly to R), not fly empty to H.
+    const s = guardState({
+      withR: true,
+      fleets: [
+        raider(inboundToH(20)),
+        fl('E2', 'p2', {
+          units: stacks([['cruiser', 4]]),
+          movement: { from: 'E', to: 'H', departedAt: NOW - 1 * HOUR, arrivesAt: NOW + 8 * HOUR, path: ['S'], destination: 'S' },
+        }),
+        fl('F2', 'p1', { location: 'S', units: stacks([['dropship', 1]]) }),
+      ],
+      hGarrison: stacks([['militia', 4]]),
+      sGarrison: stacks([['militia', 2]]),
+    });
+    const orders = stewardGuardOrders(s, 'p1');
+    expect(orders.map((a) => a.type)).toEqual(['army.load', 'fleet.move']);
+    expect(orders[0]!.payload).toMatchObject({ fleetId: 'F2', unit: 'militia', count: 2 });
+    expect(orders[1]!.payload).toMatchObject({ fleetId: 'F2', to: 'R' });
+  });
+
+  it('battle-worn troops cannot embark: no load is planned for them (it would bounce off E_NO_ARMY)', () => {
+    // army.load resolves via findHealthyStack — a damaged stack never loads.
+    // Planning it anyway would fire a doomed order AND mark the garrison as
+    // handled; the fleet still saves itself.
+    const s = guardState({
+      fleets: [raider(inboundToH(10)), fl('F1', 'p1', { location: 'H', units: stacks([['cruiser', 1]]) })],
+      hGarrison: [{ unit: 'militia', count: 4, hp: 40 }],
+    });
+    const orders = stewardGuardOrders(s, 'p1');
+    expect(orders.map((a) => a.type)).toEqual(['fleet.move']);
+    expect(orders[0]!.payload).toMatchObject({ fleetId: 'F1', to: 'S' });
+  });
+
+  it('multi-tick, through the REAL kernel: summon → dock → lift → leave, then the driver goes quiet', () => {
+    let s = guardState({
+      fleets: [raider(inboundToH(20)), fl('F2', 'p1', { location: 'S', units: stacks([['dropship', 1]]) })],
+      hGarrison: stacks([['militia', 4]]),
+    });
+    const apply = (orders: ReturnType<typeof stewardGuardOrders>): void => {
+      for (const a of orders) {
+        const r = order(s, a, s.time);
+        expect(r.error).toBeUndefined();
+        s = r.state;
+      }
+    };
+    // Tick 1: the ferry is summoned across.
+    apply(stewardGuardOrders(s, 'p1'));
+    expect(s.fleets.F2!.movement).toMatchObject({ to: 'H' });
+    // It docks (~2.3h) well before the 20h impact.
+    const adv = advance(s, NOW + 4 * HOUR);
+    expect(adv.error).toBeUndefined();
+    s = adv.state;
+    expect(s.fleets.F2!.location).toBe('H');
+    // Tick 2: the docked branch lifts the garrison and flies to safety — every
+    // order ACCEPTED by the real modules, not just well-shaped.
+    const tick2 = stewardGuardOrders(s, 'p1');
+    expect(tick2.map((a) => a.type)).toEqual(['army.load', 'fleet.move']);
+    apply(tick2);
+    expect(s.planets.H!.garrison).toEqual([]);
+    expect(s.fleets.F2!.landing).toMatchObject([{ unit: 'militia', count: 4 }]);
+    expect(s.fleets.F2!.movement).toMatchObject({ to: 'S' });
+    // Tick 3: nothing left to protect at H — the driver re-runs to silence.
     expect(stewardGuardOrders(s, 'p1')).toEqual([]);
   });
 
