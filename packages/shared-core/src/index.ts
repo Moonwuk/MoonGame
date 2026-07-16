@@ -67,7 +67,14 @@ export {
   allowedBuildings,
 } from './state/sectorKind';
 export { factionStart, type FactionStart } from './state/factionStart';
-export { planRoute, routeDistance, fleetBaseSpeed, estimateTravelHours } from './state/route';
+export {
+  planRoute,
+  routeDistance,
+  fleetBaseSpeed,
+  estimateTravelHours,
+  journeyDestination,
+  journeyEtaMs,
+} from './state/route';
 export { isBombarded, bombardedPlanets, isActivelyBombarding } from './state/orbit';
 export { fleetPositionAt, fleetNodeAt, legT } from './state/fleetPosition';
 export {
@@ -94,9 +101,11 @@ export { hashState } from './state/hash';
 export {
   previewBattle,
   previewLossCount,
+  hullPool,
   type BattlePreview,
   type BattlePreviewSide,
 } from './state/previewBattle';
+export { scanNodeThreats, type NodeThreat } from './state/threat';
 
 // Action contract
 export {
@@ -280,6 +289,7 @@ export {
   stewardModule,
   stewardActive,
   STEWARD_POSTURES,
+  STEWARD_LOSS_LIMIT,
   type StewardPosture,
 } from './modules/steward';
 export { effectsModule, type EffectImpl, type EffectOccurrence } from './modules/effects';
