@@ -3633,8 +3633,9 @@ export function stewardGuardOrders(state: GameState, ai: string): Action[] {
   const tasked = new Set<string>();
   const idleOwn = (f: Fleet): boolean =>
     f.owner === ai && f.location != null && !f.movement && !f.battleId && !tasked.has(f.id);
-  const freeHold = (f: Fleet): number =>
-    sumUnitStat(f.units, data, 'cargoCapacity') - sumUnitStat(f.landing ?? [], data, 'cargoSize');
+  // fleetCargoFree, not a local re-count: the hold is shared with carried DIVISIONS
+  // too — a transport already ferrying a formation must not be over-filled.
+  const freeHold = (f: Fleet): number => fleetCargoFree(state, f);
 
   for (const p of mine) {
     const threats = threatsOf(p.id);
