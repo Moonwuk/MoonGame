@@ -38,9 +38,28 @@ export interface NodeThreat {
   eta: number;
 }
 
+/** Does this journey end parked ON a lane (a standoff camp), not at a node? */
+function parksOnLane(mv: NonNullable<Fleet['movement']>): boolean {
+  if (mv.parkT !== undefined && mv.parkT < 1) return true;
+  const onFinalLeg = !mv.path || mv.path.length === 0;
+  return onFinalLeg && (mv.endT ?? 1) < 1;
+}
+
+/** The FINAL leg's origin — the other endpoint of the lane a park-journey ends
+ *  on (its `journeyDestination` names the far endpoint). */
+function finalLaneFrom(mv: NonNullable<Fleet['movement']>): PlanetId {
+  const p = mv.path;
+  if (p && p.length >= 2) return p[p.length - 2]!;
+  if (p && p.length === 1) return mv.to;
+  return mv.from;
+}
+
 /** How `fleet` bears on `nodeId`, or null if it does not. A hostile merely
  *  passing THROUGH on an incident lane is not a bearing — it aims at its own
- *  destination, not this node. */
+ *  destination, not this node. A journey that ends PARKED on a lane (standoff
+ *  camp) bears on BOTH endpoints of that lane: whichever doorstep it actually
+ *  favours, both defenders get the early warning while it is still in transit
+ *  (once parked, the `nearby` arm takes over anyway). */
 function classify(
   state: GameState,
   fleet: Fleet,
@@ -51,8 +70,12 @@ function classify(
     return { kind: 'present', eta: ctx.now };
   }
   const mv = fleet.movement;
-  if (mv && journeyDestination(mv) === nodeId) {
-    return { kind: 'inbound', eta: journeyEtaMs(state, fleet, mv, ctx) };
+  if (mv) {
+    const inbound =
+      journeyDestination(mv) === nodeId || (parksOnLane(mv) && finalLaneFrom(mv) === nodeId);
+    if (inbound) {
+      return { kind: 'inbound', eta: journeyEtaMs(state, fleet, mv, ctx) };
+    }
   }
   const e = fleet.edge;
   if (e && (e.from === nodeId || e.to === nodeId)) {

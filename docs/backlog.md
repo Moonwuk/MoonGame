@@ -936,12 +936,15 @@ requires[], cost, grants{ability?|passive?}}`; ветки **transhuman**/**psion
 > < 35% — опционально (отдельная поза) контрудар, только на своей территории.
 
 - **ST-3.1** ✅ `[core]` **Доля потерь по прогнозу + трипваер «враг близко».**
-  `BattlePreviewSide.damageFraction` (0..1, по корпусу через `hullPool`: остаточные
-  `hp`-пулы, щиты исключены, арифметика `damageUnits`) + `scanNodeThreats`
-  (`state/threat.ts`: `present`/`inbound`(+ETA, оценка дальних хопов по базовой
-  скорости ÷ timeScale)/`nearby`, fog-honest через `isVisibleTo`, стансы D1,
-  сорт (eta, id)) + `STEWARD_LOSS_LIMIT = 0.35` в `modules/steward.ts`. 14 тестов
-  (рукосчитанный 1.0/0.6, fog-граница, ETA×timeScale, детерминизм, deepFreeze).
+  `BattlePreviewSide.damageFraction` (0..1, по корпусу через `hullPool` на общем
+  с `damageUnits` `stackHull` — одна копия пул-арифметики, дрейф исключён; щиты
+  вне счёта) + `scanNodeThreats` (`state/threat.ts`: `present`/`inbound`(+ETA
+  через канонические `journeyDestination`/`journeyEtaMs` в `state/route.ts`;
+  парк-журней предупреждает оба конца финальной полосы)/`nearby`, fog-honest
+  через `isVisibleTo` с hoisted-`identified`, стансы D1, сорт (eta, id)) +
+  `STEWARD_LOSS_LIMIT = 0.35` в `modules/steward.ts`. 15 тестов (рукосчитанный
+  1.0/0.6, паритет hp-пулов выживших с живым боем, fog-граница, ETA×timeScale,
+  кемп-журней, детерминизм, deepFreeze).
 - **ST-3.2** ⏳ `[srv]` `[proto]` 🔒(ST-3.1) **Эвакуация под угрозой (поза `defend`).**
   `aiOrders`: скан своих узлов → прогноз → ≥ порога → самоходы `fleet.move` в
   безопасный свой узел; гарнизон — свободный транспорт с пустым трюмом → `army.load`

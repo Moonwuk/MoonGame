@@ -146,6 +146,28 @@ describe('scanNodeThreats — «враг близко» tripwire (ST-3.1)', () =
     ]);
   });
 
+  it('a park-journey (standoff camp) warns BOTH endpoints of its final lane while in transit', () => {
+    // Enemy marches B→A but will PARK at 30% of the lane (endT) — a camp near
+    // B's side of the B–A road. Both doorsteps must see it coming: A because
+    // the journey bears on it (destination side), B because the camp sits on
+    // its incident lane too. A plain fly-through (previous test) stays silent.
+    const s = baseState([
+      fleet('F1', 'p2', {
+        movement: {
+          from: 'B',
+          to: 'A',
+          departedAt: NOW - 1 * HOUR,
+          arrivesAt: NOW + 1 * HOUR,
+          endT: 0.3,
+        },
+      }),
+    ]);
+    const forA = scanNodeThreats(s, 'A', 'p1', ctx);
+    const forB = scanNodeThreats(s, 'B', 'p1', ctx);
+    expect(forA).toEqual([{ fleetId: 'F1', owner: 'p2', kind: 'inbound', eta: NOW + 1 * HOUR }]);
+    expect(forB).toEqual(forA);
+  });
+
   it('filters by stance: a peace-pair fleet at the node is no threat; own fleets never are', () => {
     const s = baseState(
       [fleet('F1', 'p3', { location: 'A' }), fleet('F2', 'p1', { location: 'A' })],
