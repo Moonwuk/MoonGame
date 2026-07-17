@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { getStance } from '../../packages/shared-core/src/index';
-import { networkSeats, newGame, parseNetworkMatchMode, START_CANDIDATES } from './game';
+import {
+  networkSeats,
+  newGame,
+  parseNetworkMatchMode,
+  seatAiDecision,
+  START_CANDIDATES,
+} from './game';
 
 describe('prototype network seats', () => {
   it('defaults to ten unique claimable FFA chairs and starts', () => {
@@ -54,5 +60,38 @@ describe('prototype network seats', () => {
     expect(parseNetworkMatchMode('2v2')).toBe('2v2');
     expect(parseNetworkMatchMode('5v5')).toBe('5v5');
     expect(() => parseNetworkMatchMode('3v3')).toThrow('TEAMS must be 2v2 or 5v5');
+  });
+});
+
+describe('seatAiDecision — Хранитель vs заместитель (SES-2.2)', () => {
+  it('a live Steward delegation always plays its posture — beats presence AND the grace', () => {
+    // The player's OWN autopilot runs regardless of whether they are connected or
+    // how long they have been away: they explicitly turned it on.
+    for (const hasHuman of [true, false]) {
+      for (const graceExpired of [true, false]) {
+        expect(seatAiDecision(hasHuman, 'defend', graceExpired)).toEqual({
+          kind: 'steward',
+          posture: 'defend',
+        });
+      }
+    }
+    expect(seatAiDecision(false, 'active_defend', true)).toEqual({
+      kind: 'steward',
+      posture: 'active_defend',
+    });
+  });
+
+  it('a present human with no delegation commands their own chair — no AI', () => {
+    expect(seatAiDecision(true, null, false)).toEqual({ kind: 'none', posture: null });
+    // Even past the grace, a connected player is never displaced by the bot.
+    expect(seatAiDecision(true, null, true)).toEqual({ kind: 'none', posture: null });
+  });
+
+  it('an empty chair waits out the real-time grace before the substitute bot seizes it', () => {
+    // Absent, grace still running (a drop / restart blip / a day or two away) → nobody
+    // drives it; the empire holds its own until the owner returns.
+    expect(seatAiDecision(false, null, false)).toEqual({ kind: 'none', posture: null });
+    // Absent PAST the grace (3 real days by default) → the expansion bot takes over.
+    expect(seatAiDecision(false, null, true)).toEqual({ kind: 'substitute', posture: 'expand' });
   });
 });

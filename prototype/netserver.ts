@@ -41,6 +41,7 @@ import {
   parseNetworkMatchMode,
   SCORE_LIMIT,
   aiOrders,
+  seatAiDecision,
   stewardActive,
   HOUR,
   serverAutoAssaultActions,
@@ -69,12 +70,19 @@ function worthLogging(ev: RoomObservation): boolean {
   }
   return true;
 }
-// BF-17: the AI stand-in must not seize a seat the MOMENT it looks empty. `humans`
-// is in-memory — after a server restart it is empty for everyone, and a mobile
-// network blip drops a live player for seconds — so every "empty" seat gets a grace
-// window (per-seat wall-clock deadline) before the expand-AI starts commanding it.
-// Steward delegation bypasses the grace: handing the seat over was the player's call.
-const AI_GRACE_MS = Number(process.env.AI_GRACE_MS ?? 10 * 60 * 1000);
+// The «заместитель» (substitute) AI must not seize a chair the moment it looks
+// empty. `humans` is in-memory — after a restart it is empty for everyone — and a
+// player is legitimately away for hours or days in a real-time game that runs for
+// weeks. So an empty chair gets a REAL-TIME grace window (per-seat wall-clock
+// deadline) before the expansion bot takes over; the owner reclaims it the instant
+// they reconnect. SES-2.2: the default is 3 real days — being offline overnight (or
+// for a couple of days) leaves your empire holding its own (garrisons defend,
+// standing orders run, and the Steward covers your sleep if you delegated it), not
+// handed to a bot. A Steward delegation bypasses the grace entirely: turning the
+// seat over to your OWN autopilot was your call, not an abandonment (SES-2.2 keeps
+// the two AIs distinct — see `seatAiDecision`). Wall-clock, independent of
+// TIME_SCALE: the ×24 first session still measures absence in real days.
+const AI_GRACE_MS = Number(process.env.AI_GRACE_MS ?? 3 * 24 * 60 * 60 * 1000);
 
 const host = process.env.HOST ?? '127.0.0.1';
 const port = Number(process.env.PORT ?? 8788);
@@ -363,17 +371,17 @@ async function createHostedMatch(id: string): Promise<HostedMatch> {
     if (now - aiLastAt < 2 * HOUR) return;
     aiLastAt = now;
     for (const seat of Object.keys(room.state.players)) {
-      // «Хранитель»: a delegated seat is played by the AI on its posture (defend) even while
-      // its owner is connected but asleep; an unclaimed/empty seat gets the full expansion AI.
+      // The two server AIs are decided by ONE pure rule (SES-2.2, `seatAiDecision`):
+      // «Хранитель» plays a delegated seat on its posture even while the owner is
+      // connected-but-idle; the «заместитель» (expand bot) takes an ABANDONED seat,
+      // but only once its real-time grace has lapsed. A present human with no
+      // delegation commands their own chair (kind 'none').
       const posture = stewardActive(room.state, seat, now);
-      if (humans.has(seat) && !posture) continue; // a human is actively commanding this seat
-      // Grace window (BF-17): an empty seat without an explicit delegation waits for
-      // its human to come back (drop / server restart) before the AI takes the wheel.
-      if (!humans.has(seat) && !posture) {
-        const eligibleAt = aiEligibleAt.get(seat);
-        if (eligibleAt !== undefined && Date.now() < eligibleAt) continue;
-      }
-      for (const action of aiOrders(room.state, seat, posture ?? 'expand')) {
+      const eligibleAt = aiEligibleAt.get(seat);
+      const graceExpired = eligibleAt === undefined || Date.now() >= eligibleAt;
+      const decision = seatAiDecision(humans.has(seat), posture, graceExpired);
+      if (decision.kind === 'none') continue;
+      for (const action of aiOrders(room.state, seat, decision.posture!)) {
         await room.submitServerAction(seat, action);
       }
     }
@@ -542,6 +550,7 @@ const lines = [
     ? `  time   : ×${TIME_SCALE} fast-forward (1 real min ≈ ${(TIME_SCALE / 60).toFixed(1)} game-hours) — playtest mode`
     : '  time   : ×1 real-time (set TIME_SCALE=100 to fast-forward a playtest)',
   `  matches: ${MATCHES} session${MATCHES > 1 ? 's' : ''} in this process (${matchIds.join(', ')}) — set MATCHES=N for more; all listed in the in-game browser`,
+  `  ai     : substitute bot takes an abandoned chair after ${(AI_GRACE_MS / 3_600_000).toFixed(1)}h offline (real time; set AI_GRACE_MS); a delegated Steward runs instantly`,
   NETWORK_MODE === '2v2'
     ? '  mode   : 2v2 team battle — 4 claimable chairs each; empty chairs are AI-driven'
     : NETWORK_MODE === '5v5'
