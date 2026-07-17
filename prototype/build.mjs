@@ -727,6 +727,9 @@ button.b:disabled{opacity:.32;cursor:not-allowed;color:var(--dim);border-color:v
 #stewardbody .st-btn:disabled{opacity:.4;cursor:not-allowed;}
 #stewardbody .st-btn.warn{border-color:#e2a15a;color:#e2a15a;background:rgba(226,161,90,.10);}
 #stewardbody .st-btn.sel{background:rgba(53,214,230,.28);font-weight:700;}
+#stewardbody .st-log{max-height:180px;overflow-y:auto;display:flex;flex-direction:column;gap:4px;font-size:12px;}
+#stewardbody .st-log-line{padding:4px 6px;border-left:2px solid rgba(53,214,230,.35);background:rgba(53,214,230,.05);border-radius:0 6px 6px 0;}
+#stewardbody .st-log-when{opacity:.55;margin-right:4px;}
 #stewardbody .st-note{margin-top:12px;font-size:11px;color:var(--dim);line-height:1.55;}
 /* read-only council header in the tech window */
 .tw-council{margin:0 0 12px;padding:9px 11px;border:1px solid var(--cyan-dim);border-radius:9px;background:rgba(53,214,230,.06);font-size:11.5px;color:var(--cyan);line-height:1.6;}

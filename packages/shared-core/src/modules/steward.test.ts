@@ -3,7 +3,7 @@ import { parseGameData, type GameData } from '../data/schemas';
 import { createKernel } from '../kernel/kernel';
 import { createInitialState, type GameState, type Player } from '../state/gameState';
 import type { Action, ApplyResult, Context } from '../action/types';
-import { stewardActive, stewardModule } from './steward';
+import { stewardActive, stewardModule, MAX_STEWARD_LOG } from './steward';
 
 const HOUR = 3_600_000;
 
@@ -142,5 +142,94 @@ describe('steward module', () => {
 
     expect(stewardActive(state, 'p1', 8 * HOUR - 1)).toBe('defend'); // the last live instant
     expect(stewardActive(state, 'p1', 8 * HOUR)).toBeNull(); // control has returned
+  });
+});
+
+describe('steward.report — the SITREP journal (ST-2.4)', () => {
+  const kernel = createKernel([stewardModule]);
+  const report = (playerId: string, entries: unknown): Action => ({
+    id: `srv:${playerId}:9`,
+    type: 'steward.report',
+    playerId,
+    payload: { entries },
+    issuedAt: 0,
+  });
+  const delegated = (): GameState =>
+    okApply(kernel.applyAction(baseState(), delegate('p1', 'defend', 8 * HOUR), ctx(0))).state;
+
+  it('appends sanitized entries to the journal while a watch is live', () => {
+    const r = okApply(
+      kernel.applyAction(
+        delegated(),
+        report('p1', [
+          { at: HOUR, kind: 'evac', node: 'A', to: 'B', count: 2, fraction: 0.8, junk: { x: 1 } },
+        ]),
+        ctx(HOUR),
+      ),
+    );
+    // Only the known scalar fields ride into state — nothing else from the payload.
+    expect(r.state.players.p1?.stewardLog).toEqual([
+      { at: HOUR, kind: 'evac', node: 'A', to: 'B', count: 2, fraction: 0.8 },
+    ]);
+    expect(r.events).toContainEqual({
+      type: 'steward.reported',
+      payload: { playerId: 'p1', count: 1 },
+    });
+  });
+
+  it('only a live watch reports: no delegation → E_NOT_DELEGATED', () => {
+    expect(
+      kernel.applyAction(baseState(), report('p1', [{ at: 0, kind: 'hold' }]), ctx(HOUR)),
+    ).toEqual({ ok: false, code: 'E_NOT_DELEGATED' });
+  });
+
+  it('rejects a malformed report WHOLE — one bad entry applies nothing (fail-secure)', () => {
+    const bad = [
+      { at: HOUR, kind: 'hold', node: 'A' }, // fine
+      { at: HOUR, kind: '', node: 'A' }, // empty kind — invalid
+    ];
+    expect(kernel.applyAction(delegated(), report('p1', bad), ctx(HOUR))).toEqual({
+      ok: false,
+      code: 'E_BAD_PAYLOAD',
+    });
+    expect(kernel.applyAction(delegated(), report('p1', []), ctx(HOUR))).toEqual({
+      ok: false,
+      code: 'E_BAD_PAYLOAD',
+    });
+    expect(
+      kernel.applyAction(delegated(), report('p1', [{ at: Infinity, kind: 'hold' }]), ctx(HOUR)),
+    ).toEqual({ ok: false, code: 'E_BAD_PAYLOAD' });
+  });
+
+  it('caps the journal FIFO: the oldest lines fall off, the newest stay', () => {
+    let state = delegated();
+    for (let batch = 0; batch < 3; batch++) {
+      const entries = Array.from({ length: 20 }, (_, i) => ({
+        at: batch * 100 + i,
+        kind: 'hold',
+        node: `n${batch * 20 + i}`,
+      }));
+      state = okApply(kernel.applyAction(state, report('p1', entries), ctx(HOUR))).state;
+    }
+    const log = state.players.p1?.stewardLog ?? [];
+    expect(log).toHaveLength(MAX_STEWARD_LOG);
+    expect(log[log.length - 1]?.node).toBe('n59'); // newest kept
+    expect(log[0]?.node).toBe('n10'); // 60 written − 50 cap → first 10 dropped
+  });
+
+  it('the journal survives expiry (the morning report is read AFTER the watch) and a new watch resets it', () => {
+    let state = okApply(
+      kernel.applyAction(delegated(), report('p1', [{ at: HOUR, kind: 'hold', node: 'A' }]), ctx(HOUR)),
+    ).state;
+    // The watch lapses — the delegation record goes, the journal STAYS.
+    const expired = kernel.advanceTo(state, ctx(10 * HOUR));
+    if (!expired.ok) throw new Error(expired.code);
+    expect(expired.state.players.p1?.steward).toBeUndefined();
+    expect(expired.state.players.p1?.stewardLog).toHaveLength(1);
+    // A fresh delegation starts a fresh journal.
+    state = okApply(
+      kernel.applyAction(expired.state, delegate('p1', 'defend', 20 * HOUR), ctx(10 * HOUR)),
+    ).state;
+    expect(state.players.p1?.stewardLog).toBeUndefined();
   });
 });

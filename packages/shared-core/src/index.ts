@@ -34,6 +34,7 @@ export {
   type ActiveResearch,
   type PlayerTechnologyState,
   type StewardState,
+  type StewardLogEntry,
   type ResourceBag,
   type PlayerId,
   type PlanetId,
@@ -290,6 +291,7 @@ export {
   stewardActive,
   STEWARD_POSTURES,
   STEWARD_LOSS_LIMIT,
+  MAX_STEWARD_LOG,
   type StewardPosture,
 } from './modules/steward';
 export { effectsModule, type EffectImpl, type EffectOccurrence } from './modules/effects';

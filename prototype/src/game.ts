@@ -65,6 +65,7 @@ import {
   type Fleet,
   type UnitStack,
   type Player,
+  type StewardLogEntry,
   type Action,
   type Context,
   type DomainEvent,
@@ -3624,6 +3625,26 @@ export function stewardGuardOrders(
 ): Action[] {
   const out: Action[] = [];
   const c = ctx(state.time);
+  // SITREP (ST-2.4): every decision below is journaled and stamped as ONE
+  // trailing `steward.report` — the morning report the sleeping owner reads.
+  const report: StewardLogEntry[] = [];
+  const frac = (x: number): number => Math.round(x * 1000) / 1000;
+  // Repeat-prone facts (hold/stranded re-derive every 2h tick) are stamped once
+  // per EPISODE: skipped while the node's latest journal line already says the
+  // same thing. The journal lives in state, so the check survives the stateless
+  // re-tick; any different entry for the node reopens the episode.
+  const lastLogged = (node: string): string | undefined => {
+    const log = state.players[ai]?.stewardLog;
+    if (!log) return undefined;
+    for (let i = log.length - 1; i >= 0; i--) {
+      if (log[i]!.node === node) return log[i]!.kind;
+    }
+    return undefined;
+  };
+  const noteOnce = (entry: StewardLogEntry): void => {
+    if (entry.node !== undefined && lastLogged(entry.node) === entry.kind) return;
+    report.push(entry);
+  };
   const identified = identifiedNodes(state, ai, data);
   const mine = Object.values(state.planets).filter((p) => p.owner === ai);
   // Threat scans are per-node; cache them — the haven search re-reads them.
@@ -3672,19 +3693,32 @@ export function stewardGuardOrders(
       // damaged wing into one its forecast declined («держим, но не
       // кровоточим»). One engager, one order — the victor chain does the rest;
       // the fight happens where the wing stands: own territory only.
-      if (posture !== 'active_defend') continue;
+      const holdEntry: StewardLogEntry = {
+        at: state.time,
+        kind: 'hold',
+        node: p.id,
+        fraction: frac(stand.defender.damageFraction),
+      };
+      if (posture !== 'active_defend') {
+        noteOnce(holdEntry);
+        continue;
+      }
       const ladder: Fleet[] = [];
       for (const t of threats) {
         if (t.kind !== 'present') continue;
         const tf = state.fleets[t.fleetId];
         if (tf && !tf.battleId) ladder.push(tf);
       }
-      if (ladder.length === 0) continue;
+      if (ladder.length === 0) {
+        noteOnce(holdEntry);
+        continue;
+      }
       const byStrength = [...docked].sort(
         (a, b) =>
           hullPool(b.units, data) - hullPool(a.units, data) ||
           (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
       );
+      let engaged = false;
       for (const f of byStrength) {
         if (tasked.has(f.id)) continue;
         let wing = f.units;
@@ -3699,11 +3733,22 @@ export function stewardGuardOrders(
         }
         const before = hullPool(f.units, data);
         if (!clears || before <= 0) continue;
-        if (1 - hullPool(wing, data) / before >= STEWARD_LOSS_LIMIT) continue;
+        const ladderFraction = 1 - hullPool(wing, data) / before;
+        if (ladderFraction >= STEWARD_LOSS_LIMIT) continue;
         out.push(engageFleet(ai, f.id, ladder[0]!.id));
         tasked.add(f.id);
+        engaged = true;
+        report.push({
+          at: state.time,
+          kind: 'strike',
+          node: p.id,
+          fleetId: f.id,
+          count: ladder.length,
+          fraction: frac(ladderFraction),
+        });
         break;
       }
+      if (!engaged) noteOnce(holdEntry);
       continue;
     }
     // Bad trade — evacuate to the nearest reachable own world nothing bears on.
@@ -3719,7 +3764,17 @@ export function stewardGuardOrders(
         haven = q.id;
       }
     }
-    if (haven === null) continue; // nowhere safer — stand and fight
+    if (haven === null) {
+      // Nowhere safer — a FORCED stand; the bad fraction in the entry tells the
+      // owner why the wing stayed put.
+      noteOnce({
+        at: state.time,
+        kind: 'hold',
+        node: p.id,
+        fraction: frac(stand.defender.damageFraction),
+      });
+      continue;
+    }
     const earliest = threats[0]!.eta;
     const assaulted = garrisonUnderAssault(state, p.id);
     // What the garrison still holds after the loads planned below (state is
@@ -3755,6 +3810,16 @@ export function stewardGuardOrders(
       out.push(moveFleet(ai, f.id, haven));
       tasked.add(f.id);
     }
+    if (docked.length > 0) {
+      report.push({
+        at: state.time,
+        kind: 'evac',
+        node: p.id,
+        to: haven,
+        count: docked.length,
+        fraction: frac(stand.defender.damageFraction),
+      });
+    }
     // Garrison still stranded → summon the nearest idle transport with a free
     // hold, but only when it beats the threat with one AI tick (2h) to spare —
     // a transport that would arrive into the assault is not sent at all.
@@ -3782,6 +3847,16 @@ export function stewardGuardOrders(
       if (ferry) {
         out.push(moveFleet(ai, ferry.id, p.id));
         tasked.add(ferry.id);
+        report.push({ at: state.time, kind: 'ferry', node: p.id, fleetId: ferry.id });
+      } else {
+        // Liftable troops remain, no help is coming this tick — the owner should
+        // wake up to «гарнизон не спасти», not to silence. Once per episode.
+        noteOnce({
+          at: state.time,
+          kind: 'stranded',
+          node: p.id,
+          fraction: frac(stand.defender.damageFraction),
+        });
       }
     }
   }
@@ -3796,8 +3871,13 @@ export function stewardGuardOrders(
       if (!idleOwn(f) || !fleetHasSquadron(f) || patrols?.[f.id]) continue;
       if (state.planets[f.location!]?.owner !== ai) continue;
       out.push(orderScramble(ai, f.id, true));
+      report.push({ at: state.time, kind: 'watch', node: f.location!, fleetId: f.id });
     }
   }
+  // The SITREP stamp rides LAST: it narrates the orders above. Applied through
+  // the same kernel path (steward.report — server-driver-only, gate refuses it
+  // from the wire), so the journal lands in state and survives the night.
+  if (report.length > 0) out.push(act(ai, 'steward.report', { entries: report }));
   return out;
 }
 
