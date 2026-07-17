@@ -9,6 +9,7 @@ import {
   newGame,
   advance,
   order,
+  ctx,
   data,
   MAP,
   SECTOR_TYPES,
@@ -116,6 +117,8 @@ import {
   planRoute,
   previewBattle,
   previewLossCount,
+  scanNodeThreats,
+  identifiedNodes,
   thresholdRamp,
   type PausedConstructionSite,
 } from '../../packages/shared-core/src/index';
@@ -894,6 +897,41 @@ function drawScanSweep(now: number) {
     cx.stroke();
   }
   cx.restore();
+}
+
+// --- threat alert (THREAT-HUD): «враг у ваших рубежей» ------------------------
+// The same fog-honest node-threat tripwire the Steward keys off (ST-3.1,
+// scanNodeThreats), surfaced to the LIVE player: one note per (node, fleet)
+// EPISODE — a camping fleet doesn't re-toast every step, a fresh approach after
+// the episode ended alerts again (the radarMemory pattern). Runs once per game
+// STEP (s.time guard), not per frame; NET is naturally fog-clean — the fogged
+// state only ever holds fleets the player may see.
+const threatMemory = new Set<string>();
+let threatScanAt = -1;
+function updateThreatAlerts(): void {
+  if (s.time === threatScanAt) return;
+  threatScanAt = s.time;
+  if (s.players[ME]?.status !== 'active') return;
+  const c = ctx(s.time);
+  const identified = identifiedNodes(s, ME, data);
+  const live = new Set<string>();
+  for (const p of Object.values(s.planets)) {
+    if (p.owner !== ME) continue;
+    for (const th of scanNodeThreats(s, p.id, ME, c, identified)) {
+      const key = `${p.id}|${th.fleetId}`;
+      live.add(key);
+      if (threatMemory.has(key)) continue;
+      threatMemory.add(key);
+      note(
+        th.kind === 'inbound' && th.eta > s.time
+          ? t('⚠ Враг идёт к {node}: прибытие через {dur}', { node: p.id, dur: stewFmtDur(th.eta - s.time) })
+          : t('⚠ Враг у {node}!', { node: p.id }),
+        p.id,
+      );
+    }
+  }
+  // Episodes that ended are forgotten — a NEW approach to the node re-alerts.
+  for (const k of threatMemory) if (!live.has(k)) threatMemory.delete(k);
 }
 
 /** Did the sweep arm cross screen-angle `target` between last frame and this one? */
@@ -3386,6 +3424,7 @@ function render(now: number) {
   drawCaptureFlashes(now); // wave over a just-flipped province, over the political fill
   drawScanSweep(now); // slow radar sweep — pure console chrome
   updateRadarContacts(now); // the arm paints enemy signatures as it crosses them
+  updateThreatAlerts(); // «враг у ваших рубежей» — once per game step
   drawRadarCoverage(); // my sensor reach (radar arrays + ships)
 
   drawFleetRoutes();
@@ -4604,11 +4643,13 @@ function fleetPanelHtml(f: Fleet): string {
             : pv.outcome === 'defender'
               ? t('гарнизон устоит')
               : t('затяжной пат');
-        at += `<div class="row dim">${t('Прогноз штурма: {v} · ~{r} р. · потери {a} дес. / {d} гарн.', {
+        at += `<div class="row dim">${t('Прогноз штурма: {v} · ~{r} р. · потери {a} дес. ({pa}%) / {d} гарн. ({pd}%)', {
           v: `<b>${verdict}</b>`,
           r: pv.roundsEst,
           a: previewLossCount(pv.attacker),
+          pa: Math.round(pv.attacker.damageFraction * 100),
           d: previewLossCount(pv.defender),
+          pd: Math.round(pv.defender.damageFraction * 100),
         })}</div>`;
         at += `<div class="hint">${t('Прогноз по видимым составам, без бонусов местности, укреплений и технологий — реальный бой может отличаться.')}</div>`;
       }
