@@ -10116,6 +10116,11 @@ function frame(nowReal: number) {
     pumpBuildQueues();
     closeIdleRallies(); // drop the 'rally' tag once a world's build pipeline empties
   }
+  // Aimed ШТУРМ resolves in net too: the server drives fleet travel and the arrival
+  // battle, and the client issues the ground assault once the fleet is parked on the
+  // target world. (Solo pumps it inside the sim block above; in both modes assaultOnArrival
+  // stays empty until a ШТУРМ is actually aimed, so this is a no-op otherwise.)
+  if (NET) pumpAssaultOrders();
   updateGoals(); // ONB-7: tick the first-session checklist off live state (no-op when idle)
   // The orbit spin only advances while the world is actually running (sim ticking, or a
   // live net match), so pausing freezes the ships on their rings instead of drifting on.
