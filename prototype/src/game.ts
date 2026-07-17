@@ -3602,6 +3602,13 @@ const liftable = (unit: string): boolean => {
   return !!def && def.domain === 'ground' && !def.traits.includes('immobile');
 };
 
+/** Anti-shuttle cooldown (ST-3.4), game-hours: after the Steward evacuates X→Y,
+ *  the REVERSE trip Y→X is off the haven list for this long — an enemy poking
+ *  two nodes alternately must not make the wing челночить between them forever
+ *  (each leg it defends nothing and a lane camper can catch it in the open).
+ *  With no other haven the wing STANDS instead — a fight beats eternal transit. */
+const EVAC_RETURN_COOLDOWN_H = 12;
+
 /**
  * One guard-duty tick of the Steward for a delegated seat (posture «Оборона»,
  * ST-3.2 / steward-roadmap §ST-3): for every owned world a VISIBLE hostile
@@ -3752,10 +3759,25 @@ export function stewardGuardOrders(
       continue;
     }
     // Bad trade — evacuate to the nearest reachable own world nothing bears on.
+    // Anti-shuttle hysteresis (ST-3.4): a candidate we RECENTLY fled FROM into
+    // this very node is the shuttle's return leg — journaled evacuations
+    // (state-resident, so the check survives the stateless re-tick) block it
+    // for EVAC_RETURN_COOLDOWN_H game-hours.
+    const returnBlocked = (candidate: string): boolean => {
+      const log = state.players[ai]?.stewardLog;
+      if (!log) return false;
+      const horizon = hoursToMs(c, EVAC_RETURN_COOLDOWN_H);
+      for (let i = log.length - 1; i >= 0; i--) {
+        const e = log[i]!;
+        if (e.kind !== 'evac' || e.node !== candidate || e.to !== p.id) continue;
+        if (state.time - e.at < horizon) return true;
+      }
+      return false;
+    };
     let haven: string | null = null;
     let havenDist = Infinity;
     for (const q of mine) {
-      if (q.id === p.id || threatsOf(q.id).length > 0) continue;
+      if (q.id === p.id || threatsOf(q.id).length > 0 || returnBlocked(q.id)) continue;
       const route = planRoute(state, p.id, q.id);
       if (!route) continue;
       const dist = routeDistance(state, p.id, route);
