@@ -220,3 +220,73 @@ describe('REL-5 · seat lock (nick + ticket)', () => {
     }
   });
 });
+
+describe('SES-2.3 · entry window (admitNewSeat)', () => {
+  it('seat-lock path: a closed window refuses a NEW nick (403) but a seated nick reconnects', async () => {
+    let open = true;
+    const server = createMultiplayerServer({
+      room: makeRoom(),
+      accountStore: new MemoryAccountStore(),
+      seatLock: true,
+      admitNewSeat: () => open,
+    });
+    const url = await server.listen();
+    try {
+      // While the window is open, alice claims a seat + gets her ticket.
+      const alice = await join(`${url}?nick=alice`);
+      const ticket = alice.welcome.seatTicket ?? '';
+      const seat = alice.welcome.playerId;
+      alice.ws.close();
+      await once(alice.ws, 'close');
+      // Window closes: a brand-new nick is refused BEFORE any seat is assigned.
+      open = false;
+      expect(await rejectStatus(`${url}?nick=bob`)).toBe(403);
+      // …and bob never burned a chair, so the room still has a free seat (would be 403,
+      // not 409). Meanwhile alice — already seated — reconnects with her ticket.
+      const again = await join(`${url}?nick=alice&ticket=${encodeURIComponent(ticket)}`);
+      expect(again.welcome.playerId).toBe(seat);
+      again.ws.close();
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('dev nick path (no lock): a closed window refuses a first-time nick, admits a returning one', async () => {
+    let open = true;
+    const store = new MemoryAccountStore();
+    const server = createMultiplayerServer({
+      room: makeRoom(),
+      accountStore: store,
+      admitNewSeat: () => open,
+    });
+    const url = await server.listen();
+    try {
+      const alice = await join(`${url}?nick=alice`);
+      const seat = alice.welcome.playerId;
+      alice.ws.close();
+      await once(alice.ws, 'close');
+      open = false;
+      expect(await rejectStatus(`${url}?nick=bob`)).toBe(403); // first-time claim, window shut
+      const again = await join(`${url}?nick=alice`); // already a participant → admitted
+      expect(again.welcome.playerId).toBe(seat);
+      again.ws.close();
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('no admitNewSeat ⇒ every join allowed (backward-compatible)', async () => {
+    const server = createMultiplayerServer({
+      room: makeRoom(),
+      accountStore: new MemoryAccountStore(),
+    });
+    const url = await server.listen();
+    try {
+      const a = await join(`${url}?nick=alice`);
+      expect(a.welcome.playerId).toBeDefined();
+      a.ws.close();
+    } finally {
+      await server.close();
+    }
+  });
+});

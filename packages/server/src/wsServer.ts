@@ -49,6 +49,14 @@ export interface MultiplayerServerOptions {
    *  on its owner's next join. Requires `accountStore`; meaningless under `auth`
    *  (the join token is already the identity there). */
   seatLock?: boolean;
+  /** Entry window (SES-2.3): may a NEW player still claim a free seat in this match?
+   *  Called ONLY on a nick-login that would take a seat the nick does not already hold
+   *  (a first-time claim); a RECONNECT — a nick whose seat exists (`accountStore.seatOf`)
+   *  — is never gated, so a seated player always gets back in. Returns false ⇒ the
+   *  upgrade is refused (403) BEFORE any seat is assigned, so a rejected newcomer never
+   *  consumes a chair. Absent ⇒ no window (every join allowed). The direct `?player=`
+   *  dev handshake carries no nick and is not gated. */
+  admitNewSeat?: (matchId: string) => boolean | Promise<boolean>;
   /** Origin allowlist (CSWSH defense, F-06). When set, an upgrade whose `Origin` header is
    *  not in the list is rejected (403) before any work. Absent ⇒ no Origin check (dev).
    *  Should ship WITH `auth`: a token gates identity, the Origin check gates which sites
@@ -251,6 +259,16 @@ export function createMultiplayerServer(
             rejectUpgrade(socket, 401);
             return;
           }
+          // Entry window (SES-2.3): a nick that does NOT already hold a seat is a
+          // first-time claim — refuse it once the window has closed, BEFORE resolveSeat
+          // assigns (so a rejected newcomer never binds/burns a chair). A returning
+          // seat-holder skips this and reconnects as always.
+          if (options.admitNewSeat && !(await accountStore.seatOf(room.id, nick))) {
+            if (!(await options.admitNewSeat(room.id))) {
+              rejectUpgrade(socket, 403);
+              return;
+            }
+          }
           const seats = Object.keys(room.state.players) as PlayerId[];
           const seat = await accountStore.resolveSeat(room.id, nick, seats);
           if (!seat) {
@@ -286,6 +304,14 @@ export function createMultiplayerServer(
           playerId = url.searchParams.get('player') ?? '';
           const nick = url.searchParams.get('nick');
           if (!playerId && nick && accountStore) {
+            // Entry window (SES-2.3), same gate as the seat-lock path: a first-time nick
+            // is refused once the window closed; a returning seat-holder is not.
+            if (options.admitNewSeat && !(await accountStore.seatOf(room.id, nick))) {
+              if (!(await options.admitNewSeat(room.id))) {
+                rejectUpgrade(socket, 403);
+                return;
+              }
+            }
             const seats = Object.keys(room.state.players) as PlayerId[];
             const seat = await accountStore.resolveSeat(room.id, nick, seats);
             if (!seat) {

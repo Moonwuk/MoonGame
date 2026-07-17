@@ -84,6 +84,16 @@ function worthLogging(ev: RoomObservation): boolean {
 // TIME_SCALE: the ×24 first session still measures absence in real days.
 const AI_GRACE_MS = Number(process.env.AI_GRACE_MS ?? 3 * 24 * 60 * 60 * 1000);
 
+// Entry window (SES-2.3): how long, in REAL time from a session's creation, a NEW
+// player may still claim a free seat. After it closes the session runs to its end
+// with whoever is in it — a latecomer can't parachute into a game already days deep
+// (Iron Order model). A player who ALREADY holds a seat reconnects at any time; this
+// gates only first-time claims. Default 4 real days; env-configurable. Measured off
+// the world clock (`state.time / TIME_SCALE`, see MatchRegistry.entryOpen) so it
+// survives a restart and honours the session's time scale — on the ×24 first session
+// 4 real days is 96 game-days, i.e. effectively the whole match.
+const ENTRY_WINDOW_MS = Number(process.env.ENTRY_WINDOW_MS ?? 4 * 24 * 60 * 60 * 1000);
+
 const host = process.env.HOST ?? '127.0.0.1';
 const port = Number(process.env.PORT ?? 8788);
 // Playtest fast-forward: wall→game clock multiplier. TIME_SCALE=100 ⇒ a real minute
@@ -476,6 +486,8 @@ for (const h of hosted) {
     rules: { timeScale: TIME_SCALE },
     createdAt: Date.now(),
     startedAt: h.room.state.time,
+    entryWindowMs: ENTRY_WINDOW_MS, // SES-2.3: a NEW player may claim a free seat only
+    // within this real-time window from the session's creation (see AI note below).
   });
 }
 const server = createMultiplayerServer({
@@ -485,6 +497,10 @@ const server = createMultiplayerServer({
   indexHtml,
   accountStore, // `?nick=` WS login resolves its seat here
   seatLock: SEAT_LOCK, // REL-5: nick+ticket identity; `?player=` refused when on
+  // Entry window (SES-2.3): the transport refuses a FIRST-time nick once the session's
+  // window has closed (a returning seat-holder always reconnects). Same window the
+  // browser feed uses to keep a closed session out of «Доступные».
+  admitNewSeat: (matchId) => registry.entryOpen(matchId),
   // The match-browser read-model + archive intents (GET /matches, POST …/archive),
   // plus the dev client at `/dev` when the player build owns `/` (same no-store
   // headers as `/` — a stale dev client is as confusing as a stale player one).
@@ -551,6 +567,7 @@ const lines = [
     : '  time   : ×1 real-time (set TIME_SCALE=100 to fast-forward a playtest)',
   `  matches: ${MATCHES} session${MATCHES > 1 ? 's' : ''} in this process (${matchIds.join(', ')}) — set MATCHES=N for more; all listed in the in-game browser`,
   `  ai     : substitute bot takes an abandoned chair after ${(AI_GRACE_MS / 3_600_000).toFixed(1)}h offline (real time; set AI_GRACE_MS); a delegated Steward runs instantly`,
+  `  join   : a NEW player may claim a free seat for ${(ENTRY_WINDOW_MS / 86_400_000).toFixed(1)} real days from a session's creation (set ENTRY_WINDOW_MS); a seated player reconnects any time`,
   NETWORK_MODE === '2v2'
     ? '  mode   : 2v2 team battle — 4 claimable chairs each; empty chairs are AI-driven'
     : NETWORK_MODE === '5v5'

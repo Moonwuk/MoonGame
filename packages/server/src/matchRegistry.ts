@@ -26,6 +26,14 @@ export interface MatchMeta {
    *  that start at time 0); dev matches start at the boot instant, so without this the
    *  day count would be days-since-epoch, not days-since-start. */
   startedAt?: number;
+  /** Entry window (SES-2.3): how long a NEW player may still claim a free seat, in
+   *  REAL milliseconds since the session was created. Absent ⇒ no window (always
+   *  joinable — the default for dev / test matches). The prototype host sets it (4
+   *  real days). Measured as `state.time / rules.timeScale` (real world-uptime — see
+   *  {@link MatchRegistry.entryOpen}), so it survives a restart and honours the
+   *  session's time scale. A RECONNECT (a nick already holding a seat) is never
+   *  gated — only a first-time claim. */
+  entryWindowMs?: number;
   /** Nicks that have moved this match to their OWN archive — PER-PLAYER, not global:
    *  archiving only hides the match from that one player's Available/Active tabs. */
   archivedBy?: Set<string>;
@@ -43,6 +51,13 @@ export interface MatchSummary {
   /** Simulation status (NOT the archive flag, which is per-viewer). */
   status: 'ongoing' | 'ended';
   createdAt: number;
+  /** Entry window (SES-2.3): can a NEW player still claim a free seat here? True when
+   *  no window is configured. A closed window keeps the match out of `available` even
+   *  if it has free seats (you cannot join it any more — only the seated may return). */
+  entryOpen: boolean;
+  /** Real ms until the entry window closes (0 once closed; a large sentinel when no
+   *  window is configured) — for the browser to show «вход открыт ещё …». */
+  entryClosesInMs: number;
 }
 
 /** The three browser tabs, projected for one viewer (by nick). */
@@ -82,8 +97,34 @@ export class MatchRegistry {
     return [...this.entries.keys()];
   }
 
+  /** Real ms the session has been running, from its game clock: `state.time` is game
+   *  time accrued from creation (the prototype host starts every session at game-time
+   *  0), and `rules.timeScale` is the wall→game multiplier, so `state.time / timeScale`
+   *  is real elapsed world-uptime. It resumes from the persisted `state.time` after a
+   *  restart (the entry window can't be reopened by bouncing the server) and pauses
+   *  while a session is hibernated (idle) — the window measures real time the world
+   *  actually ran, which is what «сессия открыта N дней» means. */
+  private realAgeMs(entry: Entry): number {
+    const scale =
+      entry.meta.rules.timeScale && entry.meta.rules.timeScale > 0 ? entry.meta.rules.timeScale : 1;
+    return entry.room.state.time / scale;
+  }
+
+  /** SES-2.3: may a NEW player still claim a free seat in this match? An unknown match
+   *  is closed (fail-secure — you cannot claim a seat in a match that isn't here). No
+   *  `entryWindowMs` ⇒ always open (dev / test default). A RECONNECT is decided by the
+   *  caller (a nick already holding a seat) and never reaches this gate. */
+  entryOpen(matchId: string): boolean {
+    const entry = this.entries.get(matchId);
+    if (!entry) return false;
+    if (entry.meta.entryWindowMs === undefined) return true;
+    return this.realAgeMs(entry) < entry.meta.entryWindowMs;
+  }
+
   private async summary(entry: Entry): Promise<MatchSummary> {
     const st = entry.room.state;
+    const window = entry.meta.entryWindowMs;
+    const open = window === undefined || this.realAgeMs(entry) < window;
     return {
       matchId: entry.room.id,
       mapId: entry.meta.mapId,
@@ -95,6 +136,9 @@ export class MatchRegistry {
       },
       status: st.match.status,
       createdAt: entry.meta.createdAt,
+      entryOpen: open,
+      entryClosesInMs:
+        window === undefined ? Number.MAX_SAFE_INTEGER : Math.max(0, window - this.realAgeMs(entry)),
     };
   }
 
@@ -116,8 +160,16 @@ export class MatchRegistry {
       }
       const seat = nick ? await this.accounts.seatOf(entry.room.id, nick) : null;
       if (seat) {
+        // A seated player keeps their match on Active regardless of the entry window —
+        // the window only gates NEW claims, never a return to a seat you already hold.
         out.active.push(sum);
-      } else if (sum.status !== 'ended' && sum.players.seated < sum.players.capacity) {
+      } else if (
+        sum.status !== 'ended' &&
+        sum.players.seated < sum.players.capacity &&
+        sum.entryOpen
+      ) {
+        // Joinable only while the entry window is still open (SES-2.3): a closed-window
+        // match with free seats is no longer offered to newcomers.
         out.available.push(sum);
       }
     }
