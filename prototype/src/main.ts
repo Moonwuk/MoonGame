@@ -4403,7 +4403,7 @@ function conveyorHtml(planetId: string, lane: BuildLane): string {
 function buildButtons(_planetId: string, ids: string[], kind: 'building' | 'unit'): string {
   const k = kind === 'unit' ? 'u' : 'b';
   const tiles = ids
-    .map((id) => codexTile(k, id, cost(kind === 'unit' ? data.units[id]?.cost : data.buildings[id]?.cost)))
+    .map((id) => codexTile(k, id, cost(kind === 'unit' ? data.units[id]?.cost : data.buildings[id]?.cost), true))
     .join('');
   return tiles ? `<div class="ptiles">${tiles}</div>` : '';
 }
@@ -4787,9 +4787,12 @@ function planetPanelHtml(p: Planet): string {
           buildButtons(p.id, shipBuilds, 'unit'),
       );
     }
-    cols.push(
-      `<div class="hint">${t('Построенные корабли сперва встают в гарнизон; запуск создаёт мобильный флот.')}</div>`,
-    );
+    if (!pcUi()) {
+      // PC carries this in the ФЛОТ tab's hover dossier ('tab:ships')
+      cols.push(
+        `<div class="hint">${t('Построенные корабли сперва встают в гарнизон; запуск создаёт мобильный флот.')}</div>`,
+      );
+    }
   } else if (planetTab === 'squadron') {
     if (wing.length) {
       cols.push(`<div class="sec">${t('Авиагруппа в гарнизоне')}</div>` + unitRows(wing));
@@ -4802,9 +4805,12 @@ function planetPanelHtml(p: Planet): string {
           buildButtons(p.id, wingBuilds, 'unit'),
       );
     }
-    cols.push(
-      `<div class="hint">${t('Носитель (◈) несёт эскадрильи (△). Запускайте авиагруппу из панели выбранного флота кнопкой «🛩 Запустить эскадрилью».')}</div>`,
-    );
+    if (!pcUi()) {
+      // PC carries this in the КРЫЛЬЯ tab's hover dossier ('tab:squadron')
+      cols.push(
+        `<div class="hint">${t('Носитель (◈) несёт эскадрильи (△). Запускайте авиагруппу из панели выбранного флота кнопкой «🛩 Запустить эскадрилью».')}</div>`,
+      );
+    }
   } else {
     cols.push(
       `<div class="sec">${t('Строительный конвейер')}</div>` +
@@ -5733,11 +5739,14 @@ function scrollFeedToEnd(): void {
  *  tiles live in context — building tiles in the build menu, ship tiles in the fleet
  *  panel — not in a global HUD strip. The LOCALIZED name rides both the desktop
  *  `title` (hover tooltip) and `data-name` — the mobile long-press bubble reads it. */
-function codexTile(kind: 'b' | 'u', id: string, label: string): string {
+function codexTile(kind: 'b' | 'u', id: string, label: string, orderable = false): string {
   if (!(kind === 'b' ? data.buildings[id] : data.units[id])) return '';
   const icon = kind === 'b' ? BUILD_ICON[id] ?? '▣' : unitIcon(id);
   const name = kind === 'b' ? buildingName(id) : unitDossier(id)?.name ?? displayUnit(id);
-  return `<button class="ptile" data-codex="${kind}:${id}" data-desc="${kind}:${id}" data-name="${esc(name)}" title="${esc(name)} — ${t('тап — полное досье')}"><span class="pt-ic">${icon}</span><span class="pt-c">${esc(label)}</span></button>`;
+  // Build-menu tiles carry the enqueue order (PC right-click = build w/o the codex
+  // confirmation); composition/garrison tiles don't — right-click is inert there.
+  const order = orderable ? ` data-buildorder="${kind === 'u' ? 'unit' : 'building'}:${id}"` : '';
+  return `<button class="ptile" data-codex="${kind}:${id}" data-desc="${kind}:${id}"${order} data-name="${esc(name)}" title="${esc(name)} — ${t('тап — полное досье')}"><span class="pt-ic">${icon}</span><span class="pt-c">${esc(label)}</span></button>`;
 }
 /** Ground-garrison tiles (the ЗЕМЛЯ tab): one flowing row of icon·count chips — no
  *  names; the hover dossier (PC) / tap dossier (touch) carries the identification. */
@@ -6397,6 +6406,28 @@ side.addEventListener('pointerleave', () => {
     hoverObj = null;
     renderObjDesc();
   }
+});
+
+// PC: right-click on a build tile orders it immediately — same enqueue path as the
+// codex «Построить здесь» button, minus the confirmation window (left-click keeps
+// opening the full dossier). The browser context menu is suppressed on these tiles.
+side.addEventListener('contextmenu', (ev) => {
+  if (!pcUi()) return;
+  const tile = (ev.target as HTMLElement).closest('[data-buildorder]') as HTMLElement | null;
+  if (!tile) return;
+  ev.preventDefault();
+  const [kind, id] = (tile.dataset.buildorder ?? '').split(':');
+  if (!kind || !id || !selPlanet) return;
+  const p = s.planets[selPlanet];
+  if (!p || p.owner !== ME) return;
+  if (kind === 'building') {
+    // mirror codexBuildBtn's gates: the sector must allow it, one copy per world
+    const buildable = (SECTOR_TYPES[SECTOR_OF[p.id]]?.allowedBuildings ?? BUILDABLE).includes(id);
+    if (!buildable || p.buildings.some((b) => b.type === id)) return;
+  }
+  enqueueBuild(selPlanet, { kind: kind as BuildKind, id, count: 1 });
+  lastPanelHtml = '';
+  renderPanel();
 });
 
 // Mobile long-press on a codex tile (.ptile): touch has no hover, so the desktop
