@@ -4236,17 +4236,19 @@ function render(now: number) {
     }
     cx.restore();
 
-    // cargo glued to the tail (behind the base, following the heading): diamonds
-    // first (carried divisions, then hold squadrons — «ромбик размером с квадратик»),
-    // then squares (ground troops). A loading pip (~1h) fills up in place; a loading
-    // SQUADRON fills as a growing diamond. Cell centres ride the rotated baseline,
-    // the pips themselves stay upright.
+    // cargo glued to the tail (behind the base, following the heading), SPLIT by
+    // shape so counts read at a glance: row 1 — only diamonds (carried divisions,
+    // hold squadrons — «ромбик размером с квадратик»), row 2 — only squares (ground
+    // troops). A loading pip (~1h) fills up in place inside its shape's row. Cell
+    // centres ride the rotated baseline, the pips themselves stay upright.
     const loads = pendingLoads.filter((p) => p.fleetId === f.id); // empty for enemy/idle fleets
-    const cargo: { kind: 'div' | 'wing' | 'troop' | 'load'; load?: PendingLoad }[] = [];
-    for (let i = 0; i < (carriedDivCount[f.id] ?? 0); i++) cargo.push({ kind: 'div' });
-    for (let i = 0; i < wingPips; i++) cargo.push({ kind: 'wing' });
-    for (let i = 0; i < troops; i++) cargo.push({ kind: 'troop' });
-    for (const p of loads) cargo.push({ kind: 'load', load: p });
+    type CargoPip = { kind: 'div' | 'wing' | 'troop' | 'load'; load?: PendingLoad };
+    const diaRow: CargoPip[] = []; // ромбы: дивизии + эскадрильи в трюме
+    const sqRow: CargoPip[] = []; // квадраты: десант
+    for (let i = 0; i < (carriedDivCount[f.id] ?? 0); i++) diaRow.push({ kind: 'div' });
+    for (let i = 0; i < wingPips; i++) diaRow.push({ kind: 'wing' });
+    for (let i = 0; i < troops; i++) sqRow.push({ kind: 'troop' });
+    for (const p of loads) (isSquadron(p.unit) ? diaRow : sqRow).push({ kind: 'load', load: p });
     // The same rotation the pyramid uses; local +y = the tail. Pips and the ship
     // count are placed through this, drawn upright at their rotated spots.
     const th = A.ang + Math.PI / 2;
@@ -4254,33 +4256,34 @@ function render(now: number) {
       x: A.x + lx * Math.cos(th) - ly * Math.sin(th),
       y: A.y + lx * Math.sin(th) + ly * Math.cos(th),
     });
-    if (cargo.length > 0) {
-      const CELL = 6.5,
-        SQ = 4,
-        DR = 3,
-        DS = 2.5, // squadron pip: a diamond with the footprint of the square
-        MAX = 8; // cap; rare overflow gets a "+N" tail
-      const n = Math.min(cargo.length, MAX);
-      const over = cargo.length - n;
+    const CELL = 6.5,
+      SQ = 4,
+      DR = 3,
+      DS = 2.5, // squadron pip: a diamond with the footprint of the square
+      MAX = 8; // per-row cap; rare overflow gets a "+N" tail
+    const diamond = (cxr: number, cyr: number, r: number, fill: boolean): void => {
+      cx.beginPath();
+      cx.moveTo(cxr, cyr - r);
+      cx.lineTo(cxr + r, cyr);
+      cx.lineTo(cxr, cyr + r);
+      cx.lineTo(cxr - r, cyr);
+      cx.closePath();
+      if (fill) cx.fill();
+      cx.stroke();
+    };
+    const drawCargoRow = (row: CargoPip[], ly: number): void => {
+      if (!row.length) return;
+      const n = Math.min(row.length, MAX);
+      const over = row.length - n;
       const rowW = n * CELL + (over > 0 ? 12 : 0);
       let lx = -rowW / 2 + CELL / 2; // local x of the first cell centre
-      const diamond = (cxr: number, cyr: number, r: number, fill: boolean): void => {
-        cx.beginPath();
-        cx.moveTo(cxr, cyr - r);
-        cx.lineTo(cxr + r, cyr);
-        cx.lineTo(cxr, cyr + r);
-        cx.lineTo(cxr - r, cyr);
-        cx.closePath();
-        if (fill) cx.fill();
-        cx.stroke();
-      };
       cx.save();
       cx.shadowColor = col;
       cx.shadowBlur = 3;
       cx.lineWidth = 1;
       for (let i = 0; i < n; i++) {
-        const pip = cargo[i]!;
-        const c0 = tailAt(lx, 4); // a touch behind the flat base
+        const pip = row[i]!;
+        const c0 = tailAt(lx, ly);
         if (pip.kind === 'div' || pip.kind === 'wing') {
           // carried division / hold squadron → a solid diamond ("ромбик")
           cx.fillStyle = rgba(col, 0.85);
@@ -4323,12 +4326,14 @@ function render(now: number) {
       }
       cx.restore();
       if (over > 0) {
-        const o = tailAt(lx, 4);
+        const o = tailAt(lx, ly);
         cx.fillStyle = rgba(col, 0.92);
         cx.font = '700 8px ui-monospace,Menlo,monospace';
         cx.fillText(`+${over}`, o.x, o.y + SQ / 2);
       }
-    }
+    };
+    drawCargoRow(diaRow, 4); // ромбы — ближний к базе ряд
+    drawCargoRow(sqRow, diaRow.length ? 4 + CELL : 4); // квадраты — своим рядом ниже
 
     if (selFleet === f.id || selFleets.has(f.id)) {
       targetBrackets(A.x, A.y, 12, now);
@@ -4358,8 +4363,8 @@ function render(now: number) {
     }
 
     // ship count (hulls in the pyramid), small, past the cargo tail — placed along
-    // the heading like the pips, glyph upright.
-    const cnt = tailAt(0, 18);
+    // the heading like the pips, glyph upright; drops lower when both rows are out.
+    const cnt = tailAt(0, diaRow.length && sqRow.length ? 18 + CELL : 18);
     cx.fillStyle = rgba(col, 0.95);
     cx.font = '700 9px ui-monospace,Menlo,monospace';
     cx.fillText(String(ships), cnt.x, cnt.y);
