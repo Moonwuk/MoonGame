@@ -4119,6 +4119,47 @@ export function stewardGuardOrders(
   return out;
 }
 
+/** The two server-side AIs that can play a seat, kept explicitly DISTINCT
+ *  (SES-2.2). `steward` — «Хранитель»: the player's OWN autopilot, a defensive
+ *  posture they turned on to cover their sleep; it runs on their chosen posture
+ *  even while they are connected-but-idle, and its live delegation OUTRANKS the
+ *  abandon grace. `substitute` — «заместитель»: the full expansion bot that takes
+ *  over an ABANDONED chair, only after the player has been gone past the
+ *  real-time grace window, and it is reclaimed the instant they return. `none` —
+ *  no AI drives the seat this tick (a present player commands it, or an absent
+ *  one is still inside their reconnect grace). */
+export type SeatAiKind = 'steward' | 'substitute' | 'none';
+
+/** What drives a seat this tick + the posture to hand `aiOrders`. */
+export interface SeatAiDecision {
+  kind: SeatAiKind;
+  posture: StewardPosture | 'expand' | null; // null ⇔ kind === 'none'
+}
+
+/** Decide which server AI (if any) plays ONE seat this tick — SES-2.2. Pure:
+ *  reads only the three facts the host tracks, no time source of its own.
+ *  `hasHuman` — a live peer holds the chair; `posture` — the seat's active
+ *  Steward delegation (`stewardActive`), null if none; `graceExpired` — the
+ *  player has been absent PAST the real-time abandon window (wall-clock, the host
+ *  compares `Date.now()`; always true for a chair that never opened a window).
+ *  The precedence encodes the owner's intent: a delegation they set beats the
+ *  automatic takeover, and a present human beats the idle bot. */
+export function seatAiDecision(
+  hasHuman: boolean,
+  posture: StewardPosture | null,
+  graceExpired: boolean,
+): SeatAiDecision {
+  // A live Steward delegation is the player's OWN autopilot: it plays regardless
+  // of connection and never waits on the abandon grace (they asked for it).
+  if (posture) return { kind: 'steward', posture };
+  // No delegation → a present human commands their own chair.
+  if (hasHuman) return { kind: 'none', posture: null };
+  // Empty chair: wait out the grace (a drop / restart blip / a few days away)
+  // before the substitute bot seizes it — reclaimed the moment they return.
+  if (!graceExpired) return { kind: 'none', posture: null };
+  return { kind: 'substitute', posture: 'expand' };
+}
+
 /** One decision tick's orders for an AI-driven seat, evaluated against `state`.
  *  Read-only: it builds and returns the actions; the caller applies them — the
  *  client to its local sim, the server through the authoritative room. Drives
