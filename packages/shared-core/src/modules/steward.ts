@@ -37,6 +37,10 @@ export const STEWARD_LOSS_LIMIT = 0.35;
  *  of 2-hour ticks fits with room to spare, and state stays small (JSONB). */
 export const MAX_STEWARD_LOG = 50;
 
+/** Hold-point cap (ST-2.1): 1–2 anchors per the roadmap — guarding is a focused
+ *  order, not a blanket «держать всё» (that would make the autopilot too strong). */
+export const MAX_STEWARD_HOLD_POINTS = 2;
+
 /** Sanitize one driver-stamped journal entry: required `at`/`kind`, then ONLY the
  *  known optional scalars are copied onto a FRESH object — nothing else from the
  *  payload can ride into JSONB state (fail-secure; same trust shape as
@@ -84,6 +88,22 @@ function stewardUnlocked(player: Player, data: GameData): boolean {
   return false;
 }
 
+/** Drop `planetId` from every player's hold points once it is no longer theirs
+ *  (capture / annihilation). Without this a lost anchor would consume one of the
+ *  two cap slots forever: the planet panel manages anchors on OWN worlds only,
+ *  so the owner would have no way left to unmark it (ST-2.1 review). */
+function pruneHoldPoints(state: GameState, planetId: string): void {
+  for (const playerId of Object.keys(state.players).sort()) {
+    const player = state.players[playerId]!;
+    const points = player.stewardHoldPoints;
+    if (!points?.includes(planetId)) continue;
+    if (state.planets[planetId]?.owner === playerId) continue; // still theirs — keep it
+    const rest = points.filter((id) => id !== planetId);
+    if (rest.length > 0) player.stewardHoldPoints = rest;
+    else delete player.stewardHoldPoints;
+  }
+}
+
 /** The posture the Steward is running for `playerId` at `now`, or null if the seat is not
  *  delegated (or the window has lapsed). The one read the server AI driver needs —
  *  deterministic: derived purely from state + the passed-in time. */
@@ -123,6 +143,36 @@ export const stewardModule: GameModule = {
       });
     });
 
+    // Hold point (ST-2.1): the player marks an OWN world «держать» — a standing
+    // order the Steward honors under any posture (never auto-evacuated,
+    // reinforced under threat). Client-submittable; gated on the same Steward
+    // tech as delegation (the whole guard pillar is one unlock).
+    api.onAction('steward.holdpoint', (action, h) => {
+      const player = h.state.players[action.playerId];
+      if (!player) return h.reject('E_NO_PLAYER');
+      if (!stewardUnlocked(player, h.ctx.data)) return h.reject('E_STEWARD_LOCKED');
+      const payload = action.payload as { planetId?: unknown; on?: unknown };
+      if (typeof payload.planetId !== 'string' || typeof payload.on !== 'boolean') {
+        return h.reject('E_BAD_PAYLOAD');
+      }
+      const points = player.stewardHoldPoints ?? [];
+      if (!payload.on) {
+        if (!points.includes(payload.planetId)) return; // clearing a non-point: safe no-op
+        const rest = points.filter((id) => id !== payload.planetId);
+        if (rest.length > 0) player.stewardHoldPoints = rest;
+        else delete player.stewardHoldPoints;
+        h.emit('steward.holdpoint', { playerId: action.playerId, planetId: payload.planetId, on: false });
+        return;
+      }
+      const planet = h.state.planets[payload.planetId];
+      if (!planet) return h.reject('E_NO_PLANET');
+      if (planet.owner !== action.playerId) return h.reject('E_FORBIDDEN'); // anchor OWN worlds only
+      if (points.includes(payload.planetId)) return; // already held: safe no-op
+      if (points.length >= MAX_STEWARD_HOLD_POINTS) return h.reject('E_LIMIT');
+      player.stewardHoldPoints = [...points, payload.planetId];
+      h.emit('steward.holdpoint', { playerId: action.playerId, planetId: payload.planetId, on: true });
+    });
+
     // SITREP stamp (ST-2.4): the SERVER DRIVER records the decisions it just made
     // for a delegated seat. Deliberately ABSENT from the client payload schemas
     // (the gate refuses it from the wire, like `patrol.stamp`) — a client writing
@@ -154,6 +204,15 @@ export const stewardModule: GameModule = {
         h.emit('steward.recalled', { playerId: action.playerId });
       }
     });
+
+    // Hold points follow ownership: any path that takes a world away (arrival
+    // capture, battle outcome, ground assault, annihilation) frees its anchor slot.
+    for (const lost of ['planet.captured', 'planet.destroyed'] as const) {
+      api.on(lost, (event, h) => {
+        const planetId = (event.payload as { planetId?: unknown }).planetId;
+        if (typeof planetId === 'string') pruneHoldPoints(h.state, planetId);
+      });
+    }
 
     // Auto-expire: when the world clock crosses a steward's `until`, hand control back and
     // announce it (a notification / the "morning report" reads `steward.expired`).

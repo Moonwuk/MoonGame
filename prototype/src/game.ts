@@ -39,6 +39,7 @@ import {
   stewardActive,
   STEWARD_POSTURES,
   STEWARD_LOSS_LIMIT,
+  MAX_STEWARD_HOLD_POINTS,
   scanNodeThreats,
   previewBattle,
   hullPool,
@@ -3377,8 +3378,12 @@ export const delegateSteward = (
 ) => act(playerId, 'steward.delegate', { posture, until });
 /** Take the seat back early (a safe no-op if nothing was delegated). */
 export const recallSteward = (playerId: string) => act(playerId, 'steward.recall', {});
+/** Mark (or unmark) an OWN world as a hold point (ST-2.1) — a standing order the
+ *  Steward honors under any posture: never auto-evacuated, reinforced under threat. */
+export const setHoldPoint = (playerId: string, planetId: string, on: boolean) =>
+  act(playerId, 'steward.holdpoint', { planetId, on });
 // Re-export the Steward reads so the netserver + UI import them from the `./game` façade.
-export { stewardActive, STEWARD_POSTURES };
+export { stewardActive, STEWARD_POSTURES, MAX_STEWARD_HOLD_POINTS };
 /** Declare war on (or otherwise re-stance) another commander. */
 export const declareWar = (playerId: string, target: string, stance: DiplomaticStance = 'war') =>
   act(playerId, 'diplomacy.declare', { target, stance });
@@ -3813,6 +3818,9 @@ export function stewardGuardOrders(
     }
     return t;
   };
+  // Hold points (ST-2.1): player-designated standing anchors — never evacuated,
+  // reinforced instead; their docked wings are not poached for other errands.
+  const holdPoints = new Set(state.players[ai]?.stewardHoldPoints ?? []);
   // A fleet gets ONE task per tick (evacuate or ferry) — never two nodes' errands.
   const tasked = new Set<string>();
   const idleOwn = (f: Fleet): boolean =>
@@ -3907,6 +3915,66 @@ export function stewardGuardOrders(
       if (!engaged) noteOnce(holdEntry);
       continue;
     }
+    const earliest = threats[0]!.eta;
+    // Hold point (ST-2.1): a player-designated anchor is NEVER auto-evacuated —
+    // the standing order outranks the loss forecast. The Steward instead tries
+    // to FLIP the forecast: summon ONE idle wing that (a) arrives with a tick
+    // (2h) to spare before the earliest threat lands and (b) turns the combined
+    // stand into a hold. Piecemeal feeding is refused — help that arrives late
+    // or still loses would only widen the defeat; the wing then stands as
+    // ordered, and the journal's bad fraction tells the owner the price.
+    if (holdPoints.has(p.id)) {
+      // Help already flying in (last tick's relief or the owner's own order) —
+      // nothing to add; the episode is already journaled.
+      const inboundHelp = Object.values(state.fleets).some(
+        (f) => f.owner === ai && f.movement != null && journeyDestination(f.movement) === p.id,
+      );
+      if (!inboundHelp) {
+        let relief: Fleet | null = null;
+        let reliefEta = Infinity;
+        let reliefFraction = 0;
+        for (const f of Object.values(state.fleets)) {
+          if (!idleOwn(f) || f.location === p.id) continue;
+          if (!f.units.some((s) => s.count > 0)) continue;
+          // Same no-poach rule as the ferry: a wing on another threatened node
+          // (or another anchor) is needed where it stands.
+          if (threatsOf(f.location!).length > 0 || holdPoints.has(f.location!)) continue;
+          const hours = estimateTravelHours(state, data, f.location!, p.id, f);
+          if (hours === null) continue;
+          const arrives = state.time + hoursToMs(c, hours);
+          if (arrives + hoursToMs(c, 2) > earliest) continue; // too late to matter
+          const together = previewBattle(attackers, [...defenders, ...f.units], data);
+          const flips =
+            together.outcome === 'defender' ||
+            together.defender.damageFraction < STEWARD_LOSS_LIMIT;
+          if (!flips) continue;
+          if (arrives < reliefEta) {
+            reliefEta = arrives;
+            relief = f;
+            reliefFraction = together.defender.damageFraction;
+          }
+        }
+        if (relief) {
+          out.push(moveFleet(ai, relief.id, p.id));
+          tasked.add(relief.id);
+          report.push({
+            at: state.time,
+            kind: 'reinforce',
+            node: p.id,
+            fleetId: relief.id,
+            fraction: frac(reliefFraction),
+          });
+        } else {
+          noteOnce({
+            at: state.time,
+            kind: 'hold',
+            node: p.id,
+            fraction: frac(stand.defender.damageFraction),
+          });
+        }
+      }
+      continue; // a hold point never falls through to evacuation
+    }
     // Bad trade — evacuate to the nearest reachable own world nothing bears on.
     // Anti-shuttle hysteresis (ST-3.4): a candidate we RECENTLY fled FROM into
     // this very node is the shuttle's return leg — journaled evacuations
@@ -3946,7 +4014,6 @@ export function stewardGuardOrders(
       });
       continue;
     }
-    const earliest = threats[0]!.eta;
     const assaulted = garrisonUnderAssault(state, p.id);
     // What the garrison still holds after the loads planned below (state is
     // read-only). Counted EXACTLY as `army.load` will resolve it — via
@@ -4003,9 +4070,9 @@ export function stewardGuardOrders(
       let ferryEta = Infinity;
       for (const f of Object.values(state.fleets)) {
         if (!idleOwn(f) || f.location === p.id || freeHold(f) <= 0) continue;
-        // Never poach a transport off ANOTHER threatened node: it is needed where
-        // it stands (that node's own evac branch tasks it) — no cross-node theft.
-        if (threatsOf(f.location!).length > 0) continue;
+        // Never poach a transport off ANOTHER threatened node (its own evac
+        // branch tasks it) or off a hold point (the anchor keeps its wing).
+        if (threatsOf(f.location!).length > 0 || holdPoints.has(f.location!)) continue;
         const hours = estimateTravelHours(state, data, f.location!, p.id, f);
         if (hours === null) continue;
         const arrives = state.time + hoursToMs(c, hours);
