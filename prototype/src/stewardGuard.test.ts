@@ -204,6 +204,57 @@ describe('stewardGuardOrders — эвакуация под угрозой (ST-3.
     expect(orders[0]!.payload).toMatchObject({ fleetId: 'F1', to: 'S' });
   });
 
+  it('анти-шаттл: недавняя эвакуация H→S блокирует обратный рейс — крыло стоит и дерётся у S', () => {
+    // The enemy re-targets the very node the wing just fled INTO. The only other
+    // haven is H — the reverse leg of the shuttle. Blocked → forced hold at S.
+    const s = guardState({
+      fleets: [
+        fl('E1', 'p2', {
+          units: stacks([['cruiser', 4]]),
+          movement: { from: 'E', to: 'H', departedAt: NOW - 1 * HOUR, arrivesAt: NOW + 4 * HOUR, path: ['S'], destination: 'S' },
+        }),
+        fl('F1', 'p1', { location: 'S', units: stacks([['cruiser', 1]]) }),
+      ],
+    });
+    s.players.p1!.stewardLog = [{ at: NOW - 2 * HOUR, kind: 'evac', node: 'H', to: 'S', count: 1, fraction: 1 }];
+    const orders = stewardGuardOrders(s, 'p1');
+    expect(orders.map((a) => a.type)).toEqual(['steward.report']);
+    expect(reportEntries(orders)).toMatchObject([{ kind: 'hold', node: 'S' }]);
+  });
+
+  it('анти-шаттл: кулдаун истёк — обратный рейс снова разрешён', () => {
+    const s = guardState({
+      fleets: [
+        fl('E1', 'p2', {
+          units: stacks([['cruiser', 4]]),
+          movement: { from: 'E', to: 'H', departedAt: NOW - 1 * HOUR, arrivesAt: NOW + 4 * HOUR, path: ['S'], destination: 'S' },
+        }),
+        fl('F1', 'p1', { location: 'S', units: stacks([['cruiser', 1]]) }),
+      ],
+    });
+    s.players.p1!.stewardLog = [{ at: NOW - 20 * HOUR, kind: 'evac', node: 'H', to: 'S', count: 1, fraction: 1 }];
+    const orders = stewardGuardOrders(s, 'p1');
+    expect(orders.map((a) => a.type)).toEqual(['fleet.move', 'steward.report']);
+    expect(orders[0]!.payload).toMatchObject({ fleetId: 'F1', to: 'H' });
+  });
+
+  it('анти-шаттл: третий безопасный мир обходит блок — крыло уходит туда, а не назад', () => {
+    const s = guardState({
+      withR: true,
+      fleets: [
+        fl('E1', 'p2', {
+          units: stacks([['cruiser', 4]]),
+          movement: { from: 'E', to: 'H', departedAt: NOW - 1 * HOUR, arrivesAt: NOW + 4 * HOUR, path: ['S'], destination: 'S' },
+        }),
+        fl('F1', 'p1', { location: 'S', units: stacks([['cruiser', 1]]) }),
+      ],
+    });
+    s.players.p1!.stewardLog = [{ at: NOW - 2 * HOUR, kind: 'evac', node: 'H', to: 'S', count: 1, fraction: 1 }];
+    const orders = stewardGuardOrders(s, 'p1');
+    expect(orders.map((a) => a.type)).toEqual(['fleet.move', 'steward.report']);
+    expect(orders[0]!.payload).toMatchObject({ fleetId: 'F1', to: 'R' });
+  });
+
   it('repeat-prone journal lines are stamped once per episode: an applied hold is not re-logged', () => {
     const s = guardState({
       fleets: [fl('E1', 'p2', { units: stacks([['scout', 1]]), ...inboundToH(10) }), fl('F1', 'p1', { location: 'H', units: stacks([['cruiser', 2]]) })],
