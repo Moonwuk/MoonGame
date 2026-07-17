@@ -546,7 +546,8 @@ body.sheet-open #cmdbar{bottom:calc(34vh + 12px);}
   box-shadow:0 0 8px rgba(255,90,77,.7);}
 
 #side{position:fixed;left:58px;right:14px;bottom:0;top:auto;width:auto;max-height:34vh;overflow:hidden;z-index:20;
-  display:none;align-items:stretch;padding:0;background:var(--glass);border:1px solid var(--line-hi);
+  display:none;align-items:stretch;padding:0;background:rgba(3,14,18,.6);border:1px solid var(--line-hi);
+  -webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px);
   box-shadow:0 0 26px rgba(0,0,0,.6),0 0 0 1px rgba(53,214,230,.08),inset 0 0 30px rgba(53,214,230,.04);
   clip-path:polygon(0 9px,9px 0,100% 0,100% calc(100% - 9px),calc(100% - 9px) 100%,0 100%);}
 /* scrollable content (left) + a dossier pane glued to the right edge, filling the
