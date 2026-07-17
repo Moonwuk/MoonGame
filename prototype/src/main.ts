@@ -903,14 +903,17 @@ function drawScanSweep(now: number) {
 // The same fog-honest node-threat tripwire the Steward keys off (ST-3.1,
 // scanNodeThreats), surfaced to the LIVE player: one note per (node, fleet)
 // EPISODE — a camping fleet doesn't re-toast every step, a fresh approach after
-// the episode ended alerts again (the radarMemory pattern). Runs once per game
-// STEP (s.time guard), not per frame; NET is naturally fog-clean — the fogged
-// state only ever holds fleets the player may see.
+// the episode ended alerts again (the radarMemory pattern). Throttled to once
+// per GAME-HOUR bucket: solo advances s.time every frame, so a raw s.time guard
+// would be a no-op and the coverage flood would run per frame; threats move on
+// multi-hour ETAs, so an hourly sweep loses nothing. NET is naturally
+// fog-clean — the fogged state only ever holds fleets the player may see.
 const threatMemory = new Set<string>();
 let threatScanAt = -1;
 function updateThreatAlerts(): void {
-  if (s.time === threatScanAt) return;
-  threatScanAt = s.time;
+  const bucket = Math.floor(s.time / HOUR);
+  if (bucket === threatScanAt) return;
+  threatScanAt = bucket;
   if (s.players[ME]?.status !== 'active') return;
   const c = ctx(s.time);
   const identified = identifiedNodes(s, ME, data);
@@ -8576,6 +8579,8 @@ function installMatch(state: GameState, aiPlayers: Set<string>): void {
   myBattleLocs.clear();
   memory.clear(); // fog memory belongs to the OLD match — stale intel must not carry over
   radarMemory.clear();
+  threatMemory.clear(); // node ids repeat across matches — a stale episode must not mute a real alert
+  threatScanAt = -1;
   battleLosses.clear();
   aaShots.length = 0;
   logLines.length = 0; // fresh log — drop notes from the menu-background match
