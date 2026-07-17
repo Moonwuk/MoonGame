@@ -825,9 +825,11 @@ button.b:disabled{opacity:.32;cursor:not-allowed;color:var(--dim);border-color:v
 @media (prefers-reduced-motion:no-preference){.sp-slot.empty{animation:sppulse 1.5s ease-in-out infinite;}}
 @keyframes sppulse{0%,100%{border-color:var(--cyan-dim);box-shadow:0 0 0 0 rgba(53,214,230,0);}50%{border-color:var(--cyan);box-shadow:0 0 18px 1px rgba(53,214,230,.30);background:rgba(53,214,230,.08);}}
 .sp-slot.filled{border:1px solid var(--cyan);background:linear-gradient(180deg,rgba(53,214,230,.10),rgba(53,214,230,.03));}
-.sp-slot .sp-sn{font-weight:700;color:#eafffb;font-size:13px;}
+/* name reserves the ✕-corner (long names like «Командир крыла» wrapped UNDER the
+   remove button and made it look misplaced) */
+.sp-slot .sp-sn{font-weight:700;color:#eafffb;font-size:13px;padding-right:24px;}
 .sp-slot .sp-inf{font-size:10px;color:var(--dim);line-height:1.4;}
-.sp-rm{position:absolute;top:6px;right:7px;width:18px;height:18px;border-radius:5px;border:1px solid var(--line-hi);background:transparent;color:var(--dim);cursor:pointer;font-size:10px;line-height:1;}
+.sp-rm{position:absolute;top:7px;right:7px;width:18px;height:18px;border-radius:5px;border:1px solid var(--line-hi);background:transparent;color:var(--dim);cursor:pointer;font-size:10px;line-height:1;padding:0;display:grid;place-items:center;}
 .sp-rm:hover{border-color:var(--red);color:var(--red);}
 .sp-warn{margin-top:12px;display:flex;gap:8px;padding:10px 12px;border:1px solid #6a4a17;border-radius:9px;background:rgba(255,180,58,.09);color:#f4d199;font-size:11.5px;line-height:1.5;}
 .sp-h{margin:15px 0 8px;font-size:10.5px;letter-spacing:2px;text-transform:uppercase;color:var(--cyan-dim);}
