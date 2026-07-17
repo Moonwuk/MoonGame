@@ -1112,6 +1112,18 @@ export const en: Record<string, string> = {
   '😴 Хранитель принял командование (Активная оборона) — держит рубежи и контратакует у своих миров.':
     '😴 The Steward took command (Active defense) — holding the line and counterstriking at your own worlds.',
   '🎮 Вы вернули командование себе.': '🎮 You took command back.',
+  'Журнал Хранителя': "Steward's journal",
+  '{dur} назад': '{dur} ago',
+  '🏃 Эвакуация с {node} → {to}: прогноз потерь {pct}%, крыльев уведено: {n}':
+    '🏃 Evacuation from {node} → {to}: loss forecast {pct}%, wings withdrawn: {n}',
+  '🚚 Паром выслан к {node} за гарнизоном': '🚚 A ferry dispatched to {node} for the garrison',
+  '⚠ Гарнизон {node} не эвакуировать: транспорт не успевает (прогноз потерь {pct}%)':
+    '⚠ The {node} garrison cannot be evacuated: no transport arrives in time (loss forecast {pct}%)',
+  '⚔ Контрудар у {node}: прогноз потерь {pct}%': '⚔ Counterstrike at {node}: loss forecast {pct}%',
+  '🛫 Дежурный вылет поднят у {node}': '🛫 A standing patrol raised at {node}',
+  '🛡 Рубеж {node} удержан: прогноз потерь {pct}%': '🛡 The {node} line held: loss forecast {pct}%',
+  'Решений за вахту: {n} — журнал в окне Хранителя.':
+    "Decisions this watch: {n} — see the Steward window's journal.",
   '🌅 Хранитель вернул вам управление (была «Оборона»).':
     '🌅 The Steward returned control to you (posture was “Defend”).',
   '🌅 Хранитель вернул вам управление (была «Активная оборона»).':

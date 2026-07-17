@@ -2424,10 +2424,13 @@ function handleEvents(events: DomainEvent[]) {
           const diff = base
             ? ` Пока вы спали: планет ${base.planets}→${now.planets}, металл ${sign(now.metal - base.metal)}, кредиты ${sign(now.credits - base.credits)}.`
             : '';
+          const logged = s.players[ME]?.stewardLog?.length ?? 0;
+          const sitrep =
+            logged > 0 ? ' ' + t('Решений за вахту: {n} — журнал в окне Хранителя.', { n: String(logged) }) : '';
           note(
             ((p as { posture?: string }).posture === 'active_defend'
               ? t('🌅 Хранитель вернул вам управление (была «Активная оборона»).')
-              : t('🌅 Хранитель вернул вам управление (была «Оборона»).')) + diff,
+              : t('🌅 Хранитель вернул вам управление (была «Оборона»).')) + diff + sitrep,
           );
           if (stewWin.classList.contains('show')) renderSteward();
         }
@@ -7154,6 +7157,48 @@ function stewFmtDur(ms: number): string {
 function stewardTechDone(): boolean {
   return s.players[ME]?.technologies?.completed.includes('ai_stewardship') ?? false;
 }
+/** One localized line of the Steward's decision journal (SITREP, ST-2.4). */
+function stewLogLine(e: { kind: string; node?: string; fleetId?: string; to?: string; count?: number; fraction?: number }): string {
+  const pct = e.fraction !== undefined ? String(Math.round(e.fraction * 100)) : '?';
+  const node = e.node ?? '?';
+  switch (e.kind) {
+    case 'evac':
+      return t('🏃 Эвакуация с {node} → {to}: прогноз потерь {pct}%, крыльев уведено: {n}', {
+        node,
+        to: e.to ?? '?',
+        pct,
+        n: String(e.count ?? 0),
+      });
+    case 'ferry':
+      return t('🚚 Паром выслан к {node} за гарнизоном', { node });
+    case 'stranded':
+      return t('⚠ Гарнизон {node} не эвакуировать: транспорт не успевает (прогноз потерь {pct}%)', { node, pct });
+    case 'strike':
+      return t('⚔ Контрудар у {node}: прогноз потерь {pct}%', { node, pct });
+    case 'watch':
+      return t('🛫 Дежурный вылет поднят у {node}', { node });
+    case 'hold':
+      return t('🛡 Рубеж {node} удержан: прогноз потерь {pct}%', { node, pct });
+    default:
+      return `${e.kind}: ${node}`;
+  }
+}
+/** The journal section of the steward window — the last watch's decisions, newest
+ *  first. Rendered whenever a journal exists (it survives expiry: the morning
+ *  report is read AFTER the watch ends). */
+function stewLogHtml(): string {
+  const log = s.players[ME]?.stewardLog;
+  if (!log || log.length === 0) return '';
+  const lines = [...log]
+    .reverse()
+    .slice(0, 12)
+    .map(
+      (e) =>
+        `<div class="st-log-line"><span class="st-log-when">${t('{dur} назад', { dur: stewFmtDur(Math.max(0, s.time - e.at)) })}</span> ${stewLogLine(e)}</div>`,
+    )
+    .join('');
+  return `<div class="st-h">${t('Журнал Хранителя')}</div><div class="st-log">${lines}</div>`;
+}
 function renderSteward(): void {
   const body = $('stewardbody');
   const posture = stewardActive(s, ME, s.time); // null unless a live delegation
@@ -7198,6 +7243,7 @@ function renderSteward(): void {
           : t('Поза «Оборона»: держит и отбивает, застраивает очередь, торгует — без наступлений и дипломатии. Управление вернётся автоматически, с утренней сводкой.')
       }</div>`;
   }
+  html += stewLogHtml();
   body.innerHTML = html;
 }
 document.getElementById('rail-steward')?.addEventListener('click', () => {

@@ -107,6 +107,12 @@ describe('gate parity (REL-2) — the schemas cover every prototype intent', () 
     expect(isValidActionPayload(stamp.type, stamp.payload)).toBe(false);
   });
 
+  it('steward.report stays server-only — a client must not forge the SITREP (ST-2.4)', () => {
+    expect(
+      isValidActionPayload('steward.report', { entries: [{ at: 0, kind: 'hold', node: 'A' }] }),
+    ).toBe(false);
+  });
+
   it('the removed order-chain types are not client-submittable', () => {
     for (const type of ['order.enqueue', 'order.clear', 'order.pop', 'order.remove', 'order.block', 'order.retry', 'order.hold']) {
       expect(isValidActionPayload(type, { fleetId: 'f1' })).toBe(false);

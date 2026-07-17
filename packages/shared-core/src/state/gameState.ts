@@ -106,6 +106,13 @@ export interface Player {
    *  server-side driver reads it via `stewardActive`; it auto-expires on the clock
    *  crossing `until` (stewardModule). Absent = the player commands the seat. */
   steward?: StewardState;
+  /** The Steward's decision journal (SITREP, ST-2.4): what the AI did on this seat's
+   *  last watch, stamped by the server driver via `steward.report` and kept AFTER the
+   *  delegation lapses — the sleeping player's client is offline, so the morning
+   *  report must live in state, not in a client log. Bounded FIFO; a new delegation
+   *  starts a fresh journal. Owner-private (stripped from rivals' views, like the
+   *  treasury — both the journal and the autopilot status itself read as «спит»). */
+  stewardLog?: StewardLogEntry[];
 }
 
 /** A live Steward delegation on a player (see `Player.steward`). */
@@ -114,6 +121,26 @@ export interface StewardState {
   posture: string;
   /** Game-time (ms) the delegation lapses at — control returns to the player then. */
   until: number;
+}
+
+/** One recorded Steward decision (see `Player.stewardLog`): a compact, JSON-safe fact
+ *  the driver stamps; the client renders it localized. `kind` is the driver's
+ *  vocabulary (evac / ferry / strike / watch / hold / stranded — extensible), the
+ *  optional fields carry only what that kind needs. */
+export interface StewardLogEntry {
+  /** Game-time (ms) of the decision. */
+  at: number;
+  kind: string;
+  /** Node (planet id) the decision concerns. */
+  node?: string;
+  /** Fleet the decision tasked. */
+  fleetId?: string;
+  /** Destination node (evacuation target etc.). */
+  to?: string;
+  /** A relevant count (fleets moved, units lifted, ...). */
+  count?: number;
+  /** Forecast hull-loss fraction (0..1) the decision keyed off. */
+  fraction?: number;
 }
 
 /** The player's chosen research leaders (0–2). Reads the current `scientists` council and
