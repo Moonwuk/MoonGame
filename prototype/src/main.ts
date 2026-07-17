@@ -4105,7 +4105,14 @@ function render(now: number) {
     const A = fleetAnchor(f);
     if (!A || !visible(A, 120)) continue;
     const col = ownerColor(f.owner);
-    const ships = sumUnits(f.units);
+    // Squadrons ABOARD a carrier live in the hold, not in the battle line: with any
+    // non-squadron hull present they leave the triangle pyramid and ride the cargo
+    // tail as diamonds. A pure strike wing in flight IS its squadrons — triangles.
+    const allUnits = sumUnits(f.units);
+    const wingAboard = sumUnits(f.units.filter((st) => isSquadron(st.unit)));
+    const hulls = allUnits - wingAboard;
+    const ships = hulls > 0 ? hulls : allUnits;
+    const wingPips = hulls > 0 ? wingAboard : 0;
     const troops = sumUnits(f.landing ?? []);
     const engine = 0.55 + 0.45 * Math.sin(now / 120 + f.id.length);
 
@@ -4172,10 +4179,10 @@ function render(now: number) {
     }
     cx.globalAlpha = detail; // full detail fades back in toward 1.45
 
-    // Squadron emblem (upright): ships are up-triangles, ONE per three ships, packed
-    // into a pyramid — "каждые 3 корабля = один треугольник". Cargo glues under the
-    // base: carried divisions as diamonds first ("эскадрильи ромбиком"), then ground
-    // troops as squares (loaded = filled, loading ~1h = an empty square filling up).
+    // Fleet emblem: ships are up-triangles, ONE per three hulls, packed into a
+    // pyramid — "каждые 3 корабля = один треугольник". Cargo glues to the TAIL
+    // (behind the base): carried divisions and hold squadrons as diamonds, then
+    // ground troops as squares (loaded = filled, loading ~1h = a pip filling up).
     const BW = 6,
       TH = 5; // triangle base width / height; rows stack TH apart
     const nTri = Math.max(1, Math.ceil(ships / 3));
@@ -4199,8 +4206,10 @@ function render(now: number) {
     // -y / up) rotates onto A.ang — the travel lane while in transit, or the orbital
     // tangent while stationed on the ring (both supplied by fleetAnchor). Previously this
     // was gated on `f.movement`, so an orbiting fleet kept its default apex-up pose and
-    // appeared frozen pointing straight up. Only the triangles turn — the cargo pips and
-    // ship-count text below stay upright and readable.
+    // appeared frozen pointing straight up. The cargo pips and ship count follow the
+    // SAME heading (they sit on the tail, behind the base — «за треугольниками»), but
+    // each pip/glyph is drawn upright at its rotated spot, so a square never reads
+    // as a diamond on a diagonal course.
     cx.translate(A.x, A.y);
     cx.rotate(A.ang + Math.PI / 2);
     cx.translate(-A.x, -A.y);
@@ -4225,54 +4234,80 @@ function render(now: number) {
     }
     cx.restore();
 
-    // cargo glued under the base: diamonds (carried divisions) first, then squares
-    // (ground troops). A loading troop (~1h) is an empty square that fills bottom-up.
+    // cargo glued to the tail (behind the base, following the heading): diamonds
+    // first (carried divisions, then hold squadrons — «ромбик размером с квадратик»),
+    // then squares (ground troops). A loading pip (~1h) fills up in place; a loading
+    // SQUADRON fills as a growing diamond. Cell centres ride the rotated baseline,
+    // the pips themselves stay upright.
     const loads = pendingLoads.filter((p) => p.fleetId === f.id); // empty for enemy/idle fleets
-    const cargo: { kind: 'div' | 'troop' | 'load'; load?: PendingLoad }[] = [];
+    const cargo: { kind: 'div' | 'wing' | 'troop' | 'load'; load?: PendingLoad }[] = [];
     for (let i = 0; i < (carriedDivCount[f.id] ?? 0); i++) cargo.push({ kind: 'div' });
+    for (let i = 0; i < wingPips; i++) cargo.push({ kind: 'wing' });
     for (let i = 0; i < troops; i++) cargo.push({ kind: 'troop' });
     for (const p of loads) cargo.push({ kind: 'load', load: p });
+    // The same rotation the pyramid uses; local +y = the tail. Pips and the ship
+    // count are placed through this, drawn upright at their rotated spots.
+    const th = A.ang + Math.PI / 2;
+    const tailAt = (lx: number, ly: number): { x: number; y: number } => ({
+      x: A.x + lx * Math.cos(th) - ly * Math.sin(th),
+      y: A.y + lx * Math.sin(th) + ly * Math.cos(th),
+    });
     if (cargo.length > 0) {
       const CELL = 6.5,
         SQ = 4,
         DR = 3,
+        DS = 2.5, // squadron pip: a diamond with the footprint of the square
         MAX = 8; // cap; rare overflow gets a "+N" tail
       const n = Math.min(cargo.length, MAX);
       const over = cargo.length - n;
       const rowW = n * CELL + (over > 0 ? 12 : 0);
-      let px = A.x - rowW / 2 + CELL / 2; // centre of the first cell
-      const cyc = yBase + 4; // a touch below the flat base
+      let lx = -rowW / 2 + CELL / 2; // local x of the first cell centre
+      const diamond = (cxr: number, cyr: number, r: number, fill: boolean): void => {
+        cx.beginPath();
+        cx.moveTo(cxr, cyr - r);
+        cx.lineTo(cxr + r, cyr);
+        cx.lineTo(cxr, cyr + r);
+        cx.lineTo(cxr - r, cyr);
+        cx.closePath();
+        if (fill) cx.fill();
+        cx.stroke();
+      };
       cx.save();
       cx.shadowColor = col;
       cx.shadowBlur = 3;
       cx.lineWidth = 1;
       for (let i = 0; i < n; i++) {
         const pip = cargo[i]!;
-        if (pip.kind === 'div') {
-          // carried division → a solid diamond ("ромбик")
-          cx.beginPath();
-          cx.moveTo(px, cyc - DR);
-          cx.lineTo(px + DR, cyc);
-          cx.lineTo(px, cyc + DR);
-          cx.lineTo(px - DR, cyc);
-          cx.closePath();
+        const c0 = tailAt(lx, 4); // a touch behind the flat base
+        if (pip.kind === 'div' || pip.kind === 'wing') {
+          // carried division / hold squadron → a solid diamond ("ромбик")
           cx.fillStyle = rgba(col, 0.85);
           cx.strokeStyle = rgba(col, 0.95);
-          cx.fill();
-          cx.stroke();
+          diamond(c0.x, c0.y, pip.kind === 'div' ? DR : DS, true);
+        } else if (pip.kind === 'troop') {
+          // loaded troop → solid square
+          const x = c0.x - SQ / 2,
+            y = c0.y - SQ / 2;
+          cx.fillStyle = rgba(col, 0.85);
+          cx.fillRect(x, y, SQ, SQ);
+          cx.strokeStyle = rgba(col, 0.95);
+          cx.strokeRect(x + 0.5, y + 0.5, SQ - 1, SQ - 1);
         } else {
-          const x = px - SQ / 2,
-            y = cyc - SQ / 2;
-          if (pip.kind === 'troop') {
-            // loaded troop → solid square
-            cx.fillStyle = rgba(col, 0.85);
-            cx.fillRect(x, y, SQ, SQ);
-            cx.strokeStyle = rgba(col, 0.95);
-            cx.strokeRect(x + 0.5, y + 0.5, SQ - 1, SQ - 1);
+          // loading pip → fills in place over ~1h (squadron = growing diamond,
+          // ground troop = empty square filling bottom-up)
+          const p = pip.load!;
+          const prog = clamp((s.time - p.startAt) / (p.doneAt - p.startAt), 0, 1);
+          if (isSquadron(p.unit)) {
+            cx.strokeStyle = rgba(col, 0.85);
+            diamond(c0.x, c0.y, DS, false);
+            if (prog > 0) {
+              cx.fillStyle = rgba(col, 0.8);
+              cx.strokeStyle = rgba(col, 0);
+              diamond(c0.x, c0.y, DS * prog, true);
+            }
           } else {
-            // loading troop → empty square filling from the bottom (0→1 over ~1h)
-            const p = pip.load!;
-            const prog = clamp((s.time - p.startAt) / (p.doneAt - p.startAt), 0, 1);
+            const x = c0.x - SQ / 2,
+              y = c0.y - SQ / 2;
             cx.strokeStyle = rgba(col, 0.85);
             cx.strokeRect(x + 0.5, y + 0.5, SQ - 1, SQ - 1);
             if (prog > 0) {
@@ -4282,15 +4317,14 @@ function render(now: number) {
             }
           }
         }
-        px += CELL;
+        lx += CELL;
       }
       cx.restore();
       if (over > 0) {
+        const o = tailAt(lx, 4);
         cx.fillStyle = rgba(col, 0.92);
         cx.font = '700 8px ui-monospace,Menlo,monospace';
-        cx.textAlign = 'left';
-        cx.fillText(`+${over}`, px - CELL / 2 + 1, cyc + SQ / 2);
-        cx.textAlign = 'center';
+        cx.fillText(`+${over}`, o.x, o.y + SQ / 2);
       }
     }
 
@@ -4321,10 +4355,12 @@ function render(now: number) {
       }
     }
 
-    // ship count, small, under the whole emblem (exact size for fleets past 5 ships).
+    // ship count (hulls in the pyramid), small, past the cargo tail — placed along
+    // the heading like the pips, glyph upright.
+    const cnt = tailAt(0, 18);
     cx.fillStyle = rgba(col, 0.95);
     cx.font = '700 9px ui-monospace,Menlo,monospace';
-    cx.fillText(String(ships), A.x, A.y + 18);
+    cx.fillText(String(ships), cnt.x, cnt.y);
 
     cx.globalAlpha = 1; // end of the per-fleet LOD cross-fade
   }
@@ -9384,6 +9420,19 @@ const fpsEl = $('fps');
 // tests. Compiled out of the player build (dev tooling, not diagnostics).
 if (!__PLAYER_BUILD__ && DEV_UI && typeof window !== 'undefined') {
   (window as unknown as { __vdFx?: object }).__vdFx = {
+    // Stock the first own fleet with hold cargo (squadrons in the hold + landing
+    // troops + a fake in-progress load) so the emblem's cargo tail can be previewed
+    // without building a carrier — dev chrome, mutates local state only.
+    stockFleet(): string | null {
+      const f = Object.values(s.fleets).find((x) => x.owner === ME);
+      if (!f) return null;
+      const wing = f.units.find((st) => isSquadron(st.unit));
+      if (wing) wing.count += 2;
+      else f.units.push({ unit: 'fighter_squadron', count: 2 });
+      (f.landing ??= []).push({ unit: 'militia', count: 2 });
+      pendingLoads.push({ fleetId: f.id, unit: 'fighter_squadron', startAt: s.time, doneAt: s.time + LOAD_TIME });
+      return f.id;
+    },
     pushSiege(fromId: string, toId: string): boolean {
       const a = s.planets[fromId]?.position;
       const b = s.planets[toId]?.position;
