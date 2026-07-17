@@ -1124,6 +1124,12 @@ export const en: Record<string, string> = {
   '⚔ Контрудар у {node}: прогноз потерь {pct}%': '⚔ Counterstrike at {node}: loss forecast {pct}%',
   '🛫 Дежурный вылет поднят у {node}': '🛫 A standing patrol raised at {node}',
   '🛡 Рубеж {node} удержан: прогноз потерь {pct}%': '🛡 The {node} line held: loss forecast {pct}%',
+  '🚩 Подкрепление выслано к {node}: прогноз потерь {pct}%':
+    '🚩 Reinforcement sent to {node}: loss forecast {pct}%',
+  'Точка удержания': 'Hold point',
+  'Снять точку': 'Unmark',
+  '🚩 Держать': '🚩 Hold',
+  '🚩 Назначить точкой удержания': '🚩 Mark as a hold point',
   'Решений за вахту: {n} — журнал в окне Хранителя.':
     "Decisions this watch: {n} — see the Steward window's journal.",
   '🌅 Хранитель вернул вам управление (была «Оборона»).':

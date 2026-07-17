@@ -309,10 +309,12 @@ function project(
     delete player.technologies;
     delete player.scientist;
     delete player.arrears; // unpaid bills read as treasury intel — owner-private
-    // Autopilot status is «спит — можно бить» intel, and the SITREP journal
-    // narrates the owner's defenses — both strictly owner-private (ST-2.4).
+    // Autopilot status is «спит — можно бить» intel, the SITREP journal narrates
+    // the owner's defenses, and hold points are targeting intel («вот его якоря»)
+    // — all strictly owner-private (ST-2.4 / ST-2.1).
     delete player.steward;
     delete player.stewardLog;
+    delete player.stewardHoldPoints;
   }
   // Scoreboard: each player's live planet/fleet/unit totals aggregate territory
   // the viewer can't see, so an enemy's `scores` line is fog-sensitive intel

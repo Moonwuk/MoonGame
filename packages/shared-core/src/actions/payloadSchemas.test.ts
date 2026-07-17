@@ -48,6 +48,7 @@ const CLIENT_ACTION_TYPES = [
   'division.unload',
   'steward.delegate',
   'steward.recall',
+  'steward.holdpoint',
   'order.auto',
   'order.scramble',
 ];
@@ -115,6 +116,7 @@ describe('SV-1.2 · action payload schemas', () => {
       ['division.unload', { divisionId: 'div:1' }],
       ['steward.delegate', { posture: 'defend', until: 123456 }],
       ['steward.recall', {}],
+      ['steward.holdpoint', { planetId: 'p1', on: true }],
       ['order.auto', { fleetId: 'f1', on: true }],
       ['order.scramble', { fleetId: 'f1', on: false }],
       ['unit.build', { planetId: 'p1', unit: 'cruiser', modules: ['targeting_array'] }],

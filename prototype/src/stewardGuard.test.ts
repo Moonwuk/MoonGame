@@ -378,6 +378,95 @@ describe('stewardGuardOrders — эвакуация под угрозой (ST-3.
     expect(orders[1]!.payload).toMatchObject({ fleetId: 'F1', to: 'S' });
   });
 
+  it('точка удержания (ST-2.1): якорь НИКОГДА не эвакуируется — без подмоги это вынужденный hold', () => {
+    // The same doomed stand the first test evacuates — but H is a hold point and
+    // no relief exists anywhere: the wing stands as ordered, the bad fraction in
+    // the journal tells the owner the price of their standing order.
+    const s = guardState({
+      fleets: [raider(inboundToH(10)), fl('F1', 'p1', { location: 'H', units: stacks([['cruiser', 1]]) })],
+      hGarrison: stacks([['militia', 4]]),
+    });
+    s.players.p1!.stewardHoldPoints = ['H'];
+    const orders = stewardGuardOrders(s, 'p1');
+    expect(orders.map((a) => a.type)).toEqual(['steward.report']);
+    const entries = reportEntries(orders);
+    expect(entries).toMatchObject([{ kind: 'hold', node: 'H' }]);
+    expect(entries[0]!.fraction as number).toBeGreaterThanOrEqual(0.35);
+  });
+
+  it('точка удержания: подкрепление, которое успевает И переламывает прогноз, вылетает к якорю', () => {
+    let s = guardState({
+      fleets: [
+        raider(inboundToH(20)),
+        fl('F1', 'p1', { location: 'H', units: stacks([['cruiser', 1]]) }),
+        fl('F2', 'p1', { location: 'S', units: stacks([['cruiser', 8]]) }),
+      ],
+    });
+    s.players.p1!.stewardHoldPoints = ['H'];
+    const tick1 = stewardGuardOrders(s, 'p1');
+    expect(tick1.map((a) => a.type)).toEqual(['fleet.move', 'steward.report']);
+    expect(tick1[0]!.payload).toMatchObject({ fleetId: 'F2', to: 'H' });
+    expect(reportEntries(tick1)).toMatchObject([{ kind: 'reinforce', node: 'H', fleetId: 'F2' }]);
+    // Apply through the real kernel: while the relief flies, the driver adds nothing…
+    for (const a of tick1) {
+      const r = order(s, a, s.time);
+      expect(r.error).toBeUndefined();
+      s = r.state;
+    }
+    expect(stewardGuardOrders(s, 'p1')).toEqual([]);
+    // …and once it docks, the combined stand HOLDS — the anchor was never evacuated.
+    const adv = advance(s, NOW + 4 * HOUR);
+    expect(adv.error).toBeUndefined();
+    s = adv.state;
+    expect(s.fleets.F2!.location).toBe('H');
+    const tick2 = stewardGuardOrders(s, 'p1');
+    expect(tick2.map((a) => a.type)).toEqual(['steward.report']);
+    expect(reportEntries(tick2)).toMatchObject([{ kind: 'hold', node: 'H' }]);
+  });
+
+  it('точка удержания: подмога, не успевающая до удара, не вылетает (piecemeal отклонён)', () => {
+    // ~2.3h travel + 2h tick margin > 3h to impact — the relief would arrive
+    // into the assault and feed the enemy piecemeal; the anchor stands alone.
+    const s = guardState({
+      fleets: [
+        raider(inboundToH(3)),
+        fl('F1', 'p1', { location: 'H', units: stacks([['cruiser', 1]]) }),
+        fl('F2', 'p1', { location: 'S', units: stacks([['cruiser', 8]]) }),
+      ],
+    });
+    s.players.p1!.stewardHoldPoints = ['H'];
+    const orders = stewardGuardOrders(s, 'p1');
+    expect(orders.map((a) => a.type)).toEqual(['steward.report']);
+    expect(reportEntries(orders)).toMatchObject([{ kind: 'hold', node: 'H' }]);
+  });
+
+  it('точка удержания: слишком слабая подмога не переламывает прогноз — не скармливается', () => {
+    const s = guardState({
+      fleets: [
+        raider(inboundToH(20)),
+        fl('F1', 'p1', { location: 'H', units: stacks([['cruiser', 1]]) }),
+        fl('F2', 'p1', { location: 'S', units: stacks([['cruiser', 1]]) }),
+      ],
+    });
+    s.players.p1!.stewardHoldPoints = ['H'];
+    const orders = stewardGuardOrders(s, 'p1');
+    expect(orders.map((a) => a.type)).toEqual(['steward.report']);
+    expect(reportEntries(orders)).toMatchObject([{ kind: 'hold', node: 'H' }]);
+  });
+
+  it('точка удержания: паром для чужой эвакуации не снимается с якоря', () => {
+    // H's garrison is stranded; the only transport sits docked at the anchor S —
+    // it stays (the anchor keeps its wing), so H journals «не спасти».
+    const s = guardState({
+      fleets: [raider(inboundToH(20)), fl('F2', 'p1', { location: 'S', units: stacks([['dropship', 1]]) })],
+      hGarrison: stacks([['militia', 4]]),
+    });
+    s.players.p1!.stewardHoldPoints = ['S'];
+    const orders = stewardGuardOrders(s, 'p1');
+    expect(orders.map((a) => a.type)).toEqual(['steward.report']);
+    expect(reportEntries(orders)).toMatchObject([{ kind: 'stranded', node: 'H' }]);
+  });
+
   it('under an active assault the garrison is locked — fleets still fly out, nothing is loaded', () => {
     const s = guardState({
       fleets: [raider({ location: 'H' }), fl('F1', 'p1', { location: 'H', units: stacks([['cruiser', 1]]) })],

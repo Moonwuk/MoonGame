@@ -233,7 +233,9 @@ describe('visibleState (fog of war as a security boundary)', () => {
     // бить» intel and must never cross the fog (ST-2.4).
     state.players.p2!.steward = { posture: 'defend', until: state.time + 1 };
     state.players.p2!.stewardLog = [{ at: 0, kind: 'evac', node: 'A' }];
+    state.players.p2!.stewardHoldPoints = ['A'];
     state.players.p1!.steward = { posture: 'defend', until: state.time + 1 };
+    state.players.p1!.stewardHoldPoints = ['B'];
     const view = visibleState(state, 'p1', data);
     expect(view.players.p1?.resources).toEqual({ metal: 99 }); // own treasury intact
     expect(view.players.p2?.resources).toEqual({}); // enemy treasury hidden
@@ -241,7 +243,9 @@ describe('visibleState (fog of war as a security boundary)', () => {
     expect(view.players.p2?.scientist).toBeUndefined(); // enemy research leader hidden
     expect(view.players.p2?.steward).toBeUndefined(); // enemy autopilot status hidden
     expect(view.players.p2?.stewardLog).toBeUndefined(); // enemy SITREP hidden
+    expect(view.players.p2?.stewardHoldPoints).toBeUndefined(); // enemy anchors hidden
     expect(view.players.p1?.steward).toBeDefined(); // own delegation stays visible
+    expect(view.players.p1?.stewardHoldPoints).toEqual(['B']); // own anchors stay visible
     expect(view.players.p2?.name).toBe('p2'); // identity kept (scoreboard)
   });
 

@@ -136,6 +136,10 @@ export const actionPayloadSchemas: Record<string, z.ZodType> = {
   // steward («Хранитель») — postures are data-driven; the module gates the value
   'steward.delegate': z.object({ posture: z.string().min(1), until: z.number().finite() }),
   'steward.recall': z.object({}),
+  // Hold point (ST-2.1) — a player-designated standing order; the module gates
+  // ownership/cap. (`steward.report` stays deliberately ABSENT: the SITREP stamp
+  // is the SERVER driver's, like `patrol.stamp` — a client must not forge it.)
+  'steward.holdpoint': z.object({ planetId: id, on: z.boolean() }),
   // standing orders (CC-2 auto-storm / CC-4 дежурный вылет) — client toggles only.
   // `patrol.stamp` is deliberately ABSENT: it is the SERVER driver's runtime stamp
   // (submitAction path, gate-exempt); a client stamping its own sortie would refill

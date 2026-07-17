@@ -113,6 +113,13 @@ export interface Player {
    *  starts a fresh journal. Owner-private (stripped from rivals' views, like the
    *  treasury — both the journal and the autopilot status itself read as «спит»). */
   stewardLog?: StewardLogEntry[];
+  /** Hold points (ST-2.1, guard): OWN worlds the player ORDERED held — a standing
+   *  order (the CC-4 family), honored by the Steward under any posture: a hold
+   *  point is never auto-evacuated; a threatened one is REINFORCED instead. Set
+   *  via `steward.holdpoint` (client-submittable, capped at
+   *  `MAX_STEWARD_HOLD_POINTS`). Owner-private — a rival reading your anchors is
+   *  targeting intel. Absent = no points. */
+  stewardHoldPoints?: PlanetId[];
 }
 
 /** A live Steward delegation on a player (see `Player.steward`). */

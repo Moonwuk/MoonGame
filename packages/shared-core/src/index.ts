@@ -292,6 +292,7 @@ export {
   STEWARD_POSTURES,
   STEWARD_LOSS_LIMIT,
   MAX_STEWARD_LOG,
+  MAX_STEWARD_HOLD_POINTS,
   type StewardPosture,
 } from './modules/steward';
 export { effectsModule, type EffectImpl, type EffectOccurrence } from './modules/effects';

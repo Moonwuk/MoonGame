@@ -86,7 +86,9 @@ import {
   FAVOUR_WAR,
   delegateSteward,
   recallSteward,
+  setHoldPoint,
   stewardActive,
+  MAX_STEWARD_HOLD_POINTS,
   castHeroAbility,
   spawnHero,
   unlockHeroSkill,
@@ -4757,6 +4759,21 @@ function planetPanelHtml(p: Planet): string {
     } else if (isInhabited(p)) {
       h += `<div class="row">${btn('capital', '', t('★ Сделать столицей'), true)}</div>`;
     }
+    // Hold point (ST-2.1): a standing order for the Steward — the anchor is never
+    // auto-evacuated and gets reinforced under threat. Same tech gate as delegation.
+    if (stewardTechDone()) {
+      const points = s.players[ME]?.stewardHoldPoints ?? [];
+      h += `<div class="row">${
+        points.includes(p.id)
+          ? `<b style="color:var(--cyan)">🚩 ${t('Точка удержания')}</b> ${btn('holdpoint', 'off', t('Снять точку'), true)}`
+          : btn(
+              'holdpoint',
+              'on',
+              compactUi() ? t('🚩 Держать') : t('🚩 Назначить точкой удержания'),
+              points.length < MAX_STEWARD_HOLD_POINTS,
+            )
+      }</div>`;
+    }
   }
 
   // Tactical ping — mark this province and share it (coalition chat, or a player's DM).
@@ -6235,6 +6252,8 @@ side.addEventListener('click', (ev) => {
     playerOrder(spyOn(ME, arg, 'planet', selPlanet!)); // arg = the world's (last known) owner
   } else if (act === 'capital') {
     playerOrder(designateCapital(ME, selPlanet!));
+  } else if (act === 'holdpoint') {
+    playerOrder(setHoldPoint(ME, selPlanet!, arg === 'on'));
   } else if (act === 'ping') {
     openPingMenu();
   } else if (act === 'bombard') {
@@ -7223,6 +7242,8 @@ function stewLogLine(e: { kind: string; node?: string; fleetId?: string; to?: st
       return t('🛫 Дежурный вылет поднят у {node}', { node });
     case 'hold':
       return t('🛡 Рубеж {node} удержан: прогноз потерь {pct}%', { node, pct });
+    case 'reinforce':
+      return t('🚩 Подкрепление выслано к {node}: прогноз потерь {pct}%', { node, pct });
     default:
       return `${e.kind}: ${node}`;
   }

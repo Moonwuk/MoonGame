@@ -1,9 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { parseGameData, type GameData } from '../data/schemas';
 import { createKernel } from '../kernel/kernel';
+import type { GameModule } from '../kernel/module';
 import { createInitialState, type GameState, type Player } from '../state/gameState';
 import type { Action, ApplyResult, Context } from '../action/types';
-import { stewardActive, stewardModule, MAX_STEWARD_LOG } from './steward';
+import {
+  stewardActive,
+  stewardModule,
+  MAX_STEWARD_LOG,
+  MAX_STEWARD_HOLD_POINTS,
+} from './steward';
 
 const HOUR = 3_600_000;
 
@@ -231,5 +237,136 @@ describe('steward.report — the SITREP journal (ST-2.4)', () => {
       kernel.applyAction(expired.state, delegate('p1', 'defend', 20 * HOUR), ctx(10 * HOUR)),
     ).state;
     expect(state.players.p1?.stewardLog).toBeUndefined();
+  });
+});
+
+describe('steward.holdpoint — player-designated anchors (ST-2.1)', () => {
+  const kernel = createKernel([stewardModule]);
+  const holdpoint = (playerId: string, planetId: unknown, on: unknown): Action => ({
+    id: `ui:${playerId}:7`,
+    type: 'steward.holdpoint',
+    playerId,
+    payload: { planetId, on },
+    issuedAt: 0,
+  });
+  const planet = (id: string, owner: string | null) => ({
+    id,
+    owner,
+    position: { x: 0, y: 0 },
+    resources: {},
+    buildings: [],
+    garrison: [],
+    traits: [],
+  });
+  const withPlanets = (): GameState => ({
+    ...baseState(),
+    planets: { A: planet('A', 'p1'), B: planet('B', 'p1'), C: planet('C', 'p1'), E: planet('E', 'p2') },
+  });
+
+  it('marks and unmarks an OWN world; clearing a non-point is a safe no-op', () => {
+    const marked = okApply(kernel.applyAction(withPlanets(), holdpoint('p1', 'A', true), ctx(0)));
+    expect(marked.state.players.p1?.stewardHoldPoints).toEqual(['A']);
+    expect(marked.events).toContainEqual({
+      type: 'steward.holdpoint',
+      payload: { playerId: 'p1', planetId: 'A', on: true },
+    });
+    // Re-marking the same anchor changes nothing (idempotent, no second event).
+    const again = okApply(kernel.applyAction(marked.state, holdpoint('p1', 'A', true), ctx(0)));
+    expect(again.state.players.p1?.stewardHoldPoints).toEqual(['A']);
+    expect(again.events).toHaveLength(0);
+    // Unmark: the LAST anchor removed deletes the field entirely (state stays lean).
+    const cleared = okApply(kernel.applyAction(marked.state, holdpoint('p1', 'A', false), ctx(0)));
+    expect(cleared.state.players.p1?.stewardHoldPoints).toBeUndefined();
+    expect(cleared.events).toContainEqual({
+      type: 'steward.holdpoint',
+      payload: { playerId: 'p1', planetId: 'A', on: false },
+    });
+    // Clearing a world that was never an anchor still succeeds, announces nothing.
+    const noop = okApply(kernel.applyAction(withPlanets(), holdpoint('p1', 'B', false), ctx(0)));
+    expect(noop.events).toHaveLength(0);
+  });
+
+  it('caps the anchors at MAX_STEWARD_HOLD_POINTS — the order stays focused', () => {
+    let state = withPlanets();
+    state = okApply(kernel.applyAction(state, holdpoint('p1', 'A', true), ctx(0))).state;
+    state = okApply(kernel.applyAction(state, holdpoint('p1', 'B', true), ctx(0))).state;
+    expect(state.players.p1?.stewardHoldPoints).toHaveLength(MAX_STEWARD_HOLD_POINTS);
+    expect(kernel.applyAction(state, holdpoint('p1', 'C', true), ctx(0))).toEqual({
+      ok: false,
+      code: 'E_LIMIT',
+    });
+    // Freeing a slot re-opens the cap.
+    state = okApply(kernel.applyAction(state, holdpoint('p1', 'A', false), ctx(0))).state;
+    state = okApply(kernel.applyAction(state, holdpoint('p1', 'C', true), ctx(0))).state;
+    expect(state.players.p1?.stewardHoldPoints).toEqual(['B', 'C']);
+  });
+
+  it('fail-secure gates: seat, tech, payload, target, ownership', () => {
+    expect(kernel.applyAction(withPlanets(), holdpoint('ghost', 'A', true), ctx(0))).toEqual({
+      ok: false,
+      code: 'E_NO_PLAYER',
+    });
+    const locked: GameState = { ...withPlanets(), players: { p1: player('p1', false) } };
+    expect(kernel.applyAction(locked, holdpoint('p1', 'A', true), ctx(0))).toEqual({
+      ok: false,
+      code: 'E_STEWARD_LOCKED',
+    });
+    expect(kernel.applyAction(withPlanets(), holdpoint('p1', 5, true), ctx(0))).toEqual({
+      ok: false,
+      code: 'E_BAD_PAYLOAD',
+    });
+    expect(kernel.applyAction(withPlanets(), holdpoint('p1', 'A', 'yes'), ctx(0))).toEqual({
+      ok: false,
+      code: 'E_BAD_PAYLOAD',
+    });
+    expect(kernel.applyAction(withPlanets(), holdpoint('p1', 'nowhere', true), ctx(0))).toEqual({
+      ok: false,
+      code: 'E_NO_PLANET',
+    });
+    // Only OWN worlds anchor — a rival's (or neutral) world is not yours to hold.
+    expect(kernel.applyAction(withPlanets(), holdpoint('p1', 'E', true), ctx(0))).toEqual({
+      ok: false,
+      code: 'E_FORBIDDEN',
+    });
+  });
+
+  it('a LOST world frees its anchor slot — hold points follow ownership', () => {
+    // A stub conquest module: any real capture path (arrival / battle / ground /
+    // annihilation) publishes the same events the steward module prunes on.
+    const conquestStub: GameModule = {
+      id: 'conquest-stub',
+      version: '1.0.0',
+      setup(api) {
+        api.onAction('test.capture', (action, h) => {
+          const p = action.payload as { planetId: string; owner: string | null; destroyed?: boolean };
+          h.state.planets[p.planetId]!.owner = p.owner;
+          if (p.destroyed) h.emit('planet.destroyed', { planetId: p.planetId, by: p.owner });
+          else h.emit('planet.captured', { planetId: p.planetId, owner: p.owner, via: 'test' });
+        });
+      },
+    };
+    const k = createKernel([stewardModule, conquestStub]);
+    const capture = (planetId: string, owner: string | null, destroyed = false): Action => ({
+      id: 'srv:cap:1',
+      type: 'test.capture',
+      playerId: 'p2',
+      payload: { planetId, owner, destroyed },
+      issuedAt: 0,
+    });
+    let state = withPlanets();
+    state = okApply(k.applyAction(state, holdpoint('p1', 'A', true), ctx(0))).state;
+    state = okApply(k.applyAction(state, holdpoint('p1', 'B', true), ctx(0))).state;
+    // The enemy takes A → its anchor is pruned, B's survives, and the freed
+    // slot is immediately reusable (the cap would otherwise leak forever:
+    // the planet-panel unmark button renders on OWN worlds only).
+    state = okApply(k.applyAction(state, capture('A', 'p2'), ctx(0))).state;
+    expect(state.players.p1?.stewardHoldPoints).toEqual(['B']);
+    state = okApply(k.applyAction(state, holdpoint('p1', 'C', true), ctx(0))).state;
+    expect(state.players.p1?.stewardHoldPoints).toEqual(['B', 'C']);
+    // Annihilation (owner → null) frees the slot the same way; the LAST anchor
+    // gone deletes the field entirely.
+    state = okApply(k.applyAction(state, capture('B', null, true), ctx(0))).state;
+    state = okApply(k.applyAction(state, capture('C', 'p2'), ctx(0))).state;
+    expect(state.players.p1?.stewardHoldPoints).toBeUndefined();
   });
 });
