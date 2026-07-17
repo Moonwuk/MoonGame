@@ -1224,6 +1224,9 @@ button.b:disabled{opacity:.32;cursor:not-allowed;color:var(--dim);border-color:v
 #connect .mname{font-size:13px;color:var(--txt,#dfeef2);text-transform:capitalize;}
 #connect .mname .mid{font-size:10px;color:var(--dim);letter-spacing:.5px;text-transform:none;margin-left:6px;}
 #connect .mmeta{margin-top:3px;font-size:11px;color:var(--dim);}
+#connect .mmeta .mwin{color:var(--cyan-dim,#6cc);}
+#connect .mmeta .mwin.soon{color:var(--amber,#e0a942);}
+#connect .mmeta .mwin.shut{color:var(--dim);text-decoration:line-through;}
 #connect .mbtns{display:flex;gap:6px;flex:none;}
 #connect .mbtn{padding:8px 11px;border-radius:7px;border:1px solid var(--cyan);background:rgba(53,214,230,.12);
   color:var(--cyan);font-size:11px;cursor:pointer;white-space:nowrap;}

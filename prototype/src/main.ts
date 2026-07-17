@@ -9177,6 +9177,24 @@ interface MatchRow {
   days: number;
   players: { seated: number; capacity: number };
   status: string;
+  /** Entry window (SES-2.3/2.4): can a NEW player still take a free seat here, and how
+   *  long is left. Absent on an older server ⇒ treat as always open. */
+  entryOpen?: boolean;
+  entryClosesInMs?: number;
+}
+
+/** A large sentinel from the server (`Number.MAX_SAFE_INTEGER`) means «no entry window»
+ *  — anything past a decade of real time counts as unbounded here. */
+const ENTRY_UNBOUNDED_MS = 3650 * 24 * 60 * 60 * 1000;
+
+/** Real-time-left → «Nд Mч» / «Mч» / «<1ч» for the join-window countdown on a row. */
+function fmtJoinWindow(ms: number): string {
+  const hours = Math.max(0, Math.floor(ms / 3_600_000));
+  const d = Math.floor(hours / 24);
+  const h = hours % 24;
+  if (d > 0) return t('{d}д {h}ч', { d, h });
+  if (hours > 0) return t('{h}ч', { h: hours });
+  return t('<1ч');
 }
 type MatchTab = 'available' | 'active' | 'archived';
 let matchLists: Record<MatchTab, MatchRow[]> | null = null;
@@ -9290,10 +9308,24 @@ function renderMatches(): void {
     row.className = 'mrow';
     const info = document.createElement('div');
     info.className = 'minfo';
+    // Entry window (SES-2.4): on «Доступные», show how long a newcomer may still take a
+    // seat — the server already drops fully-closed sessions from this tab, so an open
+    // countdown reassures, a soon-to-close one nudges. Unbounded (dev / old server) or
+    // other tabs: omitted. Own «Активные»/«Архив» rows don't gate a reconnect, so no
+    // window there.
+    let windowLine = '';
+    if (activeTab === 'available' && m.entryClosesInMs !== undefined) {
+      if (m.entryOpen === false) {
+        windowLine = ` · <span class="mwin shut">${t('вход закрыт')}</span>`;
+      } else if (m.entryClosesInMs < ENTRY_UNBOUNDED_MS) {
+        const soon = m.entryClosesInMs < 24 * 60 * 60 * 1000; // under a real day left
+        windowLine = ` · <span class="mwin${soon ? ' soon' : ''}">${t('вход ещё {dur}', { dur: fmtJoinWindow(m.entryClosesInMs) })}</span>`;
+      }
+    }
     info.innerHTML =
       `<div class="mname">${esc(m.mapId)} <span class="mid">${esc(m.matchId)}</span></div>` +
       `<div class="mmeta">${t('День {n}', { n: m.days })} · ${t('{s}/{c} игроков', { s: m.players.seated, c: m.players.capacity })} · ` +
-      `${esc(ruleSummary(m.rules))} · ${m.status === 'ended' ? t('завершён') : t('идёт')}</div>`;
+      `${esc(ruleSummary(m.rules))} · ${m.status === 'ended' ? t('завершён') : t('идёт')}${windowLine}</div>`;
     row.appendChild(info);
     const btns = document.createElement('div');
     btns.className = 'mbtns';
