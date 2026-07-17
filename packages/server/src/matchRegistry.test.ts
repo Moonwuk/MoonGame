@@ -141,3 +141,90 @@ describe('MatchRegistry — match-browser read-model', () => {
     expect(reg.ids()).toEqual(['m1']);
   });
 });
+
+describe('MatchRegistry — entry window (SES-2.3)', () => {
+  const WINDOW = 4 * MS_PER_DAY; // 4 real days
+
+  it('no entryWindowMs ⇒ always open (dev / test default)', () => {
+    const reg = new MatchRegistry(new MemoryAccountStore());
+    reg.register(room('m1', { days: 999 }), { mapId: 'duel', rules: { timeScale: 1 }, createdAt: 1 });
+    expect(reg.entryOpen('m1')).toBe(true);
+  });
+
+  it('open before the real-time window, closed at/after it (timeScale 1: game days = real days)', () => {
+    const reg = new MatchRegistry(new MemoryAccountStore());
+    reg.register(room('young', { days: 3 }), {
+      mapId: 'duel',
+      rules: { timeScale: 1 },
+      createdAt: 1,
+      entryWindowMs: WINDOW,
+    });
+    reg.register(room('old', { days: 4 }), {
+      mapId: 'duel',
+      rules: { timeScale: 1 },
+      createdAt: 1,
+      entryWindowMs: WINDOW,
+    });
+    expect(reg.entryOpen('young')).toBe(true); // 3 real days < 4
+    expect(reg.entryOpen('old')).toBe(false); // 4 real days = window → closed
+  });
+
+  it('the window is REAL time: timeScale divides game time (×24: 96 game-days = 4 real days)', () => {
+    const reg = new MatchRegistry(new MemoryAccountStore());
+    // 90 game-days at ×24 = 3.75 real days → still open; 96 game-days = 4 real days → closed.
+    reg.register(room('fast-young', { days: 90 }), {
+      mapId: 'duel',
+      rules: { timeScale: 24 },
+      createdAt: 1,
+      entryWindowMs: WINDOW,
+    });
+    reg.register(room('fast-old', { days: 96 }), {
+      mapId: 'duel',
+      rules: { timeScale: 24 },
+      createdAt: 1,
+      entryWindowMs: WINDOW,
+    });
+    expect(reg.entryOpen('fast-young')).toBe(true);
+    expect(reg.entryOpen('fast-old')).toBe(false);
+  });
+
+  it('an unknown match is closed (fail-secure — no seat can be claimed in it)', () => {
+    const reg = new MatchRegistry(new MemoryAccountStore());
+    expect(reg.entryOpen('ghost')).toBe(false);
+  });
+
+  it('a closed-window match drops out of «available» even with free seats; a seated player keeps it on «active»', async () => {
+    const accounts = new MemoryAccountStore();
+    const reg = new MatchRegistry(accounts);
+    reg.register(room('closed', { days: 10 }), {
+      mapId: 'duel',
+      rules: { timeScale: 1 },
+      createdAt: 1,
+      entryWindowMs: WINDOW,
+    });
+    // A newcomer sees no joinable match (window shut), even though a seat is free.
+    expect((await reg.list('newbie')).available).toHaveLength(0);
+    // But a player already seated there still sees it on Active — reconnect is never gated.
+    await accounts.resolveSeat('closed', 'veteran', ['green', 'red']);
+    const vet = await reg.list('veteran');
+    expect(vet.active.map((s) => s.matchId)).toEqual(['closed']);
+    expect(vet.active[0]!.entryOpen).toBe(false);
+  });
+
+  it('summary carries entryOpen + entryClosesInMs (large sentinel when unbounded)', async () => {
+    const reg = new MatchRegistry(new MemoryAccountStore());
+    reg.register(room('bounded', { days: 1 }), {
+      mapId: 'duel',
+      rules: { timeScale: 1 },
+      createdAt: 1,
+      entryWindowMs: WINDOW,
+    });
+    reg.register(room('unbounded', { days: 1 }), { mapId: 'duel', rules: { timeScale: 1 }, createdAt: 2 });
+    const lists = await reg.list('x');
+    const bounded = lists.available.find((s) => s.matchId === 'bounded')!;
+    const unbounded = lists.available.find((s) => s.matchId === 'unbounded')!;
+    expect(bounded.entryOpen).toBe(true);
+    expect(bounded.entryClosesInMs).toBe(3 * MS_PER_DAY); // 4-day window, 1 day elapsed
+    expect(unbounded.entryClosesInMs).toBe(Number.MAX_SAFE_INTEGER);
+  });
+});
