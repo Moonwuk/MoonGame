@@ -307,6 +307,16 @@ export const en: Record<string, string> = {
   'Новый командир на борту — обучение скоро появится здесь.': 'New commander aboard — the tutorial is coming soon.',
   'ОБЪЯВИТЬ ВОЙНУ': 'DECLARE WAR',
   'ОБЪЯВИТЬ ВОЙНУ?': 'DECLARE WAR?',
+  'Это мир дружественной фракции. Вы хотите объявить войну <b>{names}</b>?':
+    "This is a friendly faction's world. Do you want to declare war on <b>{names}</b>?",
+  ДА: 'YES',
+  НЕТ: 'NO',
+  '⚔ выберите чужой мир для штурма': "⚔ pick someone else's world to storm",
+  '⚔ штурмовать можно только чужой мир': "⚔ only someone else's world can be stormed",
+  'Корабли: {s} · Десант: {tr}': 'Ships: {s} · Landing: {tr}',
+  'Авто-штурм': 'Auto-storm',
+  'ВКЛ — автоматически штурмовать вражеский мир при нахождении на его орбите.':
+    'ON — automatically storm an enemy world while in its orbit.',
   'ОПЕРАТИВНАЯ ГРУППА': 'TASK GROUP',
   ОТМЕНА: 'CANCEL',
   'Обновите данные флотом или радаром.': 'Re-scan with a fleet or radar to refresh.',
@@ -984,7 +994,7 @@ export const en: Record<string, string> = {
   'Суммарная защита кораблей флота.': "The fleet's total ship defense.",
   'Очки здоровья': 'Hit points',
   'Суммарная прочность кораблей флота.': "The fleet's total hull strength.",
-  'Скорость перелёта — флот идёт со скоростью самого медленного корабля.':
+  'Скорость перелёта — флот движется со скоростью самого медленного корабля.':
     'Travel speed — the fleet moves at its slowest ship.',
   Гарнизон: 'Garrison',
   'Численность наземных войск, обороняющих мир.': 'The ground troops defending the world.',

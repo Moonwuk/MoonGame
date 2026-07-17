@@ -397,6 +397,11 @@ let selFleet: string | null = null;
 let selPlanet: string | null = null;
 let selFleets = new Set<string>();
 let aiming = false; // "Move" command armed → next world tap orders the move
+// PC ШТУРМ: armed like "Move", but the target must be someone else's capturable
+// world — the fleet flies there and assaults on arrival (one-shot, not the CC-2
+// standing auto-storm). Keyed by fleet id → destination world.
+let assaultAim = false;
+const assaultOnArrival = new Map<string, string>();
 let barrageAim = false; // "Обстрел" armed → next tap picks the artillery's focus target
 // Hero window armed modes: a cast waits for its target world; a deploy waits for the
 // point the hero's ship rises at (own world / own fleet / allied world by markers).
@@ -418,6 +423,9 @@ let warPrompt: {
   destId: string;
   edge?: { from: string; to: string; t: number };
   blockers: string[];
+  /** PC ШТУРМ command: confirm → the moved fleets also assault on arrival; the
+   *  prompt reads as "this is a friendly faction's world — declare war?". */
+  assault?: boolean;
 } | null = null;
 let merging = false; // "Merge" armed → next tap on a friendly fleet picks the anchor
 // Fleets ordered to merge but not yet co-located: each flies to its anchor and the
@@ -2242,6 +2250,66 @@ function tryMoveGroup(fleetIds: string[], destId: string): void {
   }
   for (const id of movers) playerOrder(moveFleet(ME, id, destId));
 }
+/** PC ШТУРМ: send every selected fleet at `destId` (someone else's capturable world)
+ *  and assault on arrival. A peaceful target/route stages the war prompt first —
+ *  worded as "this is a friendly faction's world". */
+function tryAssaultGroup(fleetIds: string[], destId: string): void {
+  const movers = fleetIds.filter((id) => s.fleets[id]);
+  if (!movers.length) return;
+  const blockers = new Set<string>();
+  for (const id of movers) for (const b of peaceBlockers(fleetNode(s.fleets[id]!), destId)) blockers.add(b);
+  const owner = s.planets[destId]?.owner;
+  if (owner != null && owner !== ME && !canTraverse(s, ME, owner)) blockers.add(owner);
+  if (blockers.size) {
+    warPrompt = { fleetIds: movers, destId, blockers: [...blockers], assault: true };
+    renderWarPrompt();
+    return;
+  }
+  dispatchAssault(movers, destId);
+}
+function dispatchAssault(fleetIds: string[], destId: string): void {
+  for (const id of fleetIds) {
+    const f = s.fleets[id];
+    if (!f) continue;
+    if (f.location === destId && !f.movement) {
+      // already parked at the target — storm right away (orbit first if needed)
+      if (f.orbit !== 'near') playerOrder(orbitFleet(ME, id, 'near'));
+      playerOrder(assaultFleet(ME, id));
+    } else {
+      playerOrder(moveFleet(ME, id, destId));
+      assaultOnArrival.set(id, destId);
+    }
+  }
+}
+/** Fire the one-shot assault orders of fleets that reached their ШТУРМ target
+ *  (runs each frame beside autoEngage). Redirected fleets drop the order. */
+function pumpAssaultOrders(): void {
+  if (!assaultOnArrival.size) return;
+  for (const [id, destId] of [...assaultOnArrival]) {
+    const f = s.fleets[id];
+    if (!f) {
+      assaultOnArrival.delete(id);
+      continue;
+    }
+    if (f.movement) {
+      if ((f.movement.destination ?? f.movement.to) !== destId) assaultOnArrival.delete(id); // re-routed by hand
+      continue;
+    }
+    if (f.battleId) continue; // the arrival battle IS the assault path — wait it out
+    if (f.location !== destId) {
+      assaultOnArrival.delete(id); // parked elsewhere — the order lapsed
+      continue;
+    }
+    const here = s.planets[destId];
+    if (!here || here.owner === ME || here.owner == null) {
+      assaultOnArrival.delete(id); // captured meanwhile / emptied — nothing to storm
+      continue;
+    }
+    if (f.orbit !== 'near') playerOrder(orbitFleet(ME, id, 'near'));
+    playerOrder(assaultFleet(ME, id));
+    assaultOnArrival.delete(id);
+  }
+}
 /** As tryMoveGroup, but the target is a point on a lane (continuous order). Either lane
  *  endpoint sitting on PEACE territory blocks the march until war is declared. */
 function tryMoveEdgeGroup(fleetIds: string[], edge: { from: string; to: string; t: number }): void {
@@ -2266,9 +2334,13 @@ function confirmWarPrompt(): void {
   warPrompt = null;
   hideWarPrompt();
   for (const b of wp.blockers) playerOrder(declareWar(ME, b));
-  for (const id of wp.fleetIds) {
-    if (wp.edge) playerOrder(moveFleetEdge(ME, id, wp.edge));
-    else playerOrder(moveFleet(ME, id, wp.destId));
+  if (wp.assault) {
+    dispatchAssault(wp.fleetIds, wp.destId); // wars are declared → flies + storms on arrival
+  } else {
+    for (const id of wp.fleetIds) {
+      if (wp.edge) playerOrder(moveFleetEdge(ME, id, wp.edge));
+      else playerOrder(moveFleet(ME, id, wp.destId));
+    }
   }
   note(t('⚔ Война объявлена — флоты выдвигаются'));
 }
@@ -2280,12 +2352,15 @@ function renderWarPrompt(): void {
   const el = document.getElementById('warprompt');
   if (!el || !warPrompt) return;
   const names = warPrompt.blockers.map((b) => esc(blockerName(b))).join(', ');
+  const body = warPrompt.assault
+    ? t('Это мир дружественной фракции. Вы хотите объявить войну <b>{names}</b>?', { names })
+    : t('Маршрут проходит через миры <b>{names}</b>, с кем у вас <b>мир</b>. Мирного прохода нет — движение сюда объявит <b>войну</b>.', { names });
   el.innerHTML =
     `<div class="wpbox">` +
     `<div class="wp-head">⚔ ${t('ОБЪЯВИТЬ ВОЙНУ?')}</div>` +
-    `<div class="wp-body">${t('Маршрут проходит через миры <b>{names}</b>, с кем у вас <b>мир</b>. Мирного прохода нет — движение сюда объявит <b>войну</b>.', { names })}</div>` +
-    `<div class="wp-actions"><button class="wp-no">${t('ОТМЕНА')}</button>` +
-    `<button class="wp-yes">${t('ОБЪЯВИТЬ ВОЙНУ')}</button></div>` +
+    `<div class="wp-body">${body}</div>` +
+    `<div class="wp-actions"><button class="wp-no">${warPrompt.assault ? t('НЕТ') : t('ОТМЕНА')}</button>` +
+    `<button class="wp-yes">${warPrompt.assault ? t('ДА') : t('ОБЪЯВИТЬ ВОЙНУ')}</button></div>` +
     `</div>`;
   el.classList.add('show');
 }
@@ -3084,10 +3159,32 @@ function drawFleetRoutes() {
   }
 }
 
+/** While ШТУРМ is armed (PC): ring every valid target — someone else's capturable
+ *  world (enemy or friendly faction alike; the friendly path asks to declare war). */
+function drawAssaultTargets() {
+  if (!assaultAim) return;
+  cx.save();
+  cx.strokeStyle = 'rgba(255,90,77,.85)';
+  cx.lineWidth = 1.6;
+  cx.setLineDash([4, 4]);
+  cx.shadowColor = '#ff5a4d';
+  cx.shadowBlur = 8;
+  for (const n of MAP) {
+    const p = s.planets[n.id];
+    if (!p || p.owner == null || p.owner === ME) continue;
+    if (!(SECTOR_TYPES[SECTOR_OF[n.id]]?.capturable ?? false)) continue;
+    const c = world(n);
+    cx.beginPath();
+    cx.arc(c.x, c.y, 16, 0, TAU);
+    cx.stroke();
+  }
+  cx.restore();
+}
+
 /** While "Move" is armed: a dashed line from each selected fleet to the world under
  *  the pointer (snaps to the nearest blip) — preview before committing. */
 function drawAimPreview() {
-  if (!aiming || !aimPointer) return;
+  if (!(aiming || assaultAim) || !aimPointer) return;
   const ids = selectedFleetIds();
   if (!ids.length) return;
   // Prefer a node target; if none is near, aim at the closest point ON a lane —
@@ -4305,6 +4402,7 @@ function render(now: number) {
     cx.restore();
   }
   drawPings(now); // ally ping markers (coalition), with screen hit-boxes for taps
+  drawAssaultTargets();
   drawAimPreview();
 
 }
@@ -4455,7 +4553,10 @@ function fleetPanelHtml(f: Fleet): string {
   let h = cardHeader(
     ownerColor(f.owner),
     t('ФЛОТ'),
-    t('{s} кораблей · {tr} десанта', { s: nShips, tr: nTr }) + hullTag + (inOrbit ? ' · ' + t('на орбите') : '') + (f.bombarding ? ' · ⊗ ' + t('бомбардирует') : ''),
+    (pcUi() ? t('Корабли: {s} · Десант: {tr}', { s: nShips, tr: nTr }) : t('{s} кораблей · {tr} десанта', { s: nShips, tr: nTr })) +
+      hullTag +
+      (inOrbit ? ' · ' + t('на орбите') : '') +
+      (f.bombarding ? ' · ⊗ ' + t('бомбардирует') : ''),
   );
   // Aggregate combat weight, summed across the squadron's ships (it moves at its
   // slowest hull). The hero aura (+5%, noted below) is not folded into these totals.
@@ -4476,11 +4577,14 @@ function fleetPanelHtml(f: Fleet): string {
   if (f.units.some((u) => u.count > 0 && data.units[u.unit]?.traits.includes('hero'))) flavor.push(t('с героем-флагманом'));
   if (f.units.some((u) => u.count > 0 && data.units[u.unit]?.traits.includes('artillery'))) flavor.push(t('с осадной артиллерией'));
   if (f.units.some((u) => u.count > 0 && (data.units[u.unit]?.radarRange ?? 0) > 0)) flavor.push(t('со своим радарным дозором'));
-  const blurb =
-    nShips === 0
-      ? t('Пустая группа корпусов — кораблей на борту нет.')
-      : t('Эскадра из {n} корабл.{fl} Суммарный вес ниже; идёт со скоростью самого медленного корпуса.', { n: nShips, fl: flavor.length ? ' — ' + flavor.join(', ') + '.' : '.' });
-  h += `<div class="row dim">${blurb}</div>`;
+  // PC drops the intro blurb (the header + stat chips already say it); phones keep it.
+  if (!pcUi()) {
+    const blurb =
+      nShips === 0
+        ? t('Пустая группа корпусов — кораблей на борту нет.')
+        : t('Эскадра из {n} корабл.{fl} Суммарный вес ниже; идёт со скоростью самого медленного корпуса.', { n: nShips, fl: flavor.length ? ' — ' + flavor.join(', ') + '.' : '.' });
+    h += `<div class="row dim">${blurb}</div>`;
+  }
   h += `<div class="pstats"><span data-desc="stat:atk">⚔ ${t('АТК')} ${atk}</span><span data-desc="stat:def">🛡 ${t('ЗАЩ')} ${def}</span><span data-desc="stat:hp">❤ ${t('ОЗ')} ${hpTot}</span><span data-desc="stat:spd">⚡ ${t('СКР')} ${spdTxt}</span></div>`;
   h += nShips ? `<div class="sec">${t('Корабли — тап для характеристик')}</div>` + unitTilesHtml(f.units) : '';
   if (nTr > 0) h += `<div class="sec">${t('Десант на борту')}</div>` + unitTilesHtml(f.landing ?? []);
@@ -4531,9 +4635,12 @@ function fleetPanelHtml(f: Fleet): string {
   if (f.owner === ME) {
     const auto = isAutoAssault(f.id);
     h += `<div class="sec">${t('Дежурный режим')}</div><div class="row">`;
-    h += btn('qauto', '', auto ? t('⚔ авто-штурм: ВКЛ') : t('⚔ авто-штурм: выкл'), true);
+    h += btn('qauto', '', auto ? t('⚔ авто-штурм: ВКЛ') : t('⚔ авто-штурм: выкл'), true, pcUi() ? 'act:qauto' : undefined);
     h += `</div>`;
-    h += `<div class="hint">${t('Во «включено» флот сам входит в орбиту и штурмует вражеский мир, на который прибыл — без ручного приказа.')}</div>`;
+    // PC: the explanation lives in the button's hover dossier ('act:qauto')
+    if (!pcUi()) {
+      h += `<div class="hint">${t('Во «включено» флот сам входит в орбиту и штурмует вражеский мир, на который прибыл — без ручного приказа.')}</div>`;
+    }
   }
 
   if (f.movement) {
@@ -4648,8 +4755,10 @@ function fleetPanelHtml(f: Fleet): string {
     if (dh) cols.push(dh);
     h += pcols(cols);
   }
-  h += `<div class="hint">${t('Нажмите «Курс» (командная панель) и тапните цель — флот проложит маршрут и встанет. «Слить…» объединяет с другим флотом; «Разделить» отделяет корабли в новый флот.')}</div>`;
-  h += btn('cancel', '', t('Снять выделение'), true);
+  if (!pcUi()) {
+    h += `<div class="hint">${t('Нажмите «Курс» (командная панель) и тапните цель — флот проложит маршрут и встанет. «Слить…» объединяет с другим флотом; «Разделить» отделяет корабли в новый флот.')}</div>`;
+    h += btn('cancel', '', t('Снять выделение'), true);
+  }
   return h;
 }
 
@@ -5144,7 +5253,7 @@ function objDossier(key: string): Dossier | null {
       atk: [t('Атака'), t('Суммарная атака кораблей флота.')],
       def: [t('Защита'), t('Суммарная защита кораблей флота.')],
       hp: [t('Очки здоровья'), t('Суммарная прочность кораблей флота.')],
-      spd: [t('Скорость'), t('Скорость перелёта — флот идёт со скоростью самого медленного корабля.')],
+      spd: [t('Скорость'), t('Скорость перелёта — флот движется со скоростью самого медленного корабля.')],
       garrison: [t('Гарнизон'), t('Численность наземных войск, обороняющих мир.')],
       ground: [t('Наземные части'), t('Пехота и техника на поверхности мира.')],
       gships: [t('Корабли в гарнизоне'), t('Корабли, стоящие в гарнизоне мира (не на орбите).')],
@@ -5163,6 +5272,12 @@ function objDossier(key: string): Dossier | null {
   }
   if (key === 'act:divdesign') {
     return { name: t('Конструктор дивизий'), body: t('Редактор шаблонов: состав слотов и доктрина дивизий.') };
+  }
+  if (key === 'act:qauto') {
+    return {
+      name: t('Авто-штурм'),
+      body: t('ВКЛ — автоматически штурмовать вражеский мир при нахождении на его орбите.'),
+    };
   }
   if (key.startsWith('c:')) return constructionDossier(key);
   const [kind, id, lvl] = key.split(':');
@@ -6074,6 +6189,7 @@ function renderCmdBar() {
   const ids = selectedFleetIds();
   if (ids.length === 0) {
     if (aiming) aiming = false;
+    if (assaultAim) assaultAim = false;
     if (merging) merging = false;
     cmdbar.classList.remove('show');
     lastCmdHtml = '';
@@ -6082,13 +6198,17 @@ function renderCmdBar() {
   const fleets = ids.map((id) => s.fleets[id]).filter((f): f is Fleet => !!f);
   const anyMoving = fleets.some((f) => f.movement);
   const docked = fleets.filter((f) => f.location && !f.movement && !f.battleId);
-  const canAssault = docked.some(
-    (f) =>
-      f.orbit === 'near' &&
-      f.location &&
-      s.planets[f.location]?.owner !== f.owner &&
-      SECTOR_TYPES[SECTOR_OF[f.location]]?.capturable, // empty space can't be taken
-  );
+  // PC: ШТУРМ is a targeting command (fly there + storm on arrival) — armable
+  // whenever the selection has ships. Mobile keeps the in-orbit-only button.
+  const canAssault = pcUi()
+    ? fleets.some((f) => sumUnits(f.units) > 0)
+    : docked.some(
+        (f) =>
+          f.orbit === 'near' &&
+          f.location &&
+          s.planets[f.location]?.owner !== f.owner &&
+          SECTOR_TYPES[SECTOR_OF[f.location]]?.capturable, // empty space can't be taken
+      );
   // Merge: a group fuses in one tap; a lone fleet arms target-pick (needs a partner).
   const myFleetTotal = Object.values(s.fleets).filter((f) => f.owner === ME).length;
   const canMerge = ids.length >= 2 || (ids.length === 1 && myFleetTotal >= 2);
@@ -6101,7 +6221,7 @@ function renderCmdBar() {
     `<span class="cmdlabel">${ids.length > 1 ? t('{n} ФЛОТОВ', { n: ids.length }) : t('ФЛОТ')}</span>` +
     cmdBtn('move', '⤳', t('Курс'), aiming ? 'on' : '', false) +
     cmdBtn('stop', '■', t('Стоп'), 'danger', !anyMoving) +
-    cmdBtn('attack', '⚔', t('Штурм'), '', !canAssault) +
+    cmdBtn('attack', '⚔', t('Штурм'), assaultAim ? 'on' : '', !canAssault) +
     (anyArtillery ? cmdBtn('barrage', '🎯', t('Обстрел'), barrageAim ? 'on' : '', false) : '') +
     cmdBtn('merge', '⛬', ids.length > 1 ? t('Слить') : t('Слить…'), merging ? 'on' : '', !canMerge) +
     cmdBtn('split', '⊟', t('Разделить'), splitState ? 'on' : '', !canSplit);
@@ -6408,6 +6528,15 @@ side.addEventListener('pointerleave', () => {
   }
 });
 
+// PC: the browser context menu is suppressed across the whole game surface (the
+// map, the HUD, every overlay) — right-click is a game input now. Text fields keep
+// their native menu (paste!).
+document.addEventListener('contextmenu', (ev) => {
+  if (!pcUi()) return;
+  if ((ev.target as HTMLElement).closest('input,textarea')) return;
+  ev.preventDefault();
+});
+
 // PC: right-click on a build tile orders it immediately — same enqueue path as the
 // codex «Построить здесь» button, minus the confirmation window (left-click keeps
 // opening the full dossier). The browser context menu is suppressed on these tiles.
@@ -6510,10 +6639,12 @@ cmdbar.addEventListener('click', (ev) => {
   const ids = selectedFleetIds();
   if (cmd !== 'merge') merging = false; // any other command disarms merge-targeting
   if (cmd !== 'barrage') barrageAim = false; // any other command disarms barrage-targeting
+  if (cmd !== 'attack') assaultAim = false; // any other command disarms assault-targeting
   heroAim = null; // any command disarms a pending hero cast / deploy
   heroSpawnAim = null;
   if (cmd === 'move') {
     aiming = !aiming; // arm / disarm the move order
+    assaultAim = false;
   } else if (cmd === 'merge') {
     if (ids.length >= 2) mergeGroup(ids);
     else {
@@ -6524,8 +6655,16 @@ cmdbar.addEventListener('click', (ev) => {
   } else if (cmd === 'stop') {
     for (const id of ids) if (s.fleets[id]?.movement) playerOrder(stopFleet(ME, id));
   } else if (cmd === 'attack') {
-    for (const id of ids) if (s.fleets[id]?.orbit === 'near') playerOrder(assaultFleet(ME, id));
-    aiming = false;
+    if (pcUi()) {
+      // PC: ШТУРМ aims like «Курс» — the next click on someone else's world sends
+      // the fleet there and it storms on arrival (valid targets ring up on the map).
+      assaultAim = !assaultAim;
+      aiming = false;
+      if (assaultAim) note(t('⚔ выберите чужой мир для штурма'));
+    } else {
+      for (const id of ids) if (s.fleets[id]?.orbit === 'near') playerOrder(assaultFleet(ME, id));
+      aiming = false;
+    }
   } else if (cmd === 'split') {
     const id = ids[0];
     if (id) {
@@ -6629,6 +6768,27 @@ function selectAt(mx: number, my: number) {
     if (host) playerOrder(spawnHero(ME, heroId, host.id));
     else if (n) playerOrder(spawnHero(ME, heroId, n.id));
     else note(t('✖ развёртывание отменено'));
+    lastPanelHtml = '';
+    return;
+  }
+  // ШТУРМ armed (PC): the click picks the target world — someone else's capturable
+  // world only. An enemy at war → fly + storm on arrival; a peaceful owner → the
+  // "friendly faction — declare war?" dialog. Anything else keeps the aim armed.
+  if (assaultAim) {
+    const n = nearestHit(MAP, (nn) => world(nn), mx, my, rNode);
+    if (!n) {
+      assaultAim = false; // empty space — cancel, like an armed move
+      lastPanelHtml = '';
+      return;
+    }
+    const target = s.planets[n.id];
+    const capturable = SECTOR_TYPES[SECTOR_OF[n.id]]?.capturable ?? false;
+    if (!target || !capturable || target.owner == null || target.owner === ME) {
+      note(t('⚔ штурмовать можно только чужой мир'));
+      return; // stay armed — pick another target
+    }
+    tryAssaultGroup(selectedFleetIds(), n.id);
+    assaultAim = false;
     lastPanelHtml = '';
     return;
   }
@@ -6753,7 +6913,7 @@ canvas.addEventListener('pointerdown', (ev) => {
     additive = ev.ctrlKey || ev.metaKey; // Ctrl/⌘-click → add to the fleet selection
     selectionBox = boxSelecting ? { x1: p.x, y1: p.y, x2: p.x, y2: p.y } : null;
     dragged = false;
-    if (aiming) aimPointer = p; // the aim preview starts under the finger at once
+    if (aiming || assaultAim) aimPointer = p; // the aim preview starts under the finger at once
     // Touch long-press: a still finger for ~350ms picks a fleet ADDITIVELY (the
     // Ctrl-click of phones) or opens a BOX-SELECT from empty space (the Shift-drag).
     // Not while an armed mode (move/merge/barrage) owns the taps.
@@ -6804,10 +6964,12 @@ canvas.addEventListener('pointermove', (ev) => {
     if (pinchDist > 0) zoomAt((a.x + b.x) / 2, (a.y + b.y) / 2, d / pinchDist);
     pinchDist = d;
     dragged = true;
-  } else if (aiming) {
-    // Move is armed: the finger DRAGS THE AIM (live preview via aimPointer), the
-    // camera stays put — releasing commits. Panning used to hijack this drag and
-    // silently swallow the order (the audit's blind-order finding).
+  } else if ((aiming || assaultAim) && !pcUi()) {
+    // TOUCH with Move/ШТУРМ armed: the finger DRAGS THE AIM (live preview via
+    // aimPointer), the camera stays put — releasing commits. Panning used to hijack
+    // this drag and silently swallow the order (the audit's blind-order finding).
+    // On PC the mouse hovers to aim, so an LMB drag stays a normal camera pan and
+    // the armed order survives it (commit is a clean click).
     void 0;
   } else if (boxSelecting && dragStart) {
     selectionBox = { x1: dragStart.x, y1: dragStart.y, x2: p.x, y2: p.y };
@@ -6849,9 +7011,11 @@ function endPointer(ev: PointerEvent) {
     longPressFired = false; // the long-press already acted; this release is spent
     return;
   }
-  if (single && p && (aiming || !dragged)) {
-    // While aiming, a DRAGGED release still commits — the finger was steering the
-    // aim preview, and letting go is the confirmation.
+  // Touch: while an aim is armed the drag steered the preview, so a dragged release
+  // still commits. PC: a drag is a camera pan — only a clean click commits, and the
+  // armed order stays armed through pans.
+  const aimDragCommits = (aiming || assaultAim) && !pcUi();
+  if (single && p && (aimDragCommits || !dragged)) {
     tapByTouch = ev.pointerType === 'touch';
     selectAt(p.x, p.y);
   }
@@ -8592,6 +8756,8 @@ function installMatch(state: GameState, aiPlayers: Set<string>): void {
   pendingMerges = [];
   pendingLoads = [];
   aiming = false;
+  assaultAim = false;
+  assaultOnArrival.clear();
   merging = false;
   additive = false;
   splitState = null;
@@ -9301,6 +9467,7 @@ function inMatch(): boolean {
 function topLayerOpen(): boolean {
   return Boolean(
     aiming ||
+      assaultAim ||
       merging ||
       barrageAim ||
       pingMenuLoc !== null ||
@@ -9324,8 +9491,9 @@ function topLayerOpen(): boolean {
  *  mirrors visual stacking: armed order modes → popups → windows → menus →
  *  the selection sheet → the setup screen. */
 function closeTopLayer(): boolean {
-  if (aiming || merging || barrageAim) {
+  if (aiming || assaultAim || merging || barrageAim) {
     aiming = false;
+    assaultAim = false;
     merging = false;
     barrageAim = false;
     lastPanelHtml = '';
@@ -9433,6 +9601,7 @@ function frame(nowReal: number) {
     const target = s.time + (dt / 1000) * speed * HOUR;
     apply(advance(s, target));
     autoEngage();
+    pumpAssaultOrders();
     checkFleetClashes();
     drivePatrols(); // CC-4: squadrons on дежурный вылет auto-strike contacts in range
     runAI();
