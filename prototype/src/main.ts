@@ -4755,15 +4755,15 @@ function unknownPlanetHtml(p: Planet): string {
       `<div class="row">${t('Гарнизон на момент скана')}: <b>${mem.garrison}</b></div>` +
       `<div class="row">${t('Постройки')}: ${icons}</div>` +
       spyRow +
-      `<div class="hint">${t('Обновите данные флотом или радаром.')}</div>` +
-      btn('cancel', '', t('Снять выделение'), true)
+      `<div class="hint">${t('Обновите данные флотом или радаром.')}</div>`
     );
   }
+  // No «Снять выделение» on planet cards: it only clears FLEET selection (selPlanet
+  // stays, the card would not even close) — the ✕ in the corner is the real close.
   return (
     cardHeader('#5f8f8c', p.id, t('НЕТ ТЕЛЕМЕТРИИ')) +
     `<div class="row dim">${t('Не исследовано — вне сенсоров и радаров. Содержимое неизвестно.')}</div>` +
-    `<div class="hint">${t('Отправьте флот к этой системе (или расширьте радар), чтобы обнаружить её.')}</div>` +
-    btn('cancel', '', t('Снять выделение'), true)
+    `<div class="hint">${t('Отправьте флот к этой системе (или расширьте радар), чтобы обнаружить её.')}</div>`
   );
 }
 
