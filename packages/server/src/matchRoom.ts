@@ -134,7 +134,10 @@ export interface MatchRoomOptions {
   /** Wall-clock → game-clock multiplier for the running match clock (NOT the kernel's
    *  duration `config.timeScale`): >1 fast-forwards the whole world for playtests, so a
    *  real minute becomes many game-hours and fleets/builds/economy resolve on-screen.
-   *  1 = real-time. Requires a lobby gate (manualStart / waitForPlayers). */
+   *  1 = real-time. Honoured whenever the clock is anchored/gated — a lobby gate
+   *  (`manualStart` / `waitForPlayers`) OR the no-lobby auto-start mode
+   *  (`initiallyStarted`, SES-2.1). Inert for a plain free-running room, which reads
+   *  raw wall time. */
   timeScale?: number;
 }
 
