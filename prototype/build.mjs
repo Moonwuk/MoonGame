@@ -944,6 +944,9 @@ button.b:disabled{opacity:.32;cursor:not-allowed;color:var(--dim);border-color:v
 .cn-mod.locked{opacity:.42;cursor:not-allowed;background:rgba(255,255,255,.015);}
 .cn-mod.locked .cn-mic,.cn-mod.locked .cn-mn{color:var(--dim);}
 .cn-mod.locked .cn-me{color:var(--dim);}
+/* LARS-4: origin tag on a bay/palette card ("fresh from a drop/craft/auction") */
+.cn-mo,.cn-bay .cn-mo{margin-left:6px;padding:1px 6px;border-radius:8px;border:1px solid var(--amber-dim,var(--line-hi));
+  color:var(--amber,var(--cyan));font:600 9px ui-monospace,monospace;letter-spacing:.3px;vertical-align:middle;}
 .cn-note{margin-top:11px;font-size:10.5px;color:var(--dim);line-height:1.5;}
 .cn-note b{color:var(--cyan);}
 /* live stat preview bars (right column) */

@@ -145,3 +145,30 @@ describe('constructor («Верфь») — narrowed by the arsenal snapshot (ARS
     expect(ed.palette.map((o) => o.id).sort()).toEqual(['cargo_bay', 'targeting_array']);
   });
 });
+
+// LARS-4: the Верфь pane rebuilds its palette from `Player.arsenal` on EVERY render
+// (conLoadoutPane reads `s.players[ME]?.arsenal` fresh each call, no memoization) —
+// so a module the server synced in mid-match (LARS-1's arsenal.sync) shows up here
+// without a new match. This pins that a growing snapshot is never stale by
+// construction: calling the editor again with a wider `ownedModules` set — the same
+// call `conLoadoutPane` makes on its next render — immediately reflects the growth.
+describe('constructor («Верфь») — reacts live to a growing arsenal snapshot (LARS-4)', () => {
+  it('a module added to the snapshot between two renders is buildable on the very next one', () => {
+    const before = createLoadoutEditor('cruiser', data, { metal: 999 }, {
+      ownedModules: new Set(['targeting_array']),
+    });
+    if (!before.ok) throw new Error('editor');
+    expect(before.palette.map((o) => o.id)).toEqual(['targeting_array']);
+    expect(applyLoadoutAction({ kind: 'equip', moduleId: 'cargo_bay' }, before, data, { metal: 999 }).ok).toBe(
+      false, // not yet owned — same as a rejected unit.build would be
+    );
+
+    // The "next render": arsenal.sync landed server-side, the live snapshot grew.
+    const after = createLoadoutEditor('cruiser', data, { metal: 999 }, {
+      ownedModules: new Set(['targeting_array', 'cargo_bay']),
+    });
+    if (!after.ok) throw new Error('editor');
+    expect(after.palette.map((o) => o.id).sort()).toEqual(['cargo_bay', 'targeting_array']);
+    expect(applyLoadoutAction({ kind: 'equip', moduleId: 'cargo_bay' }, after, data, { metal: 999 }).ok).toBe(true);
+  });
+});

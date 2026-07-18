@@ -146,7 +146,7 @@ import {
 import { t, tData, LOCALE, LOCALE_LABEL, setLocale, localizeStaticDom } from './i18n';
 import { META_TREE, META_BRANCH_RU, metaLevel, metaLevelProgress, metaPoints, canUnlock, unlockNode, matchXp, metaGrant, parseMetaState, type MetaState, type MetaBranch } from './meta';
 // ARS-5 — arsenal witryna (pure filter/group/parse; see prototype/src/arsenal.ts).
-import { filterArsenal, gradesOf, ownedDefIds, parseArsenalItems, type ArsenalFilter } from './arsenal';
+import { filterArsenal, gradesOf, originOf, ownedDefIds, parseArsenalItems, type ArsenalFilter } from './arsenal';
 // DEV TEST MODE — self-contained dev-only scenarios; remove this import + the
 // initTestMode(...) call below + the #testmode HTML/CSS to cut it cleanly.
 // (The player build already does: the only uses sit under `!__PLAYER_BUILD__`, so
@@ -8157,6 +8157,15 @@ function conBar(line: { label: string; base: number; effective: number; delta: n
 /** The loadout constructor pane for a family of hulls (ships or squadrons) — same
  *  `loadoutEditor` view-model, just a different hull list. Resets the draft when the
  *  selected hull isn't in this family (a tab switch). */
+/** LARS-4 — a small "откуда" tag for a Верфь card, from whatever the hub Arsenal
+ *  witryna has cached (best-effort: blank if the player never opened that tab this
+ *  session, never a guess). Only flags a NON-starter origin — a starter blueprint
+ *  sitting in every match isn't news; a fresh drop/craft/auction pickup is. */
+function conOriginTag(defId: string): string {
+  const origin = originOf(arsenalItems, defId);
+  if (!origin || origin === 'starter') return '';
+  return `<span class="cn-mo">${t(ARSENAL_ORIGIN_RU[origin])}</span>`;
+}
 function conLoadoutPane(hullList: string[]): string {
   // ARS-5: the constructor offers only what the match's arsenal snapshot (ARS-3)
   // says the player owns — the same `Player.arsenal` the core build gate reads, so
@@ -8192,7 +8201,7 @@ function conLoadoutPane(hullList: string[]): string {
         const eff = md ? Object.entries(md.effects.stats).map(([k, v]) => `+${v} ${t(STAT_RU[k] ?? k)}`).join(' ') : '';
         return (
           `<div class="cn-bay filled" data-cnun="${sl.moduleId}" title="${t('снять модуль')}"><div class="cn-bic">${MODULE_ICON[sl.moduleId] ?? '▪'}</div>` +
-          `<div><div class="cn-bt">${t(SLOT_RU[sl.type])}</div><div class="cn-bn">${esc(tData(sl.moduleName ?? sl.moduleId))}</div></div><div class="cn-bd">${eff}</div></div>`
+          `<div><div class="cn-bt">${t(SLOT_RU[sl.type])}</div><div class="cn-bn">${esc(tData(sl.moduleName ?? sl.moduleId))}${conOriginTag(sl.moduleId)}</div></div><div class="cn-bd">${eff}</div></div>`
         );
       }
       return (
@@ -8207,7 +8216,7 @@ function conLoadoutPane(hullList: string[]): string {
       if (o.installable) {
         return (
           `<button class="cn-mod" data-cnmod="${o.id}"><span class="cn-mic">${MODULE_ICON[o.id] ?? '▪'}</span>` +
-          `<span class="cn-mn">${esc(tData(o.name))}</span><span class="cn-me">${eff}</span><span class="cn-mc">${bagRu(o.cost)}</span></button>`
+          `<span class="cn-mn">${esc(tData(o.name))}${conOriginTag(o.id)}</span><span class="cn-me">${eff}</span><span class="cn-mc">${bagRu(o.cost)}</span></button>`
         );
       }
       return (
@@ -8219,10 +8228,16 @@ function conLoadoutPane(hullList: string[]): string {
   const palHead = freeTypes.length
     ? t('Доступные модули — для слота «{s}»', { s: freeTypes.map((ty) => t(SLOT_RU[ty])).join(' / ') })
     : t('Доступные модули — все слоты заняты');
+  // LARS-4: the palette above already reads the LIVE arsenal snapshot (a module
+  // bought mid-match shows up here without a new match) — this note is the only
+  // thing that needed adding: make the timing honest (built, not instant).
+  const liveNote = snap
+    ? `<div class="cn-note">${t('⚡ Арсенал живой: докупленное в матче видно здесь сразу, но начинает работать только когда ты это ПОСТРОИШЬ — постройка и логистика, не мгновенно.')}</div>`
+    : '';
   const left =
     `<div class="cn-fit"><div class="cn-hulls">${hulls}</div>${hullCard}${bays}` +
     `<div class="cn-ph">${palHead}</div><div class="cn-pal">${palette}</div>` +
-    `<div class="cn-note">${t('Типизированные слоты: модуль встаёт только в свой тип. <b>Серые</b> — не для свободного слота или уже стоят.')}</div></div>`;
+    `<div class="cn-note">${t('Типизированные слоты: модуль встаёт только в свой тип. <b>Серые</b> — не для свободного слота или уже стоят.')}</div>${liveNote}</div>`;
   // right: live preview + cost + build
   const maxStat = Math.max(1, ...m.preview.map((p) => p.effective));
   const bars = m.preview.map((p) => conBar(p, maxStat)).join('');

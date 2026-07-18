@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { filterArsenal, gradesOf, ownedDefIds, parseArsenalItems } from './arsenal';
+import { filterArsenal, gradesOf, originOf, ownedDefIds, parseArsenalItems } from './arsenal';
 import type { ArsenalItem } from '../../packages/shared-core/src/index';
 
 const hull: ArsenalItem = {
@@ -53,6 +53,23 @@ describe('arsenal witryna — filter/group', () => {
     expect(ownedDefIds(all, 'hull')).toEqual(new Set(['cruiser']));
     expect(ownedDefIds(all, 'module')).toEqual(new Set(['laser']));
     expect(ownedDefIds(all, 'hero_fitting')).toEqual(new Set(['command']));
+  });
+});
+
+describe('arsenal witryna — origin lookup (LARS-4)', () => {
+  it('finds the origin of a defId the cache has', () => {
+    expect(originOf(all, 'laser')).toBe('drop');
+    expect(originOf(all, 'cruiser')).toBe('starter');
+  });
+
+  it('an unknown defId (empty/stale cache) is undefined, never a guess', () => {
+    expect(originOf(all, 'nope')).toBeUndefined();
+    expect(originOf([], 'cruiser')).toBeUndefined();
+  });
+
+  it('picks the MOST RECENTLY acquired instance when several share a defId', () => {
+    const older: ArsenalItem = { ...module1, itemId: 'starter:acc:module:laser', origin: 'starter', acquiredAt: 1 };
+    expect(originOf([older, module1], 'laser')).toBe('drop'); // module1.acquiredAt=5 wins
   });
 });
 

@@ -994,6 +994,8 @@ export const en: Record<string, string> = {
   модуль: 'module',
   фитинг: 'fitting',
   'В арсенале нет корпусов этого класса.': 'The arsenal has no hulls of this class.',
+  '⚡ Арсенал живой: докупленное в матче видно здесь сразу, но начинает работать только когда ты это ПОСТРОИШЬ — постройка и логистика, не мгновенно.':
+    "⚡ Live arsenal: anything bought during the match shows up here right away, but it only starts working once you BUILD it — construction and logistics, not instant.",
   'Ходовые школы': 'Helm Schools',
   '+5% к скорости всех флотов с первой секунды матча.':
     '+5% fleet speed from the first second of a match.',
