@@ -983,7 +983,6 @@ export const en: Record<string, string> = {
     'sign in with an account on a server with persistence to see your collection',
   Всё: 'All',
   Корпуса: 'Hulls',
-  Модули: 'Modules',
   Фитинги: 'Fittings',
   стартовый: 'starter',
   дроп: 'drop',

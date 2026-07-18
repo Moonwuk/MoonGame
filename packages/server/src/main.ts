@@ -70,6 +70,10 @@ const loadMatch = createMatchLoader({
   stores,
   data,
   gateFactory,
+  // LARS-1: a unit.build the boot-time snapshot would reject gets one fresh live
+  // read before that — a module bought mid-match becomes buildable without a new
+  // match/snapshot (LARS-0.2: only the build catalog goes live).
+  arsenalStore: stores.arsenalStore,
   onStall: (matchId) =>
     process.stderr.write(
       `match ${matchId}: world clock stalled (a same-instant scheduling loop) — ` +
