@@ -64,7 +64,7 @@
 ### SV-1.2 · zod-схемы на каждый тип действия `[act]` ✅ — M
 **Подзадачи:** схема валидации входа по типу действия (payload). **Бирка E1.**
 **Готово, когда:** payload каждого типа валидируется по своей схеме.
-**Сделано:** `shared-core/actions/payloadSchemas` — zod-схема на все 15 клиентских типов + `isValidActionPayload`, инжектится в гейт как `payloadValidator`; кривой payload или не-клиентский тип → `E_BAD_PAYLOAD` до редьюсера.
+**Сделано:** `shared-core/actions/payloadSchemas` — zod-схема на все **46** клиентских типов + `isValidActionPayload`, инжектится в гейт как `payloadValidator`; кривой payload или не-клиентский тип → `E_BAD_PAYLOAD` до редьюсера.
 
 ---
 

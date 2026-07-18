@@ -14,7 +14,7 @@
 | Механика | Ст. | Где | Суть |
 |---|---|---|---|
 | Бой (раунды/линии/артиллерия) | ✅ | `combat`-модуль, gdd §7 | почасовые раунды, тиры front/mid/rear/artillery, `combat.damage`-хук |
-| Орбитальный слой (ПВО/бомбардировка) | ✅ | `combat` `runOrbital` | `aaDamage` бьёт near-orbit флоты; бомбардировка структур |
+| Орбитальный слой (ПВО/бомбардировка) | ✅ | `orbital` `runOrbital` | `aaDamage` бьёт near-orbit флоты; бомбардировка структур |
 | Движение + столкновения | ✅ | `movement`, `combat` | узлы/лейны, `schedule` прибытий, бой при встрече |
 | Двухфазный захват (орбита→десант) | ✅ | `combat`, gdd §7.4 | `fleet.assault`, гарнизон/`landing`, `captureOnArrival` |
 | Экономика (offline-accrual) | ✅ | `economy` | производство/содержание формулой на `time.advanced` |

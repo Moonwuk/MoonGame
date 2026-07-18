@@ -51,7 +51,7 @@
 
 | Метрика | Что показывает | Как снять | Цель |
 |---|---|---|---|
-| FPS idle / pan / zoom | плавность | headless-харнес (есть `fpsEma` + Playwright-замер) | ≥ 50 (GPU — 60) |
+| FPS idle / pan / zoom | плавность | headless-харнес (`fpsEma` + `prototype/perf.mjs`, не Playwright) | ≥ 50 (GPU — 60) |
 | Frame time p95 | микролаги | те же замеры | < 20 мс |
 | Time-to-interactive | скорость загрузки | load → первый кадр | < 2 c |
 | Bundle size | вес сборки | вывод `pnpm prototype` (сейчас ~435 KB) | следить за ростом |

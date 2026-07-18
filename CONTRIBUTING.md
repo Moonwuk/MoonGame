@@ -15,7 +15,7 @@
 
 - Node ≥ 20 (CI гоняет на 22). pnpm зафиксирован полем `packageManager` —
   включи `corepack enable`, дальше `pnpm install`.
-- **Гейт перед коммитом:** `pnpm run check` = `lint` + `typecheck` + `test`.
+- **Гейт перед коммитом:** `pnpm run check` = `lint` + `typecheck` + `test` + `docs-check`.
 - Ещё: `pnpm test`, `pnpm run lint`, `pnpm run typecheck`, `pnpm run format`,
   `pnpm run prototype` (собрать играбельный `prototype/dist/void-dominion.html`).
 
