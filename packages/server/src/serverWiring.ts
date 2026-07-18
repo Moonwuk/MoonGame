@@ -33,6 +33,12 @@ export interface MatchLoaderDeps {
 export interface MatchExtras {
   /** Wire-level deny rule for player-submitted action types (server drivers pass). */
   denyPlayerActions?: (type: string) => string | null;
+  /** Live async player-action authorization (LARS-1) — e.g. the AvA arsenal ownership
+   *  check against the live ArsenalStore on `unit.build` / `hero.fit`. */
+  authorizePlayerAction?: (
+    playerId: string,
+    action: { type: string; payload: unknown },
+  ) => Promise<string | null | undefined>;
   /** Called once per observed room `end` (the room fires it on the terminal commit). */
   onEnd?: (winner: string | null) => void;
 }
@@ -77,6 +83,9 @@ export function createMatchLoader(deps: MatchLoaderDeps): (matchId: string) => P
       initialSeq: snap.seq,
       gate: deps.gateFactory?.(),
       ...(extras?.denyPlayerActions ? { denyPlayerActions: extras.denyPlayerActions } : {}),
+      ...(extras?.authorizePlayerAction
+        ? { authorizePlayerAction: extras.authorizePlayerAction }
+        : {}),
     });
 
     // The 24/7 heartbeat while this match is live: fire due scheduled events with no

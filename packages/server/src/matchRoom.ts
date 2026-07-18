@@ -82,6 +82,20 @@ export interface MatchRoomOptions {
    *  escalation) do not pass through `receive` and stay unaffected; e.g. an AvA
    *  room denies `diplomacy.declare` because the orchestrator owns the stances. */
   denyPlayerActions?: (type: string) => string | null | undefined;
+  /** ASYNC player-action authorization (LARS-1): a WIRE rule like `denyPlayerActions`,
+   *  but payload-aware and allowed to consult a LIVE server-side source (e.g. the
+   *  ArsenalStore ownership check on `unit.build`). Return a stable reject code to
+   *  refuse THIS action, or null/undefined to admit it. Runs on both the bare and the
+   *  gated path BEFORE admission — a refused action costs the client no `clientSeq`
+   *  and leaves no receipt (a later re-submit after acquiring the item must land).
+   *  Server-internal drivers (`submitAction`/`submitServerAction`) bypass it, so the
+   *  core stays the only authority over what an ADMITTED action does (invariant #5).
+   *  A thrown check is fail-secure: the action is refused transiently (`E_UNAVAILABLE`),
+   *  never silently admitted. */
+  authorizePlayerAction?: (
+    playerId: PlayerId,
+    action: { type: string; payload: unknown },
+  ) => Promise<string | null | undefined>;
   /** Observation-only room-event stream for metrics/playtest logging (M0). */
   observe?: (event: RoomObservation) => void;
   /** Seed the idempotency receipts (e.g. rehydrated from a ReceiptStore on restart),
@@ -295,6 +309,11 @@ export class MatchRoom {
   private readonly gate?: ActionGate;
   /** Player-action deny-list (see options.denyPlayerActions). */
   private readonly denyPlayerActions?: (type: string) => string | null | undefined;
+  /** Async live player-action authorization (see options.authorizePlayerAction). */
+  private readonly authorizePlayerAction?: (
+    playerId: PlayerId,
+    action: { type: string; payload: unknown },
+  ) => Promise<string | null | undefined>;
   /** The actor mailbox (SV-0.2): serializes state-touching operations whose critical
    *  section spans an `await` — a committed submit (its persist) and a lobby `start`
    *  — so one runs fully before the next, and neither interleaves with the other's
@@ -371,6 +390,7 @@ export class MatchRoom {
     this.persist = options.persist;
     this.gate = options.gate;
     if (options.denyPlayerActions) this.denyPlayerActions = options.denyPlayerActions;
+    if (options.authorizePlayerAction) this.authorizePlayerAction = options.authorizePlayerAction;
     if (options.initialSeq && options.initialSeq > 0) this.seq = options.initialSeq;
     this.maxReceipts = options.maxReceipts ?? RECEIPTS_MAX_DEFAULT;
     this.actionRateMax = options.actionRateMax ?? ACTION_RATE_MAX_DEFAULT;
@@ -678,6 +698,21 @@ export class MatchRoom {
           );
           return;
         }
+        // Live authorization (LARS-1) — also BEFORE the gate, so a refusal costs no
+        // clientSeq. A malformed type is left for the gate's own validation to reject.
+        if (this.authorizePlayerAction && typeof envAction?.type === 'string') {
+          const payload = (message.envelope as { action?: { payload?: unknown } } | null)?.action
+            ?.payload;
+          const code = await this.liveAuthorize(playerId, envAction.type, payload);
+          if (code) {
+            this.sendReject(
+              peer,
+              typeof envAction.id === 'string' ? envAction.id : 'unknown',
+              code,
+            );
+            return;
+          }
+        }
         await this.admitEnvelope(playerId, peer, message.envelope, sessionId);
       } else {
         this.send(peer, { type: 'error', matchId: this.id, code: 'E_BAD_MESSAGE' });
@@ -698,10 +733,34 @@ export class MatchRoom {
       this.sendReject(peer, message.action.id, denied);
       return;
     }
+    // Live authorization (LARS-1) on the bare path — same wire rule, no receipt: a
+    // refusal must stay retriable after the player acquires what was missing.
+    if (this.authorizePlayerAction) {
+      const code = await this.liveAuthorize(playerId, message.action.type, message.action.payload);
+      if (code) {
+        this.sendReject(peer, message.action.id, code);
+        return;
+      }
+    }
     if (this.persist) {
       await this.submitActionCommitted(playerId, message.action, peer);
     } else {
       this.submitAction(playerId, message.action, peer);
+    }
+  }
+
+  /** Run the live authorization hook fail-secure: a thrown check refuses the action
+   *  TRANSIENTLY (`E_UNAVAILABLE` — the live source was unreachable, the client may
+   *  retry) instead of silently admitting it. */
+  private async liveAuthorize(
+    playerId: PlayerId,
+    type: string,
+    payload: unknown,
+  ): Promise<string | null> {
+    try {
+      return (await this.authorizePlayerAction!(playerId, { type, payload })) ?? null;
+    } catch {
+      return 'E_UNAVAILABLE';
     }
   }
 

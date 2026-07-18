@@ -120,6 +120,76 @@ describe('MatchRoom — player-action deny-list (AVA-8)', () => {
   });
 });
 
+describe('MatchRoom — live player-action authorization (LARS-1)', () => {
+  function gatedRoom(
+    authorize: (
+      playerId: string,
+      action: { type: string; payload: unknown },
+    ) => Promise<string | null | undefined>,
+  ): MatchRoom {
+    return new MatchRoom({
+      id: 'live-room',
+      initialState: testState(),
+      kernel: createKernel([renameModule]),
+      data: testData(),
+      now: () => 10,
+      authorizePlayerAction: authorize,
+    });
+  }
+  const send = (r: MatchRoom, peer: MemoryPeer, act: Action): Promise<void> =>
+    r.receive('p1', peer, JSON.stringify({ type: 'action', matchId: 'live-room', action: act }));
+
+  it('a refused action is rejected at the wire with the hook’s code and never applies', async () => {
+    const r = gatedRoom((_, a) =>
+      Promise.resolve(a.type === 'player.rename' ? 'E_NOT_OWNED' : null),
+    );
+    const p1 = new MemoryPeer();
+    r.addPeer('p1', p1);
+    await send(r, p1, action('a1', 'p1', 'Nope'));
+    expect(p1.messages.at(-1)).toMatchObject({
+      type: 'rejection',
+      actionId: 'a1',
+      code: 'E_NOT_OWNED',
+    });
+    expect(r.state.players.p1?.name).toBe('One');
+  });
+
+  it('a refusal leaves NO receipt — the same actionId lands once the live check passes', async () => {
+    let owned = false;
+    const r = gatedRoom(() => Promise.resolve(owned ? null : 'E_NOT_OWNED'));
+    const p1 = new MemoryPeer();
+    r.addPeer('p1', p1);
+    await send(r, p1, action('a1', 'p1', 'Bought'));
+    owned = true; // the player acquired the item mid-match
+    await send(r, p1, action('a1', 'p1', 'Bought')); // same id — must not be deduped as rejected
+    expect(r.state.players.p1?.name).toBe('Bought');
+  });
+
+  it('an allowed action flows through; server-internal submits bypass the hook', async () => {
+    const r = gatedRoom(() => Promise.resolve(null));
+    const p1 = new MemoryPeer();
+    r.addPeer('p1', p1);
+    await send(r, p1, action('a2', 'p1', 'Fine'));
+    expect(r.state.players.p1?.name).toBe('Fine');
+
+    const strict = gatedRoom(() => Promise.resolve('E_NOT_OWNED'));
+    expect((await strict.submitServerAction('p1', action('a3', 'p1', 'Driver'))).ok).toBe(true);
+  });
+
+  it('a THROWING check refuses transiently (E_UNAVAILABLE), never silently admits', async () => {
+    const r = gatedRoom(() => Promise.reject(new Error('store down')));
+    const p1 = new MemoryPeer();
+    r.addPeer('p1', p1);
+    await send(r, p1, action('a4', 'p1', 'Sneaky'));
+    expect(p1.messages.at(-1)).toMatchObject({
+      type: 'rejection',
+      actionId: 'a4',
+      code: 'E_UNAVAILABLE',
+    });
+    expect(r.state.players.p1?.name).toBe('One');
+  });
+});
+
 describe('MatchRoom', () => {
   it('welcomes each player with the authoritative snapshot', () => {
     const r = room();

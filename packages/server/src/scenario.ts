@@ -143,6 +143,12 @@ export interface DevMatchOptions {
   /** Player-action deny-list (see `MatchRoom.denyPlayerActions`) — e.g. an AvA room
    *  refuses `diplomacy.declare` because the orchestrator owns the stances (AVA-8). */
   denyPlayerActions?: (type: string) => string | null | undefined;
+  /** Live player-action authorization (see `MatchRoom.authorizePlayerAction`) — e.g. an
+   *  AvA room checks `unit.build` ownership against the LIVE ArsenalStore (LARS-1). */
+  authorizePlayerAction?: (
+    playerId: string,
+    action: { type: string; payload: unknown },
+  ) => Promise<string | null | undefined>;
 }
 
 function player(id: string, name: string, faction: string): Player {
@@ -244,6 +250,9 @@ export function createDevMatch(data: GameData, options: DevMatchOptions = {}): M
     actionRateMax: options.actionRateMax,
     actionRateWindowMs: options.actionRateWindowMs,
     ...(options.denyPlayerActions ? { denyPlayerActions: options.denyPlayerActions } : {}),
+    ...(options.authorizePlayerAction
+      ? { authorizePlayerAction: options.authorizePlayerAction }
+      : {}),
     ...(options.config ? { config: options.config } : {}),
   });
 }

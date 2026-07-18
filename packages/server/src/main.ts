@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import rateLimit from '@fastify/rate-limit';
 import { createDevMatch, loadAvaMaps, loadShippedData, loadStarterArsenal } from './scenario';
-import { arsenalSnapshotOf, grantStarterArsenal } from './arsenal';
+import { grantStarterArsenal, liveArsenalGate } from './arsenal';
 import { createMultiplayerServer } from './wsServer';
 import { createStores, snapshotOf } from './persistence';
 import { configFromEnv } from './serverConfig';
@@ -73,9 +73,20 @@ const loadMatch = createMatchLoader({
   matchExtras: async (matchId) => {
     const avaSession = await stores.sessionStore.byMatch(matchId);
     if (!avaSession) return null;
+    // LARS-1: seat (slotId) → account, for the live arsenal ownership check below.
+    const seatAccount: Record<string, string> = {};
+    for (const [accountId, slotId] of Object.entries(avaSession.seats)) {
+      seatAccount[slotId] = accountId;
+    }
     return {
       denyPlayerActions: (type: string) =>
         type === 'diplomacy.declare' ? 'E_AVA_DIPLOMACY' : null,
+      // LARS-1: `unit.build` / `hero.fit` are authorized against the LIVE ArsenalStore
+      // at submit time — an item bought mid-match is buildable immediately, an unowned
+      // one is E_NOT_OWNED at the wire (the core then trusts the admitted action).
+      authorizePlayerAction: liveArsenalGate(seatAccount, (accountId) =>
+        stores.arsenalStore.listOf(accountId),
+      ),
       onEnd: (winner: string | null) => {
         void avaOrchestrator.onMatchEnded(matchId, winner).catch((err) => {
           process.stderr.write(
@@ -142,9 +153,11 @@ const avaOrchestrator = new AvaOrchestrator({
   // AVA-8 (S7): settle the ended war — archive the matchup, record the outcome,
   // award influence to the winning corp (exactly-once by the locked→ended gate).
   settle: (matchupId, winnerSide) => avaService.settleMatch(matchupId, winnerSide),
-  // ARS-3: snapshot each rostered account's arsenal at launch — the seat builds
-  // only what it owned at the lock (GDD §2); later purchases wait for LARS-1.
-  arsenalOf: async (accountId) => arsenalSnapshotOf(await stores.arsenalStore.listOf(accountId)),
+  // LARS-1 (supersedes the ARS-3 wiring here): AvA ownership is now checked LIVE at
+  // the wire (`matchExtras.authorizePlayerAction` above), per the LARS-0.2 resolution —
+  // so `arsenalOf` is NOT passed and no launch snapshot is seeded (two gates over the
+  // same question would contradict each other on a mid-match purchase). The snapshot
+  // machinery stays for match modes that seed `SlotAssignment.arsenal` themselves.
 });
 
 // Identity gate (SE-1.x): resolve the caller from the session token. Shared by the
