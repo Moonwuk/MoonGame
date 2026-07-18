@@ -11,8 +11,8 @@
 > · «Готово, когда»`. Зоны: `[core]` · `[srv]` · `[cli]` · `[data]`. Статусы: ⏳ · 🔒(dep).
 
 > **⚠️ СТАТУС (сверено с кодом, 2026-07-18): реализация вырезана в REL-1.**
-> Прототип цепочек приказов — `orderQueueModule` + `subscriptionModule` (кернел 28→26
-> модулей), `state.orders`/`state.subscribers`, все действия
+> Прототип цепочек приказов — `orderQueueModule` + `subscriptionModule` (вырезаны оба
+> модуля цепочек), `state.orders`/`state.subscribers`, все действия
 > `order.enqueue/clear/pop/remove/block/retry/hold`, `QStep`/`popChainStep` и клиентский
 > конструктор цепочек — **удалён из игры ради простоты релиза** (см. `backlog.md`, REL-1).
 > Этих символов больше нет в исходниках; `order.*`-конверты цепочек отклоняются гейтом
