@@ -21,6 +21,7 @@ import { registerAvaApi, registerAvaFeed } from './avaApi';
 import { AvaService } from './avaService';
 import { registerMedalApi } from './medalApi';
 import { MedalService } from './medalService';
+import { registerArsenalApi } from './arsenalApi';
 import { loadMedalCatalog } from './medalCatalog';
 import { AvaOrchestrator, warDeclarationsFor } from './avaOrchestrator';
 import { MatchKeeper } from './matchFactory';
@@ -350,6 +351,8 @@ const server = createMultiplayerServer({
           registerAvaApi(scope, { service: avaService, identify });
           // Medals (MED-1) — head/officer grant + read, session-gated like the corp API.
           registerMedalApi(scope, { service: medalService, identify });
+          // Arsenal witryna (ARS-5) — read-only, session-gated: my own items only.
+          registerArsenalApi(scope, { store: stores.arsenalStore, identify });
         }
       });
     }
