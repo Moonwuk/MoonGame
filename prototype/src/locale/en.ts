@@ -312,6 +312,12 @@ export const en: Record<string, string> = {
   ДА: 'YES',
   НЕТ: 'NO',
   '⚔ выберите чужой мир для штурма': "⚔ pick someone else's world to storm",
+  '⚔ штурм невозможен: на борту нет десанта, а мир защищён — погрузите войска':
+    '⚔ assault impossible: no landing force aboard and the world is defended — load troops',
+  '⚔ внимание: на борту нет десанта — защищённый мир штурмом не взять':
+    '⚔ warning: no landing force aboard — a defended world cannot be stormed',
+  'мир защищён — для штурма нужен десант на борту': 'the world is defended — an assault needs troops aboard',
+  'Ждёт ресурсы: {c}': 'Waiting for resources: {c}',
   '⚔ штурмовать можно только чужой мир': "⚔ only someone else's world can be stormed",
   'Корабли: {s} · Десант: {tr}': 'Ships: {s} · Landing: {tr}',
   'Авто-штурм': 'Auto-storm',

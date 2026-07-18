@@ -1544,7 +1544,15 @@ function fleetAnchor(f: Fleet): { x: number; y: number; ang: number } | null {
 }
 // ONB-5: a structured, bounded mirror of the event log — feeds the return digest.
 const eventLog: RecapEvent[] = [];
+let lastNoteMsg = '';
+let lastNoteAtMs = 0;
 function note(msg: string, at?: string) {
+  // Dedupe guard: an order loop re-rejecting every frame must not machine-gun the
+  // same toast/log line — an identical message within 2s (real time) is dropped.
+  const nowMs = Date.now();
+  if (msg === lastNoteMsg && nowMs - lastNoteAtMs < 2000) return;
+  lastNoteMsg = msg;
+  lastNoteAtMs = nowMs;
   const d = floor(s.time / DAY) + 1;
   const h = floor((s.time % DAY) / HOUR);
   logLines.push(`D${d} ${String(h).padStart(2, '0')}h · ${msg}`);
@@ -1962,6 +1970,7 @@ const ERR_RU: Record<string, string> = {
   E_ALREADY_FITTED: 'фиттинг уже установлен',
   E_NO_SLOTS: 'слоты фиттингов заняты',
   E_NOT_DESTRUCTIBLE: 'этот мир нельзя уничтожить',
+  E_NO_TROOPS: 'мир защищён — для штурма нужен десант на борту',
   E_INTERNAL: 'внутренняя ошибка',
 };
 function errText(code: string): string {
@@ -2267,15 +2276,33 @@ function tryAssaultGroup(fleetIds: string[], destId: string): void {
   }
   dispatchAssault(movers, destId);
 }
+/** A defended world can only be stormed with landing troops aboard — pressing the
+ *  assault anyway just spams E_NO_TROOPS rejections. */
+function assaultNeedsTroops(f: Fleet, planetId: string): boolean {
+  const defended = (s.planets[planetId]?.garrison ?? []).some((u) => u.count > 0);
+  return defended && !(f.landing ?? []).some((u) => u.count > 0);
+}
 function dispatchAssault(fleetIds: string[], destId: string): void {
+  let warnedNoTroops = false;
   for (const id of fleetIds) {
     const f = s.fleets[id];
     if (!f) continue;
     if (f.location === destId && !f.movement) {
+      if (assaultNeedsTroops(f, destId)) {
+        if (!warnedNoTroops) {
+          warnedNoTroops = true;
+          note(t('⚔ штурм невозможен: на борту нет десанта, а мир защищён — погрузите войска'), destId);
+        }
+        continue;
+      }
       // already parked at the target — storm right away (orbit first if needed)
       if (f.orbit !== 'near') playerOrder(orbitFleet(ME, id, 'near'));
       playerOrder(assaultFleet(ME, id));
     } else {
+      if (!warnedNoTroops && assaultNeedsTroops(f, destId)) {
+        warnedNoTroops = true;
+        note(t('⚔ внимание: на борту нет десанта — защищённый мир штурмом не взять'), destId);
+      }
       playerOrder(moveFleet(ME, id, destId));
       assaultOnArrival.set(id, destId);
     }
@@ -2303,6 +2330,12 @@ function pumpAssaultOrders(): void {
     const here = s.planets[destId];
     if (!here || here.owner === ME || here.owner == null) {
       assaultOnArrival.delete(id); // captured meanwhile / emptied — nothing to storm
+      continue;
+    }
+    if (assaultNeedsTroops(f, destId)) {
+      // one clear message instead of an E_NO_TROOPS rejection loop
+      note(t('⚔ штурм невозможен: на борту нет десанта, а мир защищён — погрузите войска'), destId);
+      assaultOnArrival.delete(id);
       continue;
     }
     if (f.orbit !== 'near') playerOrder(orbitFleet(ME, id, 'near'));
@@ -2749,6 +2782,9 @@ function autoEngage() {
       (g) => g.owner !== f.owner && g.location === f.location && g.units.some((u) => u.count > 0),
     );
     if (enemyHere) continue; // let the auto orbital battle settle first
+    // A defended world + no landing troops = the assault can only be rejected
+    // (E_NO_TROOPS) — skip instead of re-pressing it every frame (toast spam).
+    if (here.garrison.some((u) => u.count > 0) && !(f.landing ?? []).some((u) => u.count > 0)) continue;
     // Player fleets go through playerOrder (server-authoritative in net play); AI applies locally.
     const issue = (a: Action) => (mine ? playerOrder(a) : apply(order(s, a, s.time)));
     if (f.orbit !== 'near') issue(orbitFleet(f.owner, f.id, 'near'));
@@ -4468,6 +4504,11 @@ function conveyorHtml(planetId: string, lane: BuildLane): string {
     html += `<div class="current" data-desc="c:${planetId}:${lane}:active:${active.seq}"><span>${t('СЕЙЧАС')}</span><b>${constructionLabel(active.payload)}</b><em class="conv-time" data-at="${active.at}">—</em>`;
     html += `<button class="conv-cancel" data-act="cancelbuild" data-arg="${active.seq}" title="${t('Отменить — вернёт часть ресурсов и поставит на паузу')}">✕</button></div>`;
     html += `<div class="bar"><i class="conv-fill" data-at="${active.at}" data-dur="${dur}" style="width:0%"></i></div>`;
+  } else if (pcUi() && queued[0] && !canStartQueued(planetId, queued[0])) {
+    // The queue is NOT stuck — its head simply can't be paid yet. Say so, with the
+    // price, instead of an idle line that reads like a broken conveyor.
+    html += `<div class="current idle"><b>⏳ ${t('Ждёт ресурсы: {c}', { c: cost(buildCost(planetId, queued[0])) })}</b></div>`;
+    html += `<div class="bar"><i style="width:0%"></i></div>`;
   } else if (compactUi()) {
     html += `<div class="current idle"><b>${t('Ожидание заказов')}</b></div>`;
     html += `<div class="bar"><i style="width:0%"></i></div>`;
