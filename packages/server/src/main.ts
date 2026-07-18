@@ -22,6 +22,8 @@ import { AvaService } from './avaService';
 import { registerMedalApi } from './medalApi';
 import { MedalService } from './medalService';
 import { registerArsenalApi } from './arsenalApi';
+import { CorpArsenalService } from './corpArsenalService';
+import { registerCorpArsenalApi } from './corpArsenalApi';
 import { loadMedalCatalog } from './medalCatalog';
 import { AvaOrchestrator, warDeclarationsFor } from './avaOrchestrator';
 import { MatchKeeper } from './matchFactory';
@@ -115,6 +117,13 @@ const loadMatch = createMatchLoader({
             `ava settlement failed for ${matchId} — ${err instanceof Error ? err.message : String(err)}\n`,
           );
         });
+        // ARS-6: every corp-arsenal item on rent for this war returns to storage
+        // exactly once (durability sink) — win or lose, no burn-on-loss (ARS-0.3).
+        void corpArsenalService.returnWar(avaSession.matchupId).catch((err) => {
+          process.stderr.write(
+            `corp-arsenal return failed for ${avaSession.matchupId} — ${err instanceof Error ? err.message : String(err)}\n`,
+          );
+        });
         // ARS-4 drop roll: place-weighted, pity-guarded, exactly-once per
         // (match, account); one telemetry JSONL line per rolled account.
         if (rewards) {
@@ -167,6 +176,19 @@ let matchCount = 1; // the seeded 'dev' match
 // (S5) state, and raise the room by persisting its first snapshot (the lazy registry loads
 // it on connect, like any match). `resolveAvaSeat` then sits each rostered account in ITS
 // slot on join; the sweep raises sessions for freshly-locked matchups with no client needed.
+// Corp-arsenal rentals (ARS-6): a head/officer hands a corp-owned item to a rostered
+// fighter before lock; the orchestrator merges it into that seat's ARS-3 snapshot at
+// launch, and the war-end hook (matchExtras.onEnd, below) returns every active
+// rental for the matchup exactly once (durability sink, ARS-0.3 — always returns,
+// win or lose).
+const corpArsenalService = new CorpArsenalService({
+  corpStore: stores.corpStore,
+  arsenalStore: stores.arsenalStore,
+  rentStore: stores.corpRentStore,
+  challengeStore: stores.challengeStore,
+  rosterStore: stores.rosterStore,
+});
+
 const avaOrchestrator = new AvaOrchestrator({
   challengeStore: stores.challengeStore,
   rosterStore: stores.rosterStore,
@@ -201,6 +223,8 @@ const avaOrchestrator = new AvaOrchestrator({
   // ARS-3: snapshot each rostered account's arsenal at launch — the seat builds
   // only what it owned at the lock (GDD §2); later purchases wait for LARS-1.
   arsenalOf: async (accountId) => arsenalSnapshotOf(await stores.arsenalStore.listOf(accountId)),
+  // ARS-6: whatever the corp rented this account for THIS war rides in too.
+  corpRentalOf: (accountId, matchupId) => corpArsenalService.rentedArsenalOf(accountId, matchupId),
 });
 
 // Identity gate (SE-1.x): resolve the caller from the session token. Shared by the
@@ -357,6 +381,8 @@ const server = createMultiplayerServer({
           registerMedalApi(scope, { service: medalService, identify });
           // Arsenal witryna (ARS-5) — read-only, session-gated: my own items only.
           registerArsenalApi(scope, { store: stores.arsenalStore, identify });
+          // Corp-arsenal rentals (ARS-6) — head/officer hands out a corp item.
+          registerCorpArsenalApi(scope, { service: corpArsenalService, identify });
         }
       });
     }

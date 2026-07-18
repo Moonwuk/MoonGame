@@ -624,9 +624,30 @@
   без ограничений (мягкая деградация как в ядре). Ростер героев не тронут —
   в прототипе нет пикера фитингов (только живые инстансы боя), фильтровать
   нечего; гейт `hero.fit` уже на ядре (ARS-3).
-- **ARS-6** ⏳ `[srv]` 🔒(ARS-3, AVA-8) **Корп-склад + аренда.** Глава/офицер выдаёт
-  предмет ростерному бойцу до лока (аудит); возврат/сгорание exactly-once по
-  исходу войны; износ как sink.
+- **ARS-6** ✅ `[srv]` **Корп-склад + аренда.** «Corp_arsenal» — тот же `ArsenalStore`
+  (ARS-2), `accountId` = id корпорации (переиспользован буквально, без нового стора
+  каталога). Новый `CorpRentStore` (Memory+Postgres, `corp_arsenal_rent`) держит
+  только АКТИВНУЮ аренду: `rent(itemId,...)` атомарно (предмет — максимум в одной
+  войне разом), `closeRent` — exactly-once (как `AvaChallengeStore.endMatchup`).
+  `CorpArsenalService.rentOut`: гейт глава/офицер (тот же паттерн, что `MedalService`
+  — читает `CorpStore.membershipOf` напрямую, не через `CorpService`), предмет должен
+  принадлежать корпе, матч — ДО лока (`status === 'accepted'`), цель — на РОСТЕРЕ
+  своей стороны (`AvaRosterStore.rosterOf`); аудит `CorpStore.appendAudit` (действия
+  `'rent'`/`'rent_return'` добавлены в `CorpAuditEntry.action`). Снапшот-мёрдж:
+  `AvaOrchestrator.corpRentalOf?` — вызывается ПЕРЕД снятием ARS-3-снапшота, сливает
+  арендованное с личным через новый чистый `mergeArsenal` (`arsenal.ts`) — рентованный
+  предмет строится неотличимо от своего, ядро не знает о корпе вообще (гейт владения
+  не тронут). Возврат: `CorpArsenalService.returnWar(matchupId)` — хук на `onEnd` в
+  `main.ts` (тот же `matchExtras.onEnd`, что ARS-4), закрывает каждую активную аренду
+  матчапа ровно один раз, `ArsenalStore.wear(itemId, 1)` (новый метод — атомарный
+  декремент durability, clamped на 0, no-op для чертежей) — резолюция ARS-0.3
+  буквальна: возврат ВСЕГДА, победа или поражение, никакого сгорания-по-проигрышу;
+  износ — единственный sink. HTTP: `POST /corp-arsenal/rent` (session-gated, паттерн
+  medals/arsenal API). Тесты: `store.test.ts` (`wear`, `corpRentStoreContract` — оба
+  адаптера), `corpArsenalService.test.ts` (RBAC, не-ростерный/чужая сторона отказ,
+  до-лока/после-лока, двойная аренда отказана, аудит, exactly-once возврат+replay),
+  `corpArsenalApi.test.ts` (гейт сессии, круговой рейс через HTTP), `avaOrchestrator
+  .test.ts` (мёрдж снапшота).
 
 ## Блок LARS · Живой арсенал — мид-сессионный анлок модулей `[core]` `[srv]` `[proto]`
 

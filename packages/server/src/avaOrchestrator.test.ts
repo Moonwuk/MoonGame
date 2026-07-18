@@ -237,6 +237,47 @@ describe('AvaOrchestrator × arsenal snapshot (ARS-3)', () => {
   });
 });
 
+describe('AvaOrchestrator × corp rentals (ARS-6)', () => {
+  it('merges a corp-rented item into the seat’s snapshot alongside the personal one', async () => {
+    const challenges = new MemoryAvaChallengeStore();
+    const roster = new MemoryAvaRosterStore();
+    const sessions = new MemoryAvaSessionStore();
+    const built: AvaSessionSpec[] = [];
+    const orch = new AvaOrchestrator({
+      challengeStore: challenges,
+      rosterStore: roster,
+      sessionStore: sessions,
+      data,
+      maps,
+      createRoom: (spec) => {
+        built.push(spec);
+        return Promise.resolve();
+      },
+      now: () => 42,
+      arsenalOf: (accountId) =>
+        Promise.resolve(accountId === 'acc-a1' ? { hulls: ['cruiser'], modules: [], fittings: [] } : { hulls: [], modules: [], fittings: [] }),
+      // ARS-6: acc-a1 also has a corp-rented module for THIS matchup only.
+      corpRentalOf: (accountId, matchupId) =>
+        Promise.resolve(
+          accountId === 'acc-a1' && matchupId === 'mu-rent'
+            ? { hulls: [], modules: ['cargo_bay'], fittings: [] }
+            : { hulls: [], modules: [], fittings: [] },
+        ),
+    });
+    const h = { orch, challenges, roster, sessions, built } as unknown as Harness;
+    await lockedMatchup(h, 'mu-rent', ['acc-a1'], ['acc-b']);
+    await orch.orchestrate('mu-rent');
+
+    const state = built[0]!.state;
+    const seats = built[0]!.seats;
+    expect(state.players[seats['acc-a1']!]?.arsenal).toEqual({
+      hulls: ['cruiser'], // personal
+      modules: ['cargo_bay'], // rented in
+      fittings: [],
+    });
+  });
+});
+
 describe('AvaOrchestrator.sweep (AVA-7) — no client needed', () => {
   it('raises a session for every locked matchup that has none, idempotently', async () => {
     const h = harness();

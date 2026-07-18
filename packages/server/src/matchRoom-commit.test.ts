@@ -388,6 +388,7 @@ describe('MatchRoom · LARS-1 live arsenal sync', () => {
         },
         transfer: (itemId, from, to) => inner.transfer(itemId, from, to),
         consume: (itemId, accountId) => inner.consume(itemId, accountId),
+        wear: (itemId, by) => inner.wear(itemId, by),
       },
     };
   }

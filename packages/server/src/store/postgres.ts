@@ -19,6 +19,8 @@ import type {
   CorpAuditEntry,
   CorpMembership,
   CorpRecord,
+  CorpRent,
+  CorpRentStore,
   CorpRole,
   CorpStore,
   CorpSummary,
@@ -243,6 +245,19 @@ export async function migrate(pool: Pool): Promise<void> {
       acquired_at bigint NOT NULL
     );
     CREATE INDEX IF NOT EXISTS arsenal_account_idx ON arsenal (account_id);
+
+    -- Corp-arsenal rentals (ARS-6): a corp-owned item (a row in the arsenal table
+    -- with account_id = the corp's id) lent to a rostered fighter for one war. item_id PK
+    -- is the "one war at a time" invariant; DELETE-on-return is the exactly-once
+    -- close (a replayed match-end deletes nothing the second time).
+    CREATE TABLE IF NOT EXISTS corp_arsenal_rent (
+      item_id     text PRIMARY KEY,
+      corp_id     text NOT NULL,
+      matchup_id  text NOT NULL,
+      account_id  text NOT NULL,
+      rented_at   bigint NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS corp_arsenal_rent_matchup_idx ON corp_arsenal_rent (matchup_id);
 
     -- Drop loop (ARS-4): the (match, account) claim PK is the exactly-once roll gate
     -- (a replayed match end inserts nothing → no second roll, no double pity bump);
@@ -1346,6 +1361,24 @@ function ownedItemOf(row: ArsenalRow): OwnedArsenalItem {
 const ARSENAL_COLS =
   'item_id, account_id, kind, form, def_id, grade, soulbound, durability, origin, acquired_at';
 
+interface CorpRentRow {
+  item_id: string;
+  corp_id: string;
+  matchup_id: string;
+  account_id: string;
+  rented_at: string;
+}
+
+function corpRentOf(row: CorpRentRow): CorpRent {
+  return {
+    itemId: row.item_id,
+    corpId: row.corp_id,
+    matchupId: row.matchup_id,
+    accountId: row.account_id,
+    rentedAt: Number(row.rented_at),
+  };
+}
+
 /** Postgres arsenal store (ARS-2). The PK makes `grant` idempotent (ON CONFLICT DO
  *  NOTHING — first write wins); transfer/consume are owner-guarded conditional writes,
  *  so a double-sell race and a soulbound move are impossible at the storage level. */
@@ -1416,6 +1449,64 @@ export class PostgresArsenalStore implements ArsenalStore {
     const r = await this.pool.query(
       `DELETE FROM arsenal WHERE item_id = $1 AND account_id = $2`,
       [itemId, accountId],
+    );
+    return (r.rowCount ?? 0) > 0;
+  }
+
+  async wear(itemId: string, by: number): Promise<{ durability?: number } | null> {
+    // Only an INSTANCE (durability IS NOT NULL) actually wears — a blueprint's row
+    // stays NULL and the UPDATE simply changes nothing for it (still 1 row touched
+    // if it exists, so we read the value back either way to report it honestly).
+    const r = await this.pool.query<{ durability: number | null }>(
+      `UPDATE arsenal SET durability = GREATEST(0, durability - $2)
+       WHERE item_id = $1 AND durability IS NOT NULL
+       RETURNING durability`,
+      [itemId, by],
+    );
+    if (r.rows[0]) return { durability: r.rows[0].durability ?? undefined };
+    const row = await this.get(itemId);
+    if (!row) return null;
+    return { durability: undefined }; // exists, but a blueprint — nothing to wear
+  }
+}
+
+export class PostgresCorpRentStore implements CorpRentStore {
+  constructor(private readonly pool: Pool) {}
+
+  async rent(entry: CorpRent): Promise<boolean> {
+    const r = await this.pool.query(
+      `INSERT INTO corp_arsenal_rent (item_id, corp_id, matchup_id, account_id, rented_at)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (item_id) DO NOTHING`,
+      [entry.itemId, entry.corpId, entry.matchupId, entry.accountId, entry.rentedAt],
+    );
+    return (r.rowCount ?? 0) > 0;
+  }
+
+  async activeForMatchup(matchupId: string): Promise<CorpRent[]> {
+    const r = await this.pool.query<CorpRentRow>(
+      `SELECT item_id, corp_id, matchup_id, account_id, rented_at
+       FROM corp_arsenal_rent WHERE matchup_id = $1 ORDER BY item_id`,
+      [matchupId],
+    );
+    return r.rows.map(corpRentOf);
+  }
+
+  async activeForAccount(matchupId: string, accountId: string): Promise<CorpRent[]> {
+    const r = await this.pool.query<CorpRentRow>(
+      `SELECT item_id, corp_id, matchup_id, account_id, rented_at
+       FROM corp_arsenal_rent WHERE matchup_id = $1 AND account_id = $2 ORDER BY item_id`,
+      [matchupId, accountId],
+    );
+    return r.rows.map(corpRentOf);
+  }
+
+  async closeRent(matchupId: string, itemId: string): Promise<boolean> {
+    // Exactly-once: the DELETE only ever removes the row once — a replayed
+    // match-end's second attempt finds nothing and changes nothing.
+    const r = await this.pool.query(
+      `DELETE FROM corp_arsenal_rent WHERE matchup_id = $1 AND item_id = $2`,
+      [matchupId, itemId],
     );
     return (r.rowCount ?? 0) > 0;
   }
