@@ -45,6 +45,18 @@ export const en: Record<string, string> = {
   'с дня {n}': 'from day {n}',
   'Требует:': 'Requires:',
   Хранитель: 'Steward',
+  // --- SPY-UX intel tab in diplomacy --------------------------------------------
+  Шпионаж: 'Espionage',
+  'Попытка: {c}¤ · шанс ~60% · окно интела 24ч · провал сжигает плату. Разведка мира — кнопка 🕵 на карточке вражеской планеты.':
+    'Attempt: {c}¤ · ~60% chance · 24h intel window · a failure burns the fee. World recon — the 🕵 button on an enemy planet card.',
+  'АКТИВНЫЕ ОКНА ИНТЕЛА': 'ACTIVE INTEL WINDOWS',
+  'нет активных окон — добудьте интел операцией ниже': 'no active windows — steal intel with an operation below',
+  ОПЕРАЦИИ: 'OPERATIONS',
+  'противников нет': 'no opponents',
+  ЖУРНАЛ: 'JOURNAL',
+  'попыток ещё не было': 'no attempts yet',
+  '🗝 Успех: {what}': '🗝 Success: {what}',
+  '✖ Провал против {who} — плата сгорела': '✖ Failed against {who} — the fee burned',
   // --- ONB-7 first-session goals checklist -------------------------------------
   'Цели первой сессии': 'First-session goals',
   'Построй шахту': 'Build a mine',
