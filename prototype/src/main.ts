@@ -497,7 +497,7 @@ let chatDrag: {
   gh: number;
 } | null = null;
 let diploOpen = false;
-let diploTab: 'diplo' | 'msgs' = 'diplo';
+let diploTab: 'diplo' | 'msgs' | 'intel' = 'diplo';
 let diploSort: 'name' | 'worlds' | 'stance' = 'stance';
 let diploExpanded: string | null = null; // participant row showing its action buttons
 // Roster filters (alongside sort): show only seats matching the picked stance(s) and
@@ -1787,6 +1787,14 @@ function intelTargets(kind: IntelGrant['kind']): Set<string> {
 // Owners whose fleets are revealed this frame by a live `fleets` grant — rebuilt
 // alongside `vision` each frame so the render path checks a Set, not the grant list.
 let intelFleetOwners = new Set<string>();
+// SPY-UX: bounded session journal of espionage outcomes (mine + counter-intel hits
+// on me) — feeds the «Шпионаж» tab in diplomacy. Stores the final localized line.
+const spyLog: { at: number; text: string }[] = [];
+function pushSpyLog(text: string): void {
+  spyLog.push({ at: s.time, text });
+  while (spyLog.length > 30) spyLog.shift();
+  if (diploOpen && diploTab === 'intel') renderDiplo();
+}
 
 /** Variant-B visibility: an identify range (full detail, feeds memory) plus a
  *  wider radar range (enemy fleets seen only as coarse signatures). The radar
@@ -2590,12 +2598,16 @@ function handleEvents(events: DomainEvent[]) {
               ? t('флоты {who}', { who: whoT })
               : t('мир {at}', { at: String(p.intelPlanet ?? p.target) });
         note(t('🕵 Агент добыл разведданные: {what} — окно 24ч', { what }));
+        pushSpyLog(t('🗝 Успех: {what}', { what }));
         if (diploOpen && diploTab === 'diplo') renderDiplo(); // the intel row appeared
         break;
       }
       case 'espionage.failed':
-        if (p.owner === ME)
-          note(t('🕵 Агент провалился ({who}) — плата сгорела', { who: NAME[p.target as string] ?? (p.target as string) }));
+        if (p.owner === ME) {
+          const whoF = NAME[p.target as string] ?? (p.target as string);
+          note(t('🕵 Агент провалился ({who}) — плата сгорела', { who: whoF }));
+          pushSpyLog(t('✖ Провал против {who} — плата сгорела', { who: whoF }));
+        }
         break;
       // Counter-intel (SPY-2): addressed to the VICTIM. A failed attempt names the
       // spy (caught red-handed); a noticed clean theft only says WHAT leaked.
@@ -2605,11 +2617,13 @@ function handleEvents(events: DomainEvent[]) {
         if (p.owner !== ME) break;
         const what =
           p.kind === 'treasury' ? t('казна') : p.kind === 'fleets' ? t('данные о флотах') : t('данные мира');
-        note(
-          p.spy
+        {
+          const line = p.spy
             ? t('🛡 Контрразведка: агент {who} пойман при попытке кражи ({what})!', { who: NAME[p.spy as string] ?? (p.spy as string), what })
-            : t('🛡 Контрразведка: утечка разведданных ({what}) — вор не установлен', { what }),
-        );
+            : t('🛡 Контрразведка: утечка разведданных ({what}) — вор не установлен', { what });
+          note(line);
+          pushSpyLog(line);
+        }
         break;
       }
       case 'planet.captured':
@@ -5682,7 +5696,7 @@ function proposeStance(target: string, to: DiplomaticStance): void {
   playerOrder(declareWar(ME, target, to));
 }
 
-function openDiplo(tab: 'diplo' | 'msgs'): void {
+function openDiplo(tab: 'diplo' | 'msgs' | 'intel'): void {
   diploOpen = true;
   diploTab = tab;
   renderDiplo();
@@ -5932,10 +5946,61 @@ function convoThreadHtml(): string {
   );
 }
 
+/** SPY-UX (плейтест, вариант 1): весь шпионаж в одном месте — активные окна интела
+ *  с таймерами, операции по каждому противнику (те же .dp-spy обработчики, что и в
+ *  ростере) и сессионный журнал попыток. Разведка мира остаётся на карточке планеты
+ *  (нужна цель) — вкладка ведёт к ней подсказкой. */
+function intelTabHtml(): string {
+  const grantLabel = (g: IntelGrant): string =>
+    g.kind === 'treasury'
+      ? t('казна {who}', { who: NAME[g.target] ?? g.target })
+      : g.kind === 'fleets'
+        ? t('флоты {who}', { who: NAME[g.target] ?? g.target })
+        : t('мир {at}', { at: g.target });
+  const rows = myIntel()
+    .sort((a, b) => a.until - b.until)
+    .map((g) => {
+      const left = Math.max(0, Math.ceil((g.until - s.time) / HOUR));
+      const jump = g.kind === 'planet' ? ` data-iw="${esc(g.target)}"` : '';
+      return (
+        `<div class="in-row"${jump}><span class="in-k">🗝</span><b>${esc(grantLabel(g))}</b>` +
+        `<span class="in-t">⏳ ${t('{n}ч', { n: left })}</span>${g.kind === 'planet' ? '<span class="in-go">↪</span>' : ''}</div>`
+      );
+    })
+    .join('');
+  const ops = Object.keys(s.players)
+    .filter((id) => id !== ME)
+    .map(
+      (id) =>
+        `<div class="in-row"><b>${esc(NAME[id] ?? id)}</b>` +
+        `<button class="dp-spy" data-spy="treasury" data-seat="${id}">🕵 ${t('казна')}</button>` +
+        `<button class="dp-spy" data-spy="fleets" data-seat="${id}">🕵 ${t('флоты')}</button></div>`,
+    )
+    .join('');
+  const log = [...spyLog]
+    .reverse()
+    .map((e) => {
+      const d = floor(e.at / DAY) + 1;
+      const h = floor((e.at % DAY) / HOUR);
+      return `<div class="in-log">D${d} ${String(h).padStart(2, '0')}ч · ${esc(e.text)}</div>`;
+    })
+    .join('');
+  return (
+    `<div class="dp-list in-list">` +
+    `<div class="in-hint">${t('Попытка: {c}¤ · шанс ~60% · окно интела 24ч · провал сжигает плату. Разведка мира — кнопка 🕵 на карточке вражеской планеты.', { c: SPY_COST })}</div>` +
+    `<div class="in-sec">${t('АКТИВНЫЕ ОКНА ИНТЕЛА')}</div>` +
+    (rows || `<div class="in-empty">${t('нет активных окон — добудьте интел операцией ниже')}</div>`) +
+    `<div class="in-sec">${t('ОПЕРАЦИИ')}</div>` +
+    (ops || `<div class="in-empty">${t('противников нет')}</div>`) +
+    `<div class="in-sec">${t('ЖУРНАЛ')}</div>` +
+    (log || `<div class="in-empty">${t('попыток ещё не было')}</div>`) +
+    `</div>`
+  );
+}
 function renderDiplo(): void {
   const el = document.getElementById('diplo');
   if (!el) return;
-  const tabBtn = (k: 'diplo' | 'msgs', label: string) =>
+  const tabBtn = (k: 'diplo' | 'msgs' | 'intel', label: string) =>
     `<button class="dp-tab${diploTab === k ? ' on' : ''}" data-tab="${k}">${label}</button>`;
   const sortBtn = (k: typeof diploSort, label: string) =>
     `<button class="dp-sortb${diploSort === k ? ' on' : ''}" data-sort="${k}">${label}</button>`;
@@ -5955,10 +6020,12 @@ function renderDiplo(): void {
       ? `<div class="dp-sorts"><span>${t('Сорт.')}:</span>${sortBtn('name', t('Имя'))}${sortBtn('worlds', t('Провинции'))}${sortBtn('stance', t('Отношение'))}</div>` +
         filterRow +
         `<div class="dp-list">${diploRowsHtml()}</div>`
-      : `<div class="dp-convo">${convoListHtml()}${convoThreadHtml()}</div>`;
+      : diploTab === 'intel'
+        ? intelTabHtml()
+        : `<div class="dp-convo">${convoListHtml()}${convoThreadHtml()}</div>`;
   el.innerHTML =
     `<div class="dpbox">` +
-    `<div class="dp-head"><b>${t('ДИПЛОМАТИЯ')}</b>${tabBtn('diplo', t('Дипломатия'))}${tabBtn('msgs', t('Сообщения'))}<button class="dp-close">✕</button></div>` +
+    `<div class="dp-head"><b>${t('ДИПЛОМАТИЯ')}</b>${tabBtn('diplo', t('Дипломатия'))}${tabBtn('msgs', t('Сообщения'))}${tabBtn('intel', t('Шпионаж'))}<button class="dp-close">✕</button></div>` +
     body +
     `</div>`;
   if (diploTab === 'msgs') scrollFeedToEnd();
@@ -7721,6 +7788,7 @@ techWin.addEventListener('click', (e) => {
 // «Командование» branch, day 15, scientist Куратор). A "morning report" note fires on expiry.
 const stewWin = $('steward');
 let lastStewAt = 0;
+let lastIntelAt = 0; // throttle for the live intel-window timers (диплом. вкладка «Шпионаж»)
 const STEW_DURATIONS = [4, 8, 12]; // game-hours a single delegation can run
 // Snapshot of my standing at delegation time, diffed on expiry for the morning report.
 let stewSnapshot: { planets: number; metal: number; credits: number } | null = null;
@@ -10275,6 +10343,11 @@ function frame(nowReal: number) {
     lastStewAt = nowReal;
     renderSteward();
   }
+  // Intel windows tick in hours — a lazy 5s refresh keeps the «Шпионаж» timers honest.
+  if (diploOpen && diploTab === 'intel' && nowReal - lastIntelAt > 5000) {
+    lastIntelAt = nowReal;
+    renderDiplo();
+  }
   requestAnimationFrame(frame);
 }
 
@@ -11085,7 +11158,7 @@ if (diploEl) {
     if (tg.id === 'diplo' || tg.closest('.dp-close')) return closeDiplo();
     const tab = (tg.closest('.dp-tab') as HTMLElement | null)?.dataset.tab;
     if (tab) {
-      diploTab = tab as 'diplo' | 'msgs';
+      diploTab = tab as 'diplo' | 'msgs' | 'intel';
       renderDiplo();
       return;
     }
@@ -11123,6 +11196,12 @@ if (diploEl) {
     if (spyBtn) {
       playerOrder(spyOn(ME, spyBtn.dataset.seat!, spyBtn.dataset.spy as 'treasury' | 'fleets'));
       renderDiplo(); // the intel row (or the rejection note) reflects the outcome
+      return;
+    }
+    const iw = (tg.closest('[data-iw]') as HTMLElement | null)?.dataset.iw;
+    if (iw) {
+      closeDiplo(); // карта должна быть видна — перелетаем к миру из окна интела
+      focusWorld(iw);
       return;
     }
     const msgseat = (tg.closest('.dp-msg') as HTMLElement | null)?.dataset.msgseat;

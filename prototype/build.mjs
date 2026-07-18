@@ -428,6 +428,22 @@ body.sheet-open #cmdbar{bottom:calc(34vh + 12px);}
 .dp-spy:hover{border-color:var(--amber);background:rgba(255,180,58,.1);}
 .dp-intel{padding:2px 10px 9px 39px;font-size:11px;color:var(--cyan);}
 .dp-intel b{color:#eafffb;}
+/* SPY-UX: вкладка «Шпионаж» — активные окна интела, операции, сессионный журнал */
+.in-hint{margin:2px 0 8px;padding:8px 10px;border:1px solid var(--line-hi);border-radius:8px;
+  font-size:10px;color:var(--dim);line-height:1.55;}
+.in-sec{margin:12px 0 6px;font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--cyan-dim);}
+.in-row{display:flex;align-items:center;gap:8px;padding:7px 9px;margin-bottom:6px;
+  border:1px solid var(--line);border-radius:8px;background:rgba(53,214,230,.04);font-size:12px;color:var(--ink);}
+.in-row b{color:#eafffb;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.in-row[data-iw]{cursor:pointer;}
+.in-row[data-iw]:active{background:rgba(53,214,230,.12);}
+.in-row .in-k{flex:0 0 auto;color:var(--cyan);}
+.in-row .in-t{margin-left:auto;flex:0 0 auto;color:var(--amber);font-size:11px;white-space:nowrap;}
+.in-row .in-go{flex:0 0 auto;color:var(--cyan-dim);}
+.in-row .dp-spy{margin-left:auto;}
+.in-row .dp-spy + .dp-spy{margin-left:0;}
+.in-empty{padding:6px 2px;font-size:11px;color:var(--dim);}
+.in-log{padding:4px 2px;font-size:10.5px;color:var(--dim);line-height:1.45;border-bottom:1px dashed rgba(29,107,112,.25);}
 .dp-intel em{font-style:normal;color:var(--dim);font-size:9px;}
 .dp-msg{margin-left:auto;padding:6px 11px;border-radius:6px;border:1px solid var(--cyan-dim);
   background:rgba(53,214,230,.1);color:var(--cyan);font-size:13px;cursor:pointer;}
@@ -1116,6 +1132,10 @@ button.b:disabled{opacity:.32;cursor:not-allowed;color:var(--dim);border-color:v
   .rv{flex:none;gap:2px;overflow:visible;}
   #devline .dl-donate{font-size:11px;padding:2px 8px;}
 
+  /* phones: three tabs + ✕ no longer fit beside the window title — the tabs alone
+     identify the window, so the «ДИПЛОМАТИЯ» caption yields its room to them */
+  #diplo .dp-head b{display:none;}
+  #diplo .dp-tab{padding:6px 9px;}
   #side{right:0;left:0;bottom:0;top:auto;width:auto;max-height:50vh;z-index:28;clip-path:none;
     border-left:0;border-right:0;border-top:1px solid var(--cyan);
     padding-bottom:env(safe-area-inset-bottom,0px);}
