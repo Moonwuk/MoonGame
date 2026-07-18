@@ -1,9 +1,12 @@
 # Система героев (data-driven, корабль + способности + дерево навыков)
 
 > Дизайн-док. Реализация дробится на кирпичики — см. **Блок HERO** в `backlog.md`.
-> Минимальный скелет уже в ветке `claude/hero-abilities` (PR #31): герой-позиция +
-> три хардкод-способности (`hero.move`, `hero.path.create`, `planet.annihilate`).
-> Этот документ описывает, во что он вырастает, и **почему именно так**.
+> **Реализовано и на main** (не скелет): data-driven диспетчер `hero.ability` +
+> `hero.spawn`/`hero.skill.unlock`/`hero.fit` (`modules/hero.ts`), провайдеры `hero.effect.*`
+> (`heroEffects.ts`), контент в `data/heroes.json`/`heroAbilities.json`/`heroPassives.json`/
+> `heroFittings.json`/`heroSkillTrees.json`, предматчевый ростер (`buildFromMap`). Этот
+> документ — исходный дизайн, «во что оно выросло и почему именно так»; ранний скелет
+> (PR #31, три хардкод-способности) давно поглощён.
 
 ## Видение (со слов заказчика)
 
