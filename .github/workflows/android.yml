@@ -25,8 +25,14 @@ on:
       - '.github/workflows/android.yml'
 
 # contents: write lets the build publish the APKs to the rolling releases.
+# id-token: write + attestations: write let attest-build-provenance mint a keyless
+# SLSA attestation (Sigstore/Fulcio via GitHub OIDC, no managed signing key) for the
+# APK bytes people actually sideload (SEC-7) — the one build in this repo with a real
+# distribution path, unlike the scan-only image in security.yml.
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 jobs:
   build-apk:
@@ -173,6 +179,19 @@ jobs:
             echo "::error::APK signature does not match mobile/debug.keystore — updates would break (uninstall required on every phone). Refusing to ship."
             exit 1
           fi
+
+      # SLSA build provenance (SEC-7): attests these exact APK bytes were built by
+      # THIS workflow run from THIS commit — verifiable with
+      # `gh attestation verify app-debug.apk -R Moonwuk/MoonGame` by anyone who
+      # sideloads it. Keyless (GitHub OIDC → Sigstore), no managed key to leak/rotate.
+      # TODO(SD-6.1): pin to the v3.x release sha256, like every other action here —
+      # left on the mutable major-version tag because this session has no verified
+      # way to resolve actions/attest-build-provenance's real commit digest (out of
+      # GitHub-MCP repo scope, WebFetch 403s api.github.com). Re-pin on next touch.
+      - name: Attest APK build provenance (SEC-7)
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: mobile/android/app/build/outputs/apk/debug/app-debug.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
