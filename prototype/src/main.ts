@@ -6878,7 +6878,25 @@ function selectAt(mx: number, my: number) {
       return;
     }
   }
-  if (!aiming) {
+  // Move armed → send the selected fleet(s) to the tapped world (or the nearest lane
+  // point if no world is hit). A route crossing a player you're at peace with stages a
+  // war prompt instead of dispatching.
+  if (aiming) {
+    const n = nearestHit(MAP, (nn) => world(nn), mx, my, rNode);
+    if (n) tryMoveGroup(selectedFleetIds(), n.id);
+    else {
+      const lane = nearestLanePoint(mx, my);
+      if (lane) tryMoveEdgeGroup(selectedFleetIds(), { from: lane.from, to: lane.to, t: lane.t });
+    }
+    aiming = false;
+    lastPanelHtml = '';
+    return;
+  }
+  // Plain tap = selection.
+  const n = nearestHit(MAP, (nn) => world(nn), mx, my, rNode);
+  if (!pcUi()) {
+    // Mobile (frozen in this chat): the original fleet-first behaviour — nearest own
+    // fleet under the tap, else the world, else clear.
     const mine = nearestHit(
       Object.values(s.fleets).filter((f) => f.owner === ME),
       fleetAnchor,
@@ -6887,43 +6905,57 @@ function selectAt(mx: number, my: number) {
       rFleet,
     );
     if (mine) {
-      if (additive) toggleFleetInSelection(mine.id); // Ctrl/⌘ → extend the group
-      else setFleetSelection([mine.id]); // (clears any selected planet)
+      if (additive) toggleFleetInSelection(mine.id);
+      else setFleetSelection([mine.id]);
       return;
     }
-  }
-  {
-    const n = nearestHit(MAP, (nn) => world(nn), mx, my, rNode);
     if (n) {
-      if (aiming) {
-        // Move armed → send the selected fleet(s) here; they route along the lanes to
-        // this world and stop. Keep them selected for follow-up orders. A route through
-        // a player you're at peace with stages a war prompt instead of dispatching.
-        tryMoveGroup(selectedFleetIds(), n.id);
-        aiming = false;
-        lastPanelHtml = '';
-        return;
-      }
-      // plain tap → select the planet (mutually exclusive with a fleet)
       selPlanet = n.id;
       selFleet = null;
       selFleets = new Set();
       lastPanelHtml = '';
       return;
     }
-  }
-  // Move armed but no node hit → if the tap landed on a road, march there: the
-  // army routes to that lane and parks at the exact point (Bytro continuous order).
-  if (aiming) {
-    const lane = nearestLanePoint(mx, my);
-    if (lane) {
-      tryMoveEdgeGroup(selectedFleetIds(), { from: lane.from, to: lane.to, t: lane.t });
-    }
-    aiming = false;
-    lastPanelHtml = '';
+    clearSelection();
     return;
   }
-  clearSelection();
+  // PC — RimWorld-style cycling: gather EVERY selectable object under the tap — your
+  // fleets (nearest first), then the world beneath them — and each repeat tap on the
+  // same spot advances to the next. So a fleet parked on its home world (or a stack of
+  // fleets on one orbit) no longer permanently masks the world / the fleets below it.
+  const fleetHits = Object.values(s.fleets)
+    .filter((f) => f.owner === ME)
+    .map((f) => {
+      const a = fleetAnchor(f);
+      return a ? { id: f.id, d: Math.hypot(mx - a.x, my - a.y) } : null;
+    })
+    .filter((h): h is { id: string; d: number } => !!h && h.d < rFleet)
+    .sort((a, b) => a.d - b.d);
+  if (additive) {
+    // Ctrl/⌘ → extend the fleet group with the nearest fleet under the tap (no cycling).
+    if (fleetHits[0]) toggleFleetInSelection(fleetHits[0].id);
+    return;
+  }
+  const cands: string[] = fleetHits.map((h) => 'f:' + h.id);
+  if (n) cands.push('p:' + n.id);
+  if (cands.length === 0) {
+    clearSelection();
+    return;
+  }
+  // Advance from whatever is selected now: a repeat tap on the same cluster steps to
+  // the next candidate; a tap on a fresh spot (current selection not in the cluster)
+  // starts at the topmost (index 0). One candidate → tapping it just keeps it selected.
+  const curKey = selFleet ? 'f:' + selFleet : selPlanet ? 'p:' + selPlanet : null;
+  const at = curKey ? cands.indexOf(curKey) : -1;
+  const pick = cands[(at + 1) % cands.length]!;
+  if (pick.startsWith('f:')) {
+    setFleetSelection([pick.slice(2)]); // (clears any selected planet)
+  } else {
+    selPlanet = pick.slice(2);
+    selFleet = null;
+    selFleets = new Set();
+    lastPanelHtml = '';
+  }
 }
 
 // --- camera control: drag-pan, pinch-zoom, wheel-zoom, tap-select ------------
