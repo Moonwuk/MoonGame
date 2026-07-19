@@ -1257,7 +1257,13 @@ requires[], cost, grants{ability?|passive?}}`; ветки **transhuman**/**psion
   masked+protected CI-переменные, least-privilege токены. Реализовано: документация
   (image-pinning.md / ci-variables.md / setup-github-secrets.md), скрипт обновления
   дайджестов, комментарии в security.yml. Ready for PR.
-- **SEC-4** ⏳ Агрегация находок: SARIF → DefectDojo / GitHub Code Scanning (единая панель, трекинг).
+- **SEC-4** ✅ _(аудитом доков — GitHub Code Scanning половина уже была реализована, не
+  отмечена)_ Агрегация находок: все 8 SARIF-джоб (semgrep/gitleaks/osv/trivy fs/trivy
+  image/zizmor/scorecard + нативный codeql) безусловно льют `upload-sarif` → единая
+  панель `Security → Code scanning` (`continue-on-error: true`, чтобы сбой аплоада не
+  валил джобу; `security-events: write` у всех 8). DefectDojo — не сделан: требует
+  внешний инстанс/API-ключ, которых у нас нет; заведётся отдельным кирпичом, когда
+  появится инстанс.
 - **SEC-5** ✅ Container scanning: `Dockerfile` (multi-stage, пин distroless-базы) +
   живой job `trivy-image` в `security.yml` (сборка образа, `trivy image` + image-SBOM).
   _(Статус выправлен аудитом доков.)_
