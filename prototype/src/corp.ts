@@ -221,6 +221,13 @@ export function parseRosterView(raw: unknown): AvaRosterView | null {
   };
 }
 
+/** The `{accountIds}` shape of GET /corps/:id/ready-players (AVA-6 setRoster
+ *  eligibility set) — a plain list of flagged account ids. */
+export function parseAccountIds(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((x): x is string => typeof x === 'string');
+}
+
 export function parseFeed(raw: unknown): AvaFeedEntry[] {
   if (!Array.isArray(raw)) return [];
   const out: AvaFeedEntry[] = [];

@@ -8,6 +8,7 @@ import {
   parseChallenges,
   parseReadyPool,
   parseRosterView,
+  parseAccountIds,
   parseFeed,
   parseMedals,
   sortMembers,
@@ -106,6 +107,12 @@ describe('corp cabinet — fail-secure parsing (AVA-C1/C2)', () => {
       counts: { challenger: 3, target: 0 },
     });
     expect(parseRosterView(null)).toBeNull();
+  });
+
+  it('parseAccountIds keeps only strings, degrades garbage to []', () => {
+    expect(parseAccountIds(['a', 'b', 42, null])).toEqual(['a', 'b']);
+    expect(parseAccountIds(null)).toEqual([]);
+    expect(parseAccountIds('a')).toEqual([]);
   });
 
   it('parseFeed keeps winnerCorp only when present (including an explicit draw null)', () => {

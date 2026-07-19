@@ -157,6 +157,7 @@ import {
   parseChallenges,
   parseReadyPool,
   parseRosterView,
+  parseAccountIds,
   parseFeed,
   sortMembers,
   canManage,
@@ -11537,6 +11538,9 @@ let avaChallenges: AvaChallenge[] = [];
 let avaPool: Array<CorpSummary & { readySince: number }> = [];
 let avaFeed: AvaFeedEntry[] = [];
 let avaRoster: AvaRosterView | null = null;
+// AVA-6 setRoster eligibility — accountIds flagged ready in my corp (head/officer only,
+// fetched only while a roster window is open; empty otherwise).
+let avaReadyPlayers: string[] = [];
 // Optimistic — no GET exists for "am I flagged ready" (server has no such read
 // model yet); reflects only what THIS session successfully posted.
 let corpReadyOptimistic: boolean | null = null;
@@ -11629,6 +11633,16 @@ async function refreshCorp(): Promise<void> {
     avaRoster = activeMatchup
       ? parseRosterView(await corpFetch(`/ava/matchup/${encodeURIComponent(activeMatchup.id)}`))
       : null;
+
+    // The setRoster eligibility set (AVA-6) — head/officer only, only while curating.
+    avaReadyPlayers =
+      avaRoster?.status === 'accepted' && myCorpId && corpMine.membership && canManage(corpMine.membership.role)
+        ? parseAccountIds(
+            ((await corpFetch(`/corps/${encodeURIComponent(myCorpId)}/ready-players`)) as {
+              accountIds?: unknown;
+            } | null)?.accountIds,
+          )
+        : [];
   } finally {
     corpFetchBusy = false;
   }
@@ -11783,13 +11797,28 @@ function corpWarsHtml(): string {
             !avaRoster?.mine.some((r) => r.accountId === corpMine.membership!.accountId)
           ? `<button class="cbtn2" data-corpact="ava-join" data-corparg="${esc(w.id)}">${t('Заявиться в состав')}</button>`
           : '';
-      const rosterLine =
-        w.status === 'accepted' && avaRoster && avaRoster.matchupId === w.id
-          ? `<div class="cwmid">${t('состав')}: ${avaRoster.counts.challenger}/${avaRoster.counts.target}</div>`
+      const rosterOpen = w.status === 'accepted' && avaRoster && avaRoster.matchupId === w.id;
+      const rosterLine = rosterOpen
+        ? `<div class="cwmid">${t('состав')}: ${avaRoster!.counts.challenger}/${avaRoster!.counts.target}</div>`
+        : '';
+      // AVA-6 setRoster — head/officer curates from the flagged pool wholesale;
+      // everyone else still only has self-enroll `join` (rendered in `act` above).
+      const curate =
+        rosterOpen && canManage(corpMine.membership?.role ?? 'recruit') && avaReadyPlayers.length > 0
+          ? `<div class="cwroster">${avaReadyPlayers
+              .map((accountId) => {
+                const login = corpDetail?.members.find((m) => m.accountId === accountId)?.login ?? accountId;
+                const on = avaRoster!.mine.some((r) => r.accountId === accountId);
+                return (
+                  `<button class="cbtn2 ctoggle${on ? ' on' : ''}" data-corpact="ava-roster-toggle" ` +
+                  `data-corparg="${esc(w.id)}" data-corpaccount="${esc(accountId)}">${on ? '✓' : '·'} ${esc(login)}</button>`
+                );
+              })
+              .join('')}</div>`
           : '';
       return (
         `<div class="cwar"><div class="cwtop"><b>⚔ ${esc(foe)}</b><span class="cst st-${w.status}">${st[w.status]}</span></div>` +
-        `<div class="cwmid">${iAmChallenger ? t('вызов от нас') : t('вызов нам')} · ${nfmt(w.cost)} ⟡</div>${rosterLine}` +
+        `<div class="cwmid">${iAmChallenger ? t('вызов от нас') : t('вызов нам')} · ${nfmt(w.cost)} ⟡</div>${rosterLine}${curate}` +
         (act ? `<div class="cwact">${act}</div>` : '') +
         `</div>`
       );
@@ -11909,6 +11938,7 @@ corpEl.addEventListener('click', (e) => {
   if (!act) return;
   const arg = btn?.dataset.corparg ?? '';
   const corpId = corpMine.membership?.corpId ?? '';
+  const account = btn?.dataset.corpaccount ?? '';
   switch (act) {
     case 'create': {
       const input = document.getElementById('corpnewname') as HTMLInputElement | null;
@@ -11984,6 +12014,17 @@ corpEl.addEventListener('click', (e) => {
     case 'ava-join':
       void corpIntent(`/ava/matchup/${encodeURIComponent(arg)}/join`);
       break;
+    case 'ava-roster-toggle': {
+      // arg = matchupId, account = the toggled accountId. Server is wholesale
+      // (setRoster REPLACES the side), so send the full desired set every time.
+      if (!avaRoster || avaRoster.matchupId !== arg) break;
+      const current = avaRoster.mine.map((r) => r.accountId);
+      const next = current.includes(account)
+        ? current.filter((id) => id !== account)
+        : [...current, account];
+      void corpIntent(`/ava/matchup/${encodeURIComponent(arg)}/roster`, { players: next });
+      break;
+    }
   }
 });
 const corpEntry = $('ccorp');

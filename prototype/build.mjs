@@ -1705,6 +1705,9 @@ button.b:disabled{opacity:.32;cursor:not-allowed;color:var(--dim);border-color:v
 #corp .cst.st-active{color:var(--red);border-color:var(--red);}
 #corp .cst.st-incoming{color:var(--amber);border-color:var(--amber);}
 #corp .cwmid{color:var(--dim);font-size:11px;margin:6px 0 9px;}
+#corp .cwroster{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 9px;}
+#corp .ctoggle{opacity:.55;}
+#corp .ctoggle.on{opacity:1;background:rgba(53,214,230,.24);}
 #corp .cchat{display:flex;flex-direction:column;gap:8px;margin-bottom:12px;}
 #corp .cmsg{border:1px solid var(--line);border-radius:8px;padding:8px 11px;font-size:12px;}
 #corp .cmsg.audit{border-style:dashed;color:var(--dim);}
