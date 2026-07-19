@@ -140,6 +140,10 @@ body.sheet-open #speedbar{bottom:calc(34vh + 12px);}
 .spd .spddiv{width:1px;height:18px;background:var(--line-hi);margin:0 2px;}
 .spd .spdmini{min-width:26px;font-size:10px;opacity:.9;}
 .spd .sep{width:1px;height:18px;background:var(--line-hi);margin:0 4px;flex:0 0 auto;}
+/* speed-multiplier sets: mobile keeps the legacy chips, PC swaps in 1/30/60/120. The
+   wrappers are display:contents so their buttons flow in the speedbar flex row. */
+.spd .spd-mult-legacy{display:contents;}
+.spd .spd-mult-pc{display:none;}
 #cmdbar{position:fixed;left:50%;transform:translateX(-50%);bottom:14px;z-index:26;display:none;align-items:center;
   gap:6px;padding:6px 8px;background:rgba(3,12,16,.88);border:1px solid var(--line-hi);border-radius:3px;
   box-shadow:0 0 22px rgba(40,200,210,.14);}
@@ -1748,6 +1752,11 @@ button.b:disabled{opacity:.32;cursor:not-allowed;color:var(--dim);border-color:v
   #emblempick .ep-box{width:min(340px,61vw);}
   #corp .corpbox{width:53.4vw;max-height:61vh;}
   #railtools #rail-settings,#railtools #rail-exit{display:grid;}
+  /* speedbar on PC: exit (⌂) lives in the rail and ▶▶ is dropped; the multiplier set
+     swaps to 1/30/60/120. (The whole bar's show/hide rides the dev toggle in main.ts.) */
+  .spd .spd-pc-hide{display:none;}
+  .spd .spd-mult-legacy{display:none;}
+  .spd .spd-mult-pc{display:contents;}
   /* base (portrait) bottom-sheet panel + the bars it lifts */
   #side{max-height:22.5vh;}
   body.sheet-open #cmdbar,body.sheet-open #speedbar{bottom:calc(22.5vh + 12px);}
@@ -1868,10 +1877,12 @@ const page = (js) => `<!doctype html>
 <aside id="side"></aside>
 <div id="toasts"></div>
 <div id="speedbar" class="spd">
-  <!-- time controls: in the player build these ride the SOLO match only (a networked
-       match's clock is the server's) — shown/hidden at runtime by NET state. -->
-  <span id="spd-ctl"><button id="spd-pause" data-speed="0">‖</button><button id="spd-play" data-speed="1" class="on">▶</button><button id="spd-fast" data-speed="3">▶▶</button><span class="spddiv"></span><button class="spdmini" data-mult="1" title="реальное время" data-i18n-title>×1</button><button class="spdmini" data-mult="10">×10</button><button class="spdmini" data-mult="50">×50</button><button class="spdmini" data-mult="100">×100</button><span class="sep"></span></span>
-  <!--dev-only--><span class="sep" id="restart-sep" style="display:none"></span><button id="restart" title="Перезапуск — к выбору ботов" data-i18n-title style="display:none">⟳</button><span class="sep"></span><!--/dev-only--><button id="tomenu" title="Выход в меню" data-i18n-title>⌂</button>
+  <!-- time controls. PC: shown only via the developer «speed control» toggle (whole
+       bar hidden otherwise); ⌂/▶▶ are PC-hidden (exit lives in the rail). Mobile is
+       frozen: keeps ⌂/▶▶ and the legacy ×1/×10/×50/×100 chips; PC swaps in 1/30/60/120
+       (data-mult = real wall-clock multiplier: 1800=½h·s, 3600=1h·s, 7200=2h·s). -->
+  <span id="spd-ctl"><button id="spd-pause" data-speed="0">‖</button><button id="spd-play" data-speed="1" class="on">▶</button><button id="spd-fast" class="spd-pc-hide" data-speed="3">▶▶</button><span class="spddiv"></span><span class="spd-mult-legacy"><button class="spdmini" data-mult="1" title="реальное время" data-i18n-title>×1</button><button class="spdmini" data-mult="10">×10</button><button class="spdmini" data-mult="50">×50</button><button class="spdmini" data-mult="100">×100</button></span><span class="spd-mult-pc"><button class="spdmini" data-mult="1" title="реальное время" data-i18n-title>1×</button><button class="spdmini" data-mult="1800" title="полчаса в секунду" data-i18n-title>30×</button><button class="spdmini" data-mult="3600" title="час в секунду" data-i18n-title>60×</button><button class="spdmini" data-mult="7200" title="два часа в секунду" data-i18n-title>120×</button></span><span class="sep"></span></span>
+  <!--dev-only--><span class="sep" id="restart-sep" style="display:none"></span><button id="restart" title="Перезапуск — к выбору ботов" data-i18n-title style="display:none">⟳</button><span class="sep"></span><!--/dev-only--><button id="tomenu" class="spd-pc-hide" title="Выход в меню" data-i18n-title>⌂</button>
 </div>
 <div id="cmdbar"></div>
 <div id="codex"></div>

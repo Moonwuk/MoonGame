@@ -320,6 +320,13 @@ export const en: Record<string, string> = {
   'Ждёт ресурсы: {c}': 'Waiting for resources: {c}',
   'уже построено': 'already built',
   'уже в очереди': 'already queued',
+  'Для разработчиков': 'For developers',
+  'Управление скоростью': 'Speed control',
+  'панель времени в матче — пауза и множители ускорения (1× — реальное время)':
+    'the in-match time bar — pause and speed multipliers (1× is real time)',
+  'полчаса в секунду': 'half an hour per second',
+  'час в секунду': 'an hour per second',
+  'два часа в секунду': 'two hours per second',
   '⚔ штурмовать можно только чужой мир': "⚔ only someone else's world can be stormed",
   'Корабли: {s} · Десант: {tr}': 'Ships: {s} · Landing: {tr}',
   'Авто-штурм': 'Auto-storm',

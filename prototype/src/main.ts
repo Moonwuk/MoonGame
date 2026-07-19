@@ -624,7 +624,8 @@ const bannerEl = $('banner');
 let lastBannerHtml = ''; // dirty-check so the banner's restart button isn't recreated each frame
 const restartBtn = $('restart'); // speedbar restart (shown in the no-bots solo sandbox)
 const restartSep = $('restart-sep');
-const spdCtl = $('spd-ctl'); // speedbar time-control group (solo-only in the player build)
+const spdCtl = $('spd-ctl'); // speedbar time-control group
+const speedbarEl = $('speedbar');
 const alertBadge = $('alertbadge');
 const cmdbar = $('cmdbar');
 const splitdlg = $('splitdlg');
@@ -799,6 +800,22 @@ function setCompactPanel(v: boolean): void {
   applyCompactPanel();
   try {
     localStorage.setItem('void.compactPanel', v ? '1' : '0');
+  } catch {
+    /* private-mode / storage-full: keep the in-memory value, just don't persist */
+  }
+}
+// Developer setting (PC): show the speedbar time controls (pause + speed multipliers).
+// Off for a normal player — the world runs at its launch pace, real-time-async; a dev
+// flips it on to pause / accelerate for testing. Defaults on in the dev client so its
+// long-standing speedbar stays; off in the player build. Client-only (localStorage).
+let devSpeedControl = ((): boolean => {
+  const raw = typeof localStorage !== 'undefined' ? localStorage.getItem('void.devSpeed') : null;
+  return raw === null ? !__PLAYER_BUILD__ : raw === '1';
+})();
+function setDevSpeedControl(v: boolean): void {
+  devSpeedControl = v;
+  try {
+    localStorage.setItem('void.devSpeed', v ? '1' : '0');
   } catch {
     /* private-mode / storage-full: keep the in-memory value, just don't persist */
   }
@@ -8419,6 +8436,14 @@ function renderSettings(): void {
     `<div class="set-lbl">${t('Звёздный фон')}<span class="set-sub">${t('дрейфующие туманности и звёзды на фоне — выключите для плоского фона')}</span></div>` +
     `<div class="set-ctl"><label class="set-switch"><input id="set-starfield" type="checkbox"${starfield ? ' checked' : ''} aria-label="${t('Звёздный фон')}"><span class="sw-track"></span><span class="sw-knob"></span></label><span id="set-starfield-val" class="set-val">${starfield ? t('вкл') : t('выкл')}</span></div>` +
     `</div>` +
+    // Developer section (PC only) — tools a normal player doesn't need.
+    (pcUi()
+      ? `<div class="pc-sec">${t('Для разработчиков')}</div>` +
+        `<div class="set-row">` +
+        `<div class="set-lbl">${t('Управление скоростью')}<span class="set-sub">${t('панель времени в матче — пауза и множители ускорения (1× — реальное время)')}</span></div>` +
+        `<div class="set-ctl"><label class="set-switch"><input id="set-devspeed" type="checkbox"${devSpeedControl ? ' checked' : ''} aria-label="${t('Управление скоростью')}"><span class="sw-track"></span><span class="sw-knob"></span></label><span id="set-devspeed-val" class="set-val">${devSpeedControl ? t('вкл') : t('выкл')}</span></div>` +
+        `</div>`
+      : '') +
     `<button class="pc-close" id="set-close" type="button">${t('ГОТОВО')}</button>` +
     `</div>`;
   const slider = document.getElementById('set-sweep') as HTMLInputElement | null;
@@ -8450,6 +8475,12 @@ function renderSettings(): void {
   star?.addEventListener('change', () => {
     setStarfield(star.checked);
     if (starVal) starVal.textContent = star.checked ? t('вкл') : t('выкл');
+  });
+  const devspd = document.getElementById('set-devspeed') as HTMLInputElement | null;
+  const devspdVal = document.getElementById('set-devspeed-val');
+  devspd?.addEventListener('change', () => {
+    setDevSpeedControl(devspd.checked);
+    if (devspdVal) devspdVal.textContent = devspd.checked ? t('вкл') : t('выкл');
   });
   document.getElementById('set-close')?.addEventListener('click', () => settingsEl.classList.remove('show'));
 }
@@ -9848,13 +9879,17 @@ function frame(nowReal: number) {
     restartBtn.style.display = soloNoBots ? '' : 'none';
     restartSep.style.display = soloNoBots ? '' : 'none';
   }
-  // Time controls belong to the client only when IT owns the clock — i.e. a solo
-  // match. In a networked match the server times the world, so the player build hides
-  // them (the dev client keeps them always, its long-standing behaviour). Toggled here
-  // because NET flips as the player joins/leaves a session.
-  const showSpdCtl = !NET || !__PLAYER_BUILD__;
+  // Speedbar time controls. PC: gated by the developer «speed control» toggle — off
+  // for a normal player, so the whole bar (its ⌂/▶▶ are PC-hidden in CSS) disappears.
+  // Mobile is frozen: the exit ⌂ lives in the bar there (the rail exit is PC-only), so
+  // the bar always shows and the controls follow the old solo/NET rule.
+  const showSpdCtl = pcUi() ? devSpeedControl : !NET || !__PLAYER_BUILD__;
   if (spdCtl && spdCtl.style.display !== (showSpdCtl ? '' : 'none')) {
     spdCtl.style.display = showSpdCtl ? '' : 'none';
+  }
+  const showBar = pcUi() ? devSpeedControl : true;
+  if (speedbarEl && speedbarEl.style.display !== (showBar ? '' : 'none')) {
+    speedbarEl.style.display = showBar ? '' : 'none';
   }
   // Keep the tech window live while open (research progress bar / eta), throttled.
   if (techWin.classList.contains('show') && nowReal - lastTechAt > 500) {
