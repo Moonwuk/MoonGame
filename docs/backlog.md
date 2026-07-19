@@ -1272,17 +1272,26 @@ requires[], cost, grants{ability?|passive?}}`; ветки **transhuman**/**psion
   живой job `trivy-image` в `security.yml` (сборка образа, `trivy image` + image-SBOM).
   _(Статус выправлен аудитом доков.)_
 - **SEC-6** 🔒(F1+ запущенный сервер) DAST: ZAP baseline против `packages/server` (раскомментировать `dast-zap`).
-- **SEC-7** ⏳ _(SEC-5 ✅ — замок снят)_ Supply-chain integrity (A08): подпись образов
-  `cosign` + provenance **SLSA** + проверка на деплое. Единственный кандидат-артефакт с
-  реальной раздачей — APK в `android.yml` (rolling GitHub Releases, люди сайдлоадят);
-  `void-dominion:scan` в `security.yml` — одноразовый образ только для сканирования,
-  подписывать его было бы security-театром (анти-гол `security/pipeline.md`).
-  _Попытка и откат (см. git-историю):_ `actions/attest-build-provenance` на APK
-  собрала zizmor-алерт «unpinned action reference» — этот экшен не входит в scope
-  GitHub-MCP-сессии и `api.github.com` недоступен через WebFetch/curl (403 «not
-  enabled for this session»), так что реальный sha256-дайджест было нечем проверить.
-  Фабриковать пин — хуже, чем не делать: откачено целиком. Нужен запуск с реальным
-  сетевым/GitHub-доступом (человек или `gh` локально), чтобы взять правильный дайджест.
+- **SEC-7** ✅ _(SEC-5 ✅ — замок снят)_ Supply-chain integrity (A08): подпись
+  образов `cosign` + provenance **SLSA** + проверка на деплое. Единственный
+  артефакт с реальной раздачей — APK в `android.yml` (rolling GitHub Releases,
+  люди сайдлоадят); `void-dominion:scan` в `security.yml` осознанно НЕ подписан —
+  одноразовый образ только для сканирования, подписывать его было бы
+  security-театром (анти-цель `security/pipeline.md`).
+  _Первая попытка (см. git-историю) откачена:_ `actions/attest-build-provenance`
+  собрала zizmor-алерт «unpinned action reference» — этот GitHub Action не входит
+  в scope GitHub-MCP-сессии и `api.github.com` недоступен через WebFetch/curl (403
+  «not enabled for this session»), так что sha256 экшена было нечем проверить.
+  _Рабочая версия:_ `cosign sign-blob` как **закреплённый Docker-образ**
+  (`ghcr.io/sigstore/cosign/cosign@sha256:b03690...`, тот же паттерн, что
+  gitleaks/trivy/osv в `security.yml`) — реестровый API `ghcr.io/v2` доступен
+  напрямую (в отличие от `api.github.com`), дайджест снят и перепроверен живым
+  запросом, не выдуман. Keyless (GitHub OIDC → Fulcio/Rekor, без управляемого
+  ключа); `continue-on-error: true` — сбой Sigstore не блокирует раздачу APK
+  игрокам; `.sig`/`.cert` уходят в build-артефакты и (на `main`) в сам релиз с
+  инструкцией `cosign verify-blob` в release notes. _Не проверено живым запуском_
+  (нет Docker/сети до Fulcio в этой сессии — синтаксис/переменные окружения
+  стандартные для Sigstore-в-GH-Actions, но CI-прогон первым подтвердит).
 - **SEC-8** 🔒(Этап 7) Полный проход **OWASP Top 10 2021** по чек-листу + threat model.
 
 ---
