@@ -1246,8 +1246,12 @@ requires[], cost, grants{ability?|passive?}}`; ветки **transhuman**/**psion
   рядом с `p/typescript`/`p/javascript`/`p/security-audit`; CI сперва гоняет
   `semgrep --test`, потом сам скан — сломанное правило валит джобу раньше находок.
   0 находок на реальном коде; 7 законных срабатываний (константные списки колонок SQL,
-  уже эскейпленный `esc()`-рендер) сняты через `// nosemgrep: <id> -- причина` (прецедент
-  SEC-1). Diff-aware `SEMGREP_BASELINE_COMMIT` из SD-2.1 сознательно не добавлен —
+  уже эскейпленный `esc()`-рендер) сняты. `pattern-regex`-правило (SQL) — `// nosemgrep:
+  <id> -- причина` реально убирает результат из SARIF (прецедент SEC-1); AST `patterns:`-
+  правило (innerHTML) — GitHub Code Scanning не всегда уважает inSource-suppression на
+  new-alert чеке PR'а (см. `security.yml`), поэтому там путь-эксклюд в самом правиле
+  вместо inline-комментария (`packages/client/src/main.ts` — единственный легитимный
+  `esc()`-рендер вне `prototype/`). Diff-aware `SEMGREP_BASELINE_COMMIT` из SD-2.1 сознательно не добавлен —
   пайплайн уже держит full-repo скан на нулевом бейзлайне (SEC-1), не diff-ratchet.
 - **SEC-3** ✅ Безопасность самого пайплайна: пин образов сканеров по `sha256`,
   masked+protected CI-переменные, least-privilege токены. Реализовано: документация

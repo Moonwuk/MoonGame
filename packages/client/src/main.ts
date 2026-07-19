@@ -73,7 +73,8 @@ function render(model: WelcomeModel): void {
   if (!app) return;
   // Escaping note: user-facing text (title/tagline/labels/nick) is run through esc();
   // the only unescaped fields (provider id, legal id) are static server config, not input.
-  app.innerHTML = // nosemgrep: no-innerhtml-assignment
+  // (excluded from the SEC-2 no-innerhtml-assignment Semgrep rule — see .semgrep/rules/.)
+  app.innerHTML =
     `<main class="welcome">` +
     `<div class="crest">◆</div>` +
     `<h1>${esc(model.title)}</h1>` +
