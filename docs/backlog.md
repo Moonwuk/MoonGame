@@ -1238,8 +1238,17 @@ requires[], cost, grants{ability?|passive?}}`; ветки **transhuman**/**psion
   Gitleaks, OSV, Trivy fs/image (`--exit-code 1`) — gate-шаг валит джобу при находке ИЛИ
   сбое скана (fail-secure), артефакты/отчёт собираются всегда. Запись триажа —
   `docs/security/pipeline.md`.
-- **SEC-2** ⏳ Кастомные Semgrep-правила под инварианты ядра: запрет `Math.random`/
-  `Date.now` и Node-built-ins в `shared-core/src` (детерминизм/чистота как security-граница).
+- **SEC-2** ✅ Кастомные Semgrep-правила под инварианты ядра: запрет `Math.random`/
+  `Date.now`/`new Date()` и Node-built-ins в `shared-core/src` (детерминизм/чистота как
+  security-граница) + два репо-широких правила из SD-2.1 (`.innerHTML = $X`, SQL-конкатенация
+  в `.query()`). `.semgrep/rules/*.yaml` — одно правило = один файл + тест
+  (`semgrep --test`, `// ruleid:`/`// ok:`), подключены в `security.yml` доп. `--config`
+  рядом с `p/typescript`/`p/javascript`/`p/security-audit`; CI сперва гоняет
+  `semgrep --test`, потом сам скан — сломанное правило валит джобу раньше находок.
+  0 находок на реальном коде; 7 законных срабатываний (константные списки колонок SQL,
+  уже эскейпленный `esc()`-рендер) сняты через `// nosemgrep: <id> -- причина` (прецедент
+  SEC-1). Diff-aware `SEMGREP_BASELINE_COMMIT` из SD-2.1 сознательно не добавлен —
+  пайплайн уже держит full-repo скан на нулевом бейзлайне (SEC-1), не diff-ratchet.
 - **SEC-3** ✅ Безопасность самого пайплайна: пин образов сканеров по `sha256`,
   masked+protected CI-переменные, least-privilege токены. Реализовано: документация
   (image-pinning.md / ci-variables.md / setup-github-secrets.md), скрипт обновления

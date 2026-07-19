@@ -71,7 +71,9 @@ function statusText(outcome: WelcomeOutcome): string {
 function render(model: WelcomeModel): void {
   const app = document.getElementById('app');
   if (!app) return;
-  app.innerHTML =
+  // Escaping note: user-facing text (title/tagline/labels/nick) is run through esc();
+  // the only unescaped fields (provider id, legal id) are static server config, not input.
+  app.innerHTML = // nosemgrep: no-innerhtml-assignment
     `<main class="welcome">` +
     `<div class="crest">◆</div>` +
     `<h1>${esc(model.title)}</h1>` +

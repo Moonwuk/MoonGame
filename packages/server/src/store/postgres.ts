@@ -1293,7 +1293,7 @@ export class PostgresAvaSessionStore implements AvaSessionStore {
   }
 
   async byMatch(matchId: string): Promise<AvaSession | null> {
-    const r = await this.pool.query<SessionRow>(
+    const r = await this.pool.query<SessionRow>( // nosemgrep: no-sql-string-interpolation -- SESSION_COLS is a fixed column-list constant, not user input
       `SELECT ${SESSION_COLS} FROM ava_sessions WHERE match_id = $1`,
       [matchId],
     );
@@ -1301,7 +1301,7 @@ export class PostgresAvaSessionStore implements AvaSessionStore {
   }
 
   async byMatchup(matchupId: string): Promise<AvaSession | null> {
-    const r = await this.pool.query<SessionRow>(
+    const r = await this.pool.query<SessionRow>( // nosemgrep: no-sql-string-interpolation -- SESSION_COLS is a fixed column-list constant, not user input
       `SELECT ${SESSION_COLS} FROM ava_sessions WHERE matchup_id = $1`,
       [matchupId],
     );
@@ -1309,7 +1309,7 @@ export class PostgresAvaSessionStore implements AvaSessionStore {
   }
 
   async dueWar(now: number): Promise<AvaSession[]> {
-    const r = await this.pool.query<SessionRow>(
+    const r = await this.pool.query<SessionRow>( // nosemgrep: no-sql-string-interpolation -- SESSION_COLS is a fixed column-list constant, not user input
       `SELECT ${SESSION_COLS} FROM ava_sessions
        WHERE war_at IS NOT NULL AND war_at <= $1 AND war_declared_at IS NULL
        ORDER BY war_at, match_id`,
@@ -1386,7 +1386,7 @@ export class PostgresArsenalStore implements ArsenalStore {
   constructor(private readonly pool: Pool) {}
 
   async grant(item: OwnedArsenalItem): Promise<void> {
-    await this.pool.query(
+    await this.pool.query( // nosemgrep: no-sql-string-interpolation -- ARSENAL_COLS is a fixed column-list constant, not user input
       `INSERT INTO arsenal (${ARSENAL_COLS})
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
        ON CONFLICT (item_id) DO NOTHING`,
@@ -1406,7 +1406,7 @@ export class PostgresArsenalStore implements ArsenalStore {
   }
 
   async get(itemId: string): Promise<OwnedArsenalItem | null> {
-    const r = await this.pool.query<ArsenalRow>(
+    const r = await this.pool.query<ArsenalRow>( // nosemgrep: no-sql-string-interpolation -- ARSENAL_COLS is a fixed column-list constant, not user input
       `SELECT ${ARSENAL_COLS} FROM arsenal WHERE item_id = $1`,
       [itemId],
     );
@@ -1414,7 +1414,7 @@ export class PostgresArsenalStore implements ArsenalStore {
   }
 
   async listOf(accountId: string): Promise<ArsenalItem[]> {
-    const r = await this.pool.query<ArsenalRow>(
+    const r = await this.pool.query<ArsenalRow>( // nosemgrep: no-sql-string-interpolation -- ARSENAL_COLS is a fixed column-list constant, not user input
       `SELECT ${ARSENAL_COLS} FROM arsenal WHERE account_id = $1
        ORDER BY kind, def_id, item_id`,
       [accountId],

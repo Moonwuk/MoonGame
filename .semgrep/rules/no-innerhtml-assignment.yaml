@@ -1,0 +1,17 @@
+rules:
+  - id: no-innerhtml-assignment
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: >-
+      Potential XSS sink (SD-1.2): assigning to .innerHTML skips escaping. Build the
+      string through the local esc() helper (already used at every other call site)
+      or prefer textContent, and suppress with `// nosemgrep: no-innerhtml-assignment`
+      plus a one-line reason if the value is provably escaped/trusted.
+    patterns:
+      - pattern: $EL.innerHTML = $X
+    paths:
+      include:
+        - packages
+      exclude:
+        - "*.test.ts"
+        - "*.test.tsx"
