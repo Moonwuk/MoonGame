@@ -27,7 +27,9 @@ const data: GameData = parseGameData({
     drone: { faction: 'x', stats: { attack: 1, defense: 1, speed: 10, hp: 6 }, cost: { metal: 3 } },
   },
   factions: {},
-  buildings: {},
+  buildings: {
+    shipyard: { name: 'Shipyard', cost: {}, buildTimeHours: 0, hp: 20, enablesShipConstruction: true },
+  },
   events: {},
   modules: {
     railgun: { name: 'Railgun', slot: 'weapon', tag: 'horizontal', cost: { metal: 5 } },
@@ -53,7 +55,15 @@ function player(id: string, arsenal?: PlayerArsenal): Player {
   };
 }
 function planet(id: string, owner: string | null): Planet {
-  return { id, owner, position: { x: 0, y: 0 }, resources: {}, buildings: [], garrison: [], traits: [] };
+  return {
+    id,
+    owner,
+    position: { x: 0, y: 0 },
+    resources: {},
+    buildings: [{ type: 'shipyard', level: 1, hp: 20 }],
+    garrison: [],
+    traits: [],
+  };
 }
 function stateWith(players: Player[]): GameState {
   const s = createInitialState({ seed: 'ars', version: { data: '0.1.0', manifest: '1' } });

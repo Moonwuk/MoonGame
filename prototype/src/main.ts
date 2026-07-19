@@ -1989,6 +1989,7 @@ const ERR_RU: Record<string, string> = {
   E_LIMIT: 'достигнут предел',
   E_CONDITIONS_UNMET: 'условия не выполнены',
   E_BOMBARDED: 'стройка под бомбардировкой',
+  E_NO_SHIPYARD: 'нужна верфь/космопорт',
   E_WRONG_SECTOR: 'не тот тип сектора',
   E_WRONG_ORBIT: 'не та орбита',
   E_SAME_LOCATION: 'флот уже здесь',

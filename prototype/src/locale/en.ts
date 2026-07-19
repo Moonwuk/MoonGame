@@ -572,6 +572,7 @@ export const en: Record<string, string> = {
   'достигнут предел': 'limit reached',
   'условия не выполнены': 'conditions not met',
   'стройка под бомбардировкой': 'construction under bombardment',
+  'нужна верфь/космопорт': 'needs a shipyard/spaceport',
   'не тот тип сектора': 'wrong sector type',
   'не та орбита': 'wrong orbit',
   'флот уже здесь': 'fleet is already here',
