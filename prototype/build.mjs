@@ -1868,9 +1868,10 @@ const page = (js) => `<!doctype html>
 <aside id="side"></aside>
 <div id="toasts"></div>
 <div id="speedbar" class="spd">
-  <!--dev-only--><button id="spd-pause" data-speed="0">‖</button><button id="spd-play" data-speed="1" class="on">▶</button><button id="spd-fast" data-speed="3">▶▶</button><span class="spddiv"></span><button class="spdmini" data-mult="1" title="реальное время" data-i18n-title>×1</button><button class="spdmini" data-mult="10">×10</button><button class="spdmini" data-mult="50">×50</button><button class="spdmini" data-mult="100">×100</button>
-  <span class="sep" id="restart-sep" style="display:none"></span><button id="restart" title="Перезапуск — к выбору ботов" data-i18n-title style="display:none">⟳</button>
-  <span class="sep"></span><!--/dev-only--><button id="tomenu" title="Выход в меню" data-i18n-title>⌂</button>
+  <!-- time controls: in the player build these ride the SOLO match only (a networked
+       match's clock is the server's) — shown/hidden at runtime by NET state. -->
+  <span id="spd-ctl"><button id="spd-pause" data-speed="0">‖</button><button id="spd-play" data-speed="1" class="on">▶</button><button id="spd-fast" data-speed="3">▶▶</button><span class="spddiv"></span><button class="spdmini" data-mult="1" title="реальное время" data-i18n-title>×1</button><button class="spdmini" data-mult="10">×10</button><button class="spdmini" data-mult="50">×50</button><button class="spdmini" data-mult="100">×100</button><span class="sep"></span></span>
+  <!--dev-only--><span class="sep" id="restart-sep" style="display:none"></span><button id="restart" title="Перезапуск — к выбору ботов" data-i18n-title style="display:none">⟳</button><span class="sep"></span><!--/dev-only--><button id="tomenu" title="Выход в меню" data-i18n-title>⌂</button>
 </div>
 <div id="cmdbar"></div>
 <div id="codex"></div>
@@ -1976,7 +1977,7 @@ const page = (js) => `<!doctype html>
   <div class="hub-body">
     <div class="hub-panel" id="hp-home">
       <button id="hub-play" class="hub-play" type="button" data-i18n>ИГРАТЬ СЕЙЧАС</button>
-      <!--dev-only--><button id="hub-solo" class="hub-solo" type="button" data-i18n>Одиночная игра</button><!--/dev-only-->
+      <button id="hub-solo" class="hub-solo" type="button" data-i18n>Одиночная игра</button>
       <!-- ONB-0 first-run offer: shown only to a not-yet-onboarded commander -->
       <div class="hub-card ob-nudge" id="onboard-nudge" style="display:none">
         <div class="hc-ic">◎</div>

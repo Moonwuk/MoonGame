@@ -624,6 +624,7 @@ const bannerEl = $('banner');
 let lastBannerHtml = ''; // dirty-check so the banner's restart button isn't recreated each frame
 const restartBtn = $('restart'); // speedbar restart (shown in the no-bots solo sandbox)
 const restartSep = $('restart-sep');
+const spdCtl = $('spd-ctl'); // speedbar time-control group (solo-only in the player build)
 const alertBadge = $('alertbadge');
 const cmdbar = $('cmdbar');
 const splitdlg = $('splitdlg');
@@ -8325,13 +8326,13 @@ for (const a of Array.from(document.querySelectorAll('.cfoot a'))) {
 
 // hub interactions
 $('hub-play').addEventListener('click', () => hubTab('games'));
-// Single-player entry — dev client only (the player build strips the tile + this hook).
-if (!__PLAYER_BUILD__) {
-  $('hub-solo').addEventListener('click', () => {
-    showHub(false);
-    openSetup('hub');
-  });
-}
+// Single-player entry from the hub home — offline skirmish vs bots (both builds).
+$('hub-solo').addEventListener('click', () => {
+  userClosed = true; // intentional leave → don't auto-reconnect to a server
+  NET = false;
+  showHub(false);
+  openSetup('hub');
+});
 $('hub-msg').addEventListener('click', () => {
   hubNote.textContent = t('Сообщения — скоро');
 });
@@ -8697,12 +8698,6 @@ sciWin.addEventListener('click', (e) => {
 });
 
 function openSetup(from: 'welcome' | 'hub' = 'welcome'): void {
-  // Player build: no single-player — every entry point is stripped, but if a stray
-  // path still lands here (e.g. a future rematch hook), fail safe into the hub.
-  if (__PLAYER_BUILD__) {
-    openHub();
-    return;
-  }
   setupReturn = from;
   setupSlots = freshSetupSlots();
   setupTeams = false; // a fresh setup opens on the classic free-for-all
@@ -9282,15 +9277,15 @@ function renderMatches(): void {
   // client offers the path that ALWAYS works — a solo skirmish offline. The player
   // build has no single-player, so it states the situation honestly instead.
   const soloCard = (msg: string): void => {
-    if (__PLAYER_BUILD__) {
-      el.innerHTML = `<div class="mempty">${msg}</div>`;
-      return;
-    }
     el.innerHTML =
       `<div class="mempty">${msg}</div>` +
       `<div class="msolo"><button class="mbtn" id="msolo-go">▶ ${t('Одиночный режим')}</button>` +
       `<div class="msolo-sub">${t('Сервер не нужен — свободные места займут боты.')}</div></div>`;
-    document.getElementById('msolo-go')?.addEventListener('click', () => openSetup('hub'));
+    document.getElementById('msolo-go')?.addEventListener('click', () => {
+      userClosed = true;
+      NET = false;
+      openSetup('hub');
+    });
   };
   if (!matchLists) {
     soloCard(
@@ -9820,6 +9815,14 @@ function frame(nowReal: number) {
     const soloNoBots = !NET && AI_PLAYERS.size === 0;
     restartBtn.style.display = soloNoBots ? '' : 'none';
     restartSep.style.display = soloNoBots ? '' : 'none';
+  }
+  // Time controls belong to the client only when IT owns the clock — i.e. a solo
+  // match. In a networked match the server times the world, so the player build hides
+  // them (the dev client keeps them always, its long-standing behaviour). Toggled here
+  // because NET flips as the player joins/leaves a session.
+  const showSpdCtl = !NET || !__PLAYER_BUILD__;
+  if (spdCtl && spdCtl.style.display !== (showSpdCtl ? '' : 'none')) {
+    spdCtl.style.display = showSpdCtl ? '' : 'none';
   }
   // Keep the tech window live while open (research progress bar / eta), throttled.
   if (techWin.classList.contains('show') && nowReal - lastTechAt > 500) {
