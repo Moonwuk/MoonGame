@@ -1272,19 +1272,17 @@ requires[], cost, grants{ability?|passive?}}`; ветки **transhuman**/**psion
   живой job `trivy-image` в `security.yml` (сборка образа, `trivy image` + image-SBOM).
   _(Статус выправлен аудитом доков.)_
 - **SEC-6** 🔒(F1+ запущенный сервер) DAST: ZAP baseline против `packages/server` (раскомментировать `dast-zap`).
-- **SEC-7** ⏳→частично ✅ _(SEC-5 ✅ — замок снят)_ Supply-chain integrity (A08): подпись
-  образов `cosign` + provenance **SLSA** + проверка на деплое. Сделана APK-половина —
-  единственный артефакт в репо с реальной раздачей (rolling GitHub Releases в
-  `android.yml`, люди буквально сайдлоадят эти байты на телефон), в отличие от
-  `void-dominion:scan` в `security.yml` (одноразовый образ только для сканирования,
-  никуда не уходит — подписывать его было бы security-театром, явный анти-гол
-  `security/pipeline.md`). `actions/attest-build-provenance` (keyless, GitHub
-  OIDC→Sigstore, без управляемого ключа) аттестует байты обеих APK на каждом билде;
-  проверка — `gh attestation verify app-debug.apk -R Moonwuk/MoonGame`. Не допилено:
-  сам экшен временно НЕ запинен по sha256 (только `@v3`) — сессия не смогла проверить
-  реальный дайджест (нет доступа к `actions/attest-build-provenance` вне scope
-  GitHub-MCP, `api.github.com` через WebFetch отдаёт 403); дальше — контейнер-подпись,
-  если/когда появится реальный деплой образа.
+- **SEC-7** ⏳ _(SEC-5 ✅ — замок снят)_ Supply-chain integrity (A08): подпись образов
+  `cosign` + provenance **SLSA** + проверка на деплое. Единственный кандидат-артефакт с
+  реальной раздачей — APK в `android.yml` (rolling GitHub Releases, люди сайдлоадят);
+  `void-dominion:scan` в `security.yml` — одноразовый образ только для сканирования,
+  подписывать его было бы security-театром (анти-гол `security/pipeline.md`).
+  _Попытка и откат (см. git-историю):_ `actions/attest-build-provenance` на APK
+  собрала zizmor-алерт «unpinned action reference» — этот экшен не входит в scope
+  GitHub-MCP-сессии и `api.github.com` недоступен через WebFetch/curl (403 «not
+  enabled for this session»), так что реальный sha256-дайджест было нечем проверить.
+  Фабриковать пин — хуже, чем не делать: откачено целиком. Нужен запуск с реальным
+  сетевым/GitHub-доступом (человек или `gh` локально), чтобы взять правильный дайджест.
 - **SEC-8** 🔒(Этап 7) Полный проход **OWASP Top 10 2021** по чек-листу + threat model.
 
 ---
