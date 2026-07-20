@@ -5922,8 +5922,9 @@ function scrollFeedToEnd(): void {
 /** A compact codex tile (icon + a one-line label) that opens the full info panel on
  *  tap. `label` is the build cost for buildables, or ×count for a fleet's ships. The
  *  tiles live in context — building tiles in the build menu, ship tiles in the fleet
- *  panel — not in a global HUD strip. The LOCALIZED name rides both the desktop
- *  `title` (hover tooltip) and `data-name` — the mobile long-press bubble reads it. */
+ *  panel — not in a global HUD strip. Identification is the game tooltip only: the
+ *  PC cursor dossier (#objtip, via data-desc) and the mobile long-press bubble
+ *  (data-name). No native `title` — it duplicated #objtip as a second, uglier popup. */
 /** A building is one-per-planet (the reducer grows it via upgrade, never a 2nd copy).
  *  Returns why a fresh build order would be refused — so the build tile can grey out
  *  the moment it's committed (built / building / queued / paused), instead of taking
@@ -5946,12 +5947,12 @@ function codexTile(kind: 'b' | 'u', id: string, label: string, orderable = false
     // Committed already — a dim, non-ordering tile. Keeps data-desc (hover dossier),
     // drops data-codex/data-buildorder so neither left- nor right-click builds again.
     const mark = lockedFor === 'built' ? '✓' : '⏳';
-    return `<button class="ptile locked" data-desc="${kind}:${id}" data-name="${esc(name)}" title="${esc(name)} — ${esc(lockedFor === 'built' ? t('уже построено') : t('уже в очереди'))}"><span class="pt-ic">${icon}</span><span class="pt-c">${mark} ${esc(label)}</span></button>`;
+    return `<button class="ptile locked" data-desc="${kind}:${id}" data-name="${esc(name)}"><span class="pt-ic">${icon}</span><span class="pt-c">${mark} ${esc(label)}</span></button>`;
   }
   // Build-menu tiles carry the enqueue order (PC right-click = build w/o the codex
   // confirmation); composition/garrison tiles don't — right-click is inert there.
   const order = orderable ? ` data-buildorder="${kind === 'u' ? 'unit' : 'building'}:${id}"` : '';
-  return `<button class="ptile" data-codex="${kind}:${id}" data-desc="${kind}:${id}"${order} data-name="${esc(name)}" title="${esc(name)} — ${t('тап — полное досье')}"><span class="pt-ic">${icon}</span><span class="pt-c">${esc(label)}</span></button>`;
+  return `<button class="ptile" data-codex="${kind}:${id}" data-desc="${kind}:${id}"${order} data-name="${esc(name)}"><span class="pt-ic">${icon}</span><span class="pt-c">${esc(label)}</span></button>`;
 }
 /** Ground-garrison tiles (the ЗЕМЛЯ tab): one flowing row of icon·count chips — no
  *  names; the hover dossier (PC) / tap dossier (touch) carries the identification. */
@@ -5960,7 +5961,7 @@ function garrisonTilesHtml(stacks: Array<{ unit: string; count: number }>): stri
     .filter((u) => u.count > 0)
     .map((u) => {
       const name = unitDossier(u.unit)?.name ?? displayUnit(u.unit);
-      return `<button class="ptile mini" data-codex="u:${esc(u.unit)}" data-desc="u:${esc(u.unit)}" data-name="${esc(name)}" title="${esc(name)} — ${t('тап — полное досье')}"><span class="pt-ic">${unitIcon(u.unit)}</span><span class="pt-c">${u.count}</span></button>`;
+      return `<button class="ptile mini" data-codex="u:${esc(u.unit)}" data-desc="u:${esc(u.unit)}" data-name="${esc(name)}"><span class="pt-ic">${unitIcon(u.unit)}</span><span class="pt-c">${u.count}</span></button>`;
     })
     .join('');
   return tiles ? `<div class="ptiles">${tiles}</div>` : `<div class="row dim">${t('нет')}</div>`;
