@@ -10,6 +10,7 @@ import {
   MemoryAvaResultStore,
   MemoryAvaRosterStore,
   MemoryAvaSessionStore,
+  MemoryCorpRentStore,
   MemoryCorpStore,
   MemoryDropStore,
   MemoryMatchStore,
@@ -25,6 +26,7 @@ import {
   PostgresAvaResultStore,
   PostgresAvaRosterStore,
   PostgresAvaSessionStore,
+  PostgresCorpRentStore,
   PostgresCorpStore,
   PostgresDropStore,
   PostgresMatchStore,
@@ -35,6 +37,7 @@ import {
 import type {
   AccountStore,
   ArsenalStore,
+  CorpRentStore,
   DropStore,
   OwnedArsenalItem,
   UserStore,
@@ -646,6 +649,63 @@ function arsenalStoreContract(
       expect(await store.consume(item, acc)).toBe(false); // already gone
       expect(await store.get(item)).toBeNull();
     });
+
+    it('wear decrements an instance’s durability, clamped at 0 (ARS-6 rental sink)', async () => {
+      const store = make();
+      const [acc, item] = [uniq('a-w'), uniq('it-w')];
+      await store.grant(instance(item, acc)); // durability: 5
+      expect(await store.wear(item, 2)).toEqual({ durability: 3 });
+      expect(await store.wear(item, 10)).toEqual({ durability: 0 }); // clamped, never negative
+      expect((await store.get(item))?.durability).toBe(0);
+    });
+
+    it('wear is a no-op on a blueprint (no durability field) and null on a missing item', async () => {
+      const store = make();
+      const [acc, item] = [uniq('a-wb'), uniq('it-wb')];
+      await store.grant(blueprint(item, acc)); // no durability
+      expect(await store.wear(item, 1)).toEqual({ durability: undefined });
+      expect(await store.wear(uniq('nope'), 1)).toBeNull();
+    });
+  });
+}
+
+function corpRentStoreContract(
+  name: string,
+  make: () => CorpRentStore,
+  uniq: (p: string) => string,
+): void {
+  describe(`CorpRentStore — ${name}`, () => {
+    it('rent is atomic — an item can be on rent to at most one war at a time', async () => {
+      const store = make();
+      const [item, corp, mu1, mu2, acc] = [uniq('it'), uniq('corp'), uniq('mu1'), uniq('mu2'), uniq('acc')];
+      expect(await store.rent({ itemId: item, corpId: corp, matchupId: mu1, accountId: acc, rentedAt: 1 })).toBe(true);
+      // same item, a second war — refused, first rental untouched
+      expect(await store.rent({ itemId: item, corpId: corp, matchupId: mu2, accountId: acc, rentedAt: 2 })).toBe(false);
+      expect(await store.activeForMatchup(mu1)).toHaveLength(1);
+      expect(await store.activeForMatchup(mu2)).toHaveLength(0);
+    });
+
+    it('activeForAccount scopes to the (matchup, account) pair', async () => {
+      const store = make();
+      const [itemA, itemB, corp, mu, acc1, acc2] = [
+        uniq('it-a'), uniq('it-b'), uniq('corp'), uniq('mu'), uniq('acc1'), uniq('acc2'),
+      ];
+      await store.rent({ itemId: itemA, corpId: corp, matchupId: mu, accountId: acc1, rentedAt: 1 });
+      await store.rent({ itemId: itemB, corpId: corp, matchupId: mu, accountId: acc2, rentedAt: 1 });
+      expect((await store.activeForAccount(mu, acc1)).map((r) => r.itemId)).toEqual([itemA]);
+      expect((await store.activeForAccount(mu, acc2)).map((r) => r.itemId)).toEqual([itemB]);
+    });
+
+    it('closeRent is exactly-once — a replayed war-end return changes nothing the second time', async () => {
+      const store = make();
+      const [item, corp, mu, acc] = [uniq('it-c'), uniq('corp'), uniq('mu-c'), uniq('acc')];
+      await store.rent({ itemId: item, corpId: corp, matchupId: mu, accountId: acc, rentedAt: 1 });
+      expect(await store.closeRent(mu, item)).toBe(true); // first close wins
+      expect(await store.closeRent(mu, item)).toBe(false); // replay — nothing to close
+      expect(await store.activeForMatchup(mu)).toHaveLength(0);
+      // the item is free again — a NEW war can rent it
+      expect(await store.rent({ itemId: item, corpId: corp, matchupId: uniq('mu2'), accountId: acc, rentedAt: 2 })).toBe(true);
+    });
   });
 }
 
@@ -847,6 +907,7 @@ rosterStoreContract(
 resultStoreContract('memory', () => new MemoryAvaResultStore(), (p) => p);
 sessionStoreContract('memory', () => new MemoryAvaSessionStore(), (p) => p);
 arsenalStoreContract('memory', () => new MemoryArsenalStore(), (p) => p);
+corpRentStoreContract('memory', () => new MemoryCorpRentStore(), (p) => p);
 dropStoreContract('memory', () => new MemoryDropStore(), (p) => p);
 medalStoreContract('memory', () => new MemoryMedalStore(), (p) => p);
 
@@ -889,6 +950,7 @@ describe.skipIf(!DB)('Postgres adapters', () => {
   resultStoreContract('postgres', () => new PostgresAvaResultStore(pool), (p) => `${p}_${stamp}`);
   sessionStoreContract('postgres', () => new PostgresAvaSessionStore(pool), (p) => `${p}_${stamp}`);
   arsenalStoreContract('postgres', () => new PostgresArsenalStore(pool), (p) => `${p}_${stamp}`);
+  corpRentStoreContract('postgres', () => new PostgresCorpRentStore(pool), (p) => `${p}_${stamp}`);
   dropStoreContract('postgres', () => new PostgresDropStore(pool), (p) => `${p}_${stamp}`);
   medalStoreContract('postgres', () => new PostgresMedalStore(pool), (p) => `${p}_${stamp}`);
 

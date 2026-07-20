@@ -238,7 +238,12 @@ export function createDevMatch(data: GameData, options: DevMatchOptions = {}): M
       id.charAt(0).toUpperCase() + id.slice(1),
       DEV_FACTIONS[i % DEV_FACTIONS.length] ?? 'vanguard',
     );
-    planets[`home_${id}`] = planet(`home_${id}`, id, x, y, ['nexus'], 'terran');
+    const home = planet(`home_${id}`, id, x, y, ['nexus'], 'terran');
+    // A starting yard — space-domain hulls need a standing shipyard/spaceport to
+    // build at all (enablesShipConstruction); without one, turn-1 fleet-building
+    // would be impossible in every dev/test match.
+    home.buildings = [{ type: 'spaceport', level: 1, hp: 25 }];
+    planets[`home_${id}`] = home;
     fleets[`${id}_1`] = fleet(`${id}_1`, id, `home_${id}`, [
       ['cruiser', 2],
       ['scout_drone', 1],

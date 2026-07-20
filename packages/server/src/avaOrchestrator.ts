@@ -11,6 +11,7 @@ import {
   type SlotAssignment,
 } from '@void/shared-core';
 import { pickAvaMap } from './avaMapPool';
+import { mergeArsenal } from './arsenal';
 import type { AvaChallengeStore, AvaRosterStore, AvaSessionStore, AvaSide } from './store';
 
 /**
@@ -73,6 +74,11 @@ export interface AvaOrchestratorDeps {
    *  in-match; bot seats stay unrestricted (the server AI builds the slot's start
    *  roster). Absent ⇒ no snapshots (seats build unrestricted, as before). */
   arsenalOf?: (accountId: string) => Promise<PlayerArsenal>;
+  /** ARS-6: corp-warehouse items rented to this account for THIS matchup (handed out
+   *  by a head/officer before lock) — merged into the snapshot above, so a rented
+   *  hull/module builds exactly like an owned one. Absent ⇒ no corp rentals (as
+   *  before ARS-6). */
+  corpRentalOf?: (accountId: string, matchupId: string) => Promise<PlayerArsenal>;
 }
 
 /** MVP peace period (`corporation-wars.md` §10: 1 timeScale-день). */
@@ -139,6 +145,7 @@ export class AvaOrchestrator {
   private readonly escalateWar?: (matchId: string) => Promise<boolean>;
   private readonly settle?: (matchupId: string, winnerSide: AvaSide | null) => Promise<unknown>;
   private readonly arsenalOf?: (accountId: string) => Promise<PlayerArsenal>;
+  private readonly corpRentalOf?: (accountId: string, matchupId: string) => Promise<PlayerArsenal>;
 
   constructor(deps: AvaOrchestratorDeps) {
     this.challenges = deps.challengeStore;
@@ -152,6 +159,7 @@ export class AvaOrchestrator {
     if (deps.escalateWar) this.escalateWar = deps.escalateWar;
     if (deps.settle) this.settle = deps.settle;
     if (deps.arsenalOf) this.arsenalOf = deps.arsenalOf;
+    if (deps.corpRentalOf) this.corpRentalOf = deps.corpRentalOf;
   }
 
   /** Raise the live session for a LOCKED matchup (idempotent — an already-raised matchup
@@ -190,7 +198,13 @@ export class AvaOrchestrator {
     if (this.arsenalOf) {
       for (const [accountId, slotId] of Object.entries(seats)) {
         const assignment = slots[slotId];
-        if (assignment) assignment.arsenal = await this.arsenalOf(accountId);
+        if (!assignment) continue;
+        const base = await this.arsenalOf(accountId);
+        // ARS-6: whatever the corp handed this account for THIS war rides in too —
+        // a rented item builds exactly like an owned one (the core gate can't tell
+        // them apart, by design).
+        const rented = this.corpRentalOf ? await this.corpRentalOf(accountId, matchupId) : null;
+        assignment.arsenal = rented ? mergeArsenal(base, rented) : base;
       }
     }
     // S5 peaceful start — cross-team stances seed at `peace` (combat-lock is free from the

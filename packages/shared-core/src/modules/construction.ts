@@ -121,6 +121,16 @@ function isQueued(
   });
 }
 
+/** True if the planet has at least one standing (undestroyed) building whose data
+ *  marks it `enablesShipConstruction` (shipyard/spaceport) — the yard a space-domain
+ *  hull needs to be laid down. Ground units never check this. */
+function hasShipyard(planet: Planet, data: GameData): boolean {
+  return planet.buildings.some((b) => {
+    if (b.hp <= 0) return false;
+    return data.buildings[b.type]?.enablesShipConstruction === true;
+  });
+}
+
 function requireUnlocked(
   h: HandlerContext,
   playerId: string,
@@ -341,6 +351,9 @@ export const constructionModule: GameModule = {
         return h.reject('E_UNKNOWN_UNIT');
       }
       requireUnlocked(h, action.playerId, 'unit', payload.unit);
+      if (def.domain === 'space' && !hasShipyard(planet, h.ctx.data)) {
+        return h.reject('E_NO_SHIPYARD');
+      }
       // ARS-3 ownership gate: a seat with an arsenal SNAPSHOT builds only what it
       // owns — the hull and every module must be listed (fail-secure E_NOT_OWNED).
       // No snapshot on the player ⇒ no restriction (regular/dev matches unchanged).

@@ -52,6 +52,19 @@ export function arsenalSnapshotOf(items: readonly ArsenalItem[]): PlayerArsenal 
   return { hulls: pick('hull'), modules: pick('module'), fittings: pick('hero_fitting') };
 }
 
+/** ARS-6 — merge a corp-rental snapshot into a personal one: the union per kind,
+ *  sorted/deduped (same shape `arsenalSnapshotOf` produces). Pure. A rented hull/
+ *  module builds exactly like an owned one — the core gate doesn't distinguish
+ *  "mine" from "borrowed for this war" (both live in the one `PlayerArsenal`). */
+export function mergeArsenal(a: PlayerArsenal, b: PlayerArsenal): PlayerArsenal {
+  const union = (x: string[], y: string[]): string[] => [...new Set([...x, ...y])].sort();
+  return {
+    hulls: union(a.hulls, b.hulls),
+    modules: union(a.modules, b.modules),
+    fittings: union(a.fittings, b.fittings),
+  };
+}
+
 /** Grant the starter set to an account — idempotent end to end (deterministic item
  *  ids + the store's first-write-wins grant), so calling it twice, or replaying a
  *  registration, changes nothing. Returns the granted item count (the full set). */

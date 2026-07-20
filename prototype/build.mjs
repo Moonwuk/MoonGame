@@ -960,6 +960,9 @@ button.b:disabled{opacity:.32;cursor:not-allowed;color:var(--dim);border-color:v
 .cn-mod.locked{opacity:.42;cursor:not-allowed;background:rgba(255,255,255,.015);}
 .cn-mod.locked .cn-mic,.cn-mod.locked .cn-mn{color:var(--dim);}
 .cn-mod.locked .cn-me{color:var(--dim);}
+/* LARS-4: origin tag on a bay/palette card ("fresh from a drop/craft/auction") */
+.cn-mo,.cn-bay .cn-mo{margin-left:6px;padding:1px 6px;border-radius:8px;border:1px solid var(--amber-dim,var(--line-hi));
+  color:var(--amber,var(--cyan));font:600 9px ui-monospace,monospace;letter-spacing:.3px;vertical-align:middle;}
 .cn-note{margin-top:11px;font-size:10.5px;color:var(--dim);line-height:1.5;}
 .cn-note b{color:var(--cyan);}
 /* live stat preview bars (right column) */
@@ -1722,6 +1725,9 @@ button.b:disabled{opacity:.32;cursor:not-allowed;color:var(--dim);border-color:v
 #corp .cst.st-active{color:var(--red);border-color:var(--red);}
 #corp .cst.st-incoming{color:var(--amber);border-color:var(--amber);}
 #corp .cwmid{color:var(--dim);font-size:11px;margin:6px 0 9px;}
+#corp .cwroster{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 9px;}
+#corp .ctoggle{opacity:.55;}
+#corp .ctoggle.on{opacity:1;background:rgba(53,214,230,.24);}
 #corp .cchat{display:flex;flex-direction:column;gap:8px;margin-bottom:12px;}
 #corp .cmsg{border:1px solid var(--line);border-radius:8px;padding:8px 11px;font-size:12px;}
 #corp .cmsg.audit{border-style:dashed;color:var(--dim);}
@@ -2061,8 +2067,8 @@ const page = (js) => `<!doctype html>
       <div class="hub-empty"><span class="he-ic">▤</span><span data-i18n>Рейтинги — скоро</span><br><span style="font-size:11px;color:var(--cyan-dim)" data-i18n>сезонный рейтинг по местам в матчах</span></div>
     </div>
     <div class="hub-panel" id="hp-ally" style="display:none">
-      <div class="hub-empty"><span class="he-ic">⚑</span><span data-i18n>Альянсы — скоро</span><br><span style="font-size:11px;color:var(--cyan-dim)" data-i18n>корпорации · общие AvA-битвы · влияние</span></div>
-      <button id="ccorp" class="hub-solo" type="button">⬢ <span data-i18n>Кабинет корпорации (макет)</span></button>
+      <div class="hub-empty"><span class="he-ic">⚑</span><span data-i18n>Альянсы</span><br><span style="font-size:11px;color:var(--cyan-dim)" data-i18n>корпорации · общие AvA-битвы · влияние</span></div>
+      <button id="ccorp" class="hub-solo" type="button">⬢ <span data-i18n>Кабинет корпорации</span></button>
     </div>
     <div class="hub-panel" id="hp-more" style="display:none">
       <div class="hub-grid">

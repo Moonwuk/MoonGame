@@ -292,24 +292,57 @@ grade/durability/origin по каждой вещи). Не подключён в 
 
 ---
 
-## ARS-6 · Корп-склад + аренда `[srv]` 🔒(ARS-3, AVA-8)
+## ARS-6 · Корп-склад + аренда `[srv]` — ✅ реализовано
 
 **Цель.** «Синергия личного и общего прогресса» (`metagame.md`): корпорация владеет
 снаряжением и выдаёт его бойцам на войну.
 
-**Опора.** CORP-0 RBAC (глава/офицер), AVA-2 `influence`, AVA-6/7 (лок ростера +
-оркестратор — момент выдачи), аудит-лог корпы.
+**Опора.** CORP-0 RBAC (глава/офицер), AVA-6/7 (лок ростера + оркестратор — момент
+снятия ARS-3-снапшота), аудит-лог корпы. `AVA-2 influence` в итоге не понадобился —
+аренда не тратит валюту, только использует уже существующий предмет.
 
-**Модель данных.** `corp_arsenal` (те же `ArsenalItem`, owner = корпорация) +
-`rent(item_id, matchup_id, account_id)` — предмет на войне ровно один раз.
+**Модель данных (проверено по коду).** `corp_arsenal` — литерально тот же
+`ArsenalStore` (ARS-2): `accountId` на строке — это id корпорации, никакого нового
+стора-каталога не потребовалось (`transfer`/`consume`/`grant`/`get`/`listOf` уже
+owner-guarded и работают с любым opaque id). Новый `CorpRentStore` (Memory+Postgres,
+таблица `corp_arsenal_rent`, `item_id` PK) — держит ТОЛЬКО активную аренду:
+`rent(entry)` атомарна (первый write выигрывает, PK гарантирует «предмет — максимум
+в одной войне разом»), `closeRent(matchupId, itemId)` — exactly-once (DELETE, тот же
+паттерн, что `AvaChallengeStore.endMatchup`/`closeMatchup`).
 
-**Реализация.** Глава/офицер выдаёт предмет ростерному бойцу ДО лока (аудит);
-предмет въезжает в снапшот ARS-3 как арендованный; после `match.ended` —
-возврат/сгорание по резолюции ARS-0.3; износ (`durability--` за войну) — мягкий
-sink против инфляции. Опциональная витрина склада в корп-UI (`corporation-ui.md`).
+**Реализация.** `CorpArsenalService.rentOut` (`corpArsenalService.ts`): RBAC-гейт
+инлайн через `CorpStore.membershipOf` (паттерн `MedalService` — не зависит от
+`CorpService`), предмет должен принадлежать АКТИВНОЙ корпе (`arsenal.get(itemId)
+.accountId === corpId`), матч — ДО лока (`AvaChallenge.status === 'accepted'`, не
+`'locked'`), цель — уже на РОСТЕРЕ СВОЕЙ стороны (`AvaRosterStore.rosterOf` +
+проверка `side`); аудит `CorpStore.appendAudit` (действия `'rent'`/`'rent_return'`
+добавлены в `CorpAuditEntry.action`, actor `'system'` на войн-энде — конвенция
+`AvaService.refund`). Снапшот-мёрдж: новый опциональный `AvaOrchestrator
+.corpRentalOf?(accountId, matchupId)` вызывается РЯДОМ с существующим `arsenalOf`
+(ARS-3) — новый чистый `mergeArsenal` (`arsenal.ts`) объединяет личное+рентованное
+по kind (union+sort+dedup) ДО того, как снапшот садится на `SlotAssignment.arsenal`;
+ядерный гейт владения (`construction.ts`/`hero.ts`) НЕ тронут — рентованный предмет
+строится неотличимо от своего, ядро вообще не знает о корпорациях. Возврат:
+`CorpArsenalService.returnWar(matchupId)` — хук на `matchExtras.onEnd` в `main.ts`
+(тот же колбэк, что уже дёргает ARS-4 дроп/сальваж), закрывает каждую активную
+аренду матчапа ровно один раз, тикает `ArsenalStore.wear(itemId, 1)` (новый метод —
+атомарный декремент `durability`, clamped на 0, no-op для чертежей без durability).
+**Резолюция ARS-0.3 — буквальна:** предмет ВСЕГДА возвращается на склад, победа или
+поражение — никакого сгорания-по-проигрышу; износ `durability--` — единственный
+sink. HTTP: `POST /corp-arsenal/rent` (`corpArsenalApi.ts`, session-gated, паттерн
+medals/arsenal API) — минимальная точка входа для главы/офицера; отдельной витрины
+склада в корп-UI не строили (опционально по спеке, вне DoD).
 
-**Тесты.** Выдача только ростерному и только офицером+; предмет не выдаётся в две
-войны сразу; возврат/сгорание exactly-once (паттерн refund AVA-4); аудит пишется.
+**Тесты.** `store.test.ts`: `wear` (декремент/клэмп/no-op на чертеже) в
+`arsenalStoreContract`, новый `corpRentStoreContract` (атомарность аренды,
+`activeForAccount`/`activeForMatchup`, exactly-once `closeRent` + повторная аренда
+свободного предмета) — оба адаптера. `corpArsenalService.test.ts`: только
+глава/офицер выдаёт; предмет должен принадлежать АКТИВНОЙ корпе; отказ не-ростерному
+и ростерному НА ЧУЖОЙ стороне того же матчапа; отказ после лока; двойная аренда
+отказана (`E_ALREADY_RENTED`); аудит пишется; `returnWar` — декремент durability +
+аудит + exactly-once на replay + предмет свободен для новой войны. `corpArsenalApi
+.test.ts`: сессионный гейт, круговой рейс через HTTP, RBAC на проводе.
+`avaOrchestrator.test.ts`: рентованное сливается с личным в одном снапшоте.
 
 **DoD.** Корп-флагман воюет в руках бойца и возвращается на склад (или гибнет) —
 ровно один раз, с записью в аудите.
