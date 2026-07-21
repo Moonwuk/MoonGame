@@ -84,11 +84,12 @@ AvA** (влияние → вызов → ростер → авто-сборка 
 | `rng/`     | Seeded PRNG (sfc32) — детерминизм; состояние сериализуется в `GameState` (golden-тест)               |
 | `util/`    | `deepClone`/`deepFreeze` (immutable-контракт), общие хелперы казны/стеков/времени                    |
 
-**Модули ядра (24):** `sector`, `planetType`, `technology`, `scientist` (лидер исследований),
+**Модули ядра (25):** `sector`, `planetType`, `technology`, `scientist` (лидер исследований),
 `economy`, `market`, `movement`, `combat` (мелэ-бой, двухфазный захват орбита→десант),
 `orbital` (ПВО + бомбардировка), `artillery` (дальнобойный standoff-огонь + barrage-приказы),
 `intercept` (перехват на лейнах), `captureOnArrival` (walk-in захват необоронённого
-нейтрального сектора), `construction`, `army` (флот ⊕ наземная армия + транспорт), `station`,
+нейтрального сектора), `construction`, `arsenalSync` (сервер-драйверный рефреш владения
+live-каталогом построек), `army` (флот ⊕ наземная армия + транспорт), `station`,
 `faction`, `hero` (аура/респаун), `diplomacy` (объявления + consent-офферы), `espionage`
 (шпионаж + контрразведка), `steward` («Хранитель» — делегирование места ИИ), `victory`
 (data-driven очки/счёт), `visibility` (память тумана, вариант B), `effects` (интерпретатор
@@ -142,7 +143,7 @@ pnpm run format         # Prettier --write
 pnpm run audit          # pnpm audit (OWASP A03)
 pnpm run prototype      # собрать играбельный prototype/dist/void-dominion.html
 
-pnpm run check          # lint + typecheck + test — гонять перед коммитом
+pnpm run check          # lint + typecheck + test + docs-check — гонять перед коммитом
 ```
 
 **CI:** [`ci.yml`](./.github/workflows/ci.yml) гоняет гейт (`pnpm run check` =
