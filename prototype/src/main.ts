@@ -3118,6 +3118,48 @@ function patrolOf(fleetId: string): Patrol | undefined {
     ? (s as { patrols?: Record<string, Patrol> }).patrols?.[fleetId]
     : patrols.get(fleetId);
 }
+/** CC-2: set the auto-storm stance UNIFORMLY on the given own fleets (☰-row toggle —
+ *  a mixed group snaps to one state instead of flipping each). Authoritative in NET
+ *  (order.auto — the server presses the storm while you're offline), local Set solo. */
+function setAutoAssault(ids: string[], on: boolean): void {
+  for (const id of ids) {
+    if (!s.fleets[id] || s.fleets[id]!.owner !== ME) continue;
+    if (isAutoAssault(id) === on) continue;
+    if (NET) playerOrder(orderAuto(ME, id, on));
+    else if (on) autoAssault.add(id);
+    else autoAssault.delete(id);
+  }
+}
+/** CC-4: stand (or stand down) «дежурный вылет» UNIFORMLY on the given fleets' wings.
+ *  Authoritative in NET (order.scramble — the server computes the patrol and flies it
+ *  while you're offline); the local Map + frame-loop driver in solo. */
+function setScramble(ids: string[], on: boolean): void {
+  for (const id of ids) {
+    const f = s.fleets[id];
+    if (!f || f.owner !== ME || !fleetHasSquadron(f)) continue;
+    if (!!patrolOf(id) === on) continue;
+    if (!on) {
+      if (NET) playerOrder(orderScramble(ME, id, false));
+      else patrols.delete(id);
+      continue;
+    }
+    const pos = f.location ? s.planets[f.location]?.position : undefined;
+    if (!pos) {
+      note(t('🛩 дежурный вылет — только со стоянки в узле'));
+      continue;
+    }
+    if (NET) {
+      playerOrder(orderScramble(ME, id, true));
+    } else {
+      if (patrols.size === 0) lastPatrolTick = s.time; // start the rearm cadence from now
+      patrols.set(id, {
+        center: { x: pos.x, y: pos.y },
+        radius: squadronStrikeRange(f),
+        sortie: freshSortie(sortieSpec(f).maxFuel),
+      });
+    }
+  }
+}
 /** «≈14ч» / «≈2д 3ч» — plan durations are game-hours, like every duration in the UI. */
 function fmtHrs(h: number): string {
   const r = Math.max(0, Math.round(h));
@@ -5074,20 +5116,16 @@ function fleetPanelHtml(f: Fleet): string {
     h += `</div>`;
     h += `<div class="hint">${t('Отделяет эскадрильи в отдельный быстрый флот — уводите его на удар, а носитель остаётся в строю. Нужен хотя бы один не-эскадрильный корабль. Контрится орбитальным ПВО.')}</div>`;
 
-    // CC-4 reactive auto-scramble — a standing "дежурный вылет" order on the wing
-    // (authoritative server state in NET — the server flies it while you're offline).
+    // CC-4 status only — the «🛩 Деж. вылет» TOGGLE moved to the ☰ command row
+    // (SO-UI: the panel keeps information, the bar keeps controls).
     const pt = patrolOf(f.id);
-    h += `<div class="row">`;
-    h += btn('qscramble', '', pt ? t('🛩 дежурный вылет: ВКЛ') : t('🛩 дежурный вылет: выкл'), true);
-    h += `</div>`;
     if (pt) {
       const status =
         pt.sortie.rearming > 0
           ? t('перезарядка {n}', { n: pt.sortie.rearming })
           : t('топливо {n}', { n: pt.sortie.fuel });
-      h += `<div class="row dim">${t('радиус {r}', { r: Math.round(pt.radius) })} · ${status}</div>`;
+      h += `<div class="row dim">${t('🛩 дежурный вылет: ВКЛ')} · ${t('радиус {r}', { r: Math.round(pt.radius) })} · ${status}</div>`;
     }
-    h += `<div class="hint">${t('Во «включено» эскадрилья сама вылетает на удар по опознанному врагу (с кем война), вошедшему в радиус удара — тратит топливо за вылет, затем перезарядка. Так дежурит, пока вы вышли.')}</div>`;
   }
 
   // The player's projection hero rides here → name it and flag its fleet aura.
@@ -5097,24 +5135,8 @@ function fleetPanelHtml(f: Fleet): string {
     h += `<div class="row"><b>♔ ${esc(heroName)}</b> <span class="dim">${t('— проекция · +5% атаки/обороны этому флоту')}</span></div>`;
   }
 
-  // CC-2 standing order — auto-storm stance (authoritative server state in NET —
-  // the server presses it while you're offline).
-  if (f.owner === ME) {
-    const auto = isAutoAssault(f.id);
-    h += `<div class="sec">${t('Дежурный режим')}</div><div class="row">`;
-    h += btn(
-      'qauto',
-      '',
-      auto ? t('⚔ авто-штурм: ВКЛ') : t('⚔ авто-штурм: выкл'),
-      true,
-      pcUi() ? 'act:qauto' : undefined,
-    );
-    h += `</div>`;
-    // PC: the explanation lives in the button's hover dossier ('act:qauto')
-    if (!pcUi()) {
-      h += `<div class="hint">${t('Во «включено» флот сам входит в орбиту и штурмует вражеский мир, на который прибыл — без ручного приказа.')}</div>`;
-    }
-  }
+  // CC-2 auto-storm: the whole «Дежурный режим» section moved to the ☰ command
+  // row («⚔ Авто-штурм» toggle) — SO-UI unloads the bottom sheet.
 
   if (f.movement) {
     // total travel-time estimate to the final destination (next-hop ETA from the
@@ -5868,12 +5890,6 @@ function objDossier(key: string): Dossier | null {
     return {
       name: t('Конструктор дивизий'),
       body: t('Редактор шаблонов: состав слотов и доктрина дивизий.'),
-    };
-  }
-  if (key === 'act:qauto') {
-    return {
-      name: t('Авто-штурм'),
-      body: t('ВКЛ — автоматически штурмовать вражеский мир при нахождении на его орбите.'),
     };
   }
   if (key.startsWith('c:')) return constructionDossier(key);
@@ -6958,7 +6974,24 @@ function renderCmdBar() {
           t('Ускорить'),
           ids.length > 0 && ids.every((id) => marchFlagged(id)) ? 'on' : '',
           ids.length === 0,
-        )
+        ) +
+        // SO-UI: standing orders live here now — the bottom sheet keeps only info.
+        cmdBtn(
+          'qauto',
+          '⚔',
+          t('Авто-штурм'),
+          ids.length > 0 && ids.every((id) => isAutoAssault(id)) ? 'on' : '',
+          ids.length === 0,
+        ) +
+        (fleets.some(fleetHasSquadron)
+          ? cmdBtn(
+              'qscramble',
+              '🛩',
+              t('Деж. вылет'),
+              fleets.filter(fleetHasSquadron).every((fl) => patrolOf(fl.id)) ? 'on' : '',
+              false,
+            )
+          : '')
       : '');
   if (html !== lastCmdHtml) {
     cmdbar.innerHTML = html;
@@ -7158,50 +7191,12 @@ side.addEventListener('click', (ev) => {
     playerOrder(assaultFleet(ME, selFleet!));
   } else if (act === 'retreat') {
     playerOrder(retreatFleet(ME, selFleet!));
-  } else if (act === 'qauto') {
-    // CC-2 stance toggle: authoritative in NET (order.auto — the server presses the
-    // storm while you're offline), the local Set in solo (autoEngage drives it).
-    for (const id of selectedFleetIds()) {
-      if (NET) playerOrder(orderAuto(ME, id, !isAutoAssault(id)));
-      else if (autoAssault.has(id)) autoAssault.delete(id);
-      else autoAssault.add(id);
-    }
   } else if (act === 'launchsquad') {
     // Split the squadron stack off into its own fast strike fleet (SQ-1.1).
     const f = selFleet ? s.fleets[selFleet] : undefined;
     if (fleetCanLaunchSquadron(f)) {
       playerOrder(splitFleet(ME, f!.id, squadronTake(f!)));
       note(t('🛩 эскадрилья запущена — ведите её на цель'));
-    }
-  } else if (act === 'qscramble') {
-    // CC-4: toggle "дежурный вылет" — stand (or stand down) a reactive auto-strike patrol
-    // on each selected squadron fleet, centred on its current node with its strike radius.
-    // Authoritative in NET (order.scramble — the server computes the patrol and flies it
-    // while you're offline); the local Map + frame-loop driver in solo.
-    for (const id of selectedFleetIds()) {
-      const f = s.fleets[id];
-      if (!f || !fleetHasSquadron(f)) continue;
-      if (patrolOf(id)) {
-        if (NET) playerOrder(orderScramble(ME, id, false));
-        else patrols.delete(id);
-        continue;
-      }
-      const pos = f.location ? s.planets[f.location]?.position : undefined;
-      if (!pos) {
-        note(t('🛩 дежурный вылет — только со стоянки в узле'));
-        continue;
-      }
-      if (NET) {
-        playerOrder(orderScramble(ME, id, true));
-      } else {
-        if (patrols.size === 0) lastPatrolTick = s.time; // start the rearm cadence from now
-        patrols.set(id, {
-          center: { x: pos.x, y: pos.y },
-          radius: squadronStrikeRange(f),
-          sortie: freshSortie(sortieSpec(f).maxFuel),
-        });
-      }
-      note(t('🛩 дежурный вылет включён — эскадрилья бьёт врага в радиусе'));
     }
   } else if (act === 'load') {
     beginLoad(selFleet!, arg); // ~1h timed load (animated in the marker)
@@ -7440,6 +7435,17 @@ cmdbar.addEventListener('click', (ev) => {
     const on = !ids.every((id) => marchFlagged(id));
     for (const id of ids) if (marchFlagged(id) !== on) playerOrder(forceMarchFleet(ME, id, on));
     if (on) note(t('⚡ форс-марш: +50% скорости, −5% прочности за час хода'));
+  } else if (cmd === 'qauto') {
+    // SO-UI: the CC-2 auto-storm stance, group-uniform (moved off the bottom sheet).
+    const on = !ids.every((id) => isAutoAssault(id));
+    setAutoAssault(ids, on);
+    if (on) note(t('⚔ авто-штурм включён — флот сам штурмует вражеский мир по прибытии'));
+  } else if (cmd === 'qscramble') {
+    // SO-UI: the CC-4 «дежурный вылет», group-uniform over the squadron fleets.
+    const wings = ids.filter((id) => fleetHasSquadron(s.fleets[id]));
+    const on = !wings.every((id) => patrolOf(id));
+    setScramble(wings, on);
+    if (on) note(t('🛩 дежурный вылет включён — эскадрилья бьёт врага в радиусе'));
   } else if (cmd === 'pick') {
     // SEL-1: touch multi-select — the sheet collapses, taps toggle own fleets.
     pickMode = !pickMode;
