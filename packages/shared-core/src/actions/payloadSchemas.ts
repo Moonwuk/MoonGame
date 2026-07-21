@@ -146,6 +146,23 @@ export const actionPayloadSchemas: Record<string, z.ZodType> = {
   // its fuel — the gate must keep rejecting it from the wire.
   'order.auto': z.object({ fleetId: id, on: z.boolean() }),
   'order.scramble': z.object({ fleetId: id, on: z.boolean() }),
+  // CC-1 order chain — the client atomically sets/cancels ([]) a fleet's whole queued
+  // plan; the module re-validates against live state (known worlds, ownership).
+  // `chain.stamp` is deliberately ABSENT: it is the SERVER driver's runtime stamp
+  // (consumed head / armed wait deadline) — a client must not advance its own chain.
+  'order.chain': z.object({
+    fleetId: id,
+    steps: z
+      .array(
+        z.union([
+          z.object({ kind: z.literal('move'), to: id }),
+          z.object({ kind: z.literal('wait'), hours: z.number().positive().finite() }),
+          z.object({ kind: z.literal('assault') }),
+          z.object({ kind: z.literal('barrage'), target: id.nullable() }),
+        ]),
+      )
+      .max(8),
+  }),
 };
 
 /** True if `payload` is a valid payload for the client-submittable action `type`. A type
