@@ -117,6 +117,7 @@ import {
   buildingLevel,
   buildingMaxLevel,
   estimateTravelHours,
+  findHealthyStack,
   fleetBaseSpeed,
   getStance,
   getOffer,
@@ -2393,14 +2394,34 @@ function pendingLoadCargo(fleetId: string): number {
   return n;
 }
 
-/** Queue a ~1h ground-army load if the hold has room (reserving for loads already
- *  under way), so the player can't over-fill the trim before any of them land. */
+/** How many of `unit` are already promised to in-progress loads lifting from the
+ *  SAME garrison (planet), so a queued load never over-draws a world's stock. Any
+ *  fleet docked at `planetId` shares that garrison, so reservations span fleets. */
+function pendingLoadUnits(planetId: string, unit: string): number {
+  let n = 0;
+  for (const p of pendingLoads) {
+    if (p.unit !== unit) continue;
+    if (s.fleets[p.fleetId]?.location === planetId) n++;
+  }
+  return n;
+}
+
+/** Queue a ~1h ground-army load if the hold has room AND the garrison still holds
+ *  a free unit (both reserving for loads already under way), so the player can't
+ *  over-fill the trim, nor queue more troops than the world can actually spare
+ *  — which would later fire real `army.load`s that reject with `E_NO_ARMY`. */
 function beginLoad(fleetId: string, unit: string): void {
   const f = s.fleets[fleetId];
   if (!f || f.movement || f.battleId || !f.location) return;
   const need = data.units[unit]?.stats.cargoSize ?? 1;
   if (need > fleetCargoFree(s, f) - pendingLoadCargo(fleetId)) {
     note('✖ ' + t('нет места в трюме')); // hold full once the loads already in progress land
+    return;
+  }
+  // Match the core's acceptance: only a healthy, default-loadout garrison stack embarks.
+  const stock = findHealthyStack(s.planets[f.location]!.garrison, unit)?.count ?? 0;
+  if (pendingLoadUnits(f.location, unit) >= stock) {
+    note('✖ ' + t('в гарнизоне не осталось')); // nothing left once the queued loads lift
     return;
   }
   pendingLoads.push({ fleetId, unit, startAt: s.time, doneAt: s.time + LOAD_TIME });

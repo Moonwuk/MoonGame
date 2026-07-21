@@ -821,6 +821,7 @@ export const en: Record<string, string> = {
   'не удалось в архив': 'archiving failed',
   'не удалось восстановить': 'restore failed',
   'неизвестный заказ': 'unknown order',
+  'в гарнизоне не осталось': 'none left in the garrison',
   нет: 'none',
   'нет места в трюме': 'no cargo room',
   ничья: 'a stalemate',
