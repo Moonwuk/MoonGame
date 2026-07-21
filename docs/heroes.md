@@ -87,7 +87,7 @@ interface Hero {
   владение/живость/дальность/кулдаун/стоимость и диспатчит по `type`.
 - **`data/heroPassives.json`** — пассивки: `{ hook, scope, params }` (напр.
   `hook:'fleet.speed', scope:'ownFleetsNear', params:{bonus:0.1}}` — баф усиления флота).
-- **`data/heroFittings.json`** — компоненты корабля: `{ slot, statMods{}, grants?[] }`
+- **`data/heroFittings.json`** — компоненты корабля: `{ statMods{}, grants?{ ability?|passive? } }` (без отдельного `slot` — общий слот-бюджет архетипа; `grants` — объект)
   (настройка самого корабля: статы / выдаёт способность).
 - **`data/heroSkillTrees.json`** — две ветки (`transhuman` / `psionic`): узлы
   `{ requires[], grants: { ability? | passive? | statBonus? | abilityParam? } }` —
@@ -107,8 +107,8 @@ interface Hero {
   `capability('hero.effect.' + type)` если есть, иначе встроенный обработчик типа →
   ставит кулдаун, списывает стоимость, эмитит `hero.ability.used`. Существующие
   `path.create`/`annihilate` переезжают сюда как **типы-эффекты в данных**.
-- **`hero.move`** — переезжает на обычный `fleet.move` для корабля героя (переиспользуем
-  маршрутизацию). Отдельное `hero.move` из скелета удаляется в пользу флотового.
+- **`hero.move`** — **сохранено** (`hero.ts` `onAction('hero.move')`): телепорт-редеплой для
+  героя-без-корабля; для героя-на-корабле движение идёт обычным `fleet.move`.
 - **`hero.fit {heroId, slot, fitting}` / `hero.skill.unlock {heroId, node}`** — настройка
   корабля и прокачка дерева (валидация слотов/`requires`/ветки; обычно вне боя).
 - **Пассивки → хуки**: при сборке движок навешивает из данных вклад в `fleet.speed` /

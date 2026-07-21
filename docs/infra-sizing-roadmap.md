@@ -43,7 +43,7 @@
 | Потолок burst | 20 действий/с/игрок; 50 msg/с/сокет (pre-parse) | `ACTION_RATE_MAX_DEFAULT` в `matchRoom.ts`; `FLOOD_MAX` в `wsServer.ts` |
 | Backpressure-cap | 1 MiB на сокет, дальше drop (close 1013) | `MAX_BUFFERED_BYTES` в `matchRoom.ts` |
 | Payload-cap | 32 KB вход | `maxPayload` в `wsServer.ts` |
-| Данные игры | **~12 KB** JSON (не 40 KB — то блок-округление `du`) | `wc -c data/*.json` = 12 368 |
+| Данные игры | **~33 KB** JSON | `wc -c data/*.json` = 33 451 |
 
 **Реальный драйвер стоимости** — CPU на действие внутри одного event-loop, не число
 соединений. Стоимость масштабируется как `размер GameState × число игроков`.
