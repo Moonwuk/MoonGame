@@ -55,6 +55,7 @@ import {
   identifiedNodes,
   timeScaleOf,
   hoursToMs,
+  effectiveStats,
   buildProgress,
   thresholdRamp,
   type DiplomaticStance,
@@ -2798,6 +2799,10 @@ type DivState = GameState & {
    *  already strips it for other viewers (future intent, like `scheduled`). Driven
    *  server-side (serverChainActions) and by the solo frame loop. */
   orders?: Record<string, FleetChain>;
+  /** BOOST-1 форс-марш («Ускорить»): fleets trading hull for speed — ×1.5 to
+   *  `fleet.speed` at the cost of 5% max-HP wear per hour IN TRANSIT. One march:
+   *  the flag drops on arrival. Stripped for other viewers (visibility.ts). */
+  forcedMarch?: Record<string, true>;
 };
 export function divisionsOf(state: GameState): Record<string, Division> {
   const s = state as DivState;
@@ -3482,6 +3487,82 @@ export const standingOrdersModule: GameModule = {
   },
 };
 
+// --- BOOST-1: форс-марш («Ускорить») -----------------------------------------
+// +50% to fleet speed at the cost of 5% max-HP wear per hour IN TRANSIT — the
+// Bytro-style forced march. The wear cripples but never kills: the pool floors
+// one hull above loss, so a march can't erase a fleet by itself. One march only:
+// the flag drops on arrival (re-arm for the next leg deliberately).
+export const FORCED_MARCH_MULT = 1.5;
+export const FORCED_MARCH_WEAR = 0.05; // share of max HP per game-hour
+export const forcedMarchModule: GameModule = {
+  id: 'forced-march',
+  version: '0.1.0',
+  setup(api) {
+    api.onAction('fleet.forcemarch', (action, h) => {
+      const p = action.payload as { fleetId?: unknown; on?: unknown };
+      if (typeof p?.fleetId !== 'string' || typeof p?.on !== 'boolean') {
+        return h.reject('E_BAD_PAYLOAD');
+      }
+      const f = h.state.fleets[p.fleetId];
+      // Absent OR not-yours → one opaque code (A06 — no fleet-existence probing).
+      if (!f || f.owner !== action.playerId) return h.reject('E_NO_FLEET');
+      const st = h.state as DivState;
+      if (p.on) {
+        (st.forcedMarch ??= {})[f.id] = true;
+      } else if (st.forcedMarch) {
+        delete st.forcedMarch[f.id];
+        if (Object.keys(st.forcedMarch).length === 0) delete st.forcedMarch;
+      }
+    });
+    // The speed pipeline contribution — same contract as retreat-haste / faction
+    // passives: multiply and pass on (order commutes, invariant #6 intact).
+    api.hook<number>('fleet.speed', (speed, args, h) => {
+      const fleetId = (args as { fleetId?: string }).fleetId;
+      return fleetId && (h.state as DivState).forcedMarch?.[fleetId]
+        ? speed * FORCED_MARCH_MULT
+        : speed;
+    });
+    // Wear accrues over continuous time while the fleet is actually marching.
+    api.on('time.advanced', (event, h) => {
+      const { from, to } = event.payload as { from: number; to: number };
+      const span = to - from;
+      if (span <= 0) return;
+      const st = h.state as DivState;
+      if (!st.forcedMarch) return;
+      const hours = (span / HOUR) * timeScaleOf(h.ctx);
+      for (const fid of Object.keys(st.forcedMarch)) {
+        const f = h.state.fleets[fid];
+        if (!f) {
+          delete st.forcedMarch[fid]; // dead fleet — sweep the flag with it
+          continue;
+        }
+        if (!f.movement) continue; // parked = no wear (the march is the cost)
+        for (const stack of f.units) {
+          if (stack.count <= 0) continue;
+          const def = h.ctx.data.units[stack.unit];
+          if (!def) continue;
+          const per = effectiveStats(def, stack, h.ctx.data).hp ?? 0;
+          if (per <= 0) continue;
+          const full = stack.count * per;
+          const pool = Math.min(stack.hp ?? full, full);
+          const minPool = (stack.count - 1) * per + 1; // last hull stays alive
+          stack.hp = Math.max(Math.min(minPool, pool), pool - full * FORCED_MARCH_WEAR * hours);
+        }
+      }
+      if (Object.keys(st.forcedMarch).length === 0) delete st.forcedMarch;
+    });
+    // One march per arm: reaching the destination drops the flag.
+    api.on('fleet.arrived', (event, h) => {
+      const fid = (event.payload as { fleetId?: string })?.fleetId;
+      const st = h.state as DivState;
+      if (typeof fid === 'string' && st.forcedMarch?.[fid]) {
+        delete st.forcedMarch[fid];
+        if (Object.keys(st.forcedMarch).length === 0) delete st.forcedMarch;
+      }
+    });
+  },
+};
+
 export const MODULES: GameModule[] = [
   sectorModule,
   planetTypeModule,
@@ -3513,6 +3594,7 @@ export const MODULES: GameModule[] = [
   divisionModule, // ground divisions: mobilise from a template + daily restoration
   capitalModule, // designatable capital (hero respawn / module re-fit anchor)
   standingOrdersModule, // CC-2/CC-4 standing orders (auto-storm / дежурный вылет), server-driven
+  forcedMarchModule, // BOOST-1 форс-марш: +50% скорости за 5% max-HP износа в час хода
   effectsModule, // EFX-1: интерпретатор data.events (trigger→effect); инертен, пока events: {} пуст
 ];
 
@@ -4142,6 +4224,9 @@ export const patrolStamp = (
 /** CC-1: set (or [] = cancel) an owned fleet's whole order chain atomically. */
 export const orderChain = (playerId: string, fleetId: string, steps: ChainStep[]) =>
   act(playerId, 'order.chain', { fleetId, steps });
+/** BOOST-1: toggle форс-марш on an owned fleet (+50% speed, hull wear in transit). */
+export const forceMarchFleet = (playerId: string, fleetId: string, on: boolean) =>
+  act(playerId, 'fleet.forcemarch', { fleetId, on });
 /** The chain driver's runtime stamp: consumed head / armed wait deadline. */
 export const chainStamp = (
   playerId: string,
