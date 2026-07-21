@@ -14,7 +14,7 @@
 | Механика | Ст. | Где | Суть |
 |---|---|---|---|
 | Бой (раунды/линии/артиллерия) | ✅ | `combat`-модуль, gdd §7 | почасовые раунды, тиры front/mid/rear/artillery, `combat.damage`-хук |
-| Орбитальный слой (ПВО/бомбардировка) | ✅ | `combat` `runOrbital` | `aaDamage` бьёт near-orbit флоты; бомбардировка структур |
+| Орбитальный слой (ПВО/бомбардировка) | ✅ | `orbital` `runOrbital` | `aaDamage` бьёт near-orbit флоты; бомбардировка структур |
 | Движение + столкновения | ✅ | `movement`, `combat` | узлы/лейны, `schedule` прибытий, бой при встрече |
 | Двухфазный захват (орбита→десант) | ✅ | `combat`, gdd §7.4 | `fleet.assault`, гарнизон/`landing`, `captureOnArrival` |
 | Экономика (offline-accrual) | ✅ | `economy` | производство/содержание формулой на `time.advanced` |
@@ -48,7 +48,7 @@
 
 | Механика | Ст. | Роадмап | Суть |
 |---|---|---|---|
-| Цепочки команд (offline-приказы) | 🟡 | `command-chains-roadmap` | база ✅ (`orderQueueModule` — серверные per-fleet цепочки, CC-0..1 + CC-server); курируемые триггеры/предикаты — ⏳ |
+| Цепочки команд (offline-приказы) | ✂️ | `command-chains-roadmap` | вырезаны в REL-1 (`orderQueueModule` и весь order-queue удалены из кода); в игре — только стоячие приказы (`standingOrdersModule`) |
 | Стоячие приказы (патруль и т.п.) | ✅ | (в squadrons/command-chains) | `standingOrdersModule` (авто-шторм/дежурный вылет) + патруль эскадрилий (SQ-4.1) |
 | Дерево технологий (4 ветки + день/условия) | 🟡 | `tech-tree-roadmap` | база ✅; +ветки/день-гейт/условия/вкладки |
 | Модули кораблей (лоадаут) + трюм-расширитель + фабрика дройдов | 🟡 | `ship-modules-roadmap` | фундамент ✅ в ядре (`ModuleDef`+типизированные слоты+эфф-статы в бою/постройке, SHIP-1..3/6; `cargo_bay` +трюм в `data/modules.json`); фабрика дройдов — ⏳ |
@@ -119,7 +119,7 @@ Async ──┬─ Экономика (offline-accrual)
 
 | Что | Почему |
 |---|---|
-| ✂️ Фракции/расы (из мета-дизайна) | заменены **стартовыми профилями** в геймплей-плане. ✅ уже в коде: `packages/shared-core/src/modules/faction.ts` (пассивы через хуки) + `reanimation.ts` + `state/factionStart.ts` + `data/factions.json` (3 фракции) — реализованы в shared-core (тесты `faction.test.ts`/`data/factions.test.ts`/`factionStart.test.ts`/`reanimation.test.ts`); играбельный прототип-кернел (`prototype/src/game.ts` MODULES) их НЕ подключает |
+| ✂️ Расы (тяжёлая мета-версия) | сведены к лёгким **фракционным пассивам**. ✅ в коде: `packages/shared-core/src/modules/faction.ts` (пассивы через хуки экономики/скорости/боя) + `state/factionStart.ts` + `data/factions.json` — тесты `faction.test.ts`/`factionStart.test.ts`; **подключён в прототип-кернел** (`prototype/src/game.ts:3212`, H3 — предматчевый выбор фракции). (`reanimation` вырезан из ядра.) |
 | ✂️ Тёмные события | спящие данные, никем не читались |
 | ✂️ Тактики боя (§7.5) | лишняя микро-механика; бой = состав+линии+герои. Принцип «готовые блоки» сохранён |
 | ✂️ Ветеранство наземки | вертикаль §5.2 + снежный ком + async-трение |

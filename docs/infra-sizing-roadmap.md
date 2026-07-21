@@ -43,7 +43,7 @@
 | Потолок burst | 20 действий/с/игрок; 50 msg/с/сокет (pre-parse) | `ACTION_RATE_MAX_DEFAULT` в `matchRoom.ts`; `FLOOD_MAX` в `wsServer.ts` |
 | Backpressure-cap | 1 MiB на сокет, дальше drop (close 1013) | `MAX_BUFFERED_BYTES` в `matchRoom.ts` |
 | Payload-cap | 32 KB вход | `maxPayload` в `wsServer.ts` |
-| Данные игры | **~12 KB** JSON (не 40 KB — то блок-округление `du`) | `wc -c data/*.json` = 12 368 |
+| Данные игры | **~33 KB** JSON | `wc -c data/*.json` = 33 451 |
 
 **Реальный драйвер стоимости** — CPU на действие внутри одного event-loop, не число
 соединений. Стоимость масштабируется как `размер GameState × число игроков`.
@@ -137,8 +137,8 @@
 CPU одной комнаты на одном ядре → потом единственный процесс/Postgres. Порядок швов,
 уже заложенных в код/доки:
 
-1. **Per-action O(игроков)** внутри одного event-loop (`matchRoom.ts:600-617`). Шов:
-   **SV-3.1** (кэш `visibleState` на комнату) режет дублирующую проекцию на пира.
+1. **Per-action O(игроков)** внутри одного event-loop (per-player fog-проекция в broadcast).
+   Шов: **SV-3.1** (кэш `visibleView` на комнату) режет дублирующую проекцию на пира.
 2. **Единственный процесс** (1 комната/процесс) — **снято (SV-0.2)**: `MatchRegistry`
    роутит N изолированных матчей/процесс, `LazyRoomRegistry` грузит по запросу,
    гибернирует простаивающие в стор (live-память ∝ активным матчам, risk13) **и будит

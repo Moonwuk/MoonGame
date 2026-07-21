@@ -48,7 +48,7 @@
   снимки), `visibilityModule` обновляет на `time.advanced`/`planet.captured`/`fleet.arrived`;
   `visibleState` отдаёт серое «last known» (`remembered[]`) вместо unknown. 3 теста.
 - **A2** ✅ Радарная дальность от зданий: **радар-постройка с 3 уровнями** в `data/buildings.json`
-  (`radarRange` 300→500→700), `radarRange` **уровневый** (`BuildingLevelSchema`). Радар ловит по
+  (`radarRange` 180→300→420), `radarRange` **уровневый** (`BuildingLevelSchema`). Радар ловит по
   **физическому расстоянию** (евклидово по `position`), а не по прыжкам графа — близкий в космосе
   узел виден, даже если недостижим по лейнам. Вклад тех/фракций — **данными, не kernel-хуком**
   (проекция чистая и живёт вне кернела): `radarRangeBonus` в `TechnologyEffects`/`FactionPassives`,
@@ -157,8 +157,9 @@
   5 тестов (`f8-persistence.test.ts`: persist/resume, seq-restore + guard, драйвер
   advance/idle). _Оговорка:_ save — после commit (fire-and-forget), не строгий
   commit-до-broadcast risk14 (тот — F2/SV-1.1). Детали — `infra-sizing-roadmap.md`.
-  ⚠️ Открытый риск: overflow-клин (`E_ADVANCE_OVERFLOW`/`E_EVENT_OVERFLOW`,
-  `kernel.ts:200,327`) — драйвер амортизирует, но не устраняет; алертить.
+  ✅ Закрыто: same-instant runaway теперь даёт ограниченный частичный адванс (часы не
+  двигаются, `inf` остаётся) вместо клина — `E_ADVANCE_OVERFLOW` из кода убран
+  (тест `advanceTo.test.ts`).
 
 ## Блок G · Клиент (Этап 4) `[cli]` _(параллелен серверу)_
 

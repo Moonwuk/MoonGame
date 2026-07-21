@@ -59,9 +59,9 @@
 > reconnect/retry через persisted store в хосте.
 
 1. PostgreSQL persistence — ✅ store-слой построен
-   - `matches(id, version, game_state_jsonb, manifest, updated_at)`;
-   - `action_receipts(action_id, match_id, player_id, seq, result_code, state_version)`;
-   - optimistic locking: `WHERE version = previousVersion`.
+   - `matches(id, state jsonb, data_version, seq, updated_at)` (стейт — JSONB, остальное — колонки);
+   - `receipts(action_id, match_id, player_id, seq, ok, code, …)`;
+   - optimistic locking по `seq`: upsert с `WHERE matches.seq <= EXCLUDED.seq`.
 
 2. WebSocket sync v2
    - `welcome` всегда отдаёт snapshot;

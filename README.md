@@ -84,14 +84,15 @@ AvA** (влияние → вызов → ростер → авто-сборка 
 | `rng/`     | Seeded PRNG (sfc32) — детерминизм; состояние сериализуется в `GameState` (golden-тест)               |
 | `util/`    | `deepClone`/`deepFreeze` (immutable-контракт), общие хелперы казны/стеков/времени                    |
 
-**Модули ядра (22):** `sector`, `planetType`, `technology`, `scientist` (лидер исследований),
+**Модули ядра (24):** `sector`, `planetType`, `technology`, `scientist` (лидер исследований),
 `economy`, `market`, `movement`, `combat` (мелэ-бой, двухфазный захват орбита→десант),
 `orbital` (ПВО + бомбардировка), `artillery` (дальнобойный standoff-огонь + barrage-приказы),
 `intercept` (перехват на лейнах), `captureOnArrival` (walk-in захват необоронённого
 нейтрального сектора), `construction`, `army` (флот ⊕ наземная армия + транспорт), `station`,
 `faction`, `hero` (аура/респаун), `diplomacy` (объявления + consent-офферы), `espionage`
 (шпионаж + контрразведка), `steward` («Хранитель» — делегирование места ИИ), `victory`
-(data-driven очки/счёт), `visibility` (память тумана, вариант B).
+(data-driven очки/счёт), `visibility` (память тумана, вариант B), `effects` (интерпретатор
+`data.events`, trigger→effect), `heroEffects` (эффекты-провайдеры героев).
 **`combat.isHostile` читает стойку из `state.diplomacy`** — бой только при объявленной войне.
 Новая механика = новый модуль (+ данные), ядро не трогается. Прототип добавляет свои
 модули поверх (налоги, дивизии, командные цепочки, стоячие приказы, мета-прогрессия).
@@ -145,14 +146,17 @@ pnpm run check          # lint + typecheck + test — гонять перед к
 ```
 
 **CI:** [`ci.yml`](./.github/workflows/ci.yml) гоняет гейт (`pnpm run check` =
-lint/typecheck/test) + `pnpm audit` на каждый пуш — против сервисного Postgres, так что
-durable-тесты тоже бегут. Рядом: **security-пайплайн**
+lint/typecheck/test/docs-check) + SCA через **OSV-Scanner** (`pnpm audit` снят: npm закрыл
+audit-эндпоинты, 2026-07) на каждый пуш — против сервисного Postgres, так что durable-тесты
+тоже бегут. Рядом: **security-пайплайн**
 ([`security.yml`](./.github/workflows/security.yml): Semgrep, CodeQL, Trivy, OSV,
-Gitleaks, TruffleHog, zizmor, Syft SBOM — сейчас информационный, не блокирующий),
+Gitleaks, TruffleHog, zizmor, Syft SBOM — 5 сканеров **блокирующие** по SEC-1:
+semgrep/gitleaks/osv/trivy-fs/trivy-image валят джобу на находке; codeql/trufflehog/zizmor/
+scorecard — информационные),
 **APK прототипа** ([`android.yml`](./.github/workflows/android.yml), rolling-релиз
 `alpha`) и [`pages.yml`](./.github/workflows/pages.yml) (не деплоится: приватный репо).
 `main` защищён — изменения едут через PR с зелёным CI.
-На сейчас **1027 тестов** зелёные (104 файла, 4 skip).
+На сейчас **~1554 теста** зелёные (143 файла).
 
 ## Статус
 
