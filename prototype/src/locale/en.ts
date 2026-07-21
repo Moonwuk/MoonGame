@@ -1030,6 +1030,8 @@ export const en: Record<string, string> = {
   'Кабинет корпорации': 'Corporation cabinet',
   'Нет матчей, ждущих приказа': 'No matches waiting on an order',
   'Новый командир': 'New Commander',
+  'Добро пожаловать, командир. Флот ждёт приказа.': 'Welcome, commander. The fleet awaits your orders.',
+  'Придумай пароль — аккаунт создастся сам': 'Choose a password — the account creates itself',
   Обновить: 'Update',
   'Обновить список': 'Refresh list',
   'Одиночная игра': 'Solo game',

@@ -9528,13 +9528,29 @@ function openHub(note = ''): void {
   refreshOnboardOffer(); // ONB-0: first-run offer/nudge for a not-yet-onboarded commander
 }
 
-$('cnew').addEventListener('click', () => openHub());
+$('cnew').addEventListener('click', () => {
+  // Bytro-style greeting (SES-2.5 UX): with accounts on the server, «Новый командир»
+  // opens the sign-up right ON the welcome card — suggested callsign + password —
+  // instead of dropping a guest into the hub only to hit a password wall at join.
+  if (authMode) {
+    if (!wNickInput.value.trim()) wNickInput.value = suggestCallsign();
+    wLoginEl.style.display = 'flex';
+    wPassRowEl.style.display = 'flex';
+    statusEl.textContent = t('Придумай пароль — аккаунт создастся сам');
+    wPassInput.focus();
+    return;
+  }
+  openHub();
+});
 // «Вход по позывному»: reveal an inline field and enter under a callsign YOU type (vs
 // «Новый командир», which auto-suggests one). The chosen callsign is remembered
-// (`void.nick`) so the next visit auto-recognises you (the first-run gate above). No
-// accounts backend yet — local identity, not cross-device recovery (accounts-roadmap.md).
+// (`void.nick`) so the next visit auto-recognises you (the first-run gate above).
+// With accounts on the server (authMode) the same form carries a password and the
+// welcome card itself registers/logs in (registration IS the first login).
 const wLoginEl = $('cwlogin');
 const wNickInput = $('cwnick') as HTMLInputElement;
+const wPassRowEl = $('cwpassrow');
+const wPassInput = $('cwpass') as HTMLInputElement;
 function signInByCallsign(): void {
   const nick = wNickInput.value.trim();
   if (!nick) {
@@ -9542,10 +9558,35 @@ function signInByCallsign(): void {
     wNickInput.focus();
     return;
   }
+  if (authMode) {
+    void welcomeSignIn(nick);
+    return;
+  }
   nickInput.value = nick;
   localStorage.setItem('void.nick', nick); // remembered — next visit skips the welcome card
   openHub();
 }
+/** Bytro-style welcome sign-in: register-or-login right on the greeting card, then
+ *  land on the hub. Reuses ensureSession (login → 401 → register), so a fresh
+ *  callsign creates the account and a known one just logs in. */
+async function welcomeSignIn(nick: string): Promise<void> {
+  wPassRowEl.style.display = 'flex'; // make sure the password is visible before we demand it
+  nickInput.value = nick;
+  const srv = resolveServer();
+  if (!srv) return;
+  const session = await ensureSession(srv.base, nick);
+  if (!session) {
+    wPassInput.focus(); // ensureSession already explained why in the status line
+    return;
+  }
+  localStorage.setItem('void.nick', nick);
+  wPassInput.value = ''; // the session JWT is stored instead — a password never lingers
+  statusEl.textContent = '';
+  openHub();
+}
+wPassInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') signInByCallsign();
+});
 $('clogin').addEventListener('click', () => {
   const show = wLoginEl.style.display === 'none';
   wLoginEl.style.display = show ? 'flex' : 'none';
@@ -10527,6 +10568,22 @@ async function probeAuthMode(base: string): Promise<void> {
   if (passRow) passRow.style.display = authMode ? '' : 'none';
 }
 
+// First visit, Bytro-style (SES-2.5 UX): when the server runs accounts, sign-up IS
+// the welcome — probe the same-origin default and surface callsign+password on the
+// greeting card right away, so a new commander registers before the hub, not deep
+// inside the join flow. Probe failure ⇒ nick mode, the card stays as it was.
+// (A remembered nick skipped the welcome card above — nothing to reveal then.)
+if (!(localStorage.getItem('void.nick') ?? '').trim())
+  void (async () => {
+    const base = srvInput.value.trim();
+    if (!base) return;
+    await probeAuthMode(base);
+    if (!authMode) return;
+    if (!wNickInput.value.trim()) wNickInput.value = suggestCallsign();
+    wLoginEl.style.display = 'flex';
+    wPassRowEl.style.display = 'flex';
+  })();
+
 /** A valid session JWT for this server, or null (with the status line explaining).
  *  Zero-friction identity: try LOGIN first; unknown-or-wrong is a uniform 401, so
  *  then try REGISTER — a fresh login creates the account (registration IS the first
@@ -10534,7 +10591,9 @@ async function probeAuthMode(base: string): Promise<void> {
 async function ensureSession(base: string, login: string): Promise<string | null> {
   const cached = localStorage.getItem(sessionKey(base));
   if (cached) return cached;
-  const password = passInput?.value ?? '';
+  // The password may come from the welcome card (Bytro-style sign-up) or the match
+  // browser's field (custom-server joins) — whichever the player actually filled.
+  const password = wPassInput.value || (passInput?.value ?? '');
   if (password.length < 8) {
     statusEl.textContent = t('Введите пароль (мин. 8 символов)');
     return null;

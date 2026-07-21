@@ -1980,6 +1980,7 @@ const page = (js) => `<!doctype html>
           <div class="wm">VOID DOMINION</div>
           <div class="wtag" data-i18n>Грань пустоты</div>
         </div>
+        <p class="csub" data-i18n>Добро пожаловать, командир. Флот ждёт приказа.</p>
         <button id="cnew" class="cnew" type="button" data-i18n>Новый командир</button>
         <div class="cdiv" data-i18n>войти через</div>
         <div class="csocial">
@@ -1993,6 +1994,9 @@ const page = (js) => `<!doctype html>
         <div id="cwlogin" class="cwlogin" style="display:none">
           <input id="cwnick" type="text" autocapitalize="off" autocomplete="off" spellcheck="false" maxlength="24" placeholder="позывной" data-i18n-ph>
           <button id="cwgo" class="cbtn" type="button" data-i18n>Войти</button>
+        </div>
+        <div id="cwpassrow" class="cwlogin" style="display:none">
+          <input id="cwpass" type="password" autocomplete="current-password" maxlength="128" placeholder="пароль (аккаунт создастся сам)" data-i18n-ph>
         </div>
       </div>
       <div id="cbrowse" style="display:none">
