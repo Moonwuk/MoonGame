@@ -135,15 +135,23 @@ BF-22 coarse/fine-шаги) — точечными фиксами, без сис
 > Durable-журнал действий (PE-1.1) и аудит-реплей продакшен-матчей (GI-1.3) — **отдельные
 > кирпичи после**, здесь только фундамент. Хэш и его golden уже есть (`state/hash.ts`).
 
-- **RPL-1 · Формат + чистый раннер** `[core]` — M.
-  `packages/shared-core/src/replay/replay.ts`: `ReplayLog { initial: GameState;
-  config; steps: [{at, action?}] }` (шаг без action = чистый advance); `runReplay(...)
-  → {state, hash, failures}` — внутри ровно real-time flow `advanceTo → applyAction`.
-  Раннер fail-secure сверяет пин версии данных/манифеста/config — реплей с другим
-  бандлом обязан отказать, а не тихо разойтись. Тест: скриптованный матч напрямую vs
-  через runReplay — хэши равны; вариант с JSONB-эмуляцией
-  (`JSON.parse(JSON.stringify())` + пересортировка ключей initial) — анти-BF-13.
-- **RPL-2 · Рекордер в MatchRoom** `[srv]` — S · 🔒(RPL-1).
+- **RPL-1 · Формат + чистый раннер** `[core]` — M · ✅ (2026-07-21).
+  `packages/shared-core/src/replay/replay.ts` + `replay.test.ts` (7 тестов) + экспорт
+  из `index.ts`. `ReplayLog { dataVersion; config?; initial; steps[{at, action?}] }`,
+  `runReplay → {state, hash, failures, rejected}` — ровно real-time flow
+  `advanceTo → applyAction`, partial-петля как в MatchRoom, fail-secure отказ по пину
+  версии/неупорядоченному логу. Тесты: живой прогон (почасовые тики + реактивный
+  игрок) vs реплей — бит-в-бит; JSONB-скрэмбл initial (анти-BF-13); дубли границ =
+  no-op; отказ по пину.
+  **⚠ Находка, меняющая контракт (важно для RPL-2/3):** начисление по спанам —
+  `rate × Δt`, сложение IEEE-754 неассоциативно ⇒ другое членение того же интервала
+  даёт float-пыль (~1e-13), движок и так обещает только coarse ≈ fine
+  (advanceTo.test). Поэтому **границы advance — часть лога**: рекордер обязан
+  записывать каждый advance-таргет живого пути (тики таймера — чистыми `{at}`-шагами),
+  а не идеализированный крупный таймлайн. Зафиксировано тестом «другое членение ≈
+  в пределах float-пыли» и в доке модуля.
+- **RPL-2 · Рекордер в MatchRoom** `[srv]` — S · 🔒(RPL-1) · ⚠ писать и ЧИСТЫЕ
+  advance-тики (см. находку RPL-1), не только действия.
   Опция `record` в MatchRoom, вызов после успешного применения в
   `applyAndBroadcast`/`commitApply` — покрывает и серверные действия
   (`submitServerAction`: ИИ, Хранитель). ⚠️ Записывать **эффективный** `ctx.now`

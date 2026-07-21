@@ -100,6 +100,11 @@ export { diffState, applyDelta, type StateDelta } from './state/delta';
 export { visibleState, visibleView, identifiedNodes, isVisibleTo } from './state/visibility';
 export type { VisibleState, VisibleView, SignatureContact, SignatureSize } from './state/visibility';
 export { hashState } from './state/hash';
+
+// Deterministic replay (RPL-1): self-contained log + pure runner — the CI harness
+// and the future audit tooling (GI-1.3) both build on this.
+export { runReplay } from './replay/replay';
+export type { ReplayLog, ReplayStep, ReplayRejection, ReplayResult } from './replay/replay';
 export {
   previewBattle,
   previewLossCount,
