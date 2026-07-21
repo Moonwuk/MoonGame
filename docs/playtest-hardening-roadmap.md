@@ -176,19 +176,22 @@ BF-22 coarse/fine-шаги) — точечными фиксами, без сис
 > SD-7.3 целиком + мусорная часть SD-7.2 из `secure-sdlc-roadmap.md`. ⚠️ zod v4:
 > мосты типа zod-fast-check таргетят v3 — arbitraries пишем руками (схемы простые).
 
-- **FUZZ-1 · fast-check + testkit** `[core]` — S.
-  fast-check в root devDeps; `testkit/arbitraries.ts`: arbitrary действий (типы — из
-  ключей `actionPayloadSchemas`, валидные payload'ы для ~10 базовых типов + отдельный
-  «мусорный» arbitrary), состояния — поверх `buildStateFromMap` + мини-GameData.
-- **FUZZ-2 · Property-suite applyAction** `[core]` — M · 🔒(FUZZ-1).
-  Свойства: (а) на `deepFreeze(state)` **никогда не бросает** (валидный или мусорный
-  payload — только `ok:false` со стабильным `/^E_[A-Z_]+/`, вплоть до `E_INTERNAL`);
-  (б) двойной прогон → одинаковый `hashState` (один seed → один результат);
-  (в) `hashState(s) === hashState(JSON.parse(JSON.stringify(s)))` после действий;
-  (г) `state.scheduled` остаётся `(at,seq)`-сортированным.
-  ⚠️ Семантические свойства — только на gate-валидных payload'ах
-  (`isValidActionPayload`): ядро по контракту получает уже провалидированное (инвариант
-  №5 CLAUDE.md), сырой мусор проверяет только «no throw».
+- **FUZZ-1 · fast-check + testkit** `[core]` — S · ✅ (2026-07-21).
+  fast-check ^4.9 в root devDeps; `testkit/arbitraries.ts`: типы действий — из ключей
+  `actionPayloadSchemas` (весь wire-каталог), валидные payload'ы руками для 6 базовых
+  типов (move/stop/assault/construct/unit.build/market.list) + «мусорный» arbitrary
+  (тип из каталога × `fc.anything()`); состояние — компактная fixture-вселенная
+  (3 мира, 2 игрока, флоты/гарнизон/шахта) с `arbSeed`-варьируемым RNG-стримом.
+- **FUZZ-2 · Property-suite applyAction** `[core]` — M · ✅ (2026-07-21).
+  `kernel/applyAction.property.test.ts`, 5 свойств поверх 6 реальных модулей:
+  (а) на `deepFreeze(state)`+`deepFreeze(data)` **никогда не бросает** — только `ok`
+  или стабильный `/^E_[A-Z_]+/` (мусор и валид, ×150); (б) frozen vs thawed вход →
+  идентичный исход (hash + events + code) — чистота и детерминизм разом; (в)
+  `hashState` переживает JSON-round-trip достижимых состояний (класс BF-13); (г)
+  `state.scheduled` остаётся `(at,seq)`-сортированным после каждой успешной апплики.
+  Риск №3 (мутация `ctx.data` модулем) под морозом НЕ вскрылся — свойство живёт в
+  полную силу. Семантические свойства — только на gate-валидных payload'ах
+  (инвариант №5 CLAUDE.md), сырой мусор проверяет «no throw + стабильный код».
 - **FUZZ-3 · Property-suite advanceTo** `[core]` — M · 🔒(FUZZ-1).
   Непрерывность спанов `time.advanced` на `[state.time, now]`; split-эквивалентность
   (advanceTo(t₁)→t₂ ≡ advanceTo(t₂) по хэшу); финальное `time === ctx.now` при
