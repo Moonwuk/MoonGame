@@ -150,20 +150,21 @@ BF-22 coarse/fine-шаги) — точечными фиксами, без сис
   записывать каждый advance-таргет живого пути (тики таймера — чистыми `{at}`-шагами),
   а не идеализированный крупный таймлайн. Зафиксировано тестом «другое членение ≈
   в пределах float-пыли» и в доке модуля.
-- **RPL-2 · Рекордер в MatchRoom** `[srv]` — S · 🔒(RPL-1) · ⚠ писать и ЧИСТЫЕ
-  advance-тики (см. находку RPL-1), не только действия.
-  Опция `record` в MatchRoom, вызов после успешного применения в
-  `applyAndBroadcast`/`commitApply` — покрывает и серверные действия
-  (`submitServerAction`: ИИ, Хранитель). ⚠️ Записывать **эффективный** `ctx.now`
-  (`Math.max(serverNow, state.time)` — `matchRoom.ts:898`), иначе реплей законно
-  разойдётся.
-- **RPL-3 · CI-тест record→replay→hash** `[srv]` — M · 🔒(RPL-2).
-  `replayDeterminism.test.ts`: in-memory room, скриптованная партия на несколько игровых
-  дней (движение/бой/захват/стройка — RNG и schedule работают по-настоящему), запись →
-  `runReplay` → хэши равны; плюс прогон реплея с другим членением advance (один прыжок
-  vs почасовые тики) — анти-BF-22; плюс сверка `failures` (одинаковый хэш не должен
-  маскировать одинаково-сломанный прогон). Самосогласованный (live vs его же реплей) —
-  не хрупкий к баланс-правкам; попадает в `pnpm test` → ci.yml без правок workflow.
+- **RPL-2 · Рекордер в MatchRoom** `[srv]` — S · ✅ (2026-07-21).
+  Опция `record` в `MatchRoom` (+ проброс в `createDevMatch`): каждая граница advance
+  (только когда время реально сдвинулось — лог компактный; и sync-`advance`, и чистый
+  `computeAdvance` durable-пути) и каждое УСПЕШНО применённое действие на его
+  эффективном инстанте `max(serverNow, state.time)`. Покрыты оба пути применения
+  (sync `applyAndBroadcast` + durable `commitApply`) и серверные драйверы
+  (`submitServerAction` — ИИ, Хранитель).
+- **RPL-3 · CI-тест record→replay→hash** `[srv]` — M · ✅ (2026-07-21).
+  `replayDeterminism.test.ts`: живой `MatchRoom` на ПОЛНОМ dev-стеке (27 модулей,
+  шипнутые данные), pinned-часы, 48 игровых часов тиков + действия по обоим путям
+  (sync + durable `submitServerAction`) → запись → `runReplay` → хэш **бит-в-бит**;
+  плюс JSON-round-trip всего лога (паритет гибернации/durable-лога). Самосогласован
+  (live vs его же реплей) — баланс-правки его не инвалидируют; попал в `pnpm test`
+  → ci.yml без правок workflow. (Тест «другое членение ≈ float-пыль» — в shared-core
+  `replay.test.ts`, RPL-1.)
 - **RPL-4 · Доки** `[docs]` — S · 🔒(RPL-3). `core-roadmap.md` CR-0.2 → частично ✅,
   `metrics-roadmap.md` KPI «хеш прогона» → green, `state.md`.
 - **RPL-5 · Durable action-log** `[srv]` — L · 🔒(RPL-3) · **отдельный кирпич, не в

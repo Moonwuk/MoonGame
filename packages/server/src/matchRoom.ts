@@ -91,6 +91,15 @@ export interface MatchRoomOptions {
   denyPlayerActions?: (type: string) => string | null | undefined;
   /** Observation-only room-event stream for metrics/playtest logging (M0). */
   observe?: (event: RoomObservation) => void;
+  /** Deterministic-replay recorder (RPL-2): receives every advance boundary the room
+   *  actually executed (pure `{at}` entries — timer ticks and pre-action catch-ups)
+   *  and every SUCCESSFULLY applied action (`{at, action}` at its effective instant,
+   *  `max(serverNow, state.time)`). Feed the entries into `ReplayLog.steps` as-is:
+   *  advance boundaries are part of the log BY CONTRACT — span accrual is float-
+   *  partition-sensitive (see shared-core replay.ts), so the log must mirror what
+   *  the room did, not an idealized timeline. Covers players, server drivers
+   *  (`submitServerAction`) and both the sync and durable apply paths. */
+  record?: (step: { at: number; action?: Action }) => void;
   /** Seed the idempotency receipts (e.g. rehydrated from a ReceiptStore on restart),
    *  so an action deduped before a crash stays deduped after it. */
   initialReceipts?: ActionReceipt[];
@@ -319,6 +328,7 @@ export class MatchRoom {
   private readonly emitStateHash: boolean;
   private readonly singlePeerPerPlayer: boolean;
   private readonly observe?: (event: RoomObservation) => void;
+  private readonly record?: (step: { at: number; action?: Action }) => void;
   /** Durable write for strict commit-before-broadcast (see options.persist). */
   private readonly persist?: (snapshot: MatchSnapshot, receipt: StoredReceipt) => Promise<void>;
   /** Opt-in action-layer front-door (see options.gate). */
@@ -406,6 +416,7 @@ export class MatchRoom {
     this.emitStateHash = options.emitStateHash ?? false;
     this.singlePeerPerPlayer = options.singlePeerPerPlayer ?? false;
     this.observe = options.observe;
+    this.record = options.record;
     this.persist = options.persist;
     this.gate = options.gate;
     if (options.denyPlayerActions) this.denyPlayerActions = options.denyPlayerActions;
@@ -930,7 +941,8 @@ export class MatchRoom {
         return { ok: false, seq: receipt.seq, events: [], code: receipt.code };
       }
 
-      const context = this.context(Math.max(serverNow, this.stateValue.time));
+      const effectiveNow = Math.max(serverNow, this.stateValue.time);
+      const context = this.context(effectiveNow);
       const result = this.kernel.applyAction(this.stateValue, action, context);
       if (!result.ok) {
         // SRV-1: the action is rejected, but `advance` above already COMMITTED the
@@ -944,6 +956,7 @@ export class MatchRoom {
       }
 
       this.stateValue = result.state;
+      this.record?.({ at: effectiveNow, action }); // RPL-2: only SUCCESSFUL applies
       const receipt = this.recordReceipt(action, playerId, true);
       const events = [...advanced.events, ...result.events];
       this.broadcastState(events);
@@ -1046,9 +1059,13 @@ export class MatchRoom {
   /** Advance `this.stateValue` to `now`, committing the catch-up in place. Thin wrapper
    *  over the pure `computeAdvance` — used by the sync `submitAction` and `tick`. */
   private advance(now: number): { ok: true; events: DomainEvent[] } | { ok: false; code: string } {
+    const from = this.stateValue.time;
     const r = this.computeAdvance(this.stateValue, now);
     if (!r.ok) return { ok: false, code: r.code };
     this.stateValue = r.state;
+    // RPL-2: the boundary the world ACTUALLY reached (a throttled advance stops
+    // short of `now`) — a no-op advance is not a boundary, keep the log compact.
+    if (r.state.time > from) this.record?.({ at: r.state.time });
     return { ok: true, events: r.events };
   }
 
@@ -1288,7 +1305,8 @@ export class MatchRoom {
         return { ok: false, code: advanced.code, durable: true };
       }
 
-      const context = this.context(Math.max(serverNow, advanced.state.time));
+      const effectiveNow = Math.max(serverNow, advanced.state.time);
+      const context = this.context(effectiveNow);
       const result = this.kernel.applyAction(advanced.state, action, context);
       const seq = this.seq + 1;
 
@@ -1300,6 +1318,7 @@ export class MatchRoom {
         if (!(await this.persistGuarded(this.snapshot(advanced.state, seq), receipt, action.id, peer))) {
           return TRANSIENT_VERDICT;
         }
+        if (advanced.state.time > this.stateValue.time) this.record?.({ at: advanced.state.time });
         this.stateValue = advanced.state;
         this.seq = seq;
         this.retainReceipt(receipt);
@@ -1315,7 +1334,9 @@ export class MatchRoom {
       if (!(await this.persistGuarded(this.snapshot(result.state, seq), receipt, action.id, peer))) {
         return TRANSIENT_VERDICT;
       }
+      if (advanced.state.time > this.stateValue.time) this.record?.({ at: advanced.state.time });
       this.stateValue = result.state;
+      this.record?.({ at: effectiveNow, action }); // RPL-2: only SUCCESSFUL applies
       this.seq = seq;
       this.retainReceipt(receipt);
       observeCommitted = () => this.observeAction(receipt, action.type);
