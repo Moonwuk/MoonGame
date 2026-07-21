@@ -51,8 +51,10 @@ import {
   HOUR,
   serverAutoAssaultActions,
   serverPatrolActions,
+  serverChainActions,
   orderScramble,
   patrolStamp,
+  chainStamp,
 } from './src/game';
 import { ActionGate } from '../packages/action-layer/src/index';
 import { isValidActionPayload } from '../packages/shared-core/src/actions/payloadSchemas';
@@ -442,6 +444,14 @@ async function createHostedMatch(id: string): Promise<HostedMatch> {
         await room.submitServerAction(p.owner, patrolStamp(p.owner, p.fleetId, p.patch.sortie, p.patch.rearmAt));
       }
       for (const act of p.actions) await room.submitServerAction(p.owner, act);
+    }
+    // CC-1: advance the authoritative order chains — stamp first (consume-on-issue),
+    // then the head step's orders; a rejected order is skipped, the chain moves on.
+    for (const c of serverChainActions(room.state, room.state.time)) {
+      if (c.patch) {
+        await room.submitServerAction(c.owner, chainStamp(c.owner, c.fleetId, c.patch.steps, c.patch.waitUntil));
+      }
+      for (const act of c.actions) await room.submitServerAction(c.owner, act);
     }
   }
 
