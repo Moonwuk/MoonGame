@@ -90,6 +90,21 @@ describe('SE-1.x · /auth/register + /auth/login', () => {
     expect((r.json() as { login: string }).login).toBe('Vasya'); // display form preserved
   });
 
+  it('accepts the suggested cyrillic callsigns («Носорог-1») — the welcome golden path', async () => {
+    const server = authApp();
+    const r = await post(server, '/auth/register', { login: 'Носорог-1', password: 'longenough' });
+    expect(r.statusCode).toBe(201);
+    expect((r.json() as { login: string }).login).toBe('Носорог-1');
+    // …and unicode dedup stays case-insensitive
+    const dup = await post(server, '/auth/register', { login: 'носорог-1', password: 'longenough' });
+    expect(dup.statusCode).toBe(409);
+    const ok = await post(server, '/auth/login', { login: 'НОСОРОГ-1', password: 'longenough' });
+    expect(ok.statusCode).toBe(200);
+    // spaces/emoji are still out — \p{L}\p{N}_- only
+    const emoji = await post(server, '/auth/register', { login: 'зая🔥', password: 'longenough' });
+    expect(emoji.statusCode).toBe(400);
+  });
+
   it('rejects malformed credentials with one stable code (no field-level detail)', async () => {
     const server = authApp();
     for (const bad of [

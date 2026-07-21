@@ -35,9 +35,12 @@ export interface AuthApiDeps {
   scryptParams?: ScryptParams;
 }
 
-/** Login: 3–24 chars, letters/digits/underscore — it doubles as the display nick and
- *  the seat identity, so keep it URL- and log-safe. */
-const LOGIN_RE = /^[a-zA-Z0-9_]{3,24}$/;
+/** Login: 3–24 chars — any unicode letters/digits plus `_`/`-`. It doubles as the
+ *  display nick and the seat identity, and the game's suggested callsigns are
+ *  cyrillic with a dash («Носорог-1»), so ASCII-only here would reject the golden
+ *  path. `\p{L}\p{N}` keeps it log-safe (no spaces/emoji/control chars); dedup is
+ *  case-insensitive via lower(login) in the stores. */
+const LOGIN_RE = /^[\p{L}\p{N}_-]{3,24}$/u;
 /** Password: 8–128 chars. The cap bounds the KDF input (DoS hygiene); no composition
  *  rules — length beats complexity theatre. */
 const PASSWORD_MIN = 8;

@@ -3203,16 +3203,34 @@ function checkEnd() {
   const iWon = s.match.winner === ME || (s.match.winners?.includes(ME) ?? false);
   const draw = !iWon && s.match.winner === null;
   // Meta-progression: one XP award per finished match (прокачка командующего).
+  // `xpAwarded` alone is a per-INSTALL latch — a reconnect to an already-ended
+  // match resets it (net welcome handler), so refreshing the page would farm the
+  // award repeatedly. A durable per-match marker (keyed by the match's endedAt,
+  // unique per finished match for this nick) makes the award idempotent; the
+  // recorded amount replays on the end screen instead of a misleading «+0».
   let gained = 0;
   let levelUp: number | null = null;
+  const awardKey = 'vd.xpawarded.' + (nickInput.value.trim() || 'guest');
+  const endStamp = String(s.match.endedAt ?? 'ended');
+  let prior: { at: string; xp: number } | null = null;
+  try {
+    prior = JSON.parse(localStorage.getItem(awardKey) ?? 'null') as typeof prior;
+  } catch {
+    prior = null; // a corrupt marker never blocks the flow — fail open to a fresh award
+  }
   if (!xpAwarded) {
     xpAwarded = true;
-    const st = loadMeta();
-    gained = matchXp({ won: iWon, score: s.match.scores?.[ME]?.total ?? 0 });
-    const before = metaLevel(st.xp);
-    const after = { xp: st.xp + gained, spent: st.spent };
-    saveMeta(after);
-    if (metaLevel(after.xp) > before) levelUp = metaLevel(after.xp);
+    if (prior?.at === endStamp) {
+      gained = prior.xp; // this match already paid out — just replay the receipt
+    } else {
+      const st = loadMeta();
+      gained = matchXp({ won: iWon, score: s.match.scores?.[ME]?.total ?? 0 });
+      const before = metaLevel(st.xp);
+      const after = { xp: st.xp + gained, spent: st.spent };
+      saveMeta(after);
+      localStorage.setItem(awardKey, JSON.stringify({ at: endStamp, xp: gained }));
+      if (metaLevel(after.xp) > before) levelUp = metaLevel(after.xp);
+    }
   }
   // The full end screen (renderEndScreen) reads this — outcome, reason, XP. The old
   // thin victory `banner` is retired; `banner` now carries only NET-status lines.
@@ -10591,6 +10609,12 @@ if (!(localStorage.getItem('void.nick') ?? '').trim())
 async function ensureSession(base: string, login: string): Promise<string | null> {
   const cached = localStorage.getItem(sessionKey(base));
   if (cached) return cached;
+  // Mirror the server's LOGIN_RE (authApi.ts) so a bad callsign gets a human
+  // explanation here instead of the server's uniform rejection.
+  if (!/^[\p{L}\p{N}_-]{3,24}$/u.test(login)) {
+    statusEl.textContent = t('Позывной для аккаунта: 3–24 символа — буквы, цифры, _ или -');
+    return null;
+  }
   // The password may come from the welcome card (Bytro-style sign-up) or the match
   // browser's field (custom-server joins) — whichever the player actually filled.
   const password = wPassInput.value || (passInput?.value ?? '');

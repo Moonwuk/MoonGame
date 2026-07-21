@@ -1032,6 +1032,8 @@ export const en: Record<string, string> = {
   'Новый командир': 'New Commander',
   'Добро пожаловать, командир. Флот ждёт приказа.': 'Welcome, commander. The fleet awaits your orders.',
   'Придумай пароль — аккаунт создастся сам': 'Choose a password — the account creates itself',
+  'Позывной для аккаунта: 3–24 символа — буквы, цифры, _ или -':
+    'Account callsign: 3–24 chars — letters, digits, _ or -',
   Обновить: 'Update',
   'Обновить список': 'Refresh list',
   'Одиночная игра': 'Solo game',
