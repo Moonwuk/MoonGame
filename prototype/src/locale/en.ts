@@ -188,6 +188,7 @@ export const en: Record<string, string> = {
   'план пуст — добавь шаги': 'plan is empty — add steps',
   '⏱{n}ч': '⏱{n}h',
   '⏱ +1ч': '⏱ +1h',
+  '🎯{n}ч': '🎯{n}h',
   Сюда: 'Go here',
   Огонь: 'Fire',
   'снять приказ': 'clear the order',

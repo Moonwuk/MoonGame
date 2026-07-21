@@ -11915,6 +11915,7 @@ function tgStepLabel(st: ChainStep, target: string): string {
   if (st.kind === 'wait') return t('⏱{n}ч', { n: st.hours });
   if (st.kind === 'move') return st.to === target ? '✈' : `✈ ${st.to}`;
   if (st.kind === 'assault') return '⚔';
+  if (st.kind === 'strike') return t('🎯{n}ч', { n: st.hours });
   return '🎯';
 }
 /** Open the composer for `target`, editing the FIRST chained fleet's plan (or a
@@ -12002,7 +12003,10 @@ document.getElementById('tgted')?.addEventListener('click', (ev) => {
   } else if (act === 'assault') {
     st.push({ kind: 'assault' });
   } else if (act === 'barrage') {
-    st.push({ kind: 'barrage', target: null });
+    // Fire window (STRIKE-1): repeat taps grow the window by an hour, like Задержка.
+    const last = st[st.length - 1];
+    if (last?.kind === 'strike') last.hours = Math.min(24 * 14, last.hours + 1);
+    else st.push({ kind: 'strike', target: null, hours: 1 });
   } else if (act === 'home') {
     const home = nearestOwnWorld(tgtEditor.target);
     if (home) st.push({ kind: 'move', to: home });
