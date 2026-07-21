@@ -2596,6 +2596,12 @@ type DivState = GameState & {
    *  (center/radius/sortie + the next rearm-round due time). Driven server-side
    *  (serverPatrolActions), so «дежурный вылет» works in NET and offline. */
   patrols?: Record<string, Patrol & { rearmAt?: number }>;
+  /** CC-1 order chains, AUTHORITATIVE: fleetId → queued steps the fleet runs one by
+   *  one whenever it is free (Задержка = wait, Точка+ = several move steps, «прийти и
+   *  открыть огонь» = move+barrage). The key is `orders` on purpose: `visibleState`
+   *  already strips it for other viewers (future intent, like `scheduled`). Driven
+   *  server-side (serverChainActions) and by the solo frame loop. */
+  orders?: Record<string, FleetChain>;
 };
 export function divisionsOf(state: GameState): Record<string, Division> {
   const s = state as DivState;
@@ -3216,11 +3222,50 @@ export const standingOrdersModule: GameModule = {
       patrol.sortie = { fuel: s.fuel, rearming: s.rearming };
       if (p.rearmAt !== undefined) patrol.rearmAt = p.rearmAt;
     });
+    api.onAction('order.chain', (action, h) => {
+      // CC-1: replace the fleet's WHOLE order chain atomically ([] = cancel). The
+      // client only ever sets the plan; advancing it is the driver's job (chain.stamp).
+      const p = action.payload as { fleetId?: unknown; steps?: unknown };
+      const f = ownedFleet(h, action.playerId, p?.fleetId);
+      if (typeof f === 'string') return h.reject(f);
+      const steps = validateChainSteps(p?.steps, h.state);
+      if (steps === null) return h.reject('E_BAD_PAYLOAD');
+      const st = h.state as DivState;
+      if (steps.length === 0) {
+        if (st.orders) {
+          delete st.orders[f.id];
+          if (Object.keys(st.orders).length === 0) delete st.orders;
+        }
+        return;
+      }
+      (st.orders ??= {})[f.id] = { steps }; // a fresh plan drops any armed wait
+    });
+    api.onAction('chain.stamp', (action, h) => {
+      // The DRIVER's runtime stamp (consumed head / armed wait deadline) — same trust
+      // shape as patrol.stamp: bounds-checked, so a forged stamp can't plant garbage.
+      const p = action.payload as { fleetId?: unknown; steps?: unknown; waitUntil?: unknown };
+      const f = ownedFleet(h, action.playerId, p?.fleetId);
+      if (typeof f === 'string') return h.reject(f);
+      const st = h.state as DivState;
+      if (!st.orders?.[f.id]) return h.reject('E_NO_TARGET'); // nothing to advance
+      const steps = validateChainSteps(p?.steps, h.state);
+      if (steps === null) return h.reject('E_BAD_PAYLOAD');
+      const w = p?.waitUntil;
+      if (w !== undefined && (typeof w !== 'number' || !Number.isFinite(w) || w < 0)) {
+        return h.reject('E_BAD_PAYLOAD');
+      }
+      if (steps.length === 0) {
+        delete st.orders[f.id];
+        if (Object.keys(st.orders).length === 0) delete st.orders;
+        return;
+      }
+      st.orders[f.id] = w === undefined ? { steps } : { steps, waitUntil: w };
+    });
     // Housekeeping: standing orders of dead fleets must not live in state (and every
     // snapshot) forever. Same deterministic sweep as the order chains'.
     api.on('time.advanced', (_ev, h) => {
       const st = h.state as DivState;
-      for (const key of ['autoAssault', 'patrols', 'wingSorties'] as const) {
+      for (const key of ['autoAssault', 'patrols', 'wingSorties', 'orders'] as const) {
         const map = st[key];
         if (!map) continue;
         for (const fid of Object.keys(map)) if (!h.state.fleets[fid]) delete map[fid];
@@ -3429,6 +3474,58 @@ export function fleetIdle(fleet: Fleet): boolean {
   return !fleet.movement && !fleet.battleId;
 }
 
+/** One CC-1 chain step. `move` — fly to a world; `wait` — hold N game-hours
+ *  (Задержка); `assault` — storm the world under the fleet (entering orbit first if
+ *  needed); `barrage` — focus artillery standoff fire (null = nearest hostile).
+ *  A step runs when the fleet is FREE, so «прийти и открыть огонь» = [move, barrage]
+ *  and a waypoint route (Точка+) is just several move steps. */
+export type ChainStep =
+  | { kind: 'move'; to: string }
+  | { kind: 'wait'; hours: number }
+  | { kind: 'assault' }
+  | { kind: 'barrage'; target: string | null };
+/** A fleet's queued chain: the remaining steps + the deadline of the ARMED head
+ *  `wait` step (stamped by the driver; absent while the head is not a ticking wait). */
+export interface FleetChain {
+  steps: ChainStep[];
+  waitUntil?: number;
+}
+export const MAX_CHAIN_STEPS = 8;
+/** One Задержка is capped at 14 game-days — enough for any real plan, too short to
+ *  park garbage in state forever. */
+export const MAX_CHAIN_WAIT_HOURS = 24 * 14;
+
+/** Rebuild chain steps from a raw payload: only known kinds, only known worlds, no
+ *  smuggled extra keys into state (A08). null = garbage → E_BAD_PAYLOAD. */
+export function validateChainSteps(raw: unknown, state: GameState): ChainStep[] | null {
+  if (!Array.isArray(raw) || raw.length > MAX_CHAIN_STEPS) return null;
+  const out: ChainStep[] = [];
+  for (const item of raw) {
+    const step = item as { kind?: unknown; to?: unknown; hours?: unknown; target?: unknown } | null;
+    if (!step || typeof step !== 'object') return null;
+    if (step.kind === 'move') {
+      if (typeof step.to !== 'string' || !state.planets[step.to]) return null;
+      out.push({ kind: 'move', to: step.to });
+    } else if (step.kind === 'wait') {
+      const h = step.hours;
+      if (typeof h !== 'number' || !Number.isFinite(h) || h <= 0 || h > MAX_CHAIN_WAIT_HOURS) {
+        return null;
+      }
+      out.push({ kind: 'wait', hours: h });
+    } else if (step.kind === 'assault') {
+      out.push({ kind: 'assault' });
+    } else if (step.kind === 'barrage') {
+      if (step.target !== null && step.target !== undefined && typeof step.target !== 'string') {
+        return null;
+      }
+      out.push({ kind: 'barrage', target: typeof step.target === 'string' ? step.target : null });
+    } else {
+      return null;
+    }
+  }
+  return out;
+}
+
 
 /** The squadron-trait ship stacks aboard a fleet — what a carrier launches as a strike
  *  wing (squadrons-roadmap SQ-1.1: launch-as-unit). Pure. */
@@ -3626,6 +3723,81 @@ export function serverAutoAssaultActions(
   return out;
 }
 
+/** One tick of the CC-1 chain driver: for every chained fleet that is FREE (not in
+ *  transit, not in battle), resolve the head step into the orders to issue plus the
+ *  `chain.stamp` patch ([] steps = chain done → cleared). Consume-on-issue: a step
+ *  whose order the core then rejects is SKIPPED, not retried forever (the CC-2
+ *  rejected-churn lesson). Sorted fleet ids ⇒ deterministic across hosts (JSONB does
+ *  not preserve object key order). Pure — hosts apply the patch, then the actions. */
+export function serverChainActions(
+  state: GameState,
+  now: number,
+): Array<{
+  fleetId: string;
+  owner: string;
+  actions: Action[];
+  patch?: { steps: ChainStep[]; waitUntil?: number };
+}> {
+  const chains = (state as DivState).orders ?? {};
+  const out: Array<{
+    fleetId: string;
+    owner: string;
+    actions: Action[];
+    patch?: { steps: ChainStep[]; waitUntil?: number };
+  }> = [];
+  for (const fid of Object.keys(chains).sort()) {
+    const chain = chains[fid]!;
+    const f = state.fleets[fid];
+    if (!f) continue; // dead fleet — the module's own housekeeping sweep clears it
+    if (!fleetIdle(f)) continue; // busy: the chain resumes once the fleet is free
+    const head = chain.steps[0];
+    if (!head) {
+      out.push({ fleetId: fid, owner: f.owner, actions: [], patch: { steps: [] } });
+      continue;
+    }
+    const rest = chain.steps.slice(1);
+    if (head.kind === 'wait') {
+      // Two-phase hold: arm the deadline once, then consume when the clock passes it.
+      if (chain.waitUntil === undefined) {
+        out.push({
+          fleetId: fid,
+          owner: f.owner,
+          actions: [],
+          patch: { steps: chain.steps, waitUntil: now + head.hours * HOUR },
+        });
+      } else if (now >= chain.waitUntil) {
+        out.push({ fleetId: fid, owner: f.owner, actions: [], patch: { steps: rest } });
+      }
+    } else if (head.kind === 'move') {
+      out.push({
+        fleetId: fid,
+        owner: f.owner,
+        // Already there → nothing to issue (the core would reject E_SAME_LOCATION).
+        actions: f.location === head.to ? [] : [moveFleet(f.owner, fid, head.to)],
+        patch: { steps: rest },
+      });
+    } else if (head.kind === 'assault') {
+      out.push({
+        fleetId: fid,
+        owner: f.owner,
+        actions:
+          f.orbit === 'near'
+            ? [assaultFleet(f.owner, fid)]
+            : [orbitFleet(f.owner, fid), assaultFleet(f.owner, fid)],
+        patch: { steps: rest },
+      });
+    } else {
+      out.push({
+        fleetId: fid,
+        owner: f.owner,
+        actions: [barrageFleet(f.owner, fid, head.target)],
+        patch: { steps: rest },
+      });
+    }
+  }
+  return out;
+}
+
 /** One tick of the SERVER-SIDE patrol driver (CC-4): tick each standing patrol's rearm
  *  on its game-hour cadence, then — if the wing is parked and flight-ready — scramble at
  *  the nearest identified, at-war contact inside the radius (the same pure scrambleOrder
@@ -3710,6 +3882,12 @@ export const orderScramble = (playerId: string, fleetId: string, on: boolean) =>
 /** The patrol driver's runtime stamp: burned fuel / ticked rearm / next cadence mark. */
 export const patrolStamp = (playerId: string, fleetId: string, sortie: SortieState, rearmAt?: number) =>
   act(playerId, 'patrol.stamp', rearmAt === undefined ? { fleetId, sortie } : { fleetId, sortie, rearmAt });
+/** CC-1: set (or [] = cancel) an owned fleet's whole order chain atomically. */
+export const orderChain = (playerId: string, fleetId: string, steps: ChainStep[]) =>
+  act(playerId, 'order.chain', { fleetId, steps });
+/** The chain driver's runtime stamp: consumed head / armed wait deadline. */
+export const chainStamp = (playerId: string, fleetId: string, steps: ChainStep[], waitUntil?: number) =>
+  act(playerId, 'chain.stamp', waitUntil === undefined ? { fleetId, steps } : { fleetId, steps, waitUntil });
 
 /** Place a market lot: `sell` escrows `amount` of `resource` for `price` credits/unit;
  *  `buy` escrows the credits and offers to buy that much of `resource`. */

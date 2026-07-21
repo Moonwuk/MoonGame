@@ -94,6 +94,8 @@ import {
   unlockHeroSkill,
   fitHero,
   buildShip,
+  serverChainActions,
+  chainStamp,
   type Patrol,
 } from './game';
 import { OFFICERS, GROUND_ROSTER } from './groundcombat';
@@ -2887,6 +2889,17 @@ function fmtHrs(h: number): string {
 // that's idle auto-sorties at the nearest identified, at-war contact inside its strike
 // radius — burning one fuel (SQ-2.1) — and rearms one round per elapsed game-hour. The
 // pure decision is scrambleOrder (tested); this just reads the world (vision + diplomacy)
+// CC-1 chain driver (solo): the same pure core the netserver runs — stamp the chain
+// forward (consume-on-issue), then issue the head step's orders. In net play the
+// server drives chains; this runs only inside the solo sim block of the frame loop.
+function driveChains(): void {
+  for (const c of serverChainActions(s, s.time)) {
+    const issue = (a: Action) => (c.owner === ME ? playerOrder(a) : apply(order(s, a, s.time)));
+    if (c.patch) issue(chainStamp(c.owner, c.fleetId, c.patch.steps, c.patch.waitUntil));
+    for (const a of c.actions) issue(a);
+  }
+}
+
 // and issues the order. Same host-side shape as autoEngage/driveQueues; single-player only
 // (net play → the server owns fleets — promoting this server-side is the CC-server brick).
 function drivePatrols(): void {
@@ -10368,6 +10381,7 @@ function frame(nowReal: number) {
     pumpAssaultOrders();
     checkFleetClashes();
     drivePatrols(); // CC-4: squadrons on дежурный вылет auto-strike contacts in range
+    driveChains(); // CC-1: advance fleet order chains (wait → move → assault/barrage)
     runAI();
     pumpBuildQueues();
     closeIdleRallies(); // drop the 'rally' tag once a world's build pipeline empties
