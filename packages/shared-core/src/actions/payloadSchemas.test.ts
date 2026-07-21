@@ -130,6 +130,7 @@ describe('SV-1.2 · action payload schemas', () => {
             { kind: 'move', to: 'p1' },
             { kind: 'assault' },
             { kind: 'barrage', target: null },
+            { kind: 'strike', target: null, hours: 3 },
           ],
         },
       ],
@@ -155,6 +156,7 @@ describe('SV-1.2 · action payload schemas', () => {
       ['order.chain', { fleetId: 'f1' }], // missing steps
       ['order.chain', { fleetId: 'f1', steps: [{ kind: 'warp' }] }], // unknown step kind
       ['order.chain', { fleetId: 'f1', steps: [{ kind: 'wait', hours: 0 }] }], // no zero waits
+      ['order.chain', { fleetId: 'f1', steps: [{ kind: 'strike', target: null, hours: 0 }] }], // no zero fire windows
       ['order.chain', { fleetId: 'f1', steps: [{ kind: 'move' }] }], // move without a target
       [
         'order.chain',

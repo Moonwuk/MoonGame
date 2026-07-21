@@ -159,6 +159,12 @@ export const actionPayloadSchemas: Record<string, z.ZodType> = {
           z.object({ kind: z.literal('wait'), hours: z.number().positive().finite() }),
           z.object({ kind: z.literal('assault') }),
           z.object({ kind: z.literal('barrage'), target: id.nullable() }),
+          // fire window: focus standoff fire for N game-hours, then cease and move on
+          z.object({
+            kind: z.literal('strike'),
+            target: id.nullable(),
+            hours: z.number().positive().finite(),
+          }),
         ]),
       )
       .max(8),

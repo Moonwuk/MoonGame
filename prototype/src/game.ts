@@ -77,7 +77,10 @@ import {
 import { canAfford, payCost } from '../../packages/shared-core/src/util/treasury';
 import { provinceScore } from '../../packages/shared-core/src/state/sectorKind';
 import { sumUnitStat, findHealthyStack } from '../../packages/shared-core/src/util/stacks';
-import { garrisonUnderAssault, requireOwnedIdleFleet } from '../../packages/shared-core/src/util/fleet';
+import {
+  garrisonUnderAssault,
+  requireOwnedIdleFleet,
+} from '../../packages/shared-core/src/util/fleet';
 import type { HandlerContext } from '../../packages/shared-core/src/kernel/module';
 import {
   GROUND_ROSTER,
@@ -119,37 +122,55 @@ export const data: GameData = parseGameData({
     meta_drill_speed: {
       name: 'Commander Drill: Logistics',
       description: 'Мета-прокачка: +5% к скорости флотов.',
-      branch: 'command', tier: 1, cost: {}, researchTimeHours: 0,
+      branch: 'command',
+      tier: 1,
+      cost: {},
+      researchTimeHours: 0,
       effects: { fleetSpeedBonus: 0.05 },
     },
     meta_drill_combat: {
       name: 'Commander Drill: Gunnery',
       description: 'Мета-прокачка: +5% к урону.',
-      branch: 'command', tier: 1, cost: {}, researchTimeHours: 0,
+      branch: 'command',
+      tier: 1,
+      cost: {},
+      researchTimeHours: 0,
       effects: { combatDamageBonus: 0.05 },
     },
     meta_drill_radar: {
       name: 'Commander Drill: Recon',
       description: 'Мета-прокачка: +15% к радиусу радаров.',
-      branch: 'command', tier: 1, cost: {}, researchTimeHours: 0,
+      branch: 'command',
+      tier: 1,
+      cost: {},
+      researchTimeHours: 0,
       effects: { radarRangeBonus: 0.15 },
     },
     meta_drill_veteran: {
       name: 'Commander Drill: Veterancy',
       description: 'Мета-прокачка: ещё +5% к скорости и урону.',
-      branch: 'command', tier: 1, cost: {}, researchTimeHours: 0,
+      branch: 'command',
+      tier: 1,
+      cost: {},
+      researchTimeHours: 0,
       effects: { fleetSpeedBonus: 0.05, combatDamageBonus: 0.05 },
     },
     meta_industry: {
       name: 'Commander Drill: Industry',
       description: 'Мета-прокачка: +5% к производству.',
-      branch: 'command', tier: 1, cost: {}, researchTimeHours: 0,
+      branch: 'command',
+      tier: 1,
+      cost: {},
+      researchTimeHours: 0,
       effects: { productionBonus: 0.05 },
     },
     meta_industry_2: {
       name: 'Commander Drill: Magnate',
       description: 'Мета-прокачка: ещё +5% к производству.',
-      branch: 'command', tier: 1, cost: {}, researchTimeHours: 0,
+      branch: 'command',
+      tier: 1,
+      cost: {},
+      researchTimeHours: 0,
       effects: { productionBonus: 0.05 },
     },
     industrial_automation: {
@@ -220,7 +241,8 @@ export const data: GameData = parseGameData({
     },
     void_armadas: {
       name: 'Void Armadas',
-      description: 'Доктрина больших соединений: +6% к урону и скорости флотов. Требует 5 своих секторов.',
+      description:
+        'Доктрина больших соединений: +6% к урону и скорости флотов. Требует 5 своих секторов.',
       branch: 'space',
       tier: 3,
       cost: { credits: 420, metal: 300, microelectronics: 60 },
@@ -252,7 +274,8 @@ export const data: GameData = parseGameData({
     },
     planetary_bastions: {
       name: 'Planetary Bastions',
-      description: 'Планетарные бастионы: оборонная промышленность полного цикла. +8% к урону. Капстоун Маршала.',
+      description:
+        'Планетарные бастионы: оборонная промышленность полного цикла. +8% к урону. Капстоун Маршала.',
       branch: 'ground',
       tier: 3,
       cost: { credits: 480, metal: 360, microelectronics: 40 },
@@ -285,7 +308,8 @@ export const data: GameData = parseGameData({
     },
     ace_programs: {
       name: 'Ace Programs',
-      description: 'Программа асов: элитные экипажи. +6% к урону и скорости флотов. Капстоун Комэска.',
+      description:
+        'Программа асов: элитные экипажи. +6% к урону и скорости флотов. Капстоун Комэска.',
       branch: 'squadron',
       tier: 3,
       cost: { credits: 500, metal: 380, microelectronics: 60 },
@@ -550,28 +574,52 @@ export const data: GameData = parseGameData({
   // prices them; `unit.build{modules}` stamps the chosen set onto the built stack.
   modules: {
     cargo_bay: {
-      name: 'Грузовой отсек', slot: 'utility', tag: 'horizontal',
-      effects: { stats: { cargoCapacity: 6 } }, cost: { metal: 45 }, allowed: { domain: 'space' },
+      name: 'Грузовой отсек',
+      slot: 'utility',
+      tag: 'horizontal',
+      effects: { stats: { cargoCapacity: 6 } },
+      cost: { metal: 45 },
+      allowed: { domain: 'space' },
     },
     radar_module: {
-      name: 'Радар-модуль', slot: 'utility', tag: 'horizontal',
-      effects: { stats: { radarRange: 180 } }, cost: { metal: 55 }, allowed: { domain: 'space' },
+      name: 'Радар-модуль',
+      slot: 'utility',
+      tag: 'horizontal',
+      effects: { stats: { radarRange: 180 } },
+      cost: { metal: 55 },
+      allowed: { domain: 'space' },
     },
     ion_engine: {
-      name: 'Ионный двигатель', slot: 'utility', tag: 'vertical',
-      effects: { stats: { speed: 2 } }, cost: { metal: 40 }, allowed: { domain: 'space' },
+      name: 'Ионный двигатель',
+      slot: 'utility',
+      tag: 'vertical',
+      effects: { stats: { speed: 2 } },
+      cost: { metal: 40 },
+      allowed: { domain: 'space' },
     },
     targeting_array: {
-      name: 'Система наведения', slot: 'weapon', tag: 'vertical',
-      effects: { stats: { attack: 4 } }, cost: { metal: 60 }, allowed: { domain: 'space' },
+      name: 'Система наведения',
+      slot: 'weapon',
+      tag: 'vertical',
+      effects: { stats: { attack: 4 } },
+      cost: { metal: 60 },
+      allowed: { domain: 'space' },
     },
     ablative_plating: {
-      name: 'Броневые плиты', slot: 'defense', tag: 'vertical',
-      effects: { stats: { hp: 12 } }, cost: { metal: 50 }, allowed: { domain: 'space' },
+      name: 'Броневые плиты',
+      slot: 'defense',
+      tag: 'vertical',
+      effects: { stats: { hp: 12 } },
+      cost: { metal: 50 },
+      allowed: { domain: 'space' },
     },
     shield_booster: {
-      name: 'Тяжёлый щит', slot: 'defense', tag: 'vertical',
-      effects: { stats: { shield: 15 } }, cost: { metal: 80 }, allowed: { domain: 'space' },
+      name: 'Тяжёлый щит',
+      slot: 'defense',
+      tag: 'vertical',
+      effects: { stats: { shield: 15 } },
+      cost: { metal: 80 },
+      allowed: { domain: 'space' },
     },
   },
   // --- фракции (H3): четыре лор-дома. Пока фракция — ЧИСТО пассивные бонусы к
@@ -643,8 +691,20 @@ export const data: GameData = parseGameData({
       hp: 18,
       scoreValue: 3,
       upgrades: [
-        { cost: { metal: 160, credits: 40 }, buildTimeHours: 4, produces: { food: 16 }, upkeep: { energy: 10 }, hp: 24 },
-        { cost: { metal: 260, credits: 90 }, buildTimeHours: 6, produces: { food: 24 }, upkeep: { energy: 16 }, hp: 30 },
+        {
+          cost: { metal: 160, credits: 40 },
+          buildTimeHours: 4,
+          produces: { food: 16 },
+          upkeep: { energy: 10 },
+          hp: 24,
+        },
+        {
+          cost: { metal: 260, credits: 90 },
+          buildTimeHours: 6,
+          produces: { food: 24 },
+          upkeep: { energy: 16 },
+          hp: 30,
+        },
       ],
     },
     power_plant: {
@@ -656,8 +716,20 @@ export const data: GameData = parseGameData({
       hp: 20,
       scoreValue: 4,
       upgrades: [
-        { cost: { metal: 240, credits: 100 }, buildTimeHours: 6, produces: { energy: 26 }, upkeep: { credits: 12 }, hp: 28 },
-        { cost: { metal: 400, credits: 190 }, buildTimeHours: 8, produces: { energy: 42 }, upkeep: { credits: 20 }, hp: 36 },
+        {
+          cost: { metal: 240, credits: 100 },
+          buildTimeHours: 6,
+          produces: { energy: 26 },
+          upkeep: { credits: 12 },
+          hp: 28,
+        },
+        {
+          cost: { metal: 400, credits: 190 },
+          buildTimeHours: 8,
+          produces: { energy: 42 },
+          upkeep: { credits: 20 },
+          hp: 36,
+        },
       ],
     },
     // Bootstrap chain on purpose: the fab's UPGRADES cost the very good it produces —
@@ -707,8 +779,20 @@ export const data: GameData = parseGameData({
       hp: 20,
       scoreValue: 5,
       upgrades: [
-        { cost: { metal: 220, credits: 90 }, buildTimeHours: 6, produces: { metal: 60 }, upkeep: { energy: 14 }, hp: 30 },
-        { cost: { metal: 380, credits: 170 }, buildTimeHours: 8, produces: { metal: 100 }, upkeep: { energy: 22 }, hp: 40 },
+        {
+          cost: { metal: 220, credits: 90 },
+          buildTimeHours: 6,
+          produces: { metal: 60 },
+          upkeep: { energy: 14 },
+          hp: 30,
+        },
+        {
+          cost: { metal: 380, credits: 170 },
+          buildTimeHours: 8,
+          produces: { metal: 100 },
+          upkeep: { energy: 22 },
+          hp: 40,
+        },
       ],
     },
     barracks: { name: 'Barracks', cost: { metal: 70 }, buildTimeHours: 3, hp: 25, scoreValue: 2 },
@@ -741,8 +825,20 @@ export const data: GameData = parseGameData({
       upkeep: { energy: 6 },
       scoreValue: 2,
       upgrades: [
-        { cost: { metal: 180, credits: 80 }, buildTimeHours: 5, hp: 28, radarRange: 330, upkeep: { energy: 10 } },
-        { cost: { metal: 300, credits: 140 }, buildTimeHours: 7, hp: 38, radarRange: 420, upkeep: { energy: 16 } },
+        {
+          cost: { metal: 180, credits: 80 },
+          buildTimeHours: 5,
+          hp: 28,
+          radarRange: 330,
+          upkeep: { energy: 10 },
+        },
+        {
+          cost: { metal: 300, credits: 140 },
+          buildTimeHours: 7,
+          hp: 38,
+          radarRange: 420,
+          upkeep: { energy: 16 },
+        },
       ],
     },
     // space fortress — only built in an asteroid field; turns the junction into a
@@ -844,7 +940,8 @@ export const data: GameData = parseGameData({
   heroes: {
     commander: {
       name: 'Командир',
-      description: 'Главный герой-флагман: командный трансгуманист, усиливает флот и открывает коридоры.',
+      description:
+        'Главный герой-флагман: командный трансгуманист, усиливает флот и открывает коридоры.',
       branch: 'transhuman',
       ship: { unit: 'hero' },
       slots: 4,
@@ -886,57 +983,87 @@ export const data: GameData = parseGameData({
   heroAbilities: {
     corridor: {
       name: 'Коридор',
-      description: 'Открывает временный публичный коридор-лейн до близкого мира; свои флоты идут по нему быстрее.',
-      type: 'temp_lane', cooldownHours: 12, range: 600, params: {},
+      description:
+        'Открывает временный публичный коридор-лейн до близкого мира; свои флоты идут по нему быстрее.',
+      type: 'temp_lane',
+      cooldownHours: 12,
+      range: 600,
+      params: {},
     },
     annihilate: {
       name: 'Аннигиляция',
-      description: 'Уничтожает планету в радиусе — она остаётся узлом, но становится мёртвым миром.',
-      type: 'annihilate', cooldownHours: 48, range: 500, params: {},
+      description:
+        'Уничтожает планету в радиусе — она остаётся узлом, но становится мёртвым миром.',
+      type: 'annihilate',
+      cooldownHours: 48,
+      range: 500,
+      params: {},
     },
     rally: {
       name: 'Сбор',
       description: 'Боевой клич: временный бонус к боевой ауре для своих флотов рядом с героем.',
-      type: 'aura', cooldownHours: 18, range: 0,
+      type: 'aura',
+      cooldownHours: 18,
+      range: 0,
       params: { combatBonus: 0.1, durationHours: 2, radius: 300 },
     },
     scan: {
       name: 'Разведка',
       description: 'Раскрывает зону вокруг цели сквозь туман на время.',
-      type: 'reveal', cooldownHours: 10, range: 400, params: { radius: 250, durationHours: 3 },
+      type: 'reveal',
+      cooldownHours: 10,
+      range: 400,
+      params: { radius: 250, durationHours: 3 },
     },
     recall: {
       name: 'Отзыв',
       description: 'Мгновенно отзывает корабль-героя в столицу.',
-      type: 'recall', cooldownHours: 24, range: 0, params: {},
+      type: 'recall',
+      cooldownHours: 24,
+      range: 0,
+      params: {},
     },
     bulwark: {
       name: 'Бастион',
       description: 'Временный щит: бонус к обороне своим флотам рядом с героем.',
-      type: 'aura', cooldownHours: 20, range: 0,
+      type: 'aura',
+      cooldownHours: 20,
+      range: 0,
       params: { defenseBonus: 0.15, durationHours: 2, radius: 300 },
     },
     boarding_translocation: {
       name: 'Абордажная транслокация',
-      description: 'Герой формируется прямо на борту одного из своих флотов — где бы тот ни был. Пассивный навык: расширяет точки развёртывания.',
-      type: 'spawn_fleet', cooldownHours: 0, range: 0, params: {},
+      description:
+        'Герой формируется прямо на борту одного из своих флотов — где бы тот ни был. Пассивный навык: расширяет точки развёртывания.',
+      type: 'spawn_fleet',
+      cooldownHours: 0,
+      range: 0,
+      params: {},
     },
     diplomatic_landing: {
       name: 'Дипломатическая высадка',
-      description: 'Союзные миры принимают героя как своего: корабль может подняться и на планете союзника. Пассивный навык: расширяет точки развёртывания.',
-      type: 'spawn_allied', cooldownHours: 0, range: 0, params: {},
+      description:
+        'Союзные миры принимают героя как своего: корабль может подняться и на планете союзника. Пассивный навык: расширяет точки развёртывания.',
+      type: 'spawn_allied',
+      cooldownHours: 0,
+      range: 0,
+      params: {},
     },
   },
   heroPassives: {
     vanguard_impulse: {
       name: 'Импульс авангарда',
       description: 'Корабль героя ведёт свой флот на форсаже: +10% к скорости флота героя.',
-      hook: 'fleet.speed', scope: 'heroFleet', params: { bonus: 0.1 },
+      hook: 'fleet.speed',
+      scope: 'heroFleet',
+      params: { bonus: 0.1 },
     },
     rally_beacon: {
       name: 'Маяк сбора',
       description: 'Флоты рядом с героем бьются яростнее: +8% к урону своих флотов в радиусе 300.',
-      hook: 'combat.damage', scope: 'ownFleetsNear', params: { bonus: 0.08, radius: 300 },
+      hook: 'combat.damage',
+      scope: 'ownFleetsNear',
+      params: { bonus: 0.08, radius: 300 },
     },
   },
   heroSkillTrees: {
@@ -980,13 +1107,15 @@ export const data: GameData = parseGameData({
     },
     aegis_matrix: {
       name: 'Матрица «Эгида»',
-      description: 'Полевой генератор воодушевляет флоты рядом с героем: +8% к урону в радиусе 300.',
+      description:
+        'Полевой генератор воодушевляет флоты рядом с героем: +8% к урону в радиусе 300.',
       grants: { passive: 'rally_beacon' },
       cost: { metal: 60 },
     },
     ablative_plating: {
       name: 'Абляционная обшивка',
-      description: 'Дополнительные +40 к корпусу корабля героя. (Статы корабля заработают со швом эффективных статов, SHIP-3.)',
+      description:
+        'Дополнительные +40 к корпусу корабля героя. (Статы корабля заработают со швом эффективных статов, SHIP-3.)',
       statMods: { hp: 40 },
       cost: { metal: 30 },
     },
@@ -1326,7 +1455,10 @@ function takeFromStacks(src: UnitStack[], unit: string, count: number): UnitStac
  *  over bare hulls, or destroyed them (BF-5); damaged/differently-fitted stacks now
  *  stay separate (combat handles multiple stacks of one unit fine). */
 function mergeStacks(base: UnitStack[], add: UnitStack[]): UnitStack[] {
-  const clone = (st: UnitStack): UnitStack => ({ ...st, ...(st.modules ? { modules: [...st.modules] } : {}) });
+  const clone = (st: UnitStack): UnitStack => ({
+    ...st,
+    ...(st.modules ? { modules: [...st.modules] } : {}),
+  });
   const out = base.map(clone);
   for (const st of add) {
     const healthy = st.hp === undefined && st.shieldHp === undefined;
@@ -1807,9 +1939,18 @@ export interface FormationTemplate {
 
 /** The three starter templates a player gets before customising them. */
 export const DEFAULT_TEMPLATES: FormationTemplate[] = [
-  { name: 'Линия', slots: ['heavy_infantry', 'heavy_infantry', 'militia', 'militia', 'tank', 'tank'] },
-  { name: 'Кулак', slots: ['tank', 'tank', 'tank', 'special_forces', 'heavy_infantry', 'heavy_infantry'] },
-  { name: 'Рейд', slots: ['special_forces', 'special_forces', 'special_forces', 'militia', 'militia', null] },
+  {
+    name: 'Линия',
+    slots: ['heavy_infantry', 'heavy_infantry', 'militia', 'militia', 'tank', 'tank'],
+  },
+  {
+    name: 'Кулак',
+    slots: ['tank', 'tank', 'tank', 'special_forces', 'heavy_infantry', 'heavy_infantry'],
+  },
+  {
+    name: 'Рейд',
+    slots: ['special_forces', 'special_forces', 'special_forces', 'militia', 'militia', null],
+  },
 ];
 
 /** Именные офицерские дивизии (H4): ГОТОВЫЕ шаблоны с встроенным офицером — состав
@@ -1819,9 +1960,28 @@ export interface OfficerTemplate extends FormationTemplate {
   officer: string; // OFFICERS key
 }
 export const OFFICER_TEMPLATES: OfficerTemplate[] = [
-  { name: 'Гвардия прорыва', officer: 'assault', slots: ['tank', 'tank', 'special_forces', 'special_forces', 'heavy_infantry', 'heavy_infantry'] },
-  { name: 'Железный рубеж', officer: 'defender', slots: ['heavy_infantry', 'heavy_infantry', 'heavy_infantry', 'heavy_infantry', 'militia', 'militia'] },
-  { name: 'Колонна снабжения', officer: 'quartermaster', slots: ['militia', 'militia', 'militia', 'heavy_infantry', 'heavy_infantry', 'tank'] },
+  {
+    name: 'Гвардия прорыва',
+    officer: 'assault',
+    slots: ['tank', 'tank', 'special_forces', 'special_forces', 'heavy_infantry', 'heavy_infantry'],
+  },
+  {
+    name: 'Железный рубеж',
+    officer: 'defender',
+    slots: [
+      'heavy_infantry',
+      'heavy_infantry',
+      'heavy_infantry',
+      'heavy_infantry',
+      'militia',
+      'militia',
+    ],
+  },
+  {
+    name: 'Колонна снабжения',
+    officer: 'quartermaster',
+    slots: ['militia', 'militia', 'militia', 'heavy_infantry', 'heavy_infantry', 'tank'],
+  },
 ];
 
 /** A composition doctrine the template's mix unlocks — an organisational LABEL
@@ -1853,7 +2013,12 @@ export interface FormationStats {
  *  combat resolves from — so the preview is grounded in real combat, not an unrelated paper
  *  stat (BF-23 tail). Doctrines are labels only, no multiplier. Pure + deterministic. */
 export function formationStats(tpl: FormationTemplate): FormationStats {
-  const byType: Record<FormationUnit, number> = { militia: 0, heavy_infantry: 0, special_forces: 0, tank: 0 };
+  const byType: Record<FormationUnit, number> = {
+    militia: 0,
+    heavy_infantry: 0,
+    special_forces: 0,
+    tank: 0,
+  };
   // A unit's single-number weight = the mean of its per-target damage row in GROUND_ROSTER
   // (expected damage vs an even enemy mix); `atk` when attacking, `def` on return fire.
   const rosterMean = (row: DamageTable): number =>
@@ -2082,13 +2247,18 @@ export function newGame(setup: SetupConfig = DEFAULT_SETUP): GameState {
     // seed UNDEPLOYED, mirroring `buildFromMap` — `hero.spawn` raises their ships
     // in-match (active cap 3). All respawn at the capital (`home`, re-designatable).
     const roster = !seat.ai && setup.heroes ? setup.heroes : DEFAULT_HEROES;
-    const mainIdx = Math.max(0, roster.findIndex((x) => x.grade === 'main'));
+    const mainIdx = Math.max(
+      0,
+      roster.findIndex((x) => x.grade === 'main'),
+    );
     roster.forEach((loadout, i) => {
       const archetype = ARCHETYPE_OF_GRADE[loadout.grade] ?? 'commander';
       const def = data.heroes[archetype];
       // Ability loadout = the menu picks (catalog-known ids) + the archetype's
       // spawn-marker perks (not menu-pickable — they ride with the archetype).
-      const picks = loadout.abilities.filter((id): id is string => !!id && !!data.heroAbilities[id]);
+      const picks = loadout.abilities.filter(
+        (id): id is string => !!id && !!data.heroAbilities[id],
+      );
       const markers = (def?.startAbilities ?? []).filter((id) =>
         data.heroAbilities[id]?.type.startsWith('spawn_'),
       );
@@ -2182,13 +2352,17 @@ export function netIncome(state: GameState, playerId: string): Record<string, nu
   // technologyModule) — the HUD `+/h` used to apply only the planetType bonus, so a
   // production-boosted player (e.g. a +12% faction) saw a low readout from minute one.
   const me = state.players[playerId];
-  const factionBonus = me?.faction ? (data.factions[me.faction]?.passives?.productionBonus ?? 0) : 0;
+  const factionBonus = me?.faction
+    ? (data.factions[me.faction]?.passives?.productionBonus ?? 0)
+    : 0;
   let techBonus = 0;
-  for (const id of me?.technologies?.completed ?? []) techBonus += data.technologies[id]?.effects?.productionBonus ?? 0;
+  for (const id of me?.technologies?.completed ?? [])
+    techBonus += data.technologies[id]?.effects?.productionBonus ?? 0;
   const bonusMult = (1 + factionBonus) * (1 + techBonus);
   for (const p of Object.values(state.planets)) {
     if (p.owner !== playerId || isBombarded(state, p.id)) continue;
-    const mult = (1 + (p.planetType ? (data.planetTypes[p.planetType]?.productionBonus ?? 0) : 0)) * bonusMult;
+    const mult =
+      (1 + (p.planetType ? (data.planetTypes[p.planetType]?.productionBonus ?? 0) : 0)) * bonusMult;
     // Credits are settled per-planet so the civic tax + Tax Office boost mirror the
     // core's economy.production pipeline (taxModule); metal accrues straight to `out`.
     let credits = 0;
@@ -2198,7 +2372,9 @@ export function netIncome(state: GameState, playerId: string): Record<string, nu
       const level = buildingLevel(def, b.level);
       // Mirror the core's brownout: a building starved of an arrears resource shows
       // its dimmed output, so the top-bar flow matches what actually accrues.
-      const starved = arrears.length > 0 && Object.keys(level.upkeep).some((r) => (level.upkeep[r] ?? 0) > 0 && arrears.includes(r));
+      const starved =
+        arrears.length > 0 &&
+        Object.keys(level.upkeep).some((r) => (level.upkeep[r] ?? 0) > 0 && arrears.includes(r));
       const bMult = mult * (starved ? BROWNOUT : 1);
       for (const res of Object.keys(level.produces)) {
         const v = (level.produces[res] ?? 0) * bMult;
@@ -2206,7 +2382,8 @@ export function netIncome(state: GameState, playerId: string): Record<string, nu
         else out[res] = (out[res] ?? 0) + v;
       }
       // …and its running cost (daily → hourly), same drain the settlement applies.
-      for (const res of Object.keys(level.upkeep)) out[res] = (out[res] ?? 0) - (level.upkeep[res] ?? 0) / 24;
+      for (const res of Object.keys(level.upkeep))
+        out[res] = (out[res] ?? 0) - (level.upkeep[res] ?? 0) / 24;
     }
     // Constructions in progress (≥50% built) chip in a partial/delta share too —
     // mirrors economy.ts's `pendingProduction` ramp rule. Point-evaluated (not
@@ -2225,22 +2402,33 @@ export function netIncome(state: GameState, playerId: string): Record<string, nu
         const def = data.buildings[cp.building];
         if (!def) continue;
         const level1 = buildingLevel(def, 1);
-        const ramp = thresholdRamp(buildProgress(state.time, event.at, level1.buildTimeHours * HOUR));
+        const ramp = thresholdRamp(
+          buildProgress(state.time, event.at, level1.buildTimeHours * HOUR),
+        );
         if (ramp <= 0) continue;
         for (const res of Object.keys(level1.produces)) {
           const v = (level1.produces[res] ?? 0) * ramp * mult;
           if (res === 'credits') credits += v;
           else out[res] = (out[res] ?? 0) + v;
         }
-      } else if (cp.kind === 'upgrade' && typeof cp.building === 'string' && typeof cp.level === 'number') {
+      } else if (
+        cp.kind === 'upgrade' &&
+        typeof cp.building === 'string' &&
+        typeof cp.level === 'number'
+      ) {
         const def = data.buildings[cp.building];
         const instance = p.buildings.find((b) => b.type === cp.building);
         if (!def || !instance) continue;
         const current = buildingLevel(def, instance.level);
         const target = buildingLevel(def, cp.level);
-        const ramp = thresholdRamp(buildProgress(state.time, event.at, target.buildTimeHours * HOUR));
+        const ramp = thresholdRamp(
+          buildProgress(state.time, event.at, target.buildTimeHours * HOUR),
+        );
         if (ramp <= 0) continue;
-        const resources = new Set([...Object.keys(current.produces), ...Object.keys(target.produces)]);
+        const resources = new Set([
+          ...Object.keys(current.produces),
+          ...Object.keys(target.produces),
+        ]);
         for (const res of resources) {
           const delta = ((target.produces[res] ?? 0) - (current.produces[res] ?? 0)) * ramp * mult;
           if (delta === 0) continue;
@@ -2264,13 +2452,20 @@ export function netIncome(state: GameState, playerId: string): Record<string, nu
           if (res === 'credits') credits += v;
           else out[res] = (out[res] ?? 0) + v;
         }
-      } else if (site.kind === 'upgrade' && typeof site.building === 'string' && typeof site.level === 'number') {
+      } else if (
+        site.kind === 'upgrade' &&
+        typeof site.building === 'string' &&
+        typeof site.level === 'number'
+      ) {
         const def = data.buildings[site.building];
         const instance = p.buildings.find((b) => b.type === site.building);
         if (!def || !instance) continue;
         const current = buildingLevel(def, instance.level);
         const target = buildingLevel(def, site.level);
-        const resources = new Set([...Object.keys(current.produces), ...Object.keys(target.produces)]);
+        const resources = new Set([
+          ...Object.keys(current.produces),
+          ...Object.keys(target.produces),
+        ]);
         for (const res of resources) {
           const delta = ((target.produces[res] ?? 0) - (current.produces[res] ?? 0)) * ramp * mult;
           if (delta === 0) continue;
@@ -2344,7 +2539,8 @@ export const botDiplomacyModule: GameModule = {
       };
       const meter = (h.state as DivState).approval?.[to];
       if (!meter || meter[from] === undefined) return; // `to` isn't a tracked bot vs `from`
-      const need = stance === 'peace' ? FAVOUR_PEACE_ACCEPT : stance === 'pact' ? FAVOUR_PACT_ACCEPT : null;
+      const need =
+        stance === 'peace' ? FAVOUR_PEACE_ACCEPT : stance === 'pact' ? FAVOUR_PACT_ACCEPT : null;
       if (need !== null && botFavour(h.state, to, from) >= need) {
         clearOffers(h.state, to, from);
         setStance(h.state, to, from, stance);
@@ -2951,7 +3147,8 @@ export const divisionModule: GameModule = {
     // templates from the defaults on first edit (per-player, deep-copied, JSON-safe).
     api.onAction('division.template', (action, h) => {
       const p = action.payload as { template?: number; slot?: number; unit?: string | null };
-      if (typeof p?.template !== 'number' || typeof p?.slot !== 'number') return h.reject('E_BAD_PAYLOAD');
+      if (typeof p?.template !== 'number' || typeof p?.slot !== 'number')
+        return h.reject('E_BAD_PAYLOAD');
       if (p.slot < 0 || p.slot >= FORMATION_SLOTS) return h.reject('E_BAD_PAYLOAD');
       const unit = p.unit ?? null;
       if (unit !== null && !(FORMATION_UNITS as readonly string[]).includes(unit)) {
@@ -2973,7 +3170,8 @@ export const divisionModule: GameModule = {
     // player templates, so they are unreachable here — their name is locked by data.
     api.onAction('division.rename', (action, h) => {
       const p = action.payload as { template?: number; name?: unknown };
-      if (typeof p?.template !== 'number' || typeof p?.name !== 'string') return h.reject('E_BAD_PAYLOAD');
+      if (typeof p?.template !== 'number' || typeof p?.name !== 'string')
+        return h.reject('E_BAD_PAYLOAD');
       const name = p.name.trim().slice(0, 24);
       if (!name) return h.reject('E_BAD_PAYLOAD');
       const ds = h.state as DivState;
@@ -3211,12 +3409,21 @@ export const standingOrdersModule: GameModule = {
       const s = p.sortie as { fuel?: unknown; rearming?: unknown } | undefined;
       const spec = sortieSpec(f);
       if (
-        typeof s?.fuel !== 'number' || !Number.isInteger(s.fuel) || s.fuel < 0 || s.fuel > spec.maxFuel ||
-        typeof s.rearming !== 'number' || !Number.isInteger(s.rearming) || s.rearming < 0 || s.rearming > spec.rearmRounds
+        typeof s?.fuel !== 'number' ||
+        !Number.isInteger(s.fuel) ||
+        s.fuel < 0 ||
+        s.fuel > spec.maxFuel ||
+        typeof s.rearming !== 'number' ||
+        !Number.isInteger(s.rearming) ||
+        s.rearming < 0 ||
+        s.rearming > spec.rearmRounds
       ) {
         return h.reject('E_BAD_PAYLOAD');
       }
-      if (p.rearmAt !== undefined && (typeof p.rearmAt !== 'number' || !Number.isFinite(p.rearmAt) || p.rearmAt < 0)) {
+      if (
+        p.rearmAt !== undefined &&
+        (typeof p.rearmAt !== 'number' || !Number.isFinite(p.rearmAt) || p.rearmAt < 0)
+      ) {
         return h.reject('E_BAD_PAYLOAD');
       }
       patrol.sortie = { fuel: s.fuel, rearming: s.rearming };
@@ -3483,7 +3690,11 @@ export type ChainStep =
   | { kind: 'move'; to: string }
   | { kind: 'wait'; hours: number }
   | { kind: 'assault' }
-  | { kind: 'barrage'; target: string | null };
+  | { kind: 'barrage'; target: string | null }
+  // A FIRE WINDOW: focus artillery standoff fire (null = auto-target) for `hours`
+  // game-hours, then cease and move on. Artillery damage is continuous
+  // (`power × hours`, artillery.ts) — hours ARE the honest count of «ударов».
+  | { kind: 'strike'; target: string | null; hours: number };
 /** A fleet's queued chain: the remaining steps + the deadline of the ARMED head
  *  `wait` step (stamped by the driver; absent while the head is not a ticking wait). */
 export interface FleetChain {
@@ -3519,13 +3730,25 @@ export function validateChainSteps(raw: unknown, state: GameState): ChainStep[] 
         return null;
       }
       out.push({ kind: 'barrage', target: typeof step.target === 'string' ? step.target : null });
+    } else if (step.kind === 'strike') {
+      if (step.target !== null && step.target !== undefined && typeof step.target !== 'string') {
+        return null;
+      }
+      const h = step.hours;
+      if (typeof h !== 'number' || !Number.isFinite(h) || h <= 0 || h > MAX_CHAIN_WAIT_HOURS) {
+        return null;
+      }
+      out.push({
+        kind: 'strike',
+        target: typeof step.target === 'string' ? step.target : null,
+        hours: h,
+      });
     } else {
       return null;
     }
   }
   return out;
 }
-
 
 /** The squadron-trait ship stacks aboard a fleet — what a carrier launches as a strike
  *  wing (squadrons-roadmap SQ-1.1: launch-as-unit). Pure. */
@@ -3600,7 +3823,10 @@ export function tickRearm(s: SortieState, maxFuel: number): SortieState {
 
 /** Does this fleet carry a launchable strike wing (squadron-trait ships)? */
 export function fleetHasSquadron(f: Fleet | undefined): boolean {
-  return !!f && f.units.some((u) => u.count > 0 && (data.units[u.unit]?.traits.includes('squadron') ?? false));
+  return (
+    !!f &&
+    f.units.some((u) => u.count > 0 && (data.units[u.unit]?.traits.includes('squadron') ?? false))
+  );
 }
 
 /** The wing's strike radius (map units) — the longest `strikeRange` among its live
@@ -3786,6 +4012,26 @@ export function serverChainActions(
             : [orbitFleet(f.owner, fid), assaultFleet(f.owner, fid)],
         patch: { steps: rest },
       });
+    } else if (head.kind === 'strike') {
+      // Fire window, two-phase like `wait`: open — focus the guns and arm the
+      // deadline; close — cease fire (clear focus) and move on. A fleet with no
+      // artillery just idles through the window (the focus order rejects, the
+      // window still runs — deterministic either way).
+      if (chain.waitUntil === undefined) {
+        out.push({
+          fleetId: fid,
+          owner: f.owner,
+          actions: [barrageFleet(f.owner, fid, head.target)],
+          patch: { steps: chain.steps, waitUntil: now + head.hours * HOUR },
+        });
+      } else if (now >= chain.waitUntil) {
+        out.push({
+          fleetId: fid,
+          owner: f.owner,
+          actions: [barrageFleet(f.owner, fid, null)],
+          patch: { steps: rest },
+        });
+      }
     } else {
       out.push({
         fleetId: fid,
@@ -3848,7 +4094,8 @@ export function serverPatrolActions(
       }
       const targets: Array<{ id: string; location: string; pos: { x: number; y: number } }> = [];
       for (const g of Object.values(state.fleets)) {
-        if (g.owner === f.owner || !g.location || g.movement || !g.units.some((u) => u.count > 0)) continue;
+        if (g.owner === f.owner || !g.location || g.movement || !g.units.some((u) => u.count > 0))
+          continue;
         if (g.battleId) continue; // already locked in a battle — engage would reject, yet the sortie fuel is spent (BF-30)
         if (getStance(state, f.owner, g.owner) !== 'war') continue; // declared enemies only — never auto-war
         if (!seen.has(g.location)) continue; // identified contacts only — fog-honest
@@ -3860,7 +4107,9 @@ export function serverPatrolActions(
       if (res.action) actions = [res.action];
     }
     const changed =
-      sortie.fuel !== p.sortie.fuel || sortie.rearming !== p.sortie.rearming || rearmAt !== p.rearmAt;
+      sortie.fuel !== p.sortie.fuel ||
+      sortie.rearming !== p.sortie.rearming ||
+      rearmAt !== p.rearmAt;
     out.push({
       fleetId: fid,
       owner: f.owner,
@@ -3871,7 +4120,6 @@ export function serverPatrolActions(
   return out;
 }
 
-
 /** Toggle the CC-2 auto-storm stance on an owned fleet (authoritative standing order). */
 export const orderAuto = (playerId: string, fleetId: string, on: boolean) =>
   act(playerId, 'order.auto', { fleetId, on });
@@ -3880,14 +4128,32 @@ export const orderAuto = (playerId: string, fleetId: string, on: boolean) =>
 export const orderScramble = (playerId: string, fleetId: string, on: boolean) =>
   act(playerId, 'order.scramble', { fleetId, on });
 /** The patrol driver's runtime stamp: burned fuel / ticked rearm / next cadence mark. */
-export const patrolStamp = (playerId: string, fleetId: string, sortie: SortieState, rearmAt?: number) =>
-  act(playerId, 'patrol.stamp', rearmAt === undefined ? { fleetId, sortie } : { fleetId, sortie, rearmAt });
+export const patrolStamp = (
+  playerId: string,
+  fleetId: string,
+  sortie: SortieState,
+  rearmAt?: number,
+) =>
+  act(
+    playerId,
+    'patrol.stamp',
+    rearmAt === undefined ? { fleetId, sortie } : { fleetId, sortie, rearmAt },
+  );
 /** CC-1: set (or [] = cancel) an owned fleet's whole order chain atomically. */
 export const orderChain = (playerId: string, fleetId: string, steps: ChainStep[]) =>
   act(playerId, 'order.chain', { fleetId, steps });
 /** The chain driver's runtime stamp: consumed head / armed wait deadline. */
-export const chainStamp = (playerId: string, fleetId: string, steps: ChainStep[], waitUntil?: number) =>
-  act(playerId, 'chain.stamp', waitUntil === undefined ? { fleetId, steps } : { fleetId, steps, waitUntil });
+export const chainStamp = (
+  playerId: string,
+  fleetId: string,
+  steps: ChainStep[],
+  waitUntil?: number,
+) =>
+  act(
+    playerId,
+    'chain.stamp',
+    waitUntil === undefined ? { fleetId, steps } : { fleetId, steps, waitUntil },
+  );
 
 /** Place a market lot: `sell` escrows `amount` of `resource` for `price` credits/unit;
  *  `buy` escrows the credits and offers to buy that much of `resource`. */
@@ -3906,8 +4172,17 @@ export const marketCancel = (playerId: string, id: string) =>
   act(playerId, 'market.cancel', { id });
 /** Mobilise division template `template` (0-based) on your world `planetId`.
  *  `officer` = build from the named OFFICER_TEMPLATES roster instead (locked premades). */
-export const mobilizeDivision = (playerId: string, planetId: string, template: number, officer = false) =>
-  act(playerId, 'division.mobilize', officer ? { planetId, template, officer: true } : { planetId, template });
+export const mobilizeDivision = (
+  playerId: string,
+  planetId: string,
+  template: number,
+  officer = false,
+) =>
+  act(
+    playerId,
+    'division.mobilize',
+    officer ? { planetId, template, officer: true } : { planetId, template },
+  );
 /** Rename your CUSTOM division template (designer menu). */
 export const renameDivisionTemplate = (playerId: string, template: number, name: string) =>
   act(playerId, 'division.rename', { template, name });
@@ -3930,7 +4205,12 @@ export const designateCapital = (playerId: string, planetId: string) =>
 
 // --- hero engine (core heroModule, HERO-3..9): the data-driven hero actions ---
 /** Cast a hero ability (HERO-4 dispatcher); `target` — planet id for ranged casts. */
-export const castHeroAbility = (playerId: string, heroId: string, abilityId: string, target?: string) =>
+export const castHeroAbility = (
+  playerId: string,
+  heroId: string,
+  abilityId: string,
+  target?: string,
+) =>
   act(playerId, 'hero.ability', { heroId, abilityId, ...(target !== undefined ? { target } : {}) });
 /** Raise an undeployed hero's ship at an owned world (or own fleet / allied world
  *  when the hero carries the matching spawn-marker ability). */
@@ -4395,9 +4675,7 @@ export function aiOrders(
   // Named `warFooting` (not `atWar`) so the module-level pair helper stays visible.
   const warFooting = Object.keys(state.players).some(
     (pid) =>
-      pid !== ai &&
-      state.players[pid]?.status === 'active' &&
-      getStance(state, ai, pid) === 'war',
+      pid !== ai && state.players[pid]?.status === 'active' && getStance(state, ai, pid) === 'war',
   );
   // The home base (build/launch anchor, and the rally point ships pool at during war).
   const base =
@@ -4491,9 +4769,7 @@ export function aiOrders(
         leader = pid;
       }
     }
-    const neutralLeft = Object.values(state.planets).some(
-      (p) => p.owner === null && capturable(p),
-    );
+    const neutralLeft = Object.values(state.planets).some((p) => p.owner === null && capturable(p));
     const losingRace = leaderScore - mine >= 50 || (!neutralLeft && leaderScore >= mine);
     if (leader && losingRace && getStance(state, ai, leader) === 'peace') {
       out.push(declareWar(ai, leader));
@@ -4506,7 +4782,9 @@ export function aiOrders(
     // in arrears) raises a plant/farm before anything else — brownouts halve its economy.
     const flow = netIncome(state, ai);
     const has = (b: string): boolean =>
-      Object.values(state.planets).some((p) => p.owner === ai && p.buildings.some((x) => x.type === b));
+      Object.values(state.planets).some(
+        (p) => p.owner === ai && p.buildings.some((x) => x.type === b),
+      );
     for (const [need, b] of [
       ['energy', 'power_plant'],
       ['food', 'farm'],
