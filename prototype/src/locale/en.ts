@@ -190,6 +190,9 @@ export const en: Record<string, string> = {
   '⏱ +1ч': '⏱ +1h',
   '🎯{n}ч': '🎯{n}h',
   'Выбрать+': 'Select+',
+  'Деж. вылет': 'Scramble',
+  '⚔ авто-штурм включён — флот сам штурмует вражеский мир по прибытии':
+    '⚔ auto-storm on — the fleet storms the hostile world it arrives at by itself',
   Ускорить: 'Boost',
   '⚡ форс-марш: +50% скорости, −5% прочности за час хода':
     '⚡ forced march: +50% speed, −5% hull per hour underway',
