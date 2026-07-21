@@ -1,5 +1,6 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import {
+  type Action,
   armyModule,
   arsenalSyncModule,
   artilleryModule,
@@ -138,6 +139,8 @@ export interface DevMatchOptions {
   config?: MatchConfig;
   /** Observation stream (persistence / metrics wiring — see `main.ts` F8). */
   observe?: (event: RoomObservation) => void;
+  /** Deterministic-replay recorder (see `MatchRoom.record`, RPL-2). */
+  record?: (step: { at: number; action?: Action }) => void;
   /** Resume from a durable snapshot instead of seeding a fresh match: the passed
    *  state replaces the freshly-seeded one (the seed still runs, cheaply, and is
    *  discarded). The clock keeps running from `state.time`. */
@@ -259,6 +262,7 @@ export function createDevMatch(data: GameData, options: DevMatchOptions = {}): M
     data,
     now: options.now,
     observe: options.observe,
+    record: options.record,
     initialReceipts: options.initialReceipts,
     initialSeq: options.initialSeq,
     persist: options.persist,
