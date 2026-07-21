@@ -97,6 +97,7 @@ import {
   serverChainActions,
   chainStamp,
   orderChain,
+  forceMarchFleet,
   MAX_CHAIN_STEPS,
   type ChainStep,
   type Patrol,
@@ -6928,7 +6929,16 @@ function renderCmdBar() {
     // ☰ — the extras row (hamburger, NOT «...» — референс не копируем дословно):
     // «Выбрать+» и будущие Ускорить/Задержка живут здесь, базовый ряд не пухнет.
     cmdBtn('more', '☰', t('Ещё'), cmdMore ? 'on' : '', false) +
-    (cmdMore || pickMode ? cmdBtn('pick', '⊕', t('Выбрать+'), pickMode ? 'on' : '', false) : '');
+    (cmdMore || pickMode ? cmdBtn('pick', '⊕', t('Выбрать+'), pickMode ? 'on' : '', false) : '') +
+    (cmdMore
+      ? cmdBtn(
+          'boost',
+          '⚡',
+          t('Ускорить'),
+          ids.length > 0 && ids.every((id) => marchFlagged(id)) ? 'on' : '',
+          ids.length === 0,
+        )
+      : '');
   if (html !== lastCmdHtml) {
     cmdbar.innerHTML = html;
     lastCmdHtml = html;
@@ -7403,6 +7413,12 @@ cmdbar.addEventListener('click', (ev) => {
     if (targetAim) note(t('◎ тапните цель на карте — соберём приказ'));
   } else if (cmd === 'more') {
     cmdMore = !cmdMore; // ☰ — show/hide the extras row
+  } else if (cmd === 'boost') {
+    // BOOST-1 форс-марш: toggle for the whole selection — ON unless everyone
+    // already marches. Wear only bites while actually flying.
+    const on = !ids.every((id) => marchFlagged(id));
+    for (const id of ids) if (marchFlagged(id) !== on) playerOrder(forceMarchFleet(ME, id, on));
+    if (on) note(t('⚡ форс-марш: +50% скорости, −5% прочности за час хода'));
   } else if (cmd === 'pick') {
     // SEL-1: touch multi-select — the sheet collapses, taps toggle own fleets.
     pickMode = !pickMode;
@@ -11927,6 +11943,10 @@ function closePingPop(): void {
 }
 
 // --- TGT-1: target-order composer (CC-1 chains rendered target-side) ---------
+/** BOOST-1: is this fleet on форс-марш? (authoritative map, both modes). */
+function marchFlagged(fid: string): boolean {
+  return (s as { forcedMarch?: Record<string, true> }).forcedMarch?.[fid] === true;
+}
 /** CC-1 plan of an OWN fleet — authoritative in both modes (the module runs in MODULES). */
 function chainStepsOf(fid: string): ChainStep[] | null {
   const ch = (s as { orders?: Record<string, { steps: ChainStep[] }> }).orders?.[fid];

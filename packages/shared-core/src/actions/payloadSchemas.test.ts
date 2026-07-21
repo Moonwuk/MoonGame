@@ -52,6 +52,7 @@ const CLIENT_ACTION_TYPES = [
   'order.auto',
   'order.scramble',
   'order.chain',
+  'fleet.forcemarch',
 ];
 
 describe('SV-1.2 · action payload schemas', () => {
@@ -120,6 +121,7 @@ describe('SV-1.2 · action payload schemas', () => {
       ['steward.holdpoint', { planetId: 'p1', on: true }],
       ['order.auto', { fleetId: 'f1', on: true }],
       ['order.scramble', { fleetId: 'f1', on: false }],
+      ['fleet.forcemarch', { fleetId: 'f1', on: true }],
       ['order.chain', { fleetId: 'f1', steps: [] }], // [] = cancel the plan
       [
         'order.chain',

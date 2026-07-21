@@ -164,10 +164,23 @@ describe('visibleState — order chains are the owner’s secret (future intent)
     expect(Object.keys(view.patrols ?? {})).toEqual(['mine-1']);
     // With nothing of the viewer's left, the keys vanish entirely (delta hygiene).
     state.autoAssault = { 'enemy-near': true };
-    state.patrols = { 'enemy-near': { center: { x: 9, y: 9 }, radius: 7, sortie: { fuel: 1, rearming: 0 } } };
+    state.patrols = {
+      'enemy-near': { center: { x: 9, y: 9 }, radius: 7, sortie: { fuel: 1, rearming: 0 } },
+    };
     const bare = visibleState(state, 'p1', data);
     expect('autoAssault' in bare).toBe(false);
     expect('patrols' in bare).toBe(false);
+  });
+
+  it('forced-march flags (BOOST-1) are stripped by the same rule', () => {
+    const state = scenario() as GameState & { forcedMarch?: Record<string, true> };
+    state.forcedMarch = { 'mine-1': true, 'enemy-near': true };
+    const view = visibleState(state, 'p1', data) as VisibleState & {
+      forcedMarch?: Record<string, true>;
+    };
+    expect(view.forcedMarch).toEqual({ 'mine-1': true }); // the enemy's march is his secret
+    state.forcedMarch = { 'enemy-near': true };
+    expect('forcedMarch' in visibleState(state, 'p1', data)).toBe(false);
   });
 });
 
@@ -513,7 +526,10 @@ describe('radar reach is stretched by tech / faction bonuses (A2)', () => {
     const base = createInitialState({ seed: 'stretch', version: { data: '0.1.0', manifest: '1' } });
     const state: GameState = {
       ...base,
-      players: { p1: { ...player('p1'), technologies: { completed: ['long_scan'] } }, p2: player('p2') },
+      players: {
+        p1: { ...player('p1'), technologies: { completed: ['long_scan'] } },
+        p2: player('p2'),
+      },
       planets: {
         X: planet('X', null, ['Z'], { position: { x: 0, y: 0 } }),
         Z: planet('Z', 'p2', ['X'], { position: { x: 400, y: 0 } }),
@@ -524,7 +540,11 @@ describe('radar reach is stretched by tech / faction bonuses (A2)', () => {
       },
     };
     // 350 < 400: dark without the tech; ×1.5 = 525 ≥ 400: the lurker blips.
-    const dark = visibleState({ ...state, players: { ...state.players, p1: player('p1') } }, 'p1', data);
+    const dark = visibleState(
+      { ...state, players: { ...state.players, p1: player('p1') } },
+      'p1',
+      data,
+    );
     expect(dark.signatures).toEqual([]);
     const lit = visibleState(state, 'p1', data);
     expect(lit.signatures).toContainEqual({ location: 'Z', size: 'L' });
@@ -590,7 +610,11 @@ describe('radar — two concentric ranges (inner full-reveal, outer signatures)'
         MID: planet('MID', null, [], { position: { x: 80, y: 0 } }), //  50<d≤100 → signature
         FAR: planet('FAR', null, [], { position: { x: 200, y: 0 } }), // >100 → nothing
       },
-      fleets: { fNear: enemy('fNear', 'NEAR'), fMid: enemy('fMid', 'MID'), fFar: enemy('fFar', 'FAR') },
+      fleets: {
+        fNear: enemy('fNear', 'NEAR'),
+        fMid: enemy('fMid', 'MID'),
+        fFar: enemy('fFar', 'FAR'),
+      },
     };
   }
 
