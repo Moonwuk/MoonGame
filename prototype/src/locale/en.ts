@@ -190,6 +190,11 @@ export const en: Record<string, string> = {
   '⏱ +1ч': '⏱ +1h',
   '🎯{n}ч': '🎯{n}h',
   'Выбрать+': 'Select+',
+  'Деж. вылет': 'Scramble',
+  'голод: −25% на земле': 'starving: −25% on the ground',
+  'блэкаут: радары и ПВО −50%': 'blackout: radars and AA −50%',
+  '⚔ авто-штурм включён — флот сам штурмует вражеский мир по прибытии':
+    '⚔ auto-storm on — the fleet storms the hostile world it arrives at by itself',
   Ускорить: 'Boost',
   '⚡ форс-марш: +50% скорости, −5% прочности за час хода':
     '⚡ forced march: +50% speed, −5% hull per hour underway',
@@ -555,6 +560,17 @@ export const en: Record<string, string> = {
   Фильтр: 'Filter',
   Флагман: 'Flagship',
   Флот: 'Fleet',
+  // Авто-имена флотов (Bytro-стиль): тип соединения по размеру
+  Звено: 'Wing',
+  Эскадрилья: 'Flight',
+  Эскадра: 'Squadron',
+  Армада: 'Armada',
+  // 🔥 режим огня артиллерии — кнопка в командном ряду + пункты меню
+  'Режим огня': 'Fire mode',
+  'не стреляет': 'holds fire',
+  'только после урона по флоту': 'only after the fleet takes damage',
+  'по тем, с кем война': 'at declared enemies',
+  'по любому, кроме пакта/союза': 'at anyone except pact/alliance',
   'Флоты на орбите': 'Fleets in orbit',
   Обновления: 'Updates',
   Фракция: 'Faction',
@@ -1484,4 +1500,50 @@ export const en: Record<string, string> = {
   'КОНСТРУКТОР ДИВИЗИЙ': 'DIVISION BUILDER',
   'ХРАНИТЕЛЬ · ИИ НА СОН': 'STEWARD · AI WHILE ASLEEP',
   'Хранитель — передать ИИ на сон': 'Steward — hand to the AI while asleep',
+  // --- Bytro-карточка армии: ХП-бар, сводка, платный ремонт, кап линии огня ----
+  'Мгновенный ремонт всего корпуса за кредиты': 'Instant full-hull repair for credits',
+  Состав: 'Composition',
+  скауты: 'scouts',
+  боевые: 'combat',
+  артиллерия: 'artillery',
+  транспорты: 'transports',
+  флагман: 'flagship',
+  рой: 'swarm',
+  всего: 'total',
+  'бьют {n} юнитов': '{n} units firing',
+  'форс-марш': 'forced march',
+  'рывок отхода': 'retreat dash',
+  'по самому медленному; техи/фракция/местность — на переходе':
+    'at the slowest hull; tech/faction/terrain apply per leg',
+  Трюм: 'Cargo hold',
+  Радар: 'Radar',
+  'Сводка армии': 'Army summary',
+  '‹ Назад к карточке': '‹ Back to the card',
+  'Линия огня': 'Firing line',
+  'В залпе бьют максимум {n} юнитов — сильнейшие первыми; все сверх капа только впитывают урон.':
+    'At most {n} units fire per volley — the strongest first; everyone beyond the cap only soaks damage.',
+  'Текущая/полная прочность армии. Чинится у своего мира с верфью — или мгновенно за кредиты.':
+    'Current/full army hull. Mends over your world with a repair yard — or instantly for credits.',
+  'Аблятивный щит: принимает урон первым и бесплатно восстанавливается вне боя.':
+    'Ablative shield: takes damage first and recharges for free out of combat.',
+  // --- настройки: цвета сторон -------------------------------------------------
+  'Цвета сторон': 'Side colours',
+  'Свой цвет': 'Your colour',
+  'вы на карте и в панелях — форма несёт тип, цвет несёт сторону':
+    'you on the map and in panels — the shape carries the type, the colour carries the side',
+  Нейтральные: 'Neutrals',
+  'ничейные миры и неопознанные силы': 'unowned worlds and unidentified forces',
+  'Палитра соперников': 'Rival palette',
+  '«дальтоник» — оттенки, различимые при цветослепоте':
+    '«colourblind» — hues distinguishable with colour vision deficiency',
+  классика: 'classic',
+  тёплая: 'warm',
+  дальтоник: 'colourblind',
+  'Вернуть цвета по умолчанию': 'Reset colours to defaults',
+  // --- ECON-3: экспресс-ремонт за металл ---------------------------------------
+  'Экспресс-ремонт у своего дока за металл': 'Express repair at your own dock for metal',
+  // --- ECON-4: рыночная комиссия ------------------------------------------------
+  'к получению после комиссии {p}%: {n} ¤': 'you receive after the {p}% fee: {n} ¤',
+  'в эскроу уйдёт {n} ¤ · комиссию {p}% платит получатель кредитов':
+    'escrow: {n} ¤ · the {p}% fee is paid by whoever receives the credits',
 };

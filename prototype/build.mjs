@@ -157,6 +157,14 @@ body.sheet-open #speedbar{bottom:calc(34vh + 12px);}
 #cmdbar button.on{background:rgba(53,214,230,.18);border-color:var(--cyan);}
 #cmdbar button.danger{color:var(--red);border-color:#7a2a22;}
 #cmdbar button.danger:hover:not(:disabled){background:rgba(255,90,77,.12);box-shadow:0 0 10px rgba(255,90,77,.3);}
+/* 🔥 режим огня: поповер-меню над командным рядом (одна кнопка → выбор режима) */
+#cmdbar .cmdpop{position:absolute;bottom:calc(100% + 8px);right:0;display:flex;flex-direction:column;gap:4px;
+  padding:6px;background:rgba(3,12,16,.94);border:1px solid var(--line-hi);border-radius:3px;
+  box-shadow:0 0 18px rgba(40,200,210,.18);min-width:230px;}
+#cmdbar .cmdpop button{flex-direction:row;justify-content:flex-start;gap:8px;height:auto;min-width:0;
+  padding:7px 10px;text-align:left;}
+#cmdbar .cmdpop button b{font-size:11px;letter-spacing:.5px;white-space:nowrap;}
+#cmdbar .cmdpop button span{font-size:9px;color:var(--dim);letter-spacing:.3px;text-transform:none;}
 /* panel is glued to the bottom edge — lift the fleet command bar above it (mobile overrides below) */
 body.sheet-open #cmdbar{bottom:calc(34vh + 12px);}
 
@@ -169,6 +177,39 @@ body.sheet-open #cmdbar{bottom:calc(34vh + 12px);}
 .ptile:active{background:rgba(53,214,230,.24);}
 .ptile .pt-ic{font-size:18px;line-height:1;}
 .ptile .pt-c{font-size:9px;color:var(--dim);letter-spacing:.3px;white-space:nowrap;}
+/* Bytro-карточка: SVG-силуэт в тайле + мини-бар корпуса стека */
+.ptile .pt-ic .uglyph{display:block;}
+.ptile .pt-hp{width:36px;height:3px;background:rgba(255,255,255,.12);border-radius:2px;overflow:hidden;}
+.ptile .pt-hp i{display:block;height:100%;background:#3ad17a;}
+.ptile .pt-hp.low i{background:#ff5a4d;}
+/* шапочный ХП-бар армии + ненавязчивый золотой чип платного ремонта */
+.hullrow{display:flex;align-items:center;gap:7px;}
+.hullrow .hico{opacity:.8;flex:0 0 auto;}
+.hullrow .hbar{flex:1;height:7px;background:rgba(255,255,255,.09);border:1px solid var(--line);overflow:hidden;}
+.hullrow .hbar i{display:block;height:100%;background:#3ad17a;}
+.hullrow .hbar.low i{background:#ff5a4d;}
+.hullrow .hbar.sh i{background:#35d6e6;}
+.hullrow b{flex:0 0 auto;font-size:11px;}
+.chip-gold{flex:0 0 auto;padding:3px 8px;font-size:10px;cursor:pointer;color:#ffd76a;
+  background:rgba(255,215,106,.08);border:1px solid rgba(255,215,106,.45);border-radius:4px;white-space:nowrap;}
+.chip-gold:hover{background:rgba(255,215,106,.18);box-shadow:0 0 8px rgba(255,215,106,.25);}
+/* ECON-4: net-подпись «→ N ¤» в биде книги (получатель кредитов платит комиссию) */
+.mk-net{color:var(--dim);font-size:10px;margin-left:6px;}
+/* ECON-3а: экспресс-ремонт за металл у дока — «обычная» пара к золотому чипу */
+.chip-metal{flex:0 0 auto;padding:3px 8px;font-size:10px;cursor:pointer;color:var(--cyan);
+  background:rgba(53,214,230,.07);border:1px solid rgba(53,214,230,.45);border-radius:4px;white-space:nowrap;}
+.chip-metal:hover{background:rgba(53,214,230,.16);box-shadow:0 0 8px rgba(53,214,230,.25);}
+/* тап по имени армии (заголовок карточки → сводка) */
+.ptitle-btn{background:none;border:0;padding:0;margin:0;cursor:pointer;text-align:left;
+  color:var(--ink);font:inherit;font-weight:700;letter-spacing:inherit;}
+.ptitle-btn:hover{color:var(--cyan);}
+/* пресеты палитры соперников в настройках */
+.set-pals{flex-wrap:wrap;}
+.set-pal{padding:5px 10px;font-size:11px;cursor:pointer;color:var(--dim);
+  background:rgba(53,214,230,.05);border:1px solid var(--line-hi);border-radius:4px;}
+.set-pal.on{color:var(--cyan);border-color:var(--cyan);background:rgba(53,214,230,.14);}
+.set-ctl input[type=color]{width:42px;height:26px;padding:0;border:1px solid var(--line-hi);
+  border-radius:4px;background:none;cursor:pointer;}
 /* mini tile (ground garrison): a nameless icon·count chip — hover/tap dossier names it */
 .ptile.mini{flex-direction:row;gap:6px;min-width:0;min-height:0;padding:7px 11px;}
 .ptile.mini .pt-c{font-size:12px;color:var(--ink);font-weight:700;}

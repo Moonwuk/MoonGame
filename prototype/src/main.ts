@@ -98,10 +98,25 @@ import {
   chainStamp,
   orderChain,
   forceMarchFleet,
+  FORCED_MARCH_MULT,
+  instantRepairFleet,
+  instantRepairCost,
+  repairFleet,
+  dockRepairCost,
+  fleetAtOwnDock,
+  MARKET_FEE,
   MAX_CHAIN_STEPS,
   type ChainStep,
   type Patrol,
 } from './game';
+import {
+  ARCHETYPE_PATH,
+  dominantUnit,
+  unitArchetype,
+  unitGlyphSvg,
+  unitSizeClass,
+} from './unitGlyphs';
+import { fleetCallsign, fleetKindKey } from './fleetName';
 import { OFFICERS, GROUND_ROSTER } from './groundcombat';
 import { DEFAULT_HEROES, type HeroLoadout } from './heroes';
 import { DEFAULT_SHIP_LOADOUTS, type ShipLoadout } from './ships';
@@ -116,9 +131,13 @@ import {
 import {
   buildingLevel,
   buildingMaxLevel,
+  cappedUnitStat,
+  COMBAT_UNIT_CAP,
+  effectiveStats,
   estimateTravelHours,
   findHealthyStack,
   fleetBaseSpeed,
+  sumUnitStat,
   getStance,
   getOffer,
   pairHas,
@@ -129,6 +148,7 @@ import {
   scanNodeThreats,
   identifiedNodes,
   thresholdRamp,
+  BLACKOUT_MULT,
   type PausedConstructionSite,
 } from '../../packages/shared-core/src/index';
 import {
@@ -260,6 +280,7 @@ import type {
   DomainEvent,
   IntelGrant,
   ArsenalItem,
+  UnitStack,
 } from '../../packages/shared-core/src/index';
 
 // --- constants ---------------------------------------------------------------
@@ -296,14 +317,61 @@ const RIVAL_COLORS = [
 ];
 const SEAT_IDS = Array.from({ length: 10 }, (_, i) => `p${i + 1}`);
 const VOID_COLOR = '#46606e'; // empty-space provinces — uncapturable void
-// Political colour is relative to the local commander: YOU are always green, neutral gray,
-// each rival its own hue. Works for solo (you = p1) and net (you may be any seat).
+// --- side-colour preferences (client-only, localStorage) ---------------------
+// Постер «цвет = принадлежность»: свой/нейтральный цвет настраиваются, палитра
+// соперников выбирается пресетом (включая дальтоник-безопасный, Okabe–Ito-подобные
+// оттенки). Чистая косметика поверх ownerColor — механика сторон не трогается.
+const RIVAL_PALETTES: Record<string, readonly string[]> = {
+  classic: RIVAL_COLORS,
+  warm: [
+    '#ff4d3d',
+    '#ff9d2e',
+    '#ffd23d',
+    '#ff6fa0',
+    '#e8703a',
+    '#d94f6c',
+    '#ffb073',
+    '#c9522f',
+    '#ff8355',
+  ],
+  cvd: [
+    '#e69f00',
+    '#56b4e9',
+    '#f0e442',
+    '#0072b2',
+    '#d55e00',
+    '#cc79a7',
+    '#999999',
+    '#a6761d',
+    '#8da0cb',
+  ],
+};
+const readPref = (k: string): string | null =>
+  typeof localStorage !== 'undefined' ? localStorage.getItem(k) : null;
+let youColor = readPref('void.colorYou') ?? COLOR.p1!;
+let neutralColor = readPref('void.colorNeutral') ?? COLOR.null!;
+let rivalPaletteId = readPref('void.rivalPalette') ?? 'classic';
+if (!RIVAL_PALETTES[rivalPaletteId]) rivalPaletteId = 'classic';
+function setSideColors(you: string, neutral: string, palette: string): void {
+  youColor = you;
+  neutralColor = neutral;
+  rivalPaletteId = RIVAL_PALETTES[palette] ? palette : 'classic';
+  if (typeof localStorage !== 'undefined') {
+    localStorage.setItem('void.colorYou', youColor);
+    localStorage.setItem('void.colorNeutral', neutralColor);
+    localStorage.setItem('void.rivalPalette', rivalPaletteId);
+  }
+}
+// Political colour is relative to the local commander: YOU are always green (or
+// your configured hue), neutral gray, each rival its own palette hue. Works for
+// solo (you = p1) and net (you may be any seat).
 function ownerColor(owner: string | null | undefined): string {
-  if (!owner) return COLOR.null;
-  if (owner === ME) return COLOR.p1;
+  if (!owner) return neutralColor;
+  if (owner === ME) return youColor;
   const rivals = SEAT_IDS.filter((id) => id !== ME);
   const i = rivals.indexOf(owner);
-  return i >= 0 ? RIVAL_COLORS[i % RIVAL_COLORS.length]! : RIVAL_COLORS[0]!;
+  const pal = RIVAL_PALETTES[rivalPaletteId] ?? RIVAL_COLORS;
+  return i >= 0 ? pal[i % pal.length]! : pal[0]!;
 }
 // Build profile. `__PLAYER_BUILD__` is an esbuild define — REQUIRED by every bundler
 // of this file (build.mjs sets it for both artifacts, uitest.mjs pins `false`); a
@@ -537,6 +605,7 @@ let tgtHits: Array<{ target: string; fleetIds: string[]; x: number; y: number }>
 // order (Курс/Штурм/Цель…) — issuing one drops back out of the mode.
 let pickMode = false;
 let cmdMore = false; // ☰ — the second row of the command bar (extras live there)
+let fireMenu = false; // 🔥 — режим огня артиллерии: поповер-меню над командным рядом
 let merging = false; // "Merge" armed → next tap on a friendly fleet picks the anchor
 // Fleets ordered to merge but not yet co-located: each flies to its anchor and the
 // fusion fires once they share a docked sector (see resolvePendingMerges()).
@@ -643,6 +712,9 @@ let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let aimPointer: { x: number; y: number } | null = null; // last canvas pointer (for the move preview)
 let hoverObj: string | null = null; // side-panel object under the pointer (data-desc key)
 let planetTab: PlanetTab = 'buildings';
+// Bytro-карточка: тап по имени флота открывает сводку армии — какой флот сейчас
+// в режиме сводки (другой флот в панели → обычная карточка сама собой).
+let fleetInfoFor: string | null = null;
 let mobTplIdx = 0; // which division template the mobilisation panel is assembling
 const buildQueues: Record<string, PlanetBuildQueue> = {};
 const logLines: string[] = [];
@@ -1286,6 +1358,12 @@ function afford(bag: Record<string, number> | undefined): boolean {
 }
 function unitIcon(unit: string): string {
   return UNIT_ICON[unit] ?? (isGround(unit) ? '◆' : '▲');
+}
+// Path2D-кэш силуэтов постера для канвы — панель берёт те же пути через SVG,
+// так что карта и карточка не могут разъехаться по форме.
+const ARCH_PATH2D: Partial<Record<keyof typeof ARCHETYPE_PATH, Path2D>> = {};
+function archPath2d(arch: keyof typeof ARCHETYPE_PATH): Path2D {
+  return (ARCH_PATH2D[arch] ??= new Path2D(ARCHETYPE_PATH[arch]));
 }
 function displayUnit(unit: string): string {
   // Unit ids are English-ish ("scout_drone") — the space-joined id is the DATA name
@@ -1949,10 +2027,13 @@ function pushSpyLog(text: string): void {
 function computeVision(): Vision {
   const identify = new Set<string>();
   const radar = new Set<string>();
+  // ECON-2 «блэкаут»: неоплаченная энергия глушит каждый свой радар вдвое —
+  // зеркалит серверную fog-проекцию (radarMultiplier, visibility.ts).
+  const dim = (s.players[ME]?.arrears ?? []).includes('energy') ? BLACKOUT_MULT : 1;
   for (const p of Object.values(s.planets))
     if (p.owner === ME) {
       floodHops(p.id, SENSOR_HOPS, identify);
-      const rr = planetRadar(p);
+      const rr = planetRadar(p) * dim;
       if (rr > 0) {
         withinRadius(p.id, rr, radar); // signatures (outer)
         withinRadius(p.id, rr * IDENTIFY_REACH_FRACTION, identify); // full reveal (inner)
@@ -1963,7 +2044,7 @@ function computeVision(): Vision {
       const node = fleetNode(f);
       if (!node) continue;
       floodHops(node, 0, identify); // own node only — ships are near-blind (mirrors FLEET_IDENTIFY_HOPS)
-      const rr = fleetRadar(f);
+      const rr = fleetRadar(f) * dim;
       if (rr > 0) {
         const pos = fleetPos(f); // radar from the SHIP's position, not its destination
         if (pos) {
@@ -3126,6 +3207,48 @@ function patrolOf(fleetId: string): Patrol | undefined {
   return NET
     ? (s as { patrols?: Record<string, Patrol> }).patrols?.[fleetId]
     : patrols.get(fleetId);
+}
+/** CC-2: set the auto-storm stance UNIFORMLY on the given own fleets (☰-row toggle —
+ *  a mixed group snaps to one state instead of flipping each). Authoritative in NET
+ *  (order.auto — the server presses the storm while you're offline), local Set solo. */
+function setAutoAssault(ids: string[], on: boolean): void {
+  for (const id of ids) {
+    if (!s.fleets[id] || s.fleets[id]!.owner !== ME) continue;
+    if (isAutoAssault(id) === on) continue;
+    if (NET) playerOrder(orderAuto(ME, id, on));
+    else if (on) autoAssault.add(id);
+    else autoAssault.delete(id);
+  }
+}
+/** CC-4: stand (or stand down) «дежурный вылет» UNIFORMLY on the given fleets' wings.
+ *  Authoritative in NET (order.scramble — the server computes the patrol and flies it
+ *  while you're offline); the local Map + frame-loop driver in solo. */
+function setScramble(ids: string[], on: boolean): void {
+  for (const id of ids) {
+    const f = s.fleets[id];
+    if (!f || f.owner !== ME || !fleetHasSquadron(f)) continue;
+    if (!!patrolOf(id) === on) continue;
+    if (!on) {
+      if (NET) playerOrder(orderScramble(ME, id, false));
+      else patrols.delete(id);
+      continue;
+    }
+    const pos = f.location ? s.planets[f.location]?.position : undefined;
+    if (!pos) {
+      note(t('🛩 дежурный вылет — только со стоянки в узле'));
+      continue;
+    }
+    if (NET) {
+      playerOrder(orderScramble(ME, id, true));
+    } else {
+      if (patrols.size === 0) lastPatrolTick = s.time; // start the rearm cadence from now
+      patrols.set(id, {
+        center: { x: pos.x, y: pos.y },
+        radius: squadronStrikeRange(f),
+        sortie: freshSortie(sortieSpec(f).maxFuel),
+      });
+    }
+  }
 }
 /** «≈14ч» / «≈2д 3ч» — plan durations are game-hours, like every duration in the UI. */
 function fmtHrs(h: number): string {
@@ -4642,59 +4765,41 @@ function render(now: number) {
     }
     cx.globalAlpha = detail; // full detail fades back in toward 1.45
 
-    // Fleet emblem: ships are up-triangles, ONE per three hulls, packed into a
-    // pyramid — "каждые 3 корабля = один треугольник". Cargo glues to the TAIL
-    // (behind the base): carried divisions and hold squadrons as diamonds, then
-    // ground troops as squares (loaded = filled, loading ~1h = a pip filling up).
-    const BW = 8,
-      TH = 6.5; // triangle base width / height; rows stack TH apart (плейтест: крупнее)
-    const nTri = Math.max(1, Math.ceil(ships / 3));
-    // pack the triangles into a bottom-heavy pyramid: full rows 1..R, then shave the
-    // apex rows of any empty slots so the BASE is always widest (1→[1], 2→[2],
-    // 4→[1,3], 6→[1,2,3], 10→[1,2,3,4]).
-    let R = 1;
-    while ((R * (R + 1)) / 2 < nTri) R++;
-    const tri: number[] = [];
-    for (let r = 1; r <= R; r++) tri.push(r);
-    for (let r = 0, trim = (R * (R + 1)) / 2 - nTri; trim > 0 && r < tri.length; r++) {
-      const cut = Math.min(tri[r]!, trim);
-      tri[r]! -= cut;
-      trim -= cut;
-    }
-    const rows = tri.filter((x) => x > 0);
-    const yBase = A.y; // baseline of the bottom (widest) row
-    const apexTop = yBase - rows.length * TH;
+    // Fleet emblem (постер «Типы кораблей»): ОДИН силуэт ДОМИНАНТА — сильнейшего
+    // корабля флота — вместо пирамиды треугольников; количество несёт счётчик
+    // «×N» за хвостом («флот на карте = доминант + счёт», полный состав — в
+    // панели выделения). Размер S/M/L по hp доминанта, гало-кольцо при щите
+    // (у флагмана — всегда), нос по курсу — heading от fleetAnchor, как раньше;
+    // карго-хвост и счётчик едут по тому же курсу.
+    const dom = dominantUnit(f.units, data);
+    const arch = dom ? unitArchetype(dom.def) : 'combat';
+    const domK = dom ? { S: 0.62, M: 0.8, L: 1 }[unitSizeClass(dom.def.stats.hp ?? 0)] : 0.62;
+    const domStack = dom ? f.units.find((st) => st.unit === dom.unit && st.count > 0) : undefined;
+    const domShield =
+      dom && domStack ? (effectiveStats(dom.def, domStack, data).shield ?? 0) > 0 : false;
     cx.save();
-    // Point the ship pyramid along its heading ("нос по курсу"): the apex (drawn toward
-    // -y / up) rotates onto A.ang — the travel lane while in transit, or the orbital
-    // tangent while stationed on the ring (both supplied by fleetAnchor). Previously this
-    // was gated on `f.movement`, so an orbiting fleet kept its default apex-up pose and
-    // appeared frozen pointing straight up. The cargo pips and ship count follow the
-    // SAME heading (they sit on the tail, behind the base — «за треугольниками»), but
-    // each pip/glyph is drawn upright at its rotated spot, so a square never reads
-    // as a diamond on a diagonal course.
     cx.translate(A.x, A.y);
     cx.rotate(A.ang + Math.PI / 2);
-    cx.translate(-A.x, -A.y);
     cx.shadowColor = col;
     cx.shadowBlur = 6 + 6 * engine;
-    cx.fillStyle = rgba(col, 0.16 + 0.12 * engine);
-    cx.strokeStyle = col;
-    cx.lineWidth = 1.3;
-    for (let r = 0; r < rows.length; r++) {
-      const base = apexTop + (r + 1) * TH; // this row's baseline
-      const rw = rows[r]! * BW;
-      for (let i = 0; i < rows[r]!; i++) {
-        const x0 = A.x - rw / 2 + i * BW;
-        cx.beginPath();
-        cx.moveTo(x0 + BW / 2, base - TH); // apex up
-        cx.lineTo(x0 + BW, base); // flat base, right corner
-        cx.lineTo(x0, base); // flat base, left corner
-        cx.closePath();
-        cx.fill();
-        cx.stroke();
-      }
+    if (domShield || arch === 'flagship') {
+      // модификатор «есть щит»: пунктирная орбита вокруг силуэта
+      cx.strokeStyle = rgba(col, 0.7);
+      cx.lineWidth = 1.1;
+      cx.setLineDash([2.6, 2.8]);
+      cx.beginPath();
+      cx.arc(0, 0, 12.5 * domK + 2, 0, TAU);
+      cx.stroke();
+      cx.setLineDash([]);
     }
+    cx.scale(domK, domK);
+    cx.translate(-12, -12);
+    cx.fillStyle = rgba(col, 0.92);
+    cx.strokeStyle = 'rgba(4,10,12,.8)';
+    cx.lineWidth = 1;
+    const p2d = archPath2d(arch);
+    cx.fill(p2d, 'evenodd');
+    cx.stroke(p2d);
     cx.restore();
 
     // cargo glued to the tail (behind the base, following the heading), SPLIT by
@@ -4836,12 +4941,12 @@ function render(now: number) {
       }
     }
 
-    // ship count (hulls in the pyramid), small, past the cargo tail — placed along
-    // the heading like the pips, glyph upright; drops lower when both rows are out.
+    // ship count («×N» — счёт при доминанте, как на постере), small, past the
+    // cargo tail — placed along the heading like the pips, glyph upright.
     const cnt = tailAt(0, diaRow.length && sqRow.length ? 21 + CELL : 21);
     cx.fillStyle = rgba(col, 0.95);
     cx.font = '700 10px ui-monospace,Menlo,monospace';
-    cx.fillText(String(ships), cnt.x, cnt.y);
+    cx.fillText(`×${ships}`, cnt.x, cnt.y);
 
     cx.globalAlpha = 1; // end of the per-fleet LOD cross-fade
   }
@@ -4883,13 +4988,18 @@ function block(inner: string): string {
 function pcols(blocks: string[]): string {
   return `<div class="pcols">${blocks.map(block).join('')}</div>`;
 }
-function cardHeader(color: string, title: string, sub: string): string {
+function cardHeader(color: string, title: string, sub: string, titleAct?: string): string {
   // PC: the one-line header truncates the subtitle — drop the spaces around the
   // separator dots so more of it fits. Mobile keeps the airy ' · '.
   const subFit = pcUi() ? sub.replace(/ · /g, '·') : sub;
+  // Bytro-стиль: тап по ИМЕНИ открывает сводку (армии) — заголовок становится
+  // кнопкой только когда карточка передала действие, прочие панели не меняются.
+  const tt = titleAct
+    ? `<button class="ptitle-btn" data-act="${titleAct}" data-arg="">${esc(title)} ▸</button>`
+    : `<b>${esc(title)}</b>`;
   return `<div class="phead">
     <span class="pflag" style="background:${color}"></span>
-    <div class="ptitle"><b>${esc(title)}</b><span>${esc(subFit)}</span></div>
+    <div class="ptitle">${tt}<span>${esc(subFit)}</span></div>
     <button class="pclose" data-act="close" data-arg="">✕</button>
   </div>`;
 }
@@ -5003,49 +5113,207 @@ function taskGroupPanelHtml(group: Fleet[]): string {
 }
 
 /** Side-panel: a single selected fleet — combat stats, orders, docking. */
+/** Тайлы состава флота Bytro-стиля: силуэт-архетип в цвете стороны (наземные —
+ *  прежние текст-глифы), счётчик и мини-бар корпуса стека; тап — досье юнита. */
+function fleetTilesHtml(f: Fleet, stacks: UnitStack[]): string {
+  const tiles = stacks
+    .filter((u) => u.count > 0)
+    .map((u) => {
+      const def = data.units[u.unit];
+      if (!def) return '';
+      const name = unitDossier(u.unit)?.name ?? displayUnit(u.unit);
+      const eff = effectiveStats(def, u, data);
+      const full = u.count * (eff.hp ?? 0);
+      const pct = full > 0 ? Math.round((Math.min(u.hp ?? full, full) / full) * 100) : 100;
+      const icon =
+        def.domain === 'ground'
+          ? `<span class="pt-ic">${unitIcon(u.unit)}</span>`
+          : `<span class="pt-ic">${unitGlyphSvg(def, { color: ownerColor(f.owner), shield: (eff.shield ?? 0) > 0 })}</span>`;
+      return `<button class="ptile" data-codex="u:${esc(u.unit)}" data-desc="u:${esc(u.unit)}" data-name="${esc(name)}" title="${esc(name)} — ${t('тап — полное досье')}">${icon}<span class="pt-c">×${u.count}</span><span class="pt-hp${pct < 30 ? ' low' : ''}"><i style="width:${pct}%"></i></span></button>`;
+    })
+    .join('');
+  return tiles ? `<div class="ptiles">${tiles}</div>` : '';
+}
+
+/** Сводка армии (тап по имени в шапке карточки): состав по архетипам, боевой вес
+ *  с капом, пулы корпуса/щита, скорость с активными множителями, трюм, радар,
+ *  содержание. Обратно — тем же тапом по имени или кнопкой «назад». */
+function fleetSummaryHtml(f: Fleet): string {
+  const rows: string[] = [];
+  // состав по архетипам постера
+  const byArch = new Map<string, number>();
+  for (const st of f.units) {
+    const def = data.units[st.unit];
+    if (!def || st.count <= 0) continue;
+    const a = unitArchetype(def);
+    byArch.set(a, (byArch.get(a) ?? 0) + st.count);
+  }
+  const ARCH_LABEL: Record<string, string> = {
+    scout: t('скауты'),
+    combat: t('боевые'),
+    artillery: t('артиллерия'),
+    transport: t('транспорты'),
+    flagship: t('флагман'),
+    swarm: t('рой'),
+  };
+  const comp = [...byArch.entries()].map(([a, n]) => `${ARCH_LABEL[a] ?? a} ×${n}`).join(' · ');
+  const nTr = sumUnits(f.landing ?? []);
+  rows.push(
+    `<div class="row">${t('Состав')}: <b>${comp || t('нет')}</b>${nTr ? ` · ${t('десант')} ×${nTr}` : ''}</div>`,
+  );
+  // боевой вес: кап против полной суммы — видно, сколько стволов «за линией»
+  const atkCap = Math.round(cappedUnitStat(f.units, data, 'attack'));
+  const atkAll = Math.round(sumUnitStat(f.units, data, 'attack'));
+  const defCap = Math.round(cappedUnitStat(f.units, data, 'defense'));
+  rows.push(
+    `<div class="row">⚔ ${t('Атака')}: <b>${atkCap}</b>${atkAll > atkCap ? ` <span class="dim">(${t('всего')} ${atkAll} — ${t('бьют {n} юнитов', { n: COMBAT_UNIT_CAP })})</span>` : ''}</div>`,
+  );
+  rows.push(`<div class="row">🛡 ${t('Защита')}: <b>${defCap}</b></div>`);
+  // пулы
+  let curHull = 0,
+    maxHull = 0,
+    curSh = 0,
+    maxSh = 0;
+  for (const st of [...f.units, ...(f.landing ?? [])]) {
+    const def = data.units[st.unit];
+    if (!def || st.count <= 0) continue;
+    const eff = effectiveStats(def, st, data);
+    const m = st.count * (eff.hp ?? 0);
+    maxHull += m;
+    curHull += Math.min(st.hp ?? m, m);
+    const ms = st.count * (eff.shield ?? 0);
+    maxSh += ms;
+    curSh += Math.min(st.shieldHp ?? ms, ms);
+  }
+  rows.push(
+    `<div class="row">♥ ${t('Корпус')}: <b>${kfmt(Math.round(curHull))}/${kfmt(maxHull)}</b>${maxSh > 0 ? ` · ◈ ${t('Щит')}: <b>${kfmt(Math.round(curSh))}/${kfmt(maxSh)}</b>` : ''}</div>`,
+  );
+  // скорость: база (мин по корпусам, лимп учтён) + активные множители
+  const spd = fleetBaseSpeed(f, data);
+  const mults: string[] = [];
+  if (marchFlagged(f.id)) mults.push(`⚡ ${t('форс-марш')} ×${FORCED_MARCH_MULT}`);
+  if (
+    (f as { retreatHasteUntil?: number }).retreatHasteUntil != null &&
+    s.time < (f as { retreatHasteUntil?: number }).retreatHasteUntil!
+  )
+    mults.push(`⤺ ${t('рывок отхода')} ×1.5`);
+  rows.push(
+    `<div class="row">⚡ ${t('Скорость')}: <b>${spd > 0 ? Math.round(spd) : '—'}</b>${mults.length ? ` <span class="dim">${mults.join(' · ')}</span>` : ''} <span class="dim">· ${t('по самому медленному; техи/фракция/местность — на переходе')}</span></div>`,
+  );
+  // трюм и радар
+  const cargoCap = sumUnitStat(f.units, data, 'cargoCapacity');
+  const cargoUsed = (f.landing ?? []).reduce((n, st) => {
+    const def = data.units[st.unit];
+    return n + (def ? st.count * (effectiveStats(def, st, data).cargoSize ?? 1) : 0);
+  }, 0);
+  if (cargoCap > 0)
+    rows.push(
+      `<div class="row">📦 ${t('Трюм')}: <b>${cargoUsed}/${Math.round(cargoCap)}</b></div>`,
+    );
+  const radar = Math.max(
+    0,
+    ...f.units.filter((u) => u.count > 0).map((u) => data.units[u.unit]?.radarRange ?? 0),
+  );
+  if (radar > 0) rows.push(`<div class="row">📡 ${t('Радар')}: <b>${radar}</b></div>`);
+  // содержание
+  const upkeep: Record<string, number> = {};
+  for (const st of f.units) {
+    const def = data.units[st.unit];
+    if (!def || st.count <= 0) continue;
+    for (const [r, n] of Object.entries(def.upkeep ?? {}))
+      upkeep[r] = (upkeep[r] ?? 0) + st.count * (n ?? 0);
+  }
+  const up = Object.entries(upkeep)
+    .filter(([, n]) => n > 0)
+    .map(([r, n]) => `${n} ${tData(r)}`)
+    .join(', ');
+  if (up) rows.push(`<div class="row dim">${t('Содержание')}: ${up}/${t('день')}</div>`);
+  return (
+    `<div class="sec">${t('Сводка армии')}</div>` +
+    rows.join('') +
+    `<div class="row">${btn('fleetinfo', '', t('‹ Назад к карточке'), true)}</div>`
+  );
+}
+
 function fleetPanelHtml(f: Fleet): string {
   const nShips = sumUnits(f.units);
   const nTr = sumUnits(f.landing ?? []);
   const inOrbit = f.orbit === 'near';
   // Hull integrity across the squadron (persistent between fights now): a stack's
-  // current hp ?? full. Below 30% the fleet limps (route.ts) until it repairs.
+  // current hp ?? full — по ЭФФЕКТИВНОМУ hp (обшивка-фитинг считается), корабли +
+  // десант вместе, как в Bytro-карточке. Below 30% the fleet limps (route.ts)
+  // until it repairs. Щит — отдельный пул (регенит бесплатно сам).
   let curHull = 0,
-    maxHull = 0;
-  for (const st of f.units) {
+    maxHull = 0,
+    curSh = 0,
+    maxSh = 0;
+  for (const st of [...f.units, ...(f.landing ?? [])]) {
     const u = data.units[st.unit];
-    if (!u) continue;
-    const m = st.count * u.stats.hp;
+    if (!u || st.count <= 0) continue;
+    const eff = effectiveStats(u, st, data);
+    const m = st.count * (eff.hp ?? 0);
     maxHull += m;
-    curHull += st.hp ?? m;
+    curHull += Math.min(st.hp ?? m, m);
+    const ms = st.count * (eff.shield ?? 0);
+    maxSh += ms;
+    curSh += Math.min(st.shieldHp ?? ms, ms);
   }
   const hullPct = maxHull > 0 ? Math.round((curHull / maxHull) * 100) : 100;
-  const hullTag =
-    hullPct < 100 ? ` · ${hullPct < 30 ? '⚠ ' : ''}${t('корпус {p}%', { p: hullPct })}` : '';
+  const hullTag = hullPct < 30 ? ` · ⚠ ${t('корпус {p}%', { p: hullPct })}` : '';
+  // ECON-1: голодный десант — владелец в food-arrears бьёт на земле на −25%.
+  const hungry =
+    nTr > 0 && f.owner === ME && (s.players[ME]?.arrears ?? []).includes('food')
+      ? ` · 🍽 ${t('голод: −25% на земле')}`
+      : '';
+  // Bytro-стиль: авто-имя соединения (тип по размеру + позывной), тап → сводка.
+  const fleetTitle = `${t(fleetKindKey(nShips))} «${fleetCallsign(f.id)}»`;
   let h = cardHeader(
     ownerColor(f.owner),
-    t('ФЛОТ'),
+    fleetTitle,
     (pcUi()
       ? t('Корабли: {s} · Десант: {tr}', { s: nShips, tr: nTr })
       : t('{s} кораблей · {tr} десанта', { s: nShips, tr: nTr })) +
       hullTag +
+      hungry +
       (inOrbit ? ' · ' + t('на орбите') : '') +
       (f.bombarding ? ' · ⊗ ' + t('бомбардирует') : ''),
+    'fleetinfo',
   );
-  // Aggregate combat weight, summed across the squadron's ships (it moves at its
-  // slowest hull). The hero aura (+5%, noted below) is not folded into these totals.
-  let atk = 0,
-    def = 0,
-    hpTot = 0,
-    spd = Infinity;
-  for (const u of f.units) {
-    const st = data.units[u.unit]?.stats;
-    if (!st || u.count <= 0) continue;
-    atk += (st.attack ?? 0) * u.count;
-    def += (st.defense ?? 0) * u.count;
-    hpTot += (st.hp ?? 0) * u.count;
-    if ((st.speed ?? 0) > 0) spd = Math.min(spd, st.speed ?? Infinity);
+  // Тап по имени открыл сводку армии — карточка целиком уступает ей место.
+  if (fleetInfoFor === f.id) return h + fleetSummaryHtml(f);
+  // ХП-бар Bytro-стиля + два ремонта: ECON-3а — экспресс за METAL у своего дока
+  // (дешёвый, основной), и ненавязчивый платный за кредиты — где угодно вне боя
+  // (цены — те же формулы, что в гейте).
+  const repairCost = instantRepairCost(f, data);
+  const canRepair = f.owner === ME && !f.battleId && repairCost > 0;
+  const atDock = canRepair && fleetAtOwnDock(f, s, data);
+  if (maxHull > 0) {
+    h += `<div class="row hullrow" data-desc="stat:hull"><span class="hico">♥</span><span class="hbar${hullPct < 30 ? ' low' : ''}"><i style="width:${hullPct}%"></i></span><b>${kfmt(Math.round(curHull))}/${kfmt(maxHull)}</b>${
+      atDock
+        ? `<button class="chip-metal" data-act="dockrepair" data-arg="${f.id}" title="${t('Экспресс-ремонт у своего дока за металл')}">🔧 ${dockRepairCost(f, data)}⬢</button>`
+        : ''
+    }${
+      canRepair
+        ? `<button class="chip-gold" data-act="instantrepair" data-arg="${f.id}" title="${t('Мгновенный ремонт всего корпуса за кредиты')}">🔧 ${repairCost}💰</button>`
+        : ''
+    }</div>`;
+    if (maxSh > 0)
+      h += `<div class="row hullrow" data-desc="stat:shield"><span class="hico">◈</span><span class="hbar sh"><i style="width:${Math.round((curSh / maxSh) * 100)}%"></i></span><b>${kfmt(Math.round(curSh))}/${kfmt(maxSh)}</b></div>`;
   }
-  const spdTxt = spd === Infinity ? '—' : String(spd);
+  // Aggregate combat weight — БОЕВОЙ вес, как его считает ядро: effectiveStats +
+  // кап линии огня (топ-10 стволов). Скорость — базовая скорость флота (мин по
+  // корпусам, лимп <30% учтён), с меткой форс-марша. The hero aura (+5%, noted
+  // below) is not folded into these totals.
+  const atk = Math.round(cappedUnitStat(f.units, data, 'attack'));
+  const def = Math.round(cappedUnitStat(f.units, data, 'defense'));
+  const spd = fleetBaseSpeed(f, data);
+  const boosted = marchFlagged(f.id);
+  const spdTxt =
+    spd > 0
+      ? boosted
+        ? `${Math.round(spd)} ⚡×${FORCED_MARCH_MULT}`
+        : String(Math.round(spd))
+      : '—';
   const flavor: string[] = [];
   if (f.units.some((u) => u.count > 0 && data.units[u.unit]?.traits.includes('hero')))
     flavor.push(t('с героем-флагманом'));
@@ -5064,27 +5332,15 @@ function fleetPanelHtml(f: Fleet): string {
           );
     h += `<div class="row dim">${blurb}</div>`;
   }
-  h += `<div class="pstats"><span data-desc="stat:atk">⚔ ${t('АТК')} ${atk}</span><span data-desc="stat:def">🛡 ${t('ЗАЩ')} ${def}</span><span data-desc="stat:hp">❤ ${t('ОЗ')} ${hpTot}</span><span data-desc="stat:spd">⚡ ${t('СКР')} ${spdTxt}</span></div>`;
+  h += `<div class="pstats"><span data-desc="stat:atk">⚔ ${t('АТК')} ${atk}</span><span data-desc="stat:def">🛡 ${t('ЗАЩ')} ${def}</span><span data-desc="stat:cap">Ⅹ ${Math.min(nShips, COMBAT_UNIT_CAP)}/${COMBAT_UNIT_CAP}</span><span data-desc="stat:spd">⚡ ${t('СКР')} ${spdTxt}</span></div>`;
   h += nShips
-    ? `<div class="sec">${t('Корабли — тап для характеристик')}</div>` + unitTilesHtml(f.units)
+    ? `<div class="sec">${t('Корабли — тап для характеристик')}</div>` + fleetTilesHtml(f, f.units)
     : '';
   if (nTr > 0)
-    h += `<div class="sec">${t('Десант на борту')}</div>` + unitTilesHtml(f.landing ?? []);
+    h += `<div class="sec">${t('Десант на борту')}</div>` + fleetTilesHtml(f, f.landing ?? []);
 
-  // Artillery rules of engagement — passive / return / standard / aggressive.
-  if (f.owner === ME && fleetHasArtillery(f)) {
-    const mode = f.barrageMode ?? 'standard';
-    const mbtn = (m: string, lbl: string) =>
-      btn('barragemode', m, (mode === m ? '● ' : '') + lbl, mode !== m);
-    h += `<div class="sec">${t('Артиллерия — режим огня')}</div><div class="row">`;
-    h +=
-      mbtn('passive', t('Пассив')) +
-      mbtn('return', t('Ответ')) +
-      mbtn('standard', t('Станд')) +
-      mbtn('aggressive', t('Агрес'));
-    h += `</div>`;
-    h += `<div class="hint">${t('Пассив — не стреляет. Ответ — только после урона по флоту. Станд — по тем, с кем война. Агрес — по любому, кроме пакта/союза.')}</div>`;
-  }
+  // Artillery rules of engagement moved to the ☰ command bar («🔥 Режим огня»
+  // button + popover menu) — the bottom sheet keeps information, not controls.
 
   // Carrier air wing (squadrons-roadmap SQ-1.1) — launch the squadron ships as a
   // separate fast strike fleet. Needs a non-squadron ship left behind (fleet.split
@@ -5101,20 +5357,16 @@ function fleetPanelHtml(f: Fleet): string {
     h += `</div>`;
     h += `<div class="hint">${t('Отделяет эскадрильи в отдельный быстрый флот — уводите его на удар, а носитель остаётся в строю. Нужен хотя бы один не-эскадрильный корабль. Контрится орбитальным ПВО.')}</div>`;
 
-    // CC-4 reactive auto-scramble — a standing "дежурный вылет" order on the wing
-    // (authoritative server state in NET — the server flies it while you're offline).
+    // CC-4 status only — the «🛩 Деж. вылет» TOGGLE moved to the ☰ command row
+    // (SO-UI: the panel keeps information, the bar keeps controls).
     const pt = patrolOf(f.id);
-    h += `<div class="row">`;
-    h += btn('qscramble', '', pt ? t('🛩 дежурный вылет: ВКЛ') : t('🛩 дежурный вылет: выкл'), true);
-    h += `</div>`;
     if (pt) {
       const status =
         pt.sortie.rearming > 0
           ? t('перезарядка {n}', { n: pt.sortie.rearming })
           : t('топливо {n}', { n: pt.sortie.fuel });
-      h += `<div class="row dim">${t('радиус {r}', { r: Math.round(pt.radius) })} · ${status}</div>`;
+      h += `<div class="row dim">${t('🛩 дежурный вылет: ВКЛ')} · ${t('радиус {r}', { r: Math.round(pt.radius) })} · ${status}</div>`;
     }
-    h += `<div class="hint">${t('Во «включено» эскадрилья сама вылетает на удар по опознанному врагу (с кем война), вошедшему в радиус удара — тратит топливо за вылет, затем перезарядка. Так дежурит, пока вы вышли.')}</div>`;
   }
 
   // The player's projection hero rides here → name it and flag its fleet aura.
@@ -5124,24 +5376,8 @@ function fleetPanelHtml(f: Fleet): string {
     h += `<div class="row"><b>♔ ${esc(heroName)}</b> <span class="dim">${t('— проекция · +5% атаки/обороны этому флоту')}</span></div>`;
   }
 
-  // CC-2 standing order — auto-storm stance (authoritative server state in NET —
-  // the server presses it while you're offline).
-  if (f.owner === ME) {
-    const auto = isAutoAssault(f.id);
-    h += `<div class="sec">${t('Дежурный режим')}</div><div class="row">`;
-    h += btn(
-      'qauto',
-      '',
-      auto ? t('⚔ авто-штурм: ВКЛ') : t('⚔ авто-штурм: выкл'),
-      true,
-      pcUi() ? 'act:qauto' : undefined,
-    );
-    h += `</div>`;
-    // PC: the explanation lives in the button's hover dossier ('act:qauto')
-    if (!pcUi()) {
-      h += `<div class="hint">${t('Во «включено» флот сам входит в орбиту и штурмует вражеский мир, на который прибыл — без ручного приказа.')}</div>`;
-    }
-  }
+  // CC-2 auto-storm: the whole «Дежурный режим» section moved to the ☰ command
+  // row («⚔ Авто-штурм» toggle) — SO-UI unloads the bottom sheet.
 
   if (f.movement) {
     // total travel-time estimate to the final destination (next-hop ETA from the
@@ -5149,9 +5385,13 @@ function fleetPanelHtml(f: Fleet): string {
     // every frame, so it's a placeholder here (stable signature → no rebuild) and
     // patched in place by updatePanelLive() — keeps the panel's buttons put.
     const dest = f.movement.destination ?? f.movement.to;
-    const restH =
+    // Гибкое время в пути: остаток маршрута за текущим лейном пересчитывается с
+    // учётом форс-марша (×1.5 с СЛЕДУЮЩЕГО лейна — текущий уже расписан
+    // авторитетно в arrivesAt, его не трогаем). Выключил буст — оценка удлиняется.
+    const rawRestH =
       dest !== f.movement.to ? (estimateTravelHours(s, data, f.movement.to, dest, f) ?? 0) : 0;
-    h += `<div class="row">${t('↗ идёт к {dest} · прибытие через', { dest: `<b>${esc(dest)}</b>` })} <b class="pn-eta" data-arrive="${f.movement.arrivesAt}" data-rest="${restH}">…</b></div>`;
+    const restH = boosted ? rawRestH / FORCED_MARCH_MULT : rawRestH;
+    h += `<div class="row">${t('↗ идёт к {dest} · прибытие через', { dest: `<b>${esc(dest)}</b>` })} <b class="pn-eta" data-arrive="${f.movement.arrivesAt}" data-rest="${restH}">…</b>${boosted ? ' <span class="dim">⚡</span>' : ''}</div>`;
   } else if (f.edge) {
     const pct = Math.round(f.edge.t * 100);
     h += `<div class="row">${t('⟜ стоит на трассе {lane} · {p}% пути', { lane: `<b>${esc(f.edge.from)}–${esc(f.edge.to)}</b>`, p: pct })}</div>`;
@@ -5180,14 +5420,7 @@ function fleetPanelHtml(f: Fleet): string {
       h += `<div class="hint">${t('Отход стоит −40% ТЕКУЩЕГО корпуса и щита (израненный флот теряет 40% остатка — отход не добивает) и даёт рывок скорости для бегства. Десант в высадке отступить не может; с орбиты вне боя корабль уходит свободно.')}</div>`;
     }
   }
-  if (!docked) {
-    if (!f.battleId)
-      h += `<div class="hint">${
-        f.edge
-          ? t('Стоит на трассе — нажмите «Курс», чтобы идти дальше (маршрут отсюда).')
-          : t('В пути — идёт по трассам. Столкновение начинает орбитальный бой.')
-      }</div>`;
-  } else {
+  if (docked) {
     // enemy/neutral world you can act on — empty space is pass-through only
     const hostile =
       here!.owner !== f.owner && (SECTOR_TYPES[SECTOR_OF[here!.id]]?.capturable ?? false);
@@ -5269,10 +5502,6 @@ function fleetPanelHtml(f: Fleet): string {
     if (dh) cols.push(dh);
     h += pcols(cols);
   }
-  if (!pcUi()) {
-    h += `<div class="hint">${t('Нажмите «Курс» (командная панель) и тапните цель — флот проложит маршрут и встанет. «Слить…» объединяет с другим флотом; «Разделить» отделяет корабли в новый флот.')}</div>`;
-    h += btn('cancel', '', t('Снять выделение'), true);
-  }
   return h;
 }
 
@@ -5330,6 +5559,10 @@ function planetPanelHtml(p: Planet): string {
       `${p.owner ? NAME[p.owner] : t('Нейтрал')} · ${kindName} · ${ptName} · ${sec}`,
     ) +
     `<div class="pstats"><span data-desc="stat:garrison">⚔ ${gcount} <span class="pl">${t('гарнизон')}</span></span><span data-desc="stat:ground">${unitIcon('heavy_infantry')} ${sumUnits(ground)} <span class="pl">${t('наземных')}</span></span><span data-desc="stat:gships">${unitIcon('cruiser')} ${sumUnits(ships)} <span class="pl">${t('кораблей')}</span></span><span data-desc="stat:pbuild">▣ ${p.buildings.length} <span class="pl">${t('построек')}</span></span></div>`;
+  // ECON-2: блэкаут — неоплаченная энергия глушит радары и ПВО этого владельца вдвое.
+  if (mine && (s.players[ME]?.arrears ?? []).includes('energy')) {
+    h += `<div class="row" style="color:var(--red)">⚡ ${t('блэкаут: радары и ПВО −50%')}</div>`;
+  }
   if (pt && (pt.productionBonus !== 0 || pt.defenseBonus !== 0)) {
     const pct = (n: number) => (n >= 0 ? '+' : '') + Math.round(n * 100) + '%';
     const parts: string[] = [];
@@ -5395,8 +5628,14 @@ function planetPanelHtml(p: Planet): string {
     // PC: one tile row of icon·count chips (the tab's old bottom hint lives in the
     // ЗЕМЛЯ tab's hover dossier, 'tab:ground'). Mobile keeps the original row list
     // and bottom hint untouched.
+    // ECON-1: голодный гарнизон — владелец мира в food-arrears теряет 25% на земле.
+    const starving =
+      p.owner === ME && ground.length > 0 && (s.players[ME]?.arrears ?? []).includes('food')
+        ? `<div class="row" style="color:var(--red)">🍽 ${t('голод: −25% на земле')}</div>`
+        : '';
     cols.push(
       `<div class="sec">${t('Наземные части')}</div>` +
+        starving +
         (pcUi() ? garrisonTilesHtml(ground) : unitRows(ground)),
     );
     if (mine) {
@@ -5871,6 +6110,25 @@ function objDossier(key: string): Dossier | null {
       atk: [t('Атака'), t('Суммарная атака кораблей флота.')],
       def: [t('Защита'), t('Суммарная защита кораблей флота.')],
       hp: [t('Очки здоровья'), t('Суммарная прочность кораблей флота.')],
+      cap: [
+        t('Линия огня'),
+        t(
+          'В залпе бьют максимум {n} юнитов — сильнейшие первыми; все сверх капа только впитывают урон.',
+          {
+            n: COMBAT_UNIT_CAP,
+          },
+        ),
+      ],
+      hull: [
+        t('Корпус'),
+        t(
+          'Текущая/полная прочность армии. Чинится у своего мира с верфью — или мгновенно за кредиты.',
+        ),
+      ],
+      shield: [
+        t('Щит'),
+        t('Аблятивный щит: принимает урон первым и бесплатно восстанавливается вне боя.'),
+      ],
       spd: [
         t('Скорость'),
         t('Скорость перелёта — флот движется со скоростью самого медленного корабля.'),
@@ -5895,12 +6153,6 @@ function objDossier(key: string): Dossier | null {
     return {
       name: t('Конструктор дивизий'),
       body: t('Редактор шаблонов: состав слотов и доктрина дивизий.'),
-    };
-  }
-  if (key === 'act:qauto') {
-    return {
-      name: t('Авто-штурм'),
-      body: t('ВКЛ — автоматически штурмовать вражеский мир при нахождении на его орбите.'),
     };
   }
   if (key.startsWith('c:')) return constructionDossier(key);
@@ -6932,12 +7184,28 @@ function renderCmdBar() {
     if (assaultAim) assaultAim = false;
     if (targetAim) targetAim = false;
     if (merging) merging = false;
+    fireMenu = false; // пустое выделение — 🔥-меню не должно всплыть при новом выборе
     cmdbar.classList.remove('show');
     lastCmdHtml = '';
     return;
   }
   const fleets = ids.map((id) => s.fleets[id]).filter((f): f is Fleet => !!f);
   const anyMoving = fleets.some((f) => f.movement);
+  // Режим огня артиллерии (одна кнопка + меню): на кнопке — общий режим арт-флотов
+  // выделения, при разнобое — нейтральная подпись.
+  const artFleets = fleets.filter((f) => f.owner === ME && fleetHasArtillery(f));
+  const FIRE_MODES: Array<{ m: string; lbl: string; sub: string }> = [
+    { m: 'passive', lbl: t('Пассив'), sub: t('не стреляет') },
+    { m: 'return', lbl: t('Ответ'), sub: t('только после урона по флоту') },
+    { m: 'standard', lbl: t('Станд'), sub: t('по тем, с кем война') },
+    { m: 'aggressive', lbl: t('Агрес'), sub: t('по любому, кроме пакта/союза') },
+  ];
+  const artModes = new Set(artFleets.map((f) => f.barrageMode ?? 'standard'));
+  const uniMode = artModes.size === 1 ? [...artModes][0] : null;
+  const fmLabel = uniMode
+    ? (FIRE_MODES.find((x) => x.m === uniMode)?.lbl ?? t('Режим огня'))
+    : t('Режим огня');
+  if (artFleets.length === 0) fireMenu = false; // выделение без артиллерии — меню гаснет
   const docked = fleets.filter((f) => f.location && !f.movement && !f.battleId);
   // PC: ШТУРМ is a targeting command (fly there + storm on arrival) — armable
   // whenever the selection has ships. Mobile keeps the in-orbit-only button.
@@ -6966,6 +7234,7 @@ function renderCmdBar() {
     cmdBtn('attack', '⚔', t('Штурм'), assaultAim ? 'on' : '', !canAssault) +
     cmdBtn('target', '◎', t('Цель'), targetAim ? 'on' : '', false) +
     (anyArtillery ? cmdBtn('barrage', '🎯', t('Обстрел'), barrageAim ? 'on' : '', false) : '') +
+    (artFleets.length > 0 ? cmdBtn('firemode', '🔥', fmLabel, fireMenu ? 'on' : '', false) : '') +
     cmdBtn(
       'merge',
       '⛬',
@@ -6985,7 +7254,33 @@ function renderCmdBar() {
           t('Ускорить'),
           ids.length > 0 && ids.every((id) => marchFlagged(id)) ? 'on' : '',
           ids.length === 0,
-        )
+        ) +
+        // SO-UI: standing orders live here now — the bottom sheet keeps only info.
+        cmdBtn(
+          'qauto',
+          '⚔',
+          t('Авто-штурм'),
+          ids.length > 0 && ids.every((id) => isAutoAssault(id)) ? 'on' : '',
+          ids.length === 0,
+        ) +
+        (fleets.some(fleetHasSquadron)
+          ? cmdBtn(
+              'qscramble',
+              '🛩',
+              t('Деж. вылет'),
+              fleets.filter(fleetHasSquadron).every((fl) => patrolOf(fl.id)) ? 'on' : '',
+              false,
+            )
+          : '')
+      : '') +
+    // 🔥 поповер над баром: четыре режима с подписью-правилом; ● — текущий.
+    (fireMenu && artFleets.length > 0
+      ? `<div class="cmdpop">` +
+        FIRE_MODES.map(
+          (x) =>
+            `<button data-cmd="fmset" data-mode="${x.m}"${uniMode === x.m ? ' class="on"' : ''}><b>${uniMode === x.m ? '● ' : ''}${x.lbl}</b><span>${x.sub}</span></button>`,
+        ).join('') +
+        `</div>`
       : '');
   if (html !== lastCmdHtml) {
     cmdbar.innerHTML = html;
@@ -7179,56 +7474,26 @@ side.addEventListener('click', (ev) => {
     openPingMenu();
   } else if (act === 'bombard') {
     playerOrder(bombardFleet(ME, selFleet!, arg === 'on'));
-  } else if (act === 'barragemode') {
-    playerOrder(barrageModeFleet(ME, selFleet!, arg));
   } else if (act === 'assault') {
     playerOrder(assaultFleet(ME, selFleet!));
   } else if (act === 'retreat') {
     playerOrder(retreatFleet(ME, selFleet!));
-  } else if (act === 'qauto') {
-    // CC-2 stance toggle: authoritative in NET (order.auto — the server presses the
-    // storm while you're offline), the local Set in solo (autoEngage drives it).
-    for (const id of selectedFleetIds()) {
-      if (NET) playerOrder(orderAuto(ME, id, !isAutoAssault(id)));
-      else if (autoAssault.has(id)) autoAssault.delete(id);
-      else autoAssault.add(id);
-    }
+  } else if (act === 'instantrepair') {
+    // Платный мгновенный ремонт: цена и отказы — на сервере; панель перерисуется
+    // по факту (полный бар = получилось), нотификаций-обещаний не даём.
+    playerOrder(instantRepairFleet(ME, arg || selFleet!));
+  } else if (act === 'dockrepair') {
+    // ECON-3а: экспресс-ремонт за metal — кнопка видна только у своего дока.
+    playerOrder(repairFleet(ME, arg || selFleet!));
+  } else if (act === 'fleetinfo') {
+    // Тап по имени армии: карточка ⇄ сводка (для текущего выбранного флота).
+    if (selFleet) fleetInfoFor = fleetInfoFor === selFleet ? null : selFleet;
   } else if (act === 'launchsquad') {
     // Split the squadron stack off into its own fast strike fleet (SQ-1.1).
     const f = selFleet ? s.fleets[selFleet] : undefined;
     if (fleetCanLaunchSquadron(f)) {
       playerOrder(splitFleet(ME, f!.id, squadronTake(f!)));
       note(t('🛩 эскадрилья запущена — ведите её на цель'));
-    }
-  } else if (act === 'qscramble') {
-    // CC-4: toggle "дежурный вылет" — stand (or stand down) a reactive auto-strike patrol
-    // on each selected squadron fleet, centred on its current node with its strike radius.
-    // Authoritative in NET (order.scramble — the server computes the patrol and flies it
-    // while you're offline); the local Map + frame-loop driver in solo.
-    for (const id of selectedFleetIds()) {
-      const f = s.fleets[id];
-      if (!f || !fleetHasSquadron(f)) continue;
-      if (patrolOf(id)) {
-        if (NET) playerOrder(orderScramble(ME, id, false));
-        else patrols.delete(id);
-        continue;
-      }
-      const pos = f.location ? s.planets[f.location]?.position : undefined;
-      if (!pos) {
-        note(t('🛩 дежурный вылет — только со стоянки в узле'));
-        continue;
-      }
-      if (NET) {
-        playerOrder(orderScramble(ME, id, true));
-      } else {
-        if (patrols.size === 0) lastPatrolTick = s.time; // start the rearm cadence from now
-        patrols.set(id, {
-          center: { x: pos.x, y: pos.y },
-          radius: squadronStrikeRange(f),
-          sortie: freshSortie(sortieSpec(f).maxFuel),
-        });
-      }
-      note(t('🛩 дежурный вылет включён — эскадрилья бьёт врага в радиусе'));
     }
   } else if (act === 'load') {
     beginLoad(selFleet!, arg); // ~1h timed load (animated in the marker)
@@ -7410,6 +7675,7 @@ cmdbar.addEventListener('click', (ev) => {
   const ids = selectedFleetIds();
   if (cmd !== 'merge') merging = false; // any other command disarms merge-targeting
   if (cmd !== 'barrage') barrageAim = false; // any other command disarms barrage-targeting
+  if (cmd !== 'firemode' && cmd !== 'fmset') fireMenu = false; // другой приказ закрывает 🔥-меню
   if (cmd !== 'attack') assaultAim = false; // any other command disarms assault-targeting
   if (cmd !== 'target') targetAim = false; // any other command disarms order-targeting
   // A real order leaves «Выбрать+» (the group stays selected and takes it);
@@ -7461,12 +7727,36 @@ cmdbar.addEventListener('click', (ev) => {
     if (targetAim) note(t('◎ тапните цель на карте — соберём приказ'));
   } else if (cmd === 'more') {
     cmdMore = !cmdMore; // ☰ — show/hide the extras row
+  } else if (cmd === 'firemode') {
+    fireMenu = !fireMenu; // 🔥 — открыть/закрыть меню выбора режима огня
+    aiming = false;
+  } else if (cmd === 'fmset') {
+    // Выбор в 🔥-меню: единый режим всем выделенным флотам с артиллерией.
+    const mode = bEl.dataset.mode ?? 'standard';
+    for (const id of ids) {
+      const f = s.fleets[id];
+      if (f && f.owner === ME && fleetHasArtillery(f) && (f.barrageMode ?? 'standard') !== mode) {
+        playerOrder(barrageModeFleet(ME, id, mode));
+      }
+    }
+    fireMenu = false;
   } else if (cmd === 'boost') {
     // BOOST-1 форс-марш: toggle for the whole selection — ON unless everyone
     // already marches. Wear only bites while actually flying.
     const on = !ids.every((id) => marchFlagged(id));
     for (const id of ids) if (marchFlagged(id) !== on) playerOrder(forceMarchFleet(ME, id, on));
     if (on) note(t('⚡ форс-марш: +50% скорости, −5% прочности за час хода'));
+  } else if (cmd === 'qauto') {
+    // SO-UI: the CC-2 auto-storm stance, group-uniform (moved off the bottom sheet).
+    const on = !ids.every((id) => isAutoAssault(id));
+    setAutoAssault(ids, on);
+    if (on) note(t('⚔ авто-штурм включён — флот сам штурмует вражеский мир по прибытии'));
+  } else if (cmd === 'qscramble') {
+    // SO-UI: the CC-4 «дежурный вылет», group-uniform over the squadron fleets.
+    const wings = ids.filter((id) => fleetHasSquadron(s.fleets[id]));
+    const on = !wings.every((id) => patrolOf(id));
+    setScramble(wings, on);
+    if (on) note(t('🛩 дежурный вылет включён — эскадрилья бьёт врага в радиусе'));
   } else if (cmd === 'pick') {
     // SEL-1: touch multi-select — the sheet collapses, taps toggle own fleets.
     pickMode = !pickMode;
@@ -8793,7 +9083,11 @@ function renderMarket(): void {
     .sort((a, b) => b.price - a.price);
   const lotRow = (l: (typeof lots)[number], bid: boolean): string => {
     const mine = l.owner === ME;
-    const qp = `<span class="mk-qp"><b>${l.amount}</b> ${TECH_CUR[l.resource] ?? ''} @ ${l.price} ¤</span>`;
+    // ECON-4: получатель кредитов получает net (5% сгорает) — в биде это исполнитель.
+    const takerNet = Math.floor(l.amount * l.price * (1 - MARKET_FEE));
+    const qp = `<span class="mk-qp"><b>${l.amount}</b> ${TECH_CUR[l.resource] ?? ''} @ ${l.price} ¤${
+      bid && !mine ? ` <span class="mk-net">→ ${takerNet} ¤</span>` : ''
+    }</span>`;
     const who = `<span class="mk-who">${mine ? t('ваш лот') : nameOf(l.owner)}</span>`;
     let btn: string;
     if (mine) {
@@ -8815,7 +9109,8 @@ function renderMarket(): void {
     `<div class="mk-form"><div class="mk-seg">${seg('sell', t('Продать'))}${seg('buy', t('Купить'))}</div>` +
     `<span class="mk-lbl">${t('кол-во')}</span><input class="mk-in" id="mk-amt" type="number" min="1" value="10">` +
     `<span class="mk-lbl">${t('цена')}</span><input class="mk-in" id="mk-price" type="number" min="0" value="3">` +
-    `<button class="mk-go" data-mkgo>${t('Выставить')}</button></div>`;
+    `<button class="mk-go" data-mkgo>${t('Выставить')}</button></div>` +
+    `<div class="mk-lbl" id="mk-net"></div>`;
   const askList = asks.length
     ? asks.map((l) => lotRow(l, false)).join('')
     : `<div class="mk-empty">${t('Нет лотов на продажу')}</div>`;
@@ -8828,6 +9123,29 @@ function renderMarket(): void {
     `<div id="marketbody">${stock}${form}` +
     `<div class="mk-sec">${t('Продажа')} · ${asks.length}</div>${askList}` +
     `<div class="mk-sec buy">${t('Покупка')} · ${bids.length}</div>${bidList}</div></div>`;
+  // ECON-4: живой «к получению» под формой — net после комиссии для стороны,
+  // которая получит кредиты (sell-лот: вы, когда его исполнят; buy-бид: эскроу).
+  const updNet = (): void => {
+    const el = document.getElementById('mk-net');
+    if (!el) return;
+    const amt = Number((document.getElementById('mk-amt') as HTMLInputElement | null)?.value) || 0;
+    const price =
+      Number((document.getElementById('mk-price') as HTMLInputElement | null)?.value) || 0;
+    const gross = amt * price;
+    el.textContent =
+      marketFormSide === 'sell'
+        ? t('к получению после комиссии {p}%: {n} ¤', {
+            p: Math.round(MARKET_FEE * 100),
+            n: Math.floor(gross * (1 - MARKET_FEE)),
+          })
+        : t('в эскроу уйдёт {n} ¤ · комиссию {p}% платит получатель кредитов', {
+            n: Math.ceil(gross),
+            p: Math.round(MARKET_FEE * 100),
+          });
+  };
+  updNet();
+  document.getElementById('mk-amt')?.addEventListener('input', updNet);
+  document.getElementById('mk-price')?.addEventListener('input', updNet);
 }
 document.getElementById('rail-market')?.addEventListener('click', () => {
   marketWin.classList.add('show');
@@ -9851,6 +10169,29 @@ function renderSettings(): void {
         `<div class="set-ctl"><label class="set-switch"><input id="set-compact" type="checkbox"${compactPanel ? ' checked' : ''} aria-label="${t('Компактный режим меню')}"><span class="sw-track"></span><span class="sw-knob"></span></label><span id="set-compact-val" class="set-val">${compactPanel ? t('вкл') : t('выкл')}</span></div>` +
         `</div>`
       : '') +
+    `<div class="pc-sec">${t('Цвета сторон')}</div>` +
+    `<div class="set-row">` +
+    `<div class="set-lbl">${t('Свой цвет')}<span class="set-sub">${t('вы на карте и в панелях — форма несёт тип, цвет несёт сторону')}</span></div>` +
+    `<div class="set-ctl"><input id="set-colyou" type="color" value="${youColor}" aria-label="${t('Свой цвет')}"></div>` +
+    `</div>` +
+    `<div class="set-row">` +
+    `<div class="set-lbl">${t('Нейтральные')}<span class="set-sub">${t('ничейные миры и неопознанные силы')}</span></div>` +
+    `<div class="set-ctl"><input id="set-colneutral" type="color" value="${neutralColor}" aria-label="${t('Нейтральные')}"></div>` +
+    `</div>` +
+    `<div class="set-row">` +
+    `<div class="set-lbl">${t('Палитра соперников')}<span class="set-sub">${t('«дальтоник» — оттенки, различимые при цветослепоте')}</span></div>` +
+    `<div class="set-ctl set-pals">` +
+    (['classic', 'warm', 'cvd'] as const)
+      .map(
+        (p) =>
+          `<button type="button" class="set-pal${rivalPaletteId === p ? ' on' : ''}" data-pal="${p}">${
+            p === 'classic' ? t('классика') : p === 'warm' ? t('тёплая') : t('дальтоник')
+          }</button>`,
+      )
+      .join('') +
+    `<button type="button" class="set-pal" id="set-colreset" title="${t('Вернуть цвета по умолчанию')}">⟲</button>` +
+    `</div>` +
+    `</div>` +
     `<div class="pc-sec">${t('Графика')}</div>` +
     `<div class="set-row">` +
     `<div class="set-lbl">${t('Свечение и ореолы')}<span class="set-sub">${t('мягкое сияние вокруг миров, флотов и границ — выключите ради чёткой карты и скорости')}</span></div>` +
@@ -9891,6 +10232,27 @@ function renderSettings(): void {
   star?.addEventListener('change', () => {
     setStarfield(star.checked);
     if (starVal) starVal.textContent = star.checked ? t('вкл') : t('выкл');
+  });
+  // Цвета сторон: живые инпуты + пресеты палитры соперников. Карта красится на
+  // следующем кадре сама (ownerColor читается при отрисовке), панель — при
+  // следующей перестройке.
+  const colYou = document.getElementById('set-colyou') as HTMLInputElement | null;
+  const colNeutral = document.getElementById('set-colneutral') as HTMLInputElement | null;
+  colYou?.addEventListener('input', () =>
+    setSideColors(colYou.value, neutralColor, rivalPaletteId),
+  );
+  colNeutral?.addEventListener('input', () =>
+    setSideColors(youColor, colNeutral.value, rivalPaletteId),
+  );
+  for (const b of Array.from(settingsEl.querySelectorAll('.set-pal[data-pal]'))) {
+    b.addEventListener('click', () => {
+      setSideColors(youColor, neutralColor, (b as HTMLElement).dataset.pal ?? 'classic');
+      renderSettings(); // перерисовать активный пресет
+    });
+  }
+  document.getElementById('set-colreset')?.addEventListener('click', () => {
+    setSideColors(COLOR.p1!, COLOR.null!, 'classic');
+    renderSettings();
   });
   document
     .getElementById('set-close')

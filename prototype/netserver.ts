@@ -61,6 +61,7 @@ import {
   orderScramble,
   patrolStamp,
   chainStamp,
+  economySnapshot,
 } from './src/game';
 import { ActionGate } from '../packages/action-layer/src/index';
 import { isValidActionPayload } from '../packages/shared-core/src/actions/payloadSchemas';
@@ -271,6 +272,8 @@ async function createHostedMatch(id: string): Promise<HostedMatch> {
   // Rehydrate idempotency receipts so a retried action stays deduped across a restart.
   const initialReceipts = await receiptStore.loadAll(id);
 
+  // ECON-6: игровое время последнего экономического среза (первый — через час).
+  let lastEconAt = initialState.time;
   const observe = (ev: RoomObservation): void => {
     metrics.observe(ev);
     if (worthLogging(ev)) {
@@ -458,11 +461,15 @@ async function createHostedMatch(id: string): Promise<HostedMatch> {
     }
     for (const p of serverPatrolActions(room.state, room.state.time)) {
       if (p.drop) {
-        if (p.owner) await room.submitServerAction(p.owner, orderScramble(p.owner, p.fleetId, false));
+        if (p.owner)
+          await room.submitServerAction(p.owner, orderScramble(p.owner, p.fleetId, false));
         continue;
       }
       if (p.patch) {
-        await room.submitServerAction(p.owner, patrolStamp(p.owner, p.fleetId, p.patch.sortie, p.patch.rearmAt));
+        await room.submitServerAction(
+          p.owner,
+          patrolStamp(p.owner, p.fleetId, p.patch.sortie, p.patch.rearmAt),
+        );
       }
       for (const act of p.actions) await room.submitServerAction(p.owner, act);
     }
@@ -470,7 +477,10 @@ async function createHostedMatch(id: string): Promise<HostedMatch> {
     // then the head step's orders; a rejected order is skipped, the chain moves on.
     for (const c of serverChainActions(room.state, room.state.time)) {
       if (c.patch) {
-        await room.submitServerAction(c.owner, chainStamp(c.owner, c.fleetId, c.patch.steps, c.patch.waitUntil));
+        await room.submitServerAction(
+          c.owner,
+          chainStamp(c.owner, c.fleetId, c.patch.steps, c.patch.waitUntil),
+        );
       }
       for (const act of c.actions) await room.submitServerAction(c.owner, act);
     }
@@ -485,6 +495,13 @@ async function createHostedMatch(id: string): Promise<HostedMatch> {
     heartbeatMs: HEARTBEAT_MS,
     maxDelayMs: MAX_TIMER_MS,
     onTick: ({ progressed }) => {
+      // ECON-6: почасовой экономический срез в пайплайн наблюдений (JSONL — кривые
+      // казны/притока/arrears, агрегатор — arrears-часы). Раз в игровой час, не спам.
+      // (Merged from main's inline onWake into the shared driver's onTick — same cadence.)
+      if (room.state.time - lastEconAt >= HOUR) {
+        lastEconAt = room.state.time;
+        observe(economySnapshot(room.state));
+      }
       // Same-instant runaway: work is due (ms 0) but the clock didn't move. SKIP the
       // drivers then — their submissions emit `action` observations that reschedule the
       // driver and reset its stall guard, which would spin a 0ms wake. The driver's own
@@ -768,7 +785,9 @@ const printSummary = (): void => {
       `  broadcast : ${ms(s.broadcastMs)} · delta ${kb(s.deltaBytes)}`,
       s.clientFps
         ? `  client    : fps avg ${s.clientFps.avg.toFixed(0)} · min ${s.clientFps.min.toFixed(0)}` +
-          (s.clientRttMs ? ` · rtt avg ${s.clientRttMs.avg.toFixed(0)}ms · max ${s.clientRttMs.max.toFixed(0)}ms` : '')
+          (s.clientRttMs
+            ? ` · rtt avg ${s.clientRttMs.avg.toFixed(0)}ms · max ${s.clientRttMs.max.toFixed(0)}ms`
+            : '')
         : '  client    : — (перф-сэмплы не приходили)',
       s.end
         ? `  match end : winner ${s.end.winner ?? '—'}${s.end.reason ? ` (${s.end.reason})` : ''}`
@@ -786,7 +805,10 @@ const shutdown = (): void => {
   // only anomalous broadcast/timing entries, so without this the report script would
   // have no full latency/delta aggregates to read.
   try {
-    appendFileSync(logFile, JSON.stringify({ t: Date.now(), kind: 'summary', summary: metrics.summary() }) + '\n');
+    appendFileSync(
+      logFile,
+      JSON.stringify({ t: Date.now(), kind: 'summary', summary: metrics.summary() }) + '\n',
+    );
   } catch {
     /* the report just falls back to the partial per-line data */
   }
