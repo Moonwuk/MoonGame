@@ -128,6 +128,20 @@ describe('MetricsAggregator (M1)', () => {
     expect(s.clientRttMs).toBeNull();
   });
 
+  it('ECON-6: counts economy snapshots and per-player arrears-hours', () => {
+    const snap = (arrears: string[]): RoomObservation => ({
+      kind: 'economy',
+      atTime: 3_600_000,
+      players: {
+        p1: { resources: { credits: 12 }, netPerHour: { credits: 1.5 }, arrears },
+        p2: { resources: { credits: 40 }, netPerHour: { credits: 3 }, arrears: [] },
+      },
+    });
+    expect(new MetricsAggregator().summary().economy).toBeNull();
+    const s = feed([snap(['food']), snap(['food', 'energy']), snap([])]).summary();
+    expect(s.economy).toEqual({ snapshots: 3, arrearsHours: { p1: 2 } }); // p2 never in arrears
+  });
+
   it('summary is a snapshot — later observations do not mutate an earlier summary', () => {
     const m = new MetricsAggregator();
     m.observe({ kind: 'action', actionId: 'a1', playerId: 'p1', type: 'x', ok: true, seq: 1 });

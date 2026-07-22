@@ -2361,6 +2361,31 @@ export function newGame(setup: SetupConfig = DEFAULT_SETUP): GameState {
   } as GameState;
 }
 
+/** ECON-6: почасовой экономический срез для пайплайна наблюдений хоста — казна /
+ *  чистый приток / arrears per player на мировом времени `state.time`. Чистая
+ *  функция состояния: кривые пишет JSONL хоста, headline-счётчики — агрегатор. */
+export function economySnapshot(state: GameState): {
+  kind: 'economy';
+  atTime: number;
+  players: Record<
+    string,
+    { resources: Record<string, number>; netPerHour: Record<string, number>; arrears: string[] }
+  >;
+} {
+  const players: Record<
+    string,
+    { resources: Record<string, number>; netPerHour: Record<string, number>; arrears: string[] }
+  > = {};
+  for (const [pid, pl] of Object.entries(state.players)) {
+    players[pid] = {
+      resources: { ...pl.resources },
+      netPerHour: netIncome(state, pid),
+      arrears: [...(pl.arrears ?? [])],
+    };
+  }
+  return { kind: 'economy', atTime: state.time, players };
+}
+
 /** Net per-hour income for a player: production from owned, un-bombarded worlds
  *  (brownout-dimmed like the core) minus unit/garrison AND building upkeep
  *  (daily ÷ 24). Drives the HUD's `+/h` deltas. */

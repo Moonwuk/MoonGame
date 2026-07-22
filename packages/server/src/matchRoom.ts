@@ -200,7 +200,12 @@ export type RoomObservation =
    *  work (`throttled` — it will finish on the next advance) from a same-instant
    *  runaway where the clock stopped progressing (`stalled` — a content/module bug
    *  that needs attention). Ops should alert on `stalled`. */
-  | { kind: 'advance_overflow'; reachedTime: number; targetTime: number; reason: 'throttled' | 'stalled' }
+  | {
+      kind: 'advance_overflow';
+      reachedTime: number;
+      targetTime: number;
+      reason: 'throttled' | 'stalled';
+    }
   /** Scheduled events dead-lettered during a catch-up (their handler threw). The
    *  timeline kept moving (by design), but silence here hid real module bugs —
    *  the record must reach the host's logs (bug-hunt: failures had NO consumer). */
@@ -224,7 +229,20 @@ export type RoomObservation =
   /** A client perf sample (M2): smoothed fps + round-trip + JS-heap as the player's
    *  device experiences the match. Rate-limited at the room (floods are dropped
    *  silently — telemetry, not a conversation); values already range-checked at parse. */
-  | { kind: 'client_perf'; playerId: PlayerId; fps: number; rttMs?: number; memMb?: number };
+  | { kind: 'client_perf'; playerId: PlayerId; fps: number; rttMs?: number; memMb?: number }
+  /** Hourly per-player economy snapshot (ECON-6): treasury, net hourly income and
+   *  arrears at world instant `atTime`. Emitted by the HOST's wake driver (the room
+   *  itself never produces it) — the type lives in the union so every observer
+   *  (JSONL, aggregator) speaks one stream. Curves come from the JSONL; the
+   *  aggregator keeps arrears-hours counters. */
+  | {
+      kind: 'economy';
+      atTime: number;
+      players: Record<
+        PlayerId,
+        { resources: Record<string, number>; netPerHour: Record<string, number>; arrears: string[] }
+      >;
+    };
 
 export interface SubmitResult {
   ok: boolean;
@@ -560,7 +578,8 @@ export class MatchRoom {
     // LARS-1: remember which account this seat is, for the live arsenal-ownership
     // read at unit.build admission (options.arsenalStore). Never trust a later,
     // different value for the same seat within one room's life.
-    if (accountId && !this.playerAccountId.has(playerId)) this.playerAccountId.set(playerId, accountId);
+    if (accountId && !this.playerAccountId.has(playerId))
+      this.playerAccountId.set(playerId, accountId);
     if (this.singlePeerPerPlayer && (this.peers.get(playerId)?.size ?? 0) > 0) {
       // That side is already controlled by a live connection.
       this.send(peer, { type: 'error', matchId: this.id, code: 'E_SLOT_TAKEN' });
@@ -726,7 +745,9 @@ export class MatchRoom {
         const envAction = (message.envelope as { action?: { id?: unknown; type?: unknown } } | null)
           ?.action;
         const deniedCode =
-          typeof envAction?.type === 'string' ? this.denyPlayerActions?.(envAction.type) : undefined;
+          typeof envAction?.type === 'string'
+            ? this.denyPlayerActions?.(envAction.type)
+            : undefined;
         if (deniedCode) {
           this.sendReject(
             peer,
@@ -900,7 +921,10 @@ export class MatchRoom {
    *  a raw sync `submitAction` there mutates `stateValue`/`seq` in the middle of a
    *  `commitApply` persist await, and the await's resolution then overwrites the
    *  driver's acked change and rewinds `seq` (bug-hunt CRIT: silent state loss). */
-  async submitServerAction(playerId: PlayerId, action: Action): Promise<{ ok: boolean; code?: string }> {
+  async submitServerAction(
+    playerId: PlayerId,
+    action: Action,
+  ): Promise<{ ok: boolean; code?: string }> {
     if (!this.persist) {
       const r = this.submitAction(playerId, action);
       return { ok: r.ok, ...(r.code !== undefined ? { code: r.code } : {}) };
@@ -1100,12 +1124,22 @@ export class MatchRoom {
       if (!result.partial) return { ok: true, state, events }; // reached `now`
       if (state.time <= before) {
         // Clock did not move despite work being done → a same-instant runaway. Stop.
-        this.observe?.({ kind: 'advance_overflow', reachedTime: state.time, targetTime: now, reason: 'stalled' });
+        this.observe?.({
+          kind: 'advance_overflow',
+          reachedTime: state.time,
+          targetTime: now,
+          reason: 'stalled',
+        });
         return { ok: true, state, events };
       }
     }
     // Made forward progress but ran out of chunks — a genuinely huge backlog. Yield.
-    this.observe?.({ kind: 'advance_overflow', reachedTime: state.time, targetTime: now, reason: 'throttled' });
+    this.observe?.({
+      kind: 'advance_overflow',
+      reachedTime: state.time,
+      targetTime: now,
+      reason: 'throttled',
+    });
     return { ok: true, state, events };
   }
 
@@ -1192,7 +1226,11 @@ export class MatchRoom {
    * broadcast) runs with `committing` set so a concurrent `tick()` skips. An unexpected
    * throw is contained (transient reject) and never wedges the mailbox.
    */
-  private submitActionCommitted(playerId: PlayerId, action: Action, peer?: RoomPeer): Promise<void> {
+  private submitActionCommitted(
+    playerId: PlayerId,
+    action: Action,
+    peer?: RoomPeer,
+  ): Promise<void> {
     return this.enqueue(() =>
       this.doCommittedSubmit(playerId, action, peer).catch(() => {
         // Last-resort: report and swallow. The `send` itself must not throw (a dead
@@ -1258,7 +1296,13 @@ export class MatchRoom {
     // unchanged core check below will reject with E_NOT_OWNED as before
     await this.commitApply(
       playerId,
-      { id: `srv:arsenal-sync:${playerId}:${this.seq}`, type: 'arsenal.sync', playerId, payload: fresh, issuedAt: this.clock() },
+      {
+        id: `srv:arsenal-sync:${playerId}:${this.seq}`,
+        type: 'arsenal.sync',
+        playerId,
+        payload: fresh,
+        issuedAt: this.clock(),
+      },
       undefined,
     );
   }
@@ -1314,8 +1358,16 @@ export class MatchRoom {
         // Reject-but-advanced: persist the advanced state + failure receipt, and only on a
         // durable ack commit the recomputable catch-up and broadcast its events (SRV-1). A
         // failed write commits nothing → the retry re-derives and re-broadcasts the advance.
-        const receipt: ActionReceipt = { actionId: action.id, playerId, seq, ok: false, code: result.code };
-        if (!(await this.persistGuarded(this.snapshot(advanced.state, seq), receipt, action.id, peer))) {
+        const receipt: ActionReceipt = {
+          actionId: action.id,
+          playerId,
+          seq,
+          ok: false,
+          code: result.code,
+        };
+        if (
+          !(await this.persistGuarded(this.snapshot(advanced.state, seq), receipt, action.id, peer))
+        ) {
           return TRANSIENT_VERDICT;
         }
         if (advanced.state.time > this.stateValue.time) this.record?.({ at: advanced.state.time });
@@ -1331,7 +1383,9 @@ export class MatchRoom {
       // Success: persist the final state + receipt, and ONLY on a durable ack commit the
       // new state, the receipt and the broadcast. A failed write commits nothing.
       const receipt: ActionReceipt = { actionId: action.id, playerId, seq, ok: true };
-      if (!(await this.persistGuarded(this.snapshot(result.state, seq), receipt, action.id, peer))) {
+      if (
+        !(await this.persistGuarded(this.snapshot(result.state, seq), receipt, action.id, peer))
+      ) {
         return TRANSIENT_VERDICT;
       }
       if (advanced.state.time > this.stateValue.time) this.record?.({ at: advanced.state.time });
@@ -1372,7 +1426,9 @@ export class MatchRoom {
   ): Promise<ActionReceipt | null> {
     const seq = this.seq + 1;
     const receipt: ActionReceipt = { actionId: action.id, playerId, seq, ok: false, code };
-    if (!(await this.persistGuarded(this.snapshot(this.stateValue, seq), receipt, action.id, peer))) {
+    if (
+      !(await this.persistGuarded(this.snapshot(this.stateValue, seq), receipt, action.id, peer))
+    ) {
       return null;
     }
     this.seq = seq;
@@ -1662,11 +1718,7 @@ export class MatchRoom {
     return this.areAllied(recipient, message.from);
   }
 
-  private handleChatSend(
-    playerId: PlayerId,
-    peer: RoomPeer,
-    message: ClientChatSendMessage,
-  ): void {
+  private handleChatSend(playerId: PlayerId, peer: RoomPeer, message: ClientChatSendMessage): void {
     if (!this.hasPlayer(playerId)) {
       this.send(peer, { type: 'error', matchId: this.id, code: 'E_FORBIDDEN' });
       return;

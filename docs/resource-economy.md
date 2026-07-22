@@ -183,7 +183,15 @@ Energy в `arrears` → радары **×0.5** дальности и ПВО **×
 - **Готово, когда:** оба бандла проходят паритет-тест; replayDeterminism (шипнутые
   данные) остаётся зелёным.
 
-### ECON-6 · Экономические метрики `[srv]` — S
+### ECON-6 · Экономические метрики `[srv]` — S · ✅ (2026-07-22)
+
+**Как легло:** `RoomObservation` += kind `economy` (тип в matchRoom.ts; комната его
+не эмитит — источник хостовый); чистый `economySnapshot(state)` в game.ts (казна
+копией + `netIncome` + arrears per player, `atTime = state.time`); эмит в
+`netserver.onWake` раз в игровой час (`lastEconAt`); JSONL несёт кривые
+(`worthLogging` пропускает economy всегда — одна строка в час, не спам),
+`MetricsAggregator` — headline: `economy.snapshots` + `arrearsHours` per player.
+`market.traded.fee` (ECON-4) уже в `events`-потоке — комиссия считается из него.
 
 - **Врезка:** netserver-пайплайн наблюдений (`RoomObservation` → JSONL +
   `MetricsAggregator`): новый kind `economy` — почасовой срез per player
