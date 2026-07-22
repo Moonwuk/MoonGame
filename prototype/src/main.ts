@@ -9520,7 +9520,7 @@ async function refreshArsenal(): Promise<void> {
   if (!srv) return;
   await probeAuthMode(srv.base);
   if (!authMode) return;
-  const session = localStorage.getItem(sessionKey(srv.base));
+  const session = sessionToken(srv.base);
   if (!session) return;
   try {
     const res = await fetch(`${httpBase(srv.base)}/arsenal/me`, {
@@ -9550,15 +9550,19 @@ $('cnew').addEventListener('click', () => {
   // Bytro-style greeting (SES-2.5 UX): with accounts on the server, «Новый командир»
   // opens the sign-up right ON the welcome card — suggested callsign + password —
   // instead of dropping a guest into the hub only to hit a password wall at join.
-  if (authMode) {
-    if (!wNickInput.value.trim()) wNickInput.value = suggestCallsign();
-    wLoginEl.style.display = 'flex';
-    wPassRowEl.style.display = 'flex';
-    statusEl.textContent = t('Придумай пароль — аккаунт создастся сам');
-    wPassInput.focus();
-    return;
-  }
-  openHub();
+  // Awaiting the probe closes the race: a tap before /auth/status answers must not
+  // take the guest branch on a server that actually wants accounts.
+  void authProbe.then(() => {
+    if (authMode) {
+      if (!wNickInput.value.trim()) wNickInput.value = suggestCallsign();
+      wLoginEl.style.display = 'flex';
+      wPassRowEl.style.display = 'flex';
+      statusEl.textContent = t('Придумай пароль — аккаунт создастся сам');
+      wPassInput.focus();
+      return;
+    }
+    openHub();
+  });
 });
 // «Вход по позывному»: reveal an inline field and enter under a callsign YOU type (vs
 // «Новый командир», which auto-suggests one). The chosen callsign is remembered
@@ -9576,31 +9580,42 @@ function signInByCallsign(): void {
     wNickInput.focus();
     return;
   }
-  if (authMode) {
-    void welcomeSignIn(nick);
-    return;
-  }
-  nickInput.value = nick;
-  localStorage.setItem('void.nick', nick); // remembered — next visit skips the welcome card
-  openHub();
+  // Same race guard as «Новый командир»: never pick the guest branch while the
+  // /auth/status probe is still in flight.
+  void authProbe.then(() => {
+    if (authMode) {
+      void welcomeSignIn(nick);
+      return;
+    }
+    nickInput.value = nick;
+    localStorage.setItem('void.nick', nick); // remembered — next visit skips the welcome card
+    openHub();
+  });
 }
+let signingIn = false; // in-flight guard: Enter + click must not double-register
 /** Bytro-style welcome sign-in: register-or-login right on the greeting card, then
  *  land on the hub. Reuses ensureSession (login → 401 → register), so a fresh
  *  callsign creates the account and a known one just logs in. */
 async function welcomeSignIn(nick: string): Promise<void> {
-  wPassRowEl.style.display = 'flex'; // make sure the password is visible before we demand it
-  nickInput.value = nick;
-  const srv = resolveServer();
-  if (!srv) return;
-  const session = await ensureSession(srv.base, nick);
-  if (!session) {
-    wPassInput.focus(); // ensureSession already explained why in the status line
-    return;
+  if (signingIn) return; // a second Enter/click while the first runs would double-POST
+  signingIn = true;
+  try {
+    wPassRowEl.style.display = 'flex'; // make sure the password is visible before we demand it
+    nickInput.value = nick;
+    const srv = resolveServer();
+    if (!srv) return;
+    const session = await ensureSession(srv.base, nick);
+    if (!session) {
+      wPassInput.focus(); // ensureSession already explained why in the status line
+      return;
+    }
+    localStorage.setItem('void.nick', nick);
+    wPassInput.value = ''; // the session JWT is stored instead — a password never lingers
+    statusEl.textContent = '';
+    openHub();
+  } finally {
+    signingIn = false;
   }
-  localStorage.setItem('void.nick', nick);
-  wPassInput.value = ''; // the session JWT is stored instead — a password never lingers
-  statusEl.textContent = '';
-  openHub();
 }
 wPassInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') signInByCallsign();
@@ -9656,6 +9671,11 @@ $('hub-msg').addEventListener('click', () => {
   hubNote.textContent = t('Сообщения — скоро');
 });
 $('hub-logout').addEventListener('click', () => {
+  // «Сменить командира» must really switch identity: drop this server's session so
+  // the next sign-in authenticates the NEW callsign instead of replaying the old JWT.
+  const srv = resolveServer();
+  if (srv) localStorage.removeItem(sessionKey(srv.base));
+  statusEl.textContent = '';
   showHub(false);
   showConnect(true);
   showStage('welcome');
@@ -10572,6 +10592,33 @@ let authMode = false;
 const passRow = document.getElementById('cpassrow') as HTMLElement | null;
 const passInput = document.getElementById('cpass') as HTMLInputElement | null;
 const sessionKey = (base: string): string => `void.session.${base}`;
+/** Session record: the JWT plus WHOSE it is. A cached token must never silently
+ *  authenticate a different callsign (family laptop: «Сменить командира» then a
+ *  new sign-in really switches the account). Legacy bare-JWT values fail the
+ *  parse → treated as absent, one harmless re-login. */
+interface SessionRec {
+  login: string;
+  token: string;
+}
+function sessionRecord(base: string): SessionRec | null {
+  try {
+    const rec = JSON.parse(localStorage.getItem(sessionKey(base)) ?? 'null') as {
+      login?: unknown;
+      token?: unknown;
+    } | null;
+    return rec && typeof rec.login === 'string' && typeof rec.token === 'string'
+      ? { login: rec.login, token: rec.token }
+      : null;
+  } catch {
+    return null;
+  }
+}
+/** The cached session token for ANY identity on this server (best-effort reads:
+ *  arsenal refresh, redial). Auth-critical paths use ensureSession, which checks
+ *  the login matches. */
+function sessionToken(base: string): string | null {
+  return sessionRecord(base)?.token ?? null;
+}
 
 /** Probe the server's identity mode and show/hide the password field. Network
  *  failure ⇒ assume nick mode (the old handshake) — the join itself will surface
@@ -10590,25 +10637,29 @@ async function probeAuthMode(base: string): Promise<void> {
 // the welcome — probe the same-origin default and surface callsign+password on the
 // greeting card right away, so a new commander registers before the hub, not deep
 // inside the join flow. Probe failure ⇒ nick mode, the card stays as it was.
-// (A remembered nick skipped the welcome card above — nothing to reveal then.)
-if (!(localStorage.getItem('void.nick') ?? '').trim())
-  void (async () => {
-    const base = srvInput.value.trim();
-    if (!base) return;
-    await probeAuthMode(base);
-    if (!authMode) return;
-    if (!wNickInput.value.trim()) wNickInput.value = suggestCallsign();
-    wLoginEl.style.display = 'flex';
-    wPassRowEl.style.display = 'flex';
-  })();
+// The probe ALWAYS runs and is awaited by the welcome buttons (cnew / sign-in), so
+// an early tap can't race /auth/status into the guest branch; revealing the form
+// applies to first visits only (a remembered nick skipped the welcome card above).
+const authProbe: Promise<void> = (async () => {
+  const base = srvInput.value.trim();
+  if (!base) return;
+  await probeAuthMode(base);
+  if (!authMode) return;
+  if ((localStorage.getItem('void.nick') ?? '').trim()) return; // welcome card was skipped
+  if (!wNickInput.value.trim()) wNickInput.value = suggestCallsign();
+  wLoginEl.style.display = 'flex';
+  wPassRowEl.style.display = 'flex';
+})();
 
 /** A valid session JWT for this server, or null (with the status line explaining).
  *  Zero-friction identity: try LOGIN first; unknown-or-wrong is a uniform 401, so
  *  then try REGISTER — a fresh login creates the account (registration IS the first
  *  login), while a taken one (409) means the password was simply wrong. */
 async function ensureSession(base: string, login: string): Promise<string | null> {
-  const cached = localStorage.getItem(sessionKey(base));
-  if (cached) return cached;
+  // Only OUR OWN cached session counts — a token minted for a different callsign
+  // (or a legacy unbound one) is ignored and replaced by a fresh login below.
+  const cachedRec = sessionRecord(base);
+  if (cachedRec && cachedRec.login.toLowerCase() === login.toLowerCase()) return cachedRec.token;
   // Mirror the server's LOGIN_RE (authApi.ts) so a bad callsign gets a human
   // explanation here instead of the server's uniform rejection.
   if (!/^[\p{L}\p{N}_-]{3,24}$/u.test(login)) {
@@ -10634,17 +10685,22 @@ async function ensureSession(base: string, login: string): Promise<string | null
   try {
     const login1 = await call('/auth/login');
     if (login1.token) {
-      localStorage.setItem(sessionKey(base), login1.token);
+      localStorage.setItem(sessionKey(base), JSON.stringify({ login, token: login1.token }));
       return login1.token;
     }
     if (login1.status === 401) {
       const reg = await call('/auth/register');
       if (reg.token) {
-        localStorage.setItem(sessionKey(base), reg.token);
+        localStorage.setItem(sessionKey(base), JSON.stringify({ login, token: reg.token }));
         note('✔ ' + t('Аккаунт создан'));
         return reg.token;
       }
-      statusEl.textContent = reg.status === 409 ? t('Неверный пароль') : t('Регистрация отклонена');
+      statusEl.textContent =
+        reg.status === 409
+          ? t('Неверный пароль')
+          : reg.status === 429
+            ? t('Слишком часто — подождите')
+            : t('Регистрация отклонена');
       return null;
     }
     statusEl.textContent =
@@ -10955,7 +11011,7 @@ function scheduleReconnect(): void {
     // the redial to the connect screen with «введите пароль» (fail-explicit).
     void (async () => {
       const srv = resolveServer();
-      const session = srv ? localStorage.getItem(sessionKey(srv.base)) : null;
+      const session = srv ? sessionToken(srv.base) : null;
       if (!srv || !session) {
         reconnecting = false;
         banner = null;
@@ -12747,7 +12803,7 @@ async function corpFetch(
   if (!srv) return null;
   await probeAuthMode(srv.base);
   if (!authMode) return null;
-  const session = localStorage.getItem(sessionKey(srv.base));
+  const session = sessionToken(srv.base);
   if (!session) return null;
   try {
     const res = await fetch(`${httpBase(srv.base)}${path}`, {

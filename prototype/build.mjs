@@ -1996,7 +1996,7 @@ const page = (js) => `<!doctype html>
           <button id="cwgo" class="cbtn" type="button" data-i18n>Войти</button>
         </div>
         <div id="cwpassrow" class="cwlogin" style="display:none">
-          <input id="cwpass" type="password" autocomplete="current-password" maxlength="128" placeholder="пароль (аккаунт создастся сам)" data-i18n-ph>
+          <input id="cwpass" type="password" autocomplete="new-password" maxlength="128" placeholder="пароль (аккаунт создастся сам)" data-i18n-ph>
         </div>
       </div>
       <div id="cbrowse" style="display:none">
