@@ -540,7 +540,7 @@ let merging = false; // "Merge" armed → next tap on a friendly fleet picks the
 // Fleets ordered to merge but not yet co-located: each flies to its anchor and the
 // fusion fires once they share a docked sector (see resolvePendingMerges()).
 let pendingMerges: Array<{ mover: string; into: string }> = [];
-let additive = false; // Ctrl/⌘ held on the current tap → add to the fleet selection
+let additive = false; // Shift or Ctrl/⌘ held on the current tap → add to the fleet selection
 // Split-fleet dialog: which fleet, and how many of each ship type peel off.
 let splitState: { fleetId: string; take: Record<string, number> } | null = null;
 
@@ -4976,7 +4976,7 @@ function taskGroupPanelHtml(group: Fleet[]): string {
     t('ОПЕРАТИВНАЯ ГРУППА'),
     t('{f} флот(ов) · {s} кораблей · {tr} десанта', { f: group.length, s: ships, tr: troops }),
   );
-  h += `<div class="hint">${t('Нажмите «Курс» и тапните цель — все выбранные флоты пойдут туда (проложат маршрут и встанут). «Слить» сплавляет группу в один флот (дальние сначала подлетят). Shift-рамка выделяет группу; Ctrl/⌘-клик добавляет флот.')}</div>`;
+  h += `<div class="hint">${t('Нажмите «Курс» и тапните цель — все выбранные флоты пойдут туда (проложат маршрут и встанут). «Слить» сплавляет группу в один флот (дальние сначала подлетят). Shift- или Ctrl/⌘-клик по флоту добавляет его в группу; Shift-рамка по пустому месту выделяет несколько.')}</div>`;
   for (const f of group) {
     const loc =
       f.location ??
@@ -7630,7 +7630,7 @@ function selectAt(mx: number, my: number) {
     );
     if (mine) {
       if (additive)
-        toggleFleetInSelection(mine.id); // Ctrl/⌘ → extend the group
+        toggleFleetInSelection(mine.id); // Shift / Ctrl / ⌘ → extend the group
       else setFleetSelection([mine.id]); // (clears any selected planet)
       return;
     }
@@ -7727,8 +7727,19 @@ canvas.addEventListener('pointerdown', (ev) => {
     dragStart = p;
     tapByTouch = ev.pointerType === 'touch'; // preview + commit share the snap radius
     longPressFired = false;
-    boxSelecting = ev.shiftKey;
-    additive = ev.ctrlKey || ev.metaKey; // Ctrl/⌘-click → add to the fleet selection
+    // Shift OR Ctrl/⌘ extends the fleet selection (the RTS/Bytro habit — Shift-click
+    // gathers fleets for one group order). Shift over EMPTY space still opens a
+    // box-select; Shift over one of YOUR fleets is an additive click instead, so the
+    // two never fight (a rubber-band from a fleet would eat the click).
+    const overOwnFleet = !!nearestHit(
+      Object.values(s.fleets).filter((f) => f.owner === ME),
+      fleetAnchor,
+      p.x,
+      p.y,
+      ev.pointerType === 'touch' ? 24 : 16,
+    );
+    additive = ev.ctrlKey || ev.metaKey || ev.shiftKey;
+    boxSelecting = ev.shiftKey && !overOwnFleet;
     selectionBox = boxSelecting ? { x1: p.x, y1: p.y, x2: p.x, y2: p.y } : null;
     dragged = false;
     if (aiming || assaultAim) aimPointer = p; // the aim preview starts under the finger at once
@@ -7813,8 +7824,12 @@ function endPointer(ev: PointerEvent) {
       const a = fleetAnchor(f);
       if (a && a.x >= x1 && a.x <= x2 && a.y >= y1 && a.y <= y2) picked.push(f.id);
     }
-    if (picked.length) setFleetSelection(picked);
-    else {
+    // A modifier-held box ADDS to the running group (Shift-gather is cumulative);
+    // a plain box replaces it. An empty additive box leaves the group untouched.
+    if (picked.length) {
+      if (additive) setFleetSelection([...new Set([...selectedFleetIds(), ...picked])]);
+      else setFleetSelection(picked);
+    } else if (!additive) {
       selFleets = new Set();
       selFleet = null;
       lastPanelHtml = '';

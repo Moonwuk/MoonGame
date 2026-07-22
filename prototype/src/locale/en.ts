@@ -380,8 +380,8 @@ export const en: Record<string, string> = {
   МАТЧИ: 'MATCHES',
   'Нажмите «Курс» (командная панель) и тапните цель — флот проложит маршрут и встанет. «Слить…» объединяет с другим флотом; «Разделить» отделяет корабли в новый флот.':
     'Press "Move" (command bar), then tap a destination — the fleet routes there and stops. "Merge…" combines with another fleet; "Split" peels ships into a new fleet.',
-  'Нажмите «Курс» и тапните цель — все выбранные флоты пойдут туда (проложат маршрут и встанут). «Слить» сплавляет группу в один флот (дальние сначала подлетят). Shift-рамка выделяет группу; Ctrl/⌘-клик добавляет флот.':
-    'Press "Move" and tap a destination — every selected fleet routes there and stops. "Merge" fuses the group into one fleet (distant ones fly in first). Shift-drag selects a group; Ctrl/⌘-click adds a fleet.',
+  'Нажмите «Курс» и тапните цель — все выбранные флоты пойдут туда (проложат маршрут и встанут). «Слить» сплавляет группу в один флот (дальние сначала подлетят). Shift- или Ctrl/⌘-клик по флоту добавляет его в группу; Shift-рамка по пустому месту выделяет несколько.':
+    'Press "Move" and tap a destination — every selected fleet routes there and stops. "Merge" fuses the group into one fleet (distant ones fly in first). Shift- or Ctrl/⌘-click a fleet to add it to the group; Shift-drag empty space to box-select several.',
   'Наземная армия ⇄ гарнизон': 'Ground army ⇄ garrison',
   'Наземные части': 'Ground units',
   'Наземные части обороняют миры; грузятся на флот из панели флота.':
