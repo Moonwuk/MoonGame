@@ -582,6 +582,12 @@ const server = createMultiplayerServer({
   // headers as `/` — a stale dev client is as confusing as a stale player one).
   httpRoutes: (app) => {
     registerBrowserApi(app, registry);
+    // NETA2-mon: the aggregator's FAILURE signals, live over HTTP — glance at desyncs /
+    // rejects-by-code / dead-letters / advance-overflows / worst fps without waiting for
+    // the on-exit JSONL summary. Process-wide aggregates only, no match ids (F-13), no
+    // PII — public like `/metrics` and `/health`, so a playtest host is one `curl` away
+    // from "is anything going wrong right now?".
+    app.get('/metrics/summary', async () => metrics.summary());
     // The client self-configures: accounts mode shows the password field + goes
     // через register/login+join-token; nick mode keeps the old handshake.
     app.get('/auth/status', async () => ({ enabled: AUTH }));
@@ -694,6 +700,7 @@ const lines = [
       : `  game   : ${localHttp}/   (open in a browser → Connect)`
     : `  game   : run \`pnpm prototype\` first to serve the HTML at /`,
   `  health : ${localHttp}/health`,
+  `  metrics: ${localHttp}/metrics/summary   (desyncs / rejects-by-code / dead-letters / latencies — live)`,
   DATABASE_URL
     ? `  store  : Postgres — durable${restoredCount > 0 ? ` (resumed ${restoredCount} saved match${restoredCount > 1 ? 'es' : ''})` : ''}`
     : '  store  : in-memory — a restart loses the matches (set DATABASE_URL for durability)',
