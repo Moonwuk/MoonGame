@@ -3634,6 +3634,92 @@ export const instantRepairModule: GameModule = {
   },
 };
 
+// --- ECON-3: ножницы «гора железа / пустая казна» -----------------------------
+// Два управляемых винта (docs/resource-economy.md §3): (а) экспресс-ремонт за
+// METAL у своего дока — дешёвая альтернатива платному мгновенному ремонту и
+// быстрая — бесплатному портовому (shipRepair 5–10%/ч остаётся); (б) переплавка
+// metal → credits с курсом сознательно хуже рынка — пол под ценой, не замена
+// торговли.
+export const REPAIR_HP_PER_METAL = 2;
+export const SMELT_RATE = 4; // metal за 1 credit
+
+/** Цена экспресс-ремонта в metal (0 — чинить нечего) — одна формула на сервер и
+ *  кнопку клиента. */
+export function dockRepairCost(f: Fleet, data: GameData): number {
+  return Math.ceil(missingHull(f, data) / REPAIR_HP_PER_METAL);
+}
+
+/** Есть ли у флота свой док: стоит (не летит) над СВОИМ миром с живым зданием,
+ *  дающим `shipRepair > 0` (spaceport/shipyard). Та же проверка — в кнопке UI. */
+export function fleetAtOwnDock(f: Fleet, state: GameState, data: GameData): boolean {
+  if (f.movement || !f.location) return false;
+  const planet = state.planets[f.location];
+  if (!planet || planet.owner !== f.owner) return false;
+  return planet.buildings.some((b) => {
+    if (b.hp <= 0) return false;
+    const def = data.buildings[b.type];
+    return !!def && buildingLevel(def, b.level).shipRepair > 0;
+  });
+}
+
+export const econScrewsModule: GameModule = {
+  id: 'econ-screws',
+  version: '0.1.0',
+  setup(api) {
+    // (а) экспресс-ремонт: мгновенный топ-ап корпуса за metal у своего дока.
+    api.onAction('fleet.repair', (action, h) => {
+      const p = action.payload as { fleetId?: unknown };
+      if (typeof p?.fleetId !== 'string') return h.reject('E_BAD_PAYLOAD');
+      const f = h.state.fleets[p.fleetId];
+      // Absent OR not-yours → one opaque code (A06 — no fleet-existence probing).
+      if (!f || f.owner !== action.playerId) return h.reject('E_NO_FLEET');
+      if (f.battleId) return h.reject('E_IN_BATTLE');
+      if (!fleetAtOwnDock(f, h.state, h.ctx.data)) return h.reject('E_NO_DOCK');
+      const player = h.state.players[action.playerId];
+      if (!player) return h.reject('E_NO_PLAYER');
+      const hull = missingHull(f, h.ctx.data);
+      if (hull <= 0) return h.reject('E_NOTHING_TO_REPAIR');
+      const metal = Math.ceil(hull / REPAIR_HP_PER_METAL);
+      if (!canAfford(player.resources, { metal })) return h.reject('E_NO_FUNDS');
+      payCost(player.resources, { metal });
+      for (const stack of [...f.units, ...(f.landing ?? [])]) delete stack.hp;
+      h.emit('fleet.repaired', { fleetId: f.id, owner: f.owner, metal, hull });
+    });
+    // (б) переплавка: metal → credits на своём мире с refinery/metal_station.
+    api.onAction('resource.smelt', (action, h) => {
+      const p = action.payload as { planetId?: unknown; amount?: unknown };
+      if (
+        typeof p?.planetId !== 'string' ||
+        typeof p?.amount !== 'number' ||
+        !Number.isFinite(p.amount) ||
+        p.amount <= 0
+      ) {
+        return h.reject('E_BAD_PAYLOAD');
+      }
+      const planet = h.state.planets[p.planetId];
+      if (!planet || planet.owner !== action.playerId) return h.reject('E_NO_PLANET');
+      const smelter = planet.buildings.some(
+        (b) => b.hp > 0 && (b.type === 'refinery' || b.type === 'metal_station'),
+      );
+      if (!smelter) return h.reject('E_NO_SMELTER');
+      const player = h.state.players[action.playerId];
+      if (!player) return h.reject('E_NO_PLAYER');
+      const amount = Math.floor(p.amount);
+      const credits = Math.floor(amount / SMELT_RATE);
+      if (credits <= 0) return h.reject('E_BAD_PAYLOAD'); // меньше минимальной плавки
+      if (!canAfford(player.resources, { metal: amount })) return h.reject('E_NO_FUNDS');
+      payCost(player.resources, { metal: amount });
+      player.resources.credits = (player.resources.credits ?? 0) + credits;
+      h.emit('resource.smelted', {
+        planetId: planet.id,
+        owner: planet.owner,
+        metal: amount,
+        credits,
+      });
+    });
+  },
+};
+
 export const MODULES: GameModule[] = [
   sectorModule,
   planetTypeModule,
@@ -3668,6 +3754,7 @@ export const MODULES: GameModule[] = [
   standingOrdersModule, // CC-2/CC-4 standing orders (auto-storm / дежурный вылет), server-driven
   forcedMarchModule, // BOOST-1 форс-марш: +50% скорости за 5% max-HP износа в час хода
   instantRepairModule, // платный мгновенный ремонт корпуса (кредиты как премиум-валюта)
+  econScrewsModule, // ECON-3: экспресс-ремонт за metal у дока + переплавка metal → credits
   effectsModule, // EFX-1: интерпретатор data.events (trigger→effect); инертен, пока events: {} пуст
 ];
 
@@ -4303,6 +4390,12 @@ export const forceMarchFleet = (playerId: string, fleetId: string, on: boolean) 
 /** Платный мгновенный ремонт корпуса всего флота (цена — `instantRepairCost`). */
 export const instantRepairFleet = (playerId: string, fleetId: string) =>
   act(playerId, 'fleet.instantRepair', { fleetId });
+/** ECON-3а: экспресс-ремонт за metal у своего дока (цена — `dockRepairCost`). */
+export const repairFleet = (playerId: string, fleetId: string) =>
+  act(playerId, 'fleet.repair', { fleetId });
+/** ECON-3б: переплавить `amount` metal в credits (курс `SMELT_RATE`:1). */
+export const smeltMetal = (playerId: string, planetId: string, amount: number) =>
+  act(playerId, 'resource.smelt', { planetId, amount });
 /** The chain driver's runtime stamp: consumed head / armed wait deadline. */
 export const chainStamp = (
   playerId: string,
