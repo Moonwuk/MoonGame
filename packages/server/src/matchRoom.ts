@@ -185,6 +185,11 @@ export type RoomObservation =
       ok: boolean;
       seq: number;
       code?: string;
+      /** True when this action's receipt was ALREADY durably persisted by the
+       *  commit-before-broadcast `persist` callback (the gated durable path). A host
+       *  that persists receipts from `observe` must skip those to avoid a double write
+       *  (the sync path — server drivers, ungated actions — leaves this false). */
+      durable?: boolean;
     }
   /** Terminal match report. `rewards` is the session-end table the core computed
    *  (SES-2: place + XP per seated player, GDD §3.4) — the host banks each seat's XP
@@ -1171,7 +1176,7 @@ export class MatchRoom {
    *  `committing` false: a driver's `reschedule` reads `msUntilNextEvent`, which reports
    *  null while committing — so emitting mid-commit would leave the driver un-armed and
    *  the 24/7 world stalled for connected players until their next action. */
-  private observeAction(receipt: ActionReceipt, actionType: string): void {
+  private observeAction(receipt: ActionReceipt, actionType: string, durable = false): void {
     this.observe?.({
       kind: 'action',
       actionId: receipt.actionId,
@@ -1180,6 +1185,7 @@ export class MatchRoom {
       ok: receipt.ok,
       seq: receipt.seq,
       ...(receipt.code ? { code: receipt.code } : {}),
+      ...(durable ? { durable: true } : {}),
     });
   }
 
@@ -1310,7 +1316,7 @@ export class MatchRoom {
       if (action.playerId !== playerId || !this.hasPlayer(playerId)) {
         const receipt = await this.commitReject(playerId, action, 'E_FORBIDDEN', peer);
         if (!receipt) return TRANSIENT_VERDICT;
-        observeCommitted = () => this.observeAction(receipt, action.type);
+        observeCommitted = () => this.observeAction(receipt, action.type, true); // durable: persist already wrote the receipt
         return { ok: false, code: 'E_FORBIDDEN', durable: true };
       }
 
@@ -1322,7 +1328,7 @@ export class MatchRoom {
       if (!advanced.ok) {
         const receipt = await this.commitReject(playerId, action, advanced.code, peer);
         if (!receipt) return TRANSIENT_VERDICT;
-        observeCommitted = () => this.observeAction(receipt, action.type);
+        observeCommitted = () => this.observeAction(receipt, action.type, true); // durable: persist already wrote the receipt
         return { ok: false, code: advanced.code, durable: true };
       }
 
@@ -1343,7 +1349,7 @@ export class MatchRoom {
         this.stateValue = advanced.state;
         this.seq = seq;
         this.retainReceipt(receipt);
-        observeCommitted = () => this.observeAction(receipt, action.type);
+        observeCommitted = () => this.observeAction(receipt, action.type, true); // durable: persist already wrote the receipt
         if (advanced.events.length > 0) this.broadcastState(advanced.events);
         // Same as the sync path: the durable catch-up advance may have ended the match
         // while THIS action rejects (E_MATCH_ENDED) — bank rewards regardless (idempotent).
@@ -1363,7 +1369,7 @@ export class MatchRoom {
       this.record?.({ at: effectiveNow, action }); // RPL-2: only SUCCESSFUL applies
       this.seq = seq;
       this.retainReceipt(receipt);
-      observeCommitted = () => this.observeAction(receipt, action.type);
+      observeCommitted = () => this.observeAction(receipt, action.type, true); // durable: persist already wrote the receipt
       this.broadcastState([...advanced.events, ...result.events]);
       this.observeEndIfNeeded();
       return { ok: true };

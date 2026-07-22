@@ -1345,10 +1345,12 @@ requires[], cost, grants{ability?|passive?}}`; ветки **transhuman**/**psion
   клиентские 6 попыток укладываются в ~31с → часто сдаётся ровно на освобождении места.
   Расширить попытки/бэкофф (или сократить окно reap). **Готово, когда:** дроп+реконнект в
   пределах reap не сдаётся раньше; тест таймингов.
-- **NETA2-3** ⏳ `[srv]` **netserver не дублирует запись квитанций**. `observe` пишет
-  квитанцию только когда `persist` НЕ активен (на durable-пути `persist` — единственный
-  писатель; сейчас пишут оба). **Готово, когда:** durable-путь — одна запись, sync — по-прежнему
-  durable; тест.
+- **NETA2-3** ✅ `[srv]` **netserver не дублирует запись квитанций**. На durable-пути квитанцию
+  писали ОБА: `persist` (commit-before-broadcast) и `observe`-хендлер. Теперь наблюдение
+  `action` несёт флаг **`durable`** (ставится на всех 4 ветках `commitApply`; sync-путь
+  `recordReceipt` его не ставит), а netserver сохраняет квитанцию только когда `!durable` —
+  durable-путь пишет один раз (`persist`), sync-путь (серверные драйверы / ungated) — по-прежнему
+  durable через `observe`. Тест: durable-действие → наблюдение помечено `durable:true`, sync — нет.
 - **NETA2-4** ⏳ `[srv]` `[cli]` **Единый источник wire-протокола**. Типы/константы/коды
   (`PingKind`/`ChatChannel`/`ServerErrorCode`/`PING_KINDS`/`CHAT_TEXT_MAX`) продублированы
   в `protocol.ts` и `multiplayer.ts` вручную (уже разошлись). Вынести в один модуль, оба

@@ -283,8 +283,12 @@ async function createHostedMatch(id: string): Promise<HostedMatch> {
       connected = Math.max(0, connected - 1);
       humans.delete(ev.playerId);
       aiEligibleAt.set(ev.playerId, Date.now() + AI_GRACE_MS); // reconnect window
-    } else if (ev.kind === 'action') {
+    } else if (ev.kind === 'action' && !ev.durable) {
       // Persist the receipt so a retried action stays deduped across a restart.
+      // NETA2-3: a DURABLE action (gated committed path) already had its receipt
+      // written by the room's commit-before-broadcast `persist` callback — skip it
+      // here or we double-write. Only the SYNC path (server drivers, ungated actions)
+      // has no other durable writer, so it still persists through this branch.
       void receiptStore.save(id, {
         actionId: ev.actionId,
         playerId: ev.playerId,
