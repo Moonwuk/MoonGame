@@ -191,6 +191,7 @@ export const en: Record<string, string> = {
   '🎯{n}ч': '🎯{n}h',
   'Выбрать+': 'Select+',
   'Деж. вылет': 'Scramble',
+  'голод: −25% на земле': 'starving: −25% on the ground',
   '⚔ авто-штурм включён — флот сам штурмует вражеский мир по прибытии':
     '⚔ auto-storm on — the fleet storms the hostile world it arrives at by itself',
   Ускорить: 'Boost',
