@@ -101,6 +101,11 @@ import {
   FORCED_MARCH_MULT,
   instantRepairFleet,
   instantRepairCost,
+  repairFleet,
+  dockRepairCost,
+  fleetAtOwnDock,
+  smeltMetal,
+  SMELT_RATE,
   MAX_CHAIN_STEPS,
   type ChainStep,
   type Patrol,
@@ -5246,12 +5251,18 @@ function fleetPanelHtml(f: Fleet): string {
   );
   // Тап по имени открыл сводку армии — карточка целиком уступает ей место.
   if (fleetInfoFor === f.id) return h + fleetSummaryHtml(f);
-  // ХП-бар Bytro-стиля + ненавязчивый платный ремонт: маленький золотой чип
-  // только на СВОЁМ повреждённом флоте вне боя (цена — та же формула, что в гейте).
+  // ХП-бар Bytro-стиля + два ремонта: ECON-3а — экспресс за METAL у своего дока
+  // (дешёвый, основной), и ненавязчивый платный за кредиты — где угодно вне боя
+  // (цены — те же формулы, что в гейте).
   const repairCost = instantRepairCost(f, data);
   const canRepair = f.owner === ME && !f.battleId && repairCost > 0;
+  const atDock = canRepair && fleetAtOwnDock(f, s, data);
   if (maxHull > 0) {
     h += `<div class="row hullrow" data-desc="stat:hull"><span class="hico">♥</span><span class="hbar${hullPct < 30 ? ' low' : ''}"><i style="width:${hullPct}%"></i></span><b>${kfmt(Math.round(curHull))}/${kfmt(maxHull)}</b>${
+      atDock
+        ? `<button class="chip-metal" data-act="dockrepair" data-arg="${f.id}" title="${t('Экспресс-ремонт у своего дока за металл')}">🔧 ${dockRepairCost(f, data)}⬢</button>`
+        : ''
+    }${
       canRepair
         ? `<button class="chip-gold" data-act="instantrepair" data-arg="${f.id}" title="${t('Мгновенный ремонт всего корпуса за кредиты')}">🔧 ${repairCost}💰</button>`
         : ''
@@ -5544,6 +5555,21 @@ function planetPanelHtml(p: Planet): string {
   // ECON-2: блэкаут — неоплаченная энергия глушит радары и ПВО этого владельца вдвое.
   if (mine && (s.players[ME]?.arrears ?? []).includes('energy')) {
     h += `<div class="row" style="color:var(--red)">⚡ ${t('блэкаут: радары и ПВО −50%')}</div>`;
+  }
+  // ECON-3б: переплавка metal → credits (курс хуже рынка сознательно — пол под
+  // ценой) на своём мире с живым refinery/metal_station.
+  if (
+    mine &&
+    p.buildings.some((b) => b.hp > 0 && (b.type === 'refinery' || b.type === 'metal_station'))
+  ) {
+    const metalStock = Math.floor(s.players[ME]?.resources.metal ?? 0);
+    const preset = (n: number) =>
+      btn('smelt', String(n), `${n}⬢ → ${Math.floor(n / SMELT_RATE)}💰`, metalStock >= n);
+    h += `<div class="row" data-desc="act:smelt">♨ ${t('Переплавка')} <span class="dim">${SMELT_RATE}⬢ = 1💰</span> ${preset(20)}${preset(100)}${
+      metalStock >= SMELT_RATE * 2
+        ? btn('smelt', String(metalStock), t('всё ({n}⬢)', { n: metalStock }), true)
+        : ''
+    }</div>`;
   }
   if (pt && (pt.productionBonus !== 0 || pt.defenseBonus !== 0)) {
     const pct = (n: number) => (n >= 0 ? '+' : '') + Math.round(n * 100) + '%';
@@ -6135,6 +6161,15 @@ function objDossier(key: string): Dossier | null {
     return {
       name: t('Конструктор дивизий'),
       body: t('Редактор шаблонов: состав слотов и доктрина дивизий.'),
+    };
+  }
+  if (key === 'act:smelt') {
+    return {
+      name: t('Переплавка'),
+      body: t(
+        'Мгновенно переплавляет металл в кредиты по курсу {n}:1 — сознательно хуже рынка: это пол под ценой, а не замена торговли.',
+        { n: SMELT_RATE },
+      ),
     };
   }
   if (key.startsWith('c:')) return constructionDossier(key);
@@ -7440,6 +7475,12 @@ side.addEventListener('click', (ev) => {
     // Платный мгновенный ремонт: цена и отказы — на сервере; панель перерисуется
     // по факту (полный бар = получилось), нотификаций-обещаний не даём.
     playerOrder(instantRepairFleet(ME, arg || selFleet!));
+  } else if (act === 'dockrepair') {
+    // ECON-3а: экспресс-ремонт за metal — кнопка видна только у своего дока.
+    playerOrder(repairFleet(ME, arg || selFleet!));
+  } else if (act === 'smelt') {
+    // ECON-3б: переплавка metal → credits на выбранном своём мире.
+    playerOrder(smeltMetal(ME, selPlanet!, Number(arg)));
   } else if (act === 'fleetinfo') {
     // Тап по имени армии: карточка ⇄ сводка (для текущего выбранного флота).
     if (selFleet) fleetInfoFor = fleetInfoFor === selFleet ? null : selFleet;
