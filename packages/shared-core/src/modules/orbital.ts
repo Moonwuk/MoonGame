@@ -4,7 +4,7 @@ import type { GameData } from '../data/schemas';
 import { buildingLevel } from '../data/schemas';
 import { hoursToMs, timeScaleOf, type Context } from '../action/types';
 import { MS_PER_HOUR } from '../util/time';
-import { sumUnitStat } from '../util/stacks';
+import { cappedUnitStat, sumUnitStat } from '../util/stacks';
 import { requireOwnedIdleFleet } from '../util/fleet';
 import { isActivelyBombarding } from '../state/orbit';
 import { BLACKOUT_MULT } from '../state/visibility';
@@ -57,9 +57,10 @@ function nearOrbitHostile(
   return best;
 }
 
-/** Bombardment firepower a fleet rains on the planet = Σ ship attack × fraction. */
+/** Bombardment firepower a fleet rains on the planet = Σ ship attack × fraction,
+ *  over at most COMBAT_UNIT_CAP units (the same firing line as melee/artillery). */
 function bombardPower(fleet: Fleet, data: GameData): number {
-  return sumUnitStat(fleet.units, data, 'attack') * BOMBARD_FRACTION;
+  return cappedUnitStat(fleet.units, data, 'attack') * BOMBARD_FRACTION;
 }
 
 /** Resolves the orbital layer over one continuous time span: planetary AA fires
