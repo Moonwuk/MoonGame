@@ -9336,9 +9336,11 @@ if (!__PLAYER_BUILD__) {
 // sign-in is a styled stub until accounts land (docs/accounts-roadmap.md AC-1.1):
 // it drops you straight into guest play by callsign, with a "скоро" notice.
 const welcomeStageEl = $('cwelcome');
+const registerStageEl = $('cregister');
 const browseStageEl = $('cbrowse');
-function showStage(stage: 'welcome' | 'browse'): void {
+function showStage(stage: 'welcome' | 'register' | 'browse'): void {
   welcomeStageEl.style.display = stage === 'welcome' ? '' : 'none';
+  registerStageEl.style.display = stage === 'register' ? '' : 'none';
   browseStageEl.style.display = stage === 'browse' ? '' : 'none';
 }
 
@@ -9610,18 +9612,14 @@ function openHub(note = ''): void {
 }
 
 $('cnew').addEventListener('click', () => {
-  // Bytro-style greeting (SES-2.5 UX): with accounts on the server, «Новый командир»
-  // opens the sign-up right ON the welcome card — suggested callsign + password —
-  // instead of dropping a guest into the hub only to hit a password wall at join.
-  // Awaiting the probe closes the race: a tap before /auth/status answers must not
-  // take the guest branch on a server that actually wants accounts.
+  // «Новый командир» → the dedicated registration PAGE (its own stage of #connect, no live
+  // game behind it): callsign + password + repeat. Awaiting the probe closes the race — a
+  // tap before /auth/status answers must not take the guest branch on an accounts server.
+  // With accounts OFF (nick-only server) there is no password to set, so a new commander
+  // just gets a suggested callsign and drops into the hub.
   void authProbe.then(() => {
     if (authMode) {
-      if (!wNickInput.value.trim()) wNickInput.value = suggestCallsign();
-      wLoginEl.style.display = 'flex';
-      wPassRowEl.style.display = 'flex';
-      statusEl.textContent = t('Придумай пароль — аккаунт создастся сам');
-      wPassInput.focus();
+      openRegister();
       return;
     }
     openHub();
@@ -9720,6 +9718,78 @@ for (const a of Array.from(document.querySelectorAll('.cfoot a'))) {
     statusEl.textContent = t('{what} — скоро', { what: (a.textContent ?? '').trim() });
   });
 }
+
+// --- «Новый командир» → dedicated registration page (its own #connect stage) -------
+// Callsign + password + repeat, on a page of its own (no live game behind it). Registration
+// IS the first login (ensureSession: login → 401 → register), so a fresh callsign creates
+// the account. «Восстановить доступ» is a stub until the accounts backend grows a real reset
+// (no email on file yet — docs/accounts-roadmap.md).
+const crNickInput = $('crnick') as HTMLInputElement;
+const crPassInput = $('crpass') as HTMLInputElement;
+const crPass2Input = $('crpass2') as HTMLInputElement;
+function openRegister(): void {
+  showStage('register');
+  crNickInput.value = crNickInput.value.trim() || suggestCallsign();
+  crPassInput.value = '';
+  crPass2Input.value = '';
+  statusEl.textContent = '';
+  crPassInput.focus();
+}
+async function submitRegister(): Promise<void> {
+  const nick = crNickInput.value.trim();
+  const pass = crPassInput.value;
+  if (!nick) {
+    statusEl.textContent = t('Введи имя командира');
+    crNickInput.focus();
+    return;
+  }
+  if (pass.length < 8) {
+    statusEl.textContent = t('Введите пароль (мин. 8 символов)');
+    crPassInput.focus();
+    return;
+  }
+  if (pass !== crPass2Input.value) {
+    statusEl.textContent = t('Пароли не совпадают');
+    crPass2Input.focus();
+    return;
+  }
+  if (signingIn) return; // Enter + click must not double-register
+  signingIn = true;
+  try {
+    const srv = resolveServer();
+    if (!srv) return;
+    const session = await ensureSession(srv.base, nick, pass);
+    if (!session) {
+      crPassInput.focus(); // ensureSession already explained why in the status line
+      return;
+    }
+    localStorage.setItem('void.nick', nick);
+    nickInput.value = nick;
+    crPassInput.value = '';
+    crPass2Input.value = '';
+    statusEl.textContent = '';
+    openHub();
+  } finally {
+    signingIn = false;
+  }
+}
+$('crgo').addEventListener('click', () => void submitRegister());
+crNickInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') crPassInput.focus();
+});
+crPassInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') crPass2Input.focus();
+});
+crPass2Input.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') void submitRegister();
+});
+$('crback').addEventListener('click', () => {
+  showStage('welcome');
+  statusEl.textContent = '';
+});
+$('crrecover').addEventListener('click', () => {
+  statusEl.textContent = t('Восстановление доступа — скоро');
+});
 
 // hub interactions
 $('hub-play').addEventListener('click', () => hubTab('games'));
@@ -9842,7 +9912,26 @@ settingsEl.addEventListener('click', (e) => {
 // First-run gate: a returning commander (a saved callsign) skips the identity card
 // and boots straight into the hub — the raw "Новый командир / войти" screen is only
 // for a genuinely new device. "Сменить командира" in the hub goes back to identity.
-if ((localStorage.getItem('void.nick') ?? '').trim()) openHub();
+//
+// Deep-link override: a «?join=<id>» URL (a new tab spawned by «Войти» in the match list)
+// boots straight into THAT session, reusing this browser's stored identity (nick / session
+// JWT). If there is no stored identity the join simply fails back onto the welcome card.
+const bootJoinId =
+  typeof location !== 'undefined'
+    ? (new URLSearchParams(location.search).get('join') ?? '').trim()
+    : '';
+if (bootJoinId) {
+  showConnect(true);
+  showHub(false);
+  statusEl.textContent = t('Подключение к сессии…');
+  void (async () => {
+    const srv = resolveServer();
+    if (srv) await probeAuthMode(srv.base);
+    connectToMatch(bootJoinId);
+  })();
+} else if ((localStorage.getItem('void.nick') ?? '').trim()) {
+  openHub();
+}
 
 // --- single-player setup overlay --------------------------------------------
 // Pick your homeworld on a mini-map and choose how many AI rivals join, then
@@ -10724,7 +10813,7 @@ const authProbe: Promise<void> = (async () => {
  *  Zero-friction identity: try LOGIN first; unknown-or-wrong is a uniform 401, so
  *  then try REGISTER — a fresh login creates the account (registration IS the first
  *  login), while a taken one (409) means the password was simply wrong. */
-async function ensureSession(base: string, login: string): Promise<string | null> {
+async function ensureSession(base: string, login: string, passwordArg?: string): Promise<string | null> {
   // Only OUR OWN cached session counts — a token minted for a different callsign
   // (or a legacy unbound one) is ignored and replaced by a fresh login below.
   const cachedRec = sessionRecord(base);
@@ -10737,7 +10826,7 @@ async function ensureSession(base: string, login: string): Promise<string | null
   }
   // The password may come from the welcome card (Bytro-style sign-up) or the match
   // browser's field (custom-server joins) — whichever the player actually filled.
-  const password = wPassInput.value || (passInput?.value ?? '');
+  const password = passwordArg ?? (wPassInput.value || (passInput?.value ?? ''));
   if (password.length < 8) {
     statusEl.textContent = t('Введите пароль (мин. 8 символов)');
     return null;
@@ -10884,6 +10973,16 @@ function connectToMatch(id: string): void {
   })();
 }
 
+// Open a session in its OWN browser tab (deep-link «?join=<id>»): the hub/browser stays in
+// THIS tab while the match runs in a fresh one, which boots straight into it from the shared
+// same-origin localStorage identity (nick / session JWT). Popup blocked → join in this tab so
+// the player is never left stuck. (On the APK / a file:// page window.open may hand off to the
+// system browser; the deployed https origin is the intended path.)
+function openSessionTab(id: string): void {
+  const w = window.open(`${location.pathname}?join=${encodeURIComponent(id)}`, '_blank');
+  if (!w) connectToMatch(id);
+}
+
 async function refreshMatches(quiet = false): Promise<void> {
   const srv = resolveServer();
   if (!srv) return;
@@ -10999,7 +11098,7 @@ function renderMatches(): void {
     const join = document.createElement('button');
     join.className = 'mbtn';
     join.textContent = t('Войти');
-    join.addEventListener('click', () => connectToMatch(m.matchId));
+    join.addEventListener('click', () => openSessionTab(m.matchId));
     btns.appendChild(join);
     if (activeTab !== 'available') {
       const restore = activeTab === 'archived';

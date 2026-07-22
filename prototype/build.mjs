@@ -1232,9 +1232,10 @@ button.b:disabled{opacity:.32;cursor:not-allowed;color:var(--dim);border-color:v
   body.sheet-open #cmdbar{bottom:calc(50vh + 8px);}
 }
 /* connect overlay — entry screen (single-player vs join a live session) */
+/* Identity is its OWN page, not an overlay: an OPAQUE full-screen backdrop so the live
+   map/skirmish never shows through behind the welcome / registration / browser cards. */
 #connect{position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;
-  padding:20px;background:radial-gradient(120% 100% at 50% 30%,rgba(4,20,28,.92),rgba(1,4,10,.97));
-  -webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px);}
+  padding:20px;background:radial-gradient(125% 105% at 50% 38%,#04141c 0%,#02080e 58%,#01040a 100%);}
 #connect .cbox{width:min(520px,94vw);background:var(--glass);border:1px solid var(--line-hi);
   border-radius:12px;padding:22px 20px;box-shadow:0 0 40px rgba(0,0,0,.6),inset 0 0 0 1px rgba(53,214,230,.06);}
 #connect .ctitle{display:flex;align-items:center;gap:10px;font-size:18px;letter-spacing:3px;color:var(--cyan);}
@@ -1256,6 +1257,9 @@ button.b:disabled{opacity:.32;cursor:not-allowed;color:var(--dim);border-color:v
 #connect .cwlogin input:focus{outline:none;border-color:var(--cyan);box-shadow:0 0 0 2px rgba(53,214,230,.2);}
 #connect .cwlogin .cbtn{flex:0 0 auto;min-width:92px;}
 #connect .cstat{margin-top:14px;min-height:16px;font-size:12px;color:var(--amber);text-align:center;}
+#connect .clink{display:block;width:100%;margin-top:14px;padding:4px;background:none;border:none;cursor:pointer;
+  color:var(--cyan-dim);font:12px ui-monospace,monospace;letter-spacing:.5px;text-align:center;}
+#connect .clink:hover{color:var(--cyan);text-decoration:underline;}
 #connect .mtabs{display:flex;gap:6px;margin-top:16px;}
 #connect .mtab{flex:1;padding:8px 6px;border-radius:7px;border:1px solid var(--line-hi);background:transparent;
   color:var(--dim);font-size:11px;letter-spacing:1px;text-transform:uppercase;cursor:pointer;}
@@ -1998,6 +2002,24 @@ const page = (js) => `<!doctype html>
         <div id="cwpassrow" class="cwlogin" style="display:none">
           <input id="cwpass" type="password" autocomplete="new-password" maxlength="128" placeholder="пароль (аккаунт создастся сам)" data-i18n-ph>
         </div>
+      </div>
+      <div id="cregister" style="display:none">
+        <button id="crback" class="cback" type="button" data-i18n>‹ назад</button>
+        <div class="ctitle"><span class="dia"></span><b data-i18n>Новый командир</b></div>
+        <p class="csub" data-i18n>Придумай позывной и пароль — так создаётся аккаунт.</p>
+        <label class="cfield"><span data-i18n>Имя командира</span>
+          <input id="crnick" type="text" autocapitalize="off" autocomplete="username" spellcheck="false" maxlength="24" placeholder="позывной" data-i18n-ph>
+        </label>
+        <label class="cfield"><span data-i18n>Пароль</span>
+          <input id="crpass" type="password" autocomplete="new-password" maxlength="128" placeholder="минимум 8 символов" data-i18n-ph>
+        </label>
+        <label class="cfield"><span data-i18n>Повтор пароля</span>
+          <input id="crpass2" type="password" autocomplete="new-password" maxlength="128" placeholder="ещё раз" data-i18n-ph>
+        </label>
+        <div class="crow">
+          <button id="crgo" class="cbtn" type="button" data-i18n>Создать командира</button>
+        </div>
+        <button id="crrecover" class="clink" type="button" data-i18n>Восстановить доступ</button>
       </div>
       <div id="cbrowse" style="display:none">
         <button id="cback" class="cback" type="button" data-i18n>‹ назад</button>

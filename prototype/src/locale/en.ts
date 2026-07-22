@@ -1032,6 +1032,18 @@ export const en: Record<string, string> = {
   'Новый командир': 'New Commander',
   'Добро пожаловать, командир. Флот ждёт приказа.': 'Welcome, commander. The fleet awaits your orders.',
   'Придумай пароль — аккаунт создастся сам': 'Choose a password — the account creates itself',
+  'Придумай позывной и пароль — так создаётся аккаунт.':
+    'Choose a callsign and password — that creates your account.',
+  'Имя командира': 'Commander name',
+  'Повтор пароля': 'Repeat password',
+  'Создать командира': 'Create commander',
+  'Восстановить доступ': 'Recover access',
+  'минимум 8 символов': 'at least 8 characters',
+  'ещё раз': 'once more',
+  'Введи имя командира': 'Enter a commander name',
+  'Пароли не совпадают': 'Passwords do not match',
+  'Восстановление доступа — скоро': 'Access recovery — coming soon',
+  'Подключение к сессии…': 'Connecting to the session…',
   'переподключение — приказ не отправлен, повтори через миг':
     'reconnecting — order not sent, try again in a moment',
   'матч заполнен — все места заняты': 'match is full — every seat is taken',
