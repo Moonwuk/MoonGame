@@ -239,6 +239,7 @@ import { resolveIntro, parseSeenIntros, type IntroCard } from './intros';
 import { buildRecap, type RecapEvent } from './recap';
 // ONB-7 — first-session goals checklist (mine/fleet/capture/score, ticked from state).
 import { FIRST_GOALS, metGoals, mergeDone, goalsComplete, type GoalSignals } from './firstGoals';
+import { reconnectDelayMs } from './reconnect';
 // ONB-0 — first-run onboarding state + funnel (per-callsign localStorage). Pure
 // model; main.ts persists it and drives the hub offer / «Ещё → Обучение» replay.
 import {
@@ -11053,12 +11054,16 @@ if (__PLAYER_BUILD__) {
 // The match browser (stage 2) loads its list on entry — "Новый командир" / "Вход"
 // call refreshMatches() themselves; nothing to prefetch while the clean welcome is up.
 
-// Auto-reconnect after an unexpected drop: rejoin our seat with capped exponential
-// backoff (1,2,4,8,8,8s, then give up). Same saved server + nick → same side.
+// Auto-reconnect after an unexpected drop: rejoin our seat with capped exponential backoff
+// (1,2,4,8,8,… s). The budget (`reconnectDelayMs`, NETA2-2) OUTLASTS the server's ~30s
+// socket-reap window on purpose — a reconnect within the reap must not give up before the
+// old socket frees the seat (else it loses the race with `E_SLOT_TAKEN`). Same saved
+// server + nick → same side.
 function scheduleReconnect(): void {
   if (reconnectTimer) return;
   reconnectAttempts++;
-  if (reconnectAttempts > 6) {
+  const delay = reconnectDelayMs(reconnectAttempts);
+  if (delay === null) {
     reconnecting = false;
     reconnectAttempts = 0;
     banner = null;
@@ -11067,7 +11072,6 @@ function scheduleReconnect(): void {
     return;
   }
   banner = t('⟳ переподключение…');
-  const delay = Math.min(1000 * 2 ** (reconnectAttempts - 1), 8000);
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;
     if (!authMode) {
