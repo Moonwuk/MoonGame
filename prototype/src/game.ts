@@ -1533,6 +1533,25 @@ export const taxModule: GameModule = {
   },
 };
 
+// --- ECON-1: голодная армия ---------------------------------------------------
+// Food in the owner's `arrears` (the economy module's unpaid-bill marker) → their
+// GROUND damage ×HUNGER_MULT. Ships run on credits, not rations — the orbital
+// phase is untouched. Pure read of state the economy already settles spanwise, so
+// determinism/replays are intact; the multiplier is a one-line balance knob.
+export const HUNGER_MULT = 0.75;
+export const hungerModule: GameModule = {
+  id: 'hunger',
+  version: '0.1.0',
+  setup(api) {
+    api.hook<number>('combat.damage', (damage, args, h) => {
+      const a = args as { phase?: string; attacker?: string | null };
+      if (a.phase !== 'ground' || typeof a.attacker !== 'string') return damage;
+      const striker = h.state.players[a.attacker];
+      return striker?.arrears?.includes('food') ? damage * HUNGER_MULT : damage;
+    });
+  },
+};
+
 // --- fleet.launch / fleet.merge: form and consolidate mobile fleets ----------
 // The core builds units into a planet's garrison; this small module lets a
 // player scramble those into a new fleet (ships → units, ground troops →
@@ -3568,6 +3587,7 @@ export const MODULES: GameModule[] = [
   planetTypeModule,
   taxModule, // civic tax on inhabited worlds (hooks economy.production, after planetType)
   factionModule, // H3: чисто пассивные бонусы дома (production / fleet.speed / combat.damage)
+  hungerModule, // ECON-1: food в arrears → наземный урон ×0.75 (корабли едят кредиты)
   economyModule,
   movementModule,
   heroModule, // projection hero: fleet combat aura (+5%) + death/respawn

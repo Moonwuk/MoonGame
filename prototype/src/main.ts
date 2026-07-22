@@ -5036,6 +5036,11 @@ function fleetPanelHtml(f: Fleet): string {
   const hullPct = maxHull > 0 ? Math.round((curHull / maxHull) * 100) : 100;
   const hullTag =
     hullPct < 100 ? ` · ${hullPct < 30 ? '⚠ ' : ''}${t('корпус {p}%', { p: hullPct })}` : '';
+  // ECON-1: голодный десант — владелец в food-arrears бьёт на земле на −25%.
+  const hungry =
+    nTr > 0 && f.owner === ME && (s.players[ME]?.arrears ?? []).includes('food')
+      ? ` · 🍽 ${t('голод: −25% на земле')}`
+      : '';
   let h = cardHeader(
     ownerColor(f.owner),
     t('ФЛОТ'),
@@ -5043,6 +5048,7 @@ function fleetPanelHtml(f: Fleet): string {
       ? t('Корабли: {s} · Десант: {tr}', { s: nShips, tr: nTr })
       : t('{s} кораблей · {tr} десанта', { s: nShips, tr: nTr })) +
       hullTag +
+      hungry +
       (inOrbit ? ' · ' + t('на орбите') : '') +
       (f.bombarding ? ' · ⊗ ' + t('бомбардирует') : ''),
   );
@@ -5390,8 +5396,14 @@ function planetPanelHtml(p: Planet): string {
     // PC: one tile row of icon·count chips (the tab's old bottom hint lives in the
     // ЗЕМЛЯ tab's hover dossier, 'tab:ground'). Mobile keeps the original row list
     // and bottom hint untouched.
+    // ECON-1: голодный гарнизон — владелец мира в food-arrears теряет 25% на земле.
+    const starving =
+      p.owner === ME && ground.length > 0 && (s.players[ME]?.arrears ?? []).includes('food')
+        ? `<div class="row" style="color:var(--red)">🍽 ${t('голод: −25% на земле')}</div>`
+        : '';
     cols.push(
       `<div class="sec">${t('Наземные части')}</div>` +
+        starving +
         (pcUi() ? garrisonTilesHtml(ground) : unitRows(ground)),
     );
     if (mine) {
