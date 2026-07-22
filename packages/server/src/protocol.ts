@@ -357,7 +357,9 @@ export function parseClientMessage(raw: string): ClientMessage | null {
     return { type: 'action.v1', envelope: decoded.envelope };
   }
   if (decoded.type === 'ping') {
-    return typeof decoded.clientTime === 'number'
+    // Require a FINITE clientTime (like the desync/perf branches) — a NaN/Infinity would
+    // ride back in `pong.clientTime` and poison the client's `now - clientTime` RTT math.
+    return typeof decoded.clientTime === 'number' && Number.isFinite(decoded.clientTime)
       ? { type: 'ping', clientTime: decoded.clientTime }
       : { type: 'ping' };
   }

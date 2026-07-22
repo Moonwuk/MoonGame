@@ -1032,6 +1032,8 @@ export const en: Record<string, string> = {
   'Новый командир': 'New Commander',
   'Добро пожаловать, командир. Флот ждёт приказа.': 'Welcome, commander. The fleet awaits your orders.',
   'Придумай пароль — аккаунт создастся сам': 'Choose a password — the account creates itself',
+  'переподключение — приказ не отправлен, повтори через миг':
+    'reconnecting — order not sent, try again in a moment',
   'Позывной для аккаунта: 3–24 символа — буквы, цифры, _ или -':
     'Account callsign: 3–24 chars — letters, digits, _ or -',
   Обновить: 'Update',

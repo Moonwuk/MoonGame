@@ -951,6 +951,11 @@ export class MatchRoom {
         // so peers see the advanced world instead of losing it until the next accepted
         // action — without a tick loop, that could be hours of game time.
         if (advanced.events.length > 0) this.broadcastState(advanced.events);
+        // The advance itself may have ENDED the match (a score/domination threshold
+        // crossed on a `time.advanced` span) — the triggering action then rejects with
+        // E_MATCH_ENDED, but rewards must still be banked. observeEndIfNeeded is
+        // idempotent, so calling it on every advanced-reject is safe (EC-* banking bug).
+        this.observeEndIfNeeded();
         const receipt = this.recordReceipt(action, playerId, false, result.code);
         if (peer) this.sendRejection(peer, receipt);
         return { ok: false, seq: receipt.seq, events: [], code: receipt.code };
@@ -1325,6 +1330,9 @@ export class MatchRoom {
         this.retainReceipt(receipt);
         observeCommitted = () => this.observeAction(receipt, action.type);
         if (advanced.events.length > 0) this.broadcastState(advanced.events);
+        // Same as the sync path: the durable catch-up advance may have ended the match
+        // while THIS action rejects (E_MATCH_ENDED) — bank rewards regardless (idempotent).
+        this.observeEndIfNeeded();
         if (peer) this.sendRejection(peer, receipt);
         return { ok: false, code: result.code, durable: true };
       }

@@ -2174,6 +2174,14 @@ function playerOrder(action: Action) {
     activeTour?.notifyAction(action.type); // optimistic — server result is async
     return;
   }
+  // Net match, socket temporarily down (auto-reconnecting): DON'T run the local reducer
+  // — the order would apply to `s`, look accepted on-screen, then vanish when the
+  // reconnect `welcome` overwrites state (the server never saw it). Refuse with feedback
+  // instead of silently losing it. (Solo/skirmish has `reconnecting === false`.)
+  if (reconnecting) {
+    note('⟳ ' + t('переподключение — приказ не отправлен, повтори через миг'));
+    return;
+  }
   const out = order(s, action, s.time);
   apply(out);
   if (out.error) note('✖ ' + errText(out.error));
