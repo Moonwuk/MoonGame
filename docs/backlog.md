@@ -1306,7 +1306,18 @@ requires[], cost, grants{ability?|passive?}}`; ветки **transhuman**/**psion
 - **SEC-5** ✅ Container scanning: `Dockerfile` (multi-stage, пин distroless-базы) +
   живой job `trivy-image` в `security.yml` (сборка образа, `trivy image` + image-SBOM).
   _(Статус выправлен аудитом доков.)_
-- **SEC-6** 🔒(F1+ запущенный сервер) DAST: ZAP baseline против `packages/server` (раскомментировать `dast-zap`).
+- **SEC-6** ✅ DAST: `dast-zap`-джоба в `security.yml` (не было закомментированной
+  заготовки под этим именем — заметка была неточной, добавлена с нуля тем же
+  паттерном пиненных Docker-образов, что у gitleaks/trivy/osv). Поднимает
+  `packages/server` in-memory (`pnpm dev:server`, без `DATABASE_URL` — auth/gate
+  дефолт-off, F1 ✅), ждёт `/health`, гоняет ZAP baseline (`ghcr.io/zaproxy/zaproxy`,
+  `--network host` — цель голый node-процесс на раннере, не контейнер) через
+  `zap-baseline.py -t http://localhost:8787`. Образ закреплён по sha256, дайджест
+  снят живым запросом к `ghcr.io/v2` (тот же метод, что у SEC-7). Информационная
+  (`continue-on-error`, ещё без триажа на реальном рантайме — как у CodeQL/TruffleHog/
+  zizmor/Scorecard при первом добавлении), станет блокирующей после первого прогона
+  и разбора находок. HTML+JSON отчёт — артефакт джобы; `report`-джоба и
+  `summarize-security.mjs` в курсе нового ключа `dast-zap`.
 - **SEC-7** ✅ _(SEC-5 ✅ — замок снят)_ Supply-chain integrity (A08): подпись
   образов `cosign` + provenance **SLSA** + проверка на деплое. Единственный
   артефакт с реальной раздачей — APK в `android.yml` (rolling GitHub Releases,
