@@ -37,6 +37,12 @@ export {
   type OpenMatchesFeedDeps,
 } from './matchApi';
 export { MatchKeeper, type MatchKeeperOptions } from './matchFactory';
+export {
+  startClockDriver,
+  HEARTBEAT_MS,
+  type ClockDriverHandle,
+  type ClockDriverOptions,
+} from './clockDriver';
 export { pickAvaMap } from './avaMapPool';
 export {
   arsenalSnapshotOf,

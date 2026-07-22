@@ -21,6 +21,9 @@ import {
   MetricsAggregator,
   createMultiplayerServer,
   registerBrowserApi,
+  startClockDriver,
+  HEARTBEAT_MS,
+  type ClockDriverHandle,
   MemoryAccountStore,
   MemoryCommanderStore,
   MemoryMatchStore,
@@ -229,15 +232,11 @@ const NET_SEATS = networkSeats(NETWORK_MODE);
 const MATCHES = Math.max(1, Math.min(16, Number(process.env.MATCHES ?? 1) || 1));
 const matchIds = Array.from({ length: MATCHES }, (_, i) => (i === 0 ? 'proto' : `proto-${i + 1}`));
 
-// Shared wakeup-driver tuning (one instance of these per hosted match below).
-const MAX_TIMER_MS = 60 * 60_000; // 1h cap (setTimeout overflow + clock-drift safety)
-// While a match has connected players, tick at least this often even if the
-// schedule is momentarily empty — otherwise the world only advances when someone issues
-// an order (submitAction), so the published clock/economy/in-flight fleets freeze
-// on-screen between actions. newGame() starts with NO scheduled events, so without this
-// the very first thing players see after joining is a frozen "Day 1 00:00".
-const HEARTBEAT_MS = 1_000;
-const WAKE_STALL_LIMIT = 3; // consecutive due-but-non-progressing wakes → back off
+// Wakeup-driver tuning. NETA2-6: the arm/fire/stall loop + the live-player HEARTBEAT_MS
+// beat now live in the shared `startClockDriver` (packages/server) — one scheduler for
+// both hosts. This host only pins a tighter 1h timer cap (setTimeout overflow +
+// clock-drift safety); the stall limit and the beat interval come from the shared driver.
+const MAX_TIMER_MS = 60 * 60_000; // 1h cap, passed as the driver's maxDelayMs
 
 /** One hosted session: a MatchRoom plus ALL its per-match machinery — the empty-seat
  *  AI (with the BF-17 reconnect grace), the standing-order drivers, the debounced
@@ -247,14 +246,16 @@ interface HostedMatch {
   id: string;
   room: MatchRoom;
   restored: boolean;
-  armWakeup(): void;
   /** Final durable flush (shutdown). */
   flush(): Promise<void>;
   clearTimers(): void;
 }
 
 async function createHostedMatch(id: string): Promise<HostedMatch> {
-  let connected = 0; // live players in THIS match (drives its running-match heartbeat)
+  let connected = 0; // live players in THIS match (gates the empty-seat AI)
+  // The shared offline scheduler (assigned after `room` below). `observe` re-arms it,
+  // so it is declared here — before `observe` — and read with `?.` until it exists.
+  let driver: ClockDriverHandle | null = null;
   // Seats with a live human peer. Any seat NOT in here is "empty" and is driven by
   // the server-side AI (mirrors single-player: empty slots are taken by the AI).
   const humans = new Set<string>();
@@ -306,13 +307,14 @@ async function createHostedMatch(id: string): Promise<HostedMatch> {
     // never emit it — SES-2.1.)
     if (ev.kind === 'action' || ev.kind === 'lobby' || ev.kind === 'end') scheduleSave();
     // Re-arm on room events: an action may (un)schedule events, and a join/leave
-    // starts/stops the live-player heartbeat below. A genuine
-    // external event also gives the stall guard a fresh chance (the situation may have
-    // changed). `advance_overflow` is EXCLUDED: a stalled catch-up emits it from inside
-    // `room.tick()` itself, so resetting/re-arming on it would defeat the wake-stall
-    // back-off in `onWake` (an eternal 0ms wake spin). The M1 metrics kinds are excluded
-    // too: they describe work already done (fan-out size, timings, desync reports) and
-    // never move the next-event time — re-arming on every broadcast would churn the timer.
+    // starts/stops the live-player heartbeat (the driver reads room.peerCount).
+    // `reschedule()` re-evaluates the next wake AND resets the driver's stall guard —
+    // a genuine external event means the situation may have changed. `advance_overflow`
+    // is EXCLUDED: a stalled catch-up emits it from inside `room.tick()` itself, so
+    // rescheduling on it would defeat the stall back-off (an eternal 0ms wake spin). The
+    // M1 metrics kinds are excluded too: they describe work already done (fan-out size,
+    // timings, desync reports) and never move the next-event time — rescheduling on every
+    // broadcast would churn the timer.
     if (
       ev.kind === 'join' ||
       ev.kind === 'leave' ||
@@ -321,8 +323,7 @@ async function createHostedMatch(id: string): Promise<HostedMatch> {
       ev.kind === 'end' ||
       ev.kind === 'dead_letter'
     ) {
-      wakeStalls = 0;
-      armWakeup();
+      driver?.reschedule();
     }
   };
 
@@ -402,31 +403,18 @@ async function createHostedMatch(id: string): Promise<HostedMatch> {
     saving = false;
   }
 
-  // Offline scheduler (PA-4.1): a per-room wakeup driver so the world runs
-  // 24/7 even with nobody connected. The in-state schedule is mirrored as ONE
-  // pending timer set to the soonest event; when it fires we `tick()` the room
-  // (advance + broadcast the arrivals/battles/captures that came due) and re-arm.
-  // `setTimeout` overflows past ~24.8 days, so a far-future event is capped to
-  // MAX_TIMER_MS and we re-arm — a long sleep taken in hops. Note: NO downtime
-  // catch-up — the room resumes its clock at the saved `state.time` (initiallyStarted),
-  // so the gap while the process was down is simply skipped, not replayed. The
-  // distributed/durable evolution is a job queue on Postgres (pg-boss): one shared
-  // "wake match X at T" job across many server processes instead of one in-memory
-  // timer per room — see docs/persistence-accounts-roadmap.md (PA-4).
-  let wakeTimer: ReturnType<typeof setTimeout> | null = null;
-  let wakeStalls = 0;
-  let driversBusy = false; // re-entrancy guard: one async driver pass at a time
-  function armWakeup(): void {
-    if (wakeTimer) {
-      clearTimeout(wakeTimer);
-      wakeTimer = null;
-    }
-    const ev = room.msUntilNextEvent(); // wall-ms to the next scheduled event, or null
-    const beat = room.isStarted && connected > 0 ? HEARTBEAT_MS : null; // live-player heartbeat
-    if (ev === null && beat === null) return; // nothing scheduled and nobody live → idle
-    const ms = ev === null ? beat : beat === null ? ev : Math.min(ev, beat);
-    wakeTimer = setTimeout(onWake, Math.min(ms ?? MAX_TIMER_MS, MAX_TIMER_MS));
-  }
+  // Offline scheduler (PA-4.1): the shared `startClockDriver` (assigned below, after the
+  // driver bodies its onTick calls) runs the world 24/7 — it arms one timer for the
+  // soonest scheduled event, ticks the room when it fires (advance + broadcast the
+  // arrivals/battles/captures that came due), and re-arms; the live-player HEARTBEAT_MS
+  // beat keeps a watched room's clock moving on-screen even with an empty schedule. NO
+  // downtime catch-up — the room resumes at the saved `state.time` (initiallyStarted), so
+  // a gap while the process was down is skipped, not replayed. The distributed evolution
+  // is a Postgres job queue (pg-boss): one shared "wake match X at T" job across processes
+  // instead of one in-memory timer per room — see docs/persistence-accounts-roadmap.md.
+  // `driversBusy` guards re-entrancy: on a DURABLE room a driver pass awaits the room's
+  // mailbox, so a later (heartbeat) tick must not start a second pass mid-flight.
+  let driversBusy = false;
   // Server-side AI for empty seats: every ~2 game-hours, any match seat with no live
   // human peer issues the same orders the single-player AI would (shared `aiOrders`),
   // submitted through the authoritative room. Runs only while the match is started and
@@ -488,56 +476,53 @@ async function createHostedMatch(id: string): Promise<HostedMatch> {
     }
   }
 
-  function onWake(): void {
-    wakeTimer = null;
-    const progressed = room.tick(); // fire whatever is now due (no-op if a capped timer fired early)
-    // Stall guard: work is due (ms 0) but the clock didn't move ⇒ a same-instant runaway.
-    // While stalled, SKIP the AI/standing-order drivers — their submissions (even rejected ones)
-    // emit `action` observations that would reset this guard and re-arm a 0ms wake — and
-    // back off after a few tries instead of busy-looping (the room has already surfaced
-    // an advance_overflow). A real player action re-arms via `observe`, which resets the
-    // counter and gives it a fresh chance.
-    const stalled = !progressed && room.msUntilNextEvent() === 0;
-    if (!stalled && !driversBusy) {
-      wakeStalls = 0;
-      // Async drivers (durable rooms await the mailbox); the busy flag stops a later
-      // heartbeat from double-running them while a slow persist is still in flight.
-      driversBusy = true;
-      void (async () => {
-        try {
-          await runServerAI(); // drive any empty seat once the clock has moved
-          await runServerStanding(); // CC-2/CC-4: standing orders (auto-storm / дежурный вылет)
-        } finally {
-          driversBusy = false;
-        }
-      })();
-    }
-    scheduleSave(); // persist the advanced world
-    if (stalled && ++wakeStalls >= WAKE_STALL_LIMIT) {
+  // Raise the shared clock driver for this room. onTick fires AFTER room.tick(): persist
+  // the advanced world and — unless the tick stalled or a pass is still in flight — run
+  // the empty-seat AI + standing orders. The driver owns the arm/stall/re-arm loop and the
+  // HEARTBEAT_MS beat; `observe` calls driver.reschedule() when an action moves the
+  // next-event time (or a join/leave flips the beat).
+  driver = startClockDriver(room, {
+    heartbeatMs: HEARTBEAT_MS,
+    maxDelayMs: MAX_TIMER_MS,
+    onTick: ({ progressed }) => {
+      // Same-instant runaway: work is due (ms 0) but the clock didn't move. SKIP the
+      // drivers then — their submissions emit `action` observations that reschedule the
+      // driver and reset its stall guard, which would spin a 0ms wake. The driver's own
+      // STALL_LIMIT backs off; here we just avoid feeding it.
+      const stalled = !progressed && room.msUntilNextEvent() === 0;
+      if (!stalled && !driversBusy) {
+        // Async drivers (durable rooms await the mailbox); the busy flag stops a later
+        // heartbeat from double-running them while a slow persist is still in flight.
+        driversBusy = true;
+        void (async () => {
+          try {
+            await runServerAI(); // drive any empty seat once the clock has moved
+            await runServerStanding(); // CC-2/CC-4: standing orders (auto-storm / дежурный вылет)
+          } finally {
+            driversBusy = false;
+          }
+        })();
+      }
+      scheduleSave(); // persist the advanced world
+    },
+    onStall: () =>
       process.stderr.write(
         `wakeup driver idling (${id}): the world clock stalled (a same-instant scheduling loop) — ` +
           'check for a module scheduling events at its own instant.\n',
-      );
-      return; // idle — do not re-arm
-    }
-    armWakeup(); // re-arm for the next event (or the remainder of a long sleep)
-  }
+      ),
+  });
 
   return {
     id,
     room,
     restored: !!restoredSnap,
-    armWakeup,
     flush: doSave,
     clearTimers(): void {
       if (saveTimer) {
         clearTimeout(saveTimer);
         saveTimer = null;
       }
-      if (wakeTimer) {
-        clearTimeout(wakeTimer);
-        wakeTimer = null;
-      }
+      driver?.stop(); // cancel the pending wake
     },
   };
 }
@@ -753,9 +738,10 @@ lines.push(
 );
 process.stdout.write(lines.join('\n'));
 
-// Start the offline heartbeat per room: if a restored match already has a due/pending
-// event, this arms its first wake (no burst — the clock resumes at the saved time).
-for (const h of hosted) h.armWakeup();
+// The per-room offline scheduler self-arms when its clock driver is created inside
+// createHostedMatch (a restored match with a due/pending event arms its first wake then;
+// a fresh, empty schedule idles until the first join re-arms it via `observe`). No burst
+// on resume — the clock picks up at the saved time (initiallyStarted).
 
 // On Ctrl-C: print the playtest summary (counts gathered by `observe`) and where
 // the raw JSONL landed, then close cleanly — the per-match data survives the run.

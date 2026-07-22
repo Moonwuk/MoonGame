@@ -554,6 +554,16 @@ export class MatchRoom {
     return this.started;
   }
 
+  /** Whether the world clock is currently ADVANCING (vs. frozen in a pre-start lobby).
+   *  Mirrors the `clock()` gate exactly: a no-lobby room (auto-start SES-2.1, or the
+   *  plain dev match) always runs; a waitForPlayers/manualStart lobby runs only once
+   *  released (`lobbyRunningSince` set). The offline heartbeat beats only a running
+   *  room — a frozen lobby has no live clock to keep on-screen, and its "due" events
+   *  must not fire (which would also trip the driver's stall guard). */
+  get isClockRunning(): boolean {
+    return (!this.waitFor && !this.manualStart) || this.lobbyRunningSince !== null;
+  }
+
   /** Number of connected sockets across all seats — 0 means the match is unwatched
    *  and a lifecycle registry may hibernate it (persist + evict). */
   get peerCount(): number {
