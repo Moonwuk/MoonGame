@@ -1034,6 +1034,9 @@ export const en: Record<string, string> = {
   'Придумай пароль — аккаунт создастся сам': 'Choose a password — the account creates itself',
   'переподключение — приказ не отправлен, повтори через миг':
     'reconnecting — order not sent, try again in a moment',
+  'матч заполнен — все места заняты': 'match is full — every seat is taken',
+  'вход в этот матч закрыт (окно приёма новых игроков истекло)':
+    'this match is closed to new players (the entry window has elapsed)',
   'Позывной для аккаунта: 3–24 символа — буквы, цифры, _ или -':
     'Account callsign: 3–24 chars — letters, digits, _ or -',
   Обновить: 'Update',

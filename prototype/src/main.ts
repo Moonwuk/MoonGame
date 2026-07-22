@@ -10557,6 +10557,12 @@ function connect(): void {
           statusEl.textContent = 'that name is already playing (another tab or device?)';
         } else if (!admitted && code === 'E_UNKNOWN_PLAYER') {
           statusEl.textContent = 'could not get a seat';
+        } else if (!admitted && code === 'E_MATCH_FULL') {
+          // NETA2-1: the server COMPLETED the handshake just to tell us why — a real
+          // refusal, not "server down". Say it plainly instead of a generic error.
+          statusEl.textContent = t('матч заполнен — все места заняты');
+        } else if (!admitted && code === 'E_ENTRY_CLOSED') {
+          statusEl.textContent = t('вход в этот матч закрыт (окно приёма новых игроков истекло)');
         } else {
           statusEl.textContent = 'error: ' + code;
         }

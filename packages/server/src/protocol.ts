@@ -20,6 +20,12 @@ export type ServerErrorCode =
   | 'E_PAYLOAD_TOO_LARGE'
   | 'E_SLOT_TAKEN'
   | 'E_UNKNOWN_PLAYER'
+  // Handshake refusals the client can act on (NETA2-1): delivered over a COMPLETED
+  // upgrade (then the socket closes) — a browser hides a failed WS handshake's HTTP
+  // status, so these ride an app-level `error` frame instead. Both are already public
+  // via the `GET /matches` browser feed, so surfacing them leaks nothing new.
+  | 'E_MATCH_FULL'
+  | 'E_ENTRY_CLOSED'
   | 'E_PING_TARGET'
   | 'E_PING_UNSEEN'
   | 'E_PING_BUILD'
