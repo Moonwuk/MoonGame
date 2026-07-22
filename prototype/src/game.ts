@@ -441,7 +441,9 @@ export const data: GameData = parseGameData({
       stats: { attack: 16, defense: 14, speed: 40, hp: 60, cargoCapacity: 5 },
       line: 'front',
       signature: 4, // big warship — broadcasts
-      cost: { metal: 60, credits: 20 },
+      // ECON-7: modern warships need microelectronics — the hi-tech good gates a
+      // real fleet, so you must run fabricators to keep building (Bytro model).
+      cost: { metal: 60, credits: 20, microelectronics: 3 },
       buildTimeHours: 3,
       upkeep: { credits: 4 },
       slots: { weapon: 1, defense: 1, utility: 1 }, // the balanced warship: one of each bay
@@ -454,7 +456,7 @@ export const data: GameData = parseGameData({
       stats: { attack: 30, defense: 6, speed: 30, hp: 40, range: 240 },
       traits: ['artillery'],
       signature: 5, // huge siege platform — loudest
-      cost: { metal: 90, credits: 40 },
+      cost: { metal: 90, credits: 40, microelectronics: 4 }, // ECON-7: guided munitions
       buildTimeHours: 5,
       upkeep: { credits: 6 },
       slots: { weapon: 1, utility: 1 }, // a gun bay + a utility bay — a glass cannon
@@ -916,18 +918,72 @@ export const data: GameData = parseGameData({
     },
   },
   planetTypes: {
-    terran: { name: 'Terran', productionBonus: 0, defenseBonus: 0.1 },
-    barren: { name: 'Barren', productionBonus: -0.25, defenseBonus: 0 },
-    oceanic: { name: 'Oceanic', productionBonus: 0.15, defenseBonus: 0.05 },
-    volcanic: { name: 'Volcanic', productionBonus: 0.25, defenseBonus: -0.05 },
-    gas_giant: { name: 'Gas Giant', productionBonus: 0.35, defenseBonus: -0.15 },
-    crystalline: { name: 'Crystalline', productionBonus: 0.45, defenseBonus: -0.25 },
-    fortress_world: { name: 'Fortress World', productionBonus: -0.15, defenseBonus: 0.4 },
-    relic_world: { name: 'Relic World', productionBonus: 0.05, defenseBonus: 0 },
-    irradiated: { name: 'Irradiated', productionBonus: 0.2, defenseBonus: 0.15 },
-    ringworld: { name: 'Ringworld', productionBonus: 0.3, defenseBonus: 0.1 },
+    // ECON-7: каждый мир пассивно даёт 4 базовых ресурса (в час) с перекосом по типу
+    // (Bytro-модель провинций). Микроэлектроники в baseOutput НЕТ — она только из
+    // фабрикатора. productionBonus остаётся общим множителем богатства мира.
+    terran: {
+      name: 'Terran',
+      baseOutput: { food: 5, credits: 6, energy: 3, metal: 4 },
+      productionBonus: 0,
+      defenseBonus: 0.1,
+    },
+    barren: {
+      name: 'Barren',
+      baseOutput: { metal: 7, credits: 3, energy: 2, food: 1 },
+      productionBonus: -0.25,
+      defenseBonus: 0,
+    },
+    oceanic: {
+      name: 'Oceanic',
+      baseOutput: { food: 8, credits: 5, energy: 3, metal: 3 },
+      productionBonus: 0.15,
+      defenseBonus: 0.05,
+    },
+    volcanic: {
+      name: 'Volcanic',
+      baseOutput: { metal: 11, energy: 5, credits: 4, food: 1 },
+      productionBonus: 0.25,
+      defenseBonus: -0.05,
+    },
+    gas_giant: {
+      name: 'Gas Giant',
+      baseOutput: { energy: 8, credits: 6, metal: 4, food: 1 },
+      productionBonus: 0.35,
+      defenseBonus: -0.15,
+    },
+    crystalline: {
+      name: 'Crystalline',
+      baseOutput: { metal: 13, energy: 5, credits: 6, food: 1 },
+      productionBonus: 0.45,
+      defenseBonus: -0.25,
+    },
+    fortress_world: {
+      name: 'Fortress World',
+      baseOutput: { metal: 4, credits: 5, energy: 3, food: 2 },
+      productionBonus: -0.15,
+      defenseBonus: 0.4,
+    },
+    relic_world: {
+      name: 'Relic World',
+      baseOutput: { credits: 12, energy: 4, metal: 4, food: 3 },
+      productionBonus: 0.05,
+      defenseBonus: 0,
+    },
+    irradiated: {
+      name: 'Irradiated',
+      baseOutput: { energy: 6, metal: 8, credits: 4, food: 1 },
+      productionBonus: 0.2,
+      defenseBonus: 0.15,
+    },
+    ringworld: {
+      name: 'Ringworld',
+      baseOutput: { food: 5, credits: 8, energy: 5, metal: 6 },
+      productionBonus: 0.3,
+      defenseBonus: 0.1,
+    },
     dead_world: {
       name: 'Dead World',
+      baseOutput: { metal: 10, credits: 1, energy: 1 },
       productionBonus: 0,
       productionByResource: { metal: 0.3 },
       defenseBonus: 0,
@@ -1483,7 +1539,10 @@ function mergeStacks(base: UnitStack[], add: UnitStack[]): UnitStack[] {
 // fleet starved the economy. Now every inhabited world of yours levies a flat
 // civic tax; a Tax Office (one-time, no levels) boosts that world's whole credit
 // take. Hooks `economy.production`, so the core economy stays generic.
-export const TAX_PER_HOUR = 100; // base credits/h from the FIRST inhabited owned world
+// ECON-7: civic tax slashed from 100 → 20. Worlds now make credits PASSIVELY via
+// planetType.baseOutput (relic ~12/h, terran ~6/h …), so the flat capital tax is a
+// modest bonus, not the firehose that flooded the treasury (playtest §4a: +2.8k/day).
+export const TAX_PER_HOUR = 20; // base credits/h from the FIRST inhabited owned world
 export const TAX_OFFICE_BONUS = 0.25; // Tax Office: +25% to that world's credit income
 export const TAX_DIMINISH = 0.06; // civic tax per world tapers as an empire grows
 
@@ -2411,6 +2470,16 @@ export function netIncome(state: GameState, playerId: string): Record<string, nu
     // Credits are settled per-planet so the civic tax + Tax Office boost mirror the
     // core's economy.production pipeline (taxModule); metal accrues straight to `out`.
     let credits = 0;
+    // ECON-7: passive per-type base output, mirrored from the core's planetTypeModule
+    // (scaled by the world's richness incl. productionByResource; base credits routed
+    // through the tax accumulator so a Tax Office boosts them too).
+    const ptDef = p.planetType ? data.planetTypes[p.planetType] : undefined;
+    const ptByRes = ptDef?.productionByResource ?? {};
+    for (const res of Object.keys(ptDef?.baseOutput ?? {})) {
+      const v = (ptDef!.baseOutput[res] ?? 0) * mult * (1 + (ptByRes[res] ?? 0));
+      if (res === 'credits') credits += v;
+      else out[res] = (out[res] ?? 0) + v;
+    }
     for (const b of p.buildings) {
       const def = data.buildings[b.type];
       if (!def) continue;
@@ -5061,7 +5130,10 @@ export function aiOrders(
       const cost = data.buildings[b]?.cost ?? {};
       return Object.keys(cost).every((r) => (pl.resources[r] ?? 0) >= (cost[r] ?? 0) + 60);
     };
-    for (const b of ['refinery', 'tax_office'] as const) {
+    // ECON-7: fabricator joins the chain — microelectronics gates warships now
+    // (cruiser/siege cost micro), so a bot without a fab eventually can't build a
+    // fleet. Built once the credit/tax engine is up; keeps micro produced AND spent.
+    for (const b of ['refinery', 'tax_office', 'fabricator'] as const) {
       if (has(b)) continue;
       if (affordable(b) && !pendingBuild(base.id, b)) out.push(buildBuilding(ai, base.id, b));
       break; // one link at a time — wait out the current one either way
@@ -5080,7 +5152,8 @@ export function aiOrders(
     if (
       aiFleets < (warFooting ? 8 : 4) &&
       (pl.resources.metal ?? 0) > 220 &&
-      (pl.resources.credits ?? 0) > 120
+      (pl.resources.credits ?? 0) > 120 &&
+      (pl.resources.microelectronics ?? 0) >= 3 // ECON-7: warships need the hi-tech good
     ) {
       out.push(buildUnit(ai, base.id, 'cruiser', 1));
     }
