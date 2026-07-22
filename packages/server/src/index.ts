@@ -79,6 +79,7 @@ export type {
 export { parseClientMessage, serializeServerMessage } from './protocol';
 export {
   type AccountStore,
+  type CommanderStore,
   type MatchSnapshot,
   type MatchStore,
   type ReceiptStore,
@@ -87,11 +88,13 @@ export {
   type UserRecord,
   type UserStore,
   MemoryAccountStore,
+  MemoryCommanderStore,
   MemoryMatchStore,
   MemoryReceiptStore,
   MemoryUserStore,
   migrate,
   PostgresAccountStore,
+  PostgresCommanderStore,
   PostgresMatchStore,
   PostgresReceiptStore,
   PostgresUserStore,

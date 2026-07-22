@@ -64,6 +64,28 @@ export interface AccountStore {
   /** Read-only: how many seats are currently claimed in a room (occupied count), for
    *  the browser's "players X/Y" status line. */
   occupiedSeats(room: string): Promise<number>;
+  /** Read-only: every claimed seat in a room as `(playerId, nick)`. Used at match end
+   *  to credit each seated commander's account (nick → account via `UserStore`), so
+   *  the reward table the core computed reaches durable per-account XP. */
+  seatedNicks(room: string): Promise<Array<{ playerId: PlayerId; nick: string }>>;
+  close?(): Promise<void>;
+}
+
+/** Durable commander progression (EC-*): per-account XP earned by finishing matches.
+ *  The core computes the per-player reward table (`match.rewards`, deterministic); this
+ *  store is the account-crediting layer the core comment points to — so a commander's
+ *  level survives a new device, unlike the prototype's per-callsign localStorage. */
+export interface CommanderStore {
+  /** Credit a finished match's rewards to accounts, EXACTLY ONCE per matchId (a
+   *  durable idempotency marker guards a server restart re-observing the same end).
+   *  Returns true if this call performed the credit, false if the match was already
+   *  credited. The whole (mark + increments) is one atomic operation. */
+  creditMatch(
+    matchId: string,
+    rows: ReadonlyArray<{ accountId: string; xp: number }>,
+  ): Promise<boolean>;
+  /** Accumulated lifetime XP for an account (0 when it never finished a match). */
+  xpOf(accountId: string): Promise<number>;
   close?(): Promise<void>;
 }
 

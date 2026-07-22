@@ -187,8 +187,9 @@ export type RoomObservation =
       code?: string;
     }
   /** Terminal match report. `rewards` is the session-end table the core computed
-   *  (SES-2: place + XP per seated player, GDD §3.4) — surfaced here so the
-   *  playtest JSONL carries it until account crediting exists (EC-*). */
+   *  (SES-2: place + XP per seated player, GDD §3.4) — the host banks each seat's XP
+   *  onto its account here (EC-*: `CommanderStore.creditMatch`, idempotent per match)
+   *  and the playtest JSONL carries the same table. */
   | {
       kind: 'end';
       winner: PlayerId | null;

@@ -16,6 +16,7 @@ import type {
   AvaSession,
   AvaSessionStore,
   AvaSide,
+  CommanderStore,
   CorpAuditEntry,
   CorpMembership,
   CorpRecord,
@@ -272,6 +273,17 @@ export async function migrate(pool: Pool): Promise<void> {
       pity        integer NOT NULL DEFAULT 0,
       shards      integer NOT NULL DEFAULT 0
     );
+    -- Commander progression (EC-*): lifetime XP per account, credited once per match.
+    -- commander_credits is the durable idempotency marker — a server restart that
+    -- re-observes an already-ended match inserts nothing, so XP is never double-paid.
+    CREATE TABLE IF NOT EXISTS commander_xp (
+      account_id  text PRIMARY KEY,
+      xp          bigint NOT NULL DEFAULT 0
+    );
+    CREATE TABLE IF NOT EXISTS commander_credits (
+      match_id     text PRIMARY KEY,
+      credited_at  timestamptz NOT NULL DEFAULT now()
+    );
   `);
 }
 
@@ -421,6 +433,62 @@ export class PostgresAccountStore implements AccountStore {
       [room],
     );
     return Number(r.rows[0]?.n ?? 0);
+  }
+
+  async seatedNicks(room: string): Promise<Array<{ playerId: PlayerId; nick: string }>> {
+    const r = await this.pool.query<{ player_id: string; nick: string }>(
+      `SELECT player_id, nick FROM seats WHERE room = $1`,
+      [room],
+    );
+    return r.rows.map((row) => ({ playerId: row.player_id as PlayerId, nick: row.nick }));
+  }
+}
+
+/** Durable commander XP (EC-*). `creditMatch` runs mark-then-increment in one
+ *  transaction; the `commander_credits` PK makes the mark the atomic idempotency
+ *  gate — a re-observed match end credits nothing a second time. */
+export class PostgresCommanderStore implements CommanderStore {
+  constructor(private readonly pool: Pool) {}
+
+  async creditMatch(
+    matchId: string,
+    rows: ReadonlyArray<{ accountId: string; xp: number }>,
+  ): Promise<boolean> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const claim = await client.query(
+        `INSERT INTO commander_credits (match_id) VALUES ($1) ON CONFLICT DO NOTHING`,
+        [matchId],
+      );
+      if (claim.rowCount === 0) {
+        await client.query('ROLLBACK'); // already credited — a restart re-observed the end
+        return false;
+      }
+      for (const { accountId, xp } of rows) {
+        if (xp > 0)
+          await client.query(
+            `INSERT INTO commander_xp (account_id, xp) VALUES ($1, $2)
+             ON CONFLICT (account_id) DO UPDATE SET xp = commander_xp.xp + $2`,
+            [accountId, xp],
+          );
+      }
+      await client.query('COMMIT');
+      return true;
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  async xpOf(accountId: string): Promise<number> {
+    const r = await this.pool.query<{ xp: string }>(
+      `SELECT xp FROM commander_xp WHERE account_id = $1`,
+      [accountId],
+    );
+    return Number(r.rows[0]?.xp ?? 0);
   }
 }
 

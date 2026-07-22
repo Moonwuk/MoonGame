@@ -22,10 +22,12 @@ import {
   createMultiplayerServer,
   registerBrowserApi,
   MemoryAccountStore,
+  MemoryCommanderStore,
   MemoryMatchStore,
   MemoryReceiptStore,
   MemoryUserStore,
   PostgresAccountStore,
+  PostgresCommanderStore,
   PostgresMatchStore,
   PostgresReceiptStore,
   PostgresUserStore,
@@ -33,6 +35,7 @@ import {
   registerAuthApi,
   configFromEnv,
   type AccountStore,
+  type CommanderStore,
   type MatchStore,
   type ReceiptStore,
   type RoomObservation,
@@ -160,6 +163,7 @@ let matchStore: MatchStore;
 let accountStore: AccountStore;
 let receiptStore: ReceiptStore;
 let userStore: UserStore;
+let commanderStore: CommanderStore;
 if (DATABASE_URL) {
   pool = new Pool({ connectionString: DATABASE_URL });
   await migrate(pool);
@@ -167,11 +171,33 @@ if (DATABASE_URL) {
   accountStore = new PostgresAccountStore(pool);
   receiptStore = new PostgresReceiptStore(pool);
   userStore = new PostgresUserStore(pool);
+  commanderStore = new PostgresCommanderStore(pool);
 } else {
   matchStore = new MemoryMatchStore();
   accountStore = new MemoryAccountStore();
   receiptStore = new MemoryReceiptStore();
   userStore = new MemoryUserStore();
+  commanderStore = new MemoryCommanderStore();
+}
+
+/** Account crediting (EC-*): the core already computed `match.rewards` (place + XP per
+ *  seat, deterministic). At match end, map each seat's nick → account and bank the XP
+ *  durably, EXACTLY ONCE (creditMatch's idempotency marker survives a restart that
+ *  re-observes the same end). Nick-mode servers have no accounts → nothing to credit. */
+async function creditCommanderXp(
+  matchId: string,
+  rewards: Record<string, { xp: number }> | undefined,
+): Promise<void> {
+  if (!rewards) return;
+  const seats = await accountStore.seatedNicks(matchId);
+  const rows: Array<{ accountId: string; xp: number }> = [];
+  for (const { playerId, nick } of seats) {
+    const xp = rewards[playerId]?.xp ?? 0;
+    if (xp <= 0) continue;
+    const user = await userStore.findUser(nick); // nick === account login in AUTH mode
+    if (user) rows.push({ accountId: user.userId, xp });
+  }
+  if (rows.length) await commanderStore.creditMatch(matchId, rows);
 }
 
 // Accounts on the PLAYABLE path (SES-2.5): with AUTH_JWT_SECRET set, the full account
@@ -266,6 +292,9 @@ async function createHostedMatch(id: string): Promise<HostedMatch> {
         ok: ev.ok,
         ...(ev.code ? { code: ev.code } : {}),
       });
+    } else if (ev.kind === 'end' && AUTH) {
+      // Bank each seated commander's match XP onto their account (idempotent).
+      void creditCommanderXp(id, ev.rewards);
     }
     // Persist after anything that changes the world (debounced below), and re-arm
     // the offline wakeup: an action may schedule or consume events — both move the
@@ -600,6 +629,22 @@ const server = createMultiplayerServer({
           playerId: seat.playerId,
           token: await authCfg.signToken!(id, seat.playerId, who.claim.accountId),
         };
+      });
+      // Commander progression (EC-*): the session reads its own durable lifetime XP.
+      // The client turns `xp` into a level/points locally (prototype meta.ts), so the
+      // end screen and hub show account-backed progress, not per-device localStorage.
+      app.get('/commander/me', async (request, reply) => {
+        const header = request.headers.authorization;
+        const bearer =
+          typeof header === 'string' && header.startsWith('Bearer ')
+            ? header.slice('Bearer '.length).trim()
+            : null;
+        const who = bearer ? await authCfg.verifySession!(bearer) : null;
+        if (!who?.ok) {
+          void reply.code(401);
+          return { error: 'E_AUTH' as const };
+        }
+        return { xp: await commanderStore.xpOf(who.claim.accountId) };
       });
     }
     if (playerHtml !== undefined && devHtml !== undefined) {

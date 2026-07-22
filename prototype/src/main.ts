@@ -9364,6 +9364,7 @@ const HUB_PANELS: Record<string, string> = {
   ally: 'hp-ally',
   more: 'hp-more',
 };
+let currentHubTab = 'home'; // the visible hub panel, so an async XP sync can repaint it
 function hubTab(tab: string): void {
   hubNote.textContent = '';
   if (tab === 'games') {
@@ -9372,6 +9373,7 @@ function hubTab(tab: string): void {
     enterBrowse(); // hand off to the existing match browser
     return;
   }
+  currentHubTab = tab;
   if (tab === 'meta') renderMetaPanel(); // live numbers every visit (XP may have grown)
   if (tab === 'arsenal') void refreshArsenal(); // cache paints now, server refresh trails
   for (const [k, pid] of Object.entries(HUB_PANELS))
@@ -9550,6 +9552,42 @@ async function refreshArsenal(): Promise<void> {
     // offline/unreachable — the cache painted above stays the source of truth
   }
 }
+/** Accounts mode (EC-*): pull the DURABLE account XP into the local meta mirror, so
+ *  the commander level/progress a player sees is account-backed and follows them to a
+ *  new device — not the per-callsign localStorage that only lived in one browser. The
+ *  server total is authoritative (it sums every credited match across devices); the
+ *  per-match award still lands optimistically at checkEnd (same formula as the core's
+ *  `data.rewards`, so they agree). Guest/nick mode has no account → keeps localStorage. */
+async function syncCommanderFromServer(): Promise<void> {
+  const srv = resolveServer();
+  if (!srv) return;
+  await probeAuthMode(srv.base);
+  if (!authMode) return;
+  const session = sessionToken(srv.base);
+  if (!session) return;
+  try {
+    const res = await fetch(`${httpBase(srv.base)}/commander/me`, {
+      headers: { authorization: `Bearer ${session}` },
+    });
+    if (!res.ok) return;
+    const body = (await res.json().catch(() => null)) as { xp?: unknown } | null;
+    if (typeof body?.xp !== 'number') return;
+    const cur = loadMeta();
+    // XP only ever grows (accumulated per finished match). Take the max, never a
+    // regression: the server is the durable cross-device total, but if this device
+    // just awarded a match optimistically and the server hasn't credited it yet, we
+    // must NOT drop below the local figure. Both converge once the credit lands.
+    const total = Math.max(cur.xp, body.xp);
+    if (total !== cur.xp) {
+      saveMeta({ ...cur, xp: total }); // local `spent` tree is kept
+      // repaint the open hub panel so the new level/points show without a manual switch
+      if (hubEl.style.display !== 'none' && (currentHubTab === 'home' || currentHubTab === 'meta'))
+        hubTab(currentHubTab);
+    }
+  } catch {
+    // offline — the last mirrored total stays; a later login reconciles
+  }
+}
 function openHub(note = ''): void {
   if (!nickInput.value.trim()) nickInput.value = suggestCallsign();
   const nick = nickInput.value.trim();
@@ -9559,6 +9597,7 @@ function openHub(note = ''): void {
   hubTab('home');
   hubNote.textContent = note;
   refreshOnboardOffer(); // ONB-0: first-run offer/nudge for a not-yet-onboarded commander
+  void syncCommanderFromServer(); // account-backed XP → local mirror (accounts mode only)
 }
 
 $('cnew').addEventListener('click', () => {
