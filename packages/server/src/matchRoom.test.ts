@@ -301,6 +301,27 @@ describe('MatchRoom — observation & state hash (M0)', () => {
     ]);
   });
 
+  it('a THROWING observer never disrupts the room (metrics is pure telemetry)', () => {
+    const r = new MatchRoom({
+      id: 'obs-throw',
+      initialState: testState(),
+      kernel: createKernel([renameModule]),
+      data: testData(),
+      now: () => 10,
+      observe: () => {
+        throw new Error('a metrics consumer blew up on EVERY observation');
+      },
+    });
+    const p1 = new MemoryPeer();
+    r.addPeer('p1', p1); // the 'join' observation throws internally — must not escape
+    // The action commits and broadcasts despite the observer throwing on join/action/
+    // events/broadcast/timing — if any escaped, submitAction would throw and fail here.
+    const res = r.submitAction('p1', action('a1', 'p1', 'Commander'), p1);
+    expect(res.ok).toBe(true);
+    expect(p1.messages.some((m) => (m as { type: string }).type === 'welcome')).toBe(true);
+    expect(r.state.players.p1?.name).toBe('Commander'); // the world actually advanced
+  });
+
   it('reports a match end exactly once', () => {
     const { r, events } = observed();
     const p1 = new MemoryPeer();

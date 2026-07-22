@@ -261,8 +261,10 @@ function canSend(peer: RoomPeer): boolean {
 }
 
 /** Best-effort actionId from a raw envelope, for correlating a gate rejection back to the
- *  client's action. A malformed payload may carry none — then `''`, and the client
- *  correlates by its own clientSeq instead. */
+ *  client's action. The legit client always sends a string actionId
+ *  (`createActionEnvelope`), so `''` only arises for a malformed/hostile envelope — its
+ *  rejection is then simply not correlated (the client's handler ignores an empty
+ *  actionId) and dropped, which is harmless. There is NO clientSeq fallback. */
 function envelopeActionId(envelope: unknown): string {
   if (envelope !== null && typeof envelope === 'object') {
     const id = (envelope as { actionId?: unknown }).actionId;
@@ -416,7 +418,20 @@ export class MatchRoom {
     }
     this.emitStateHash = options.emitStateHash ?? false;
     this.singlePeerPerPlayer = options.singlePeerPerPlayer ?? false;
-    this.observe = options.observe;
+    // Enforce the metrics invariant (docs/metrics-roadmap): an observer is PURE
+    // telemetry and must NEVER feed back into the room. Wrap it once here so a
+    // throwing observer can't escape a commit/broadcast (a metrics bug must not take
+    // the match down) — every `this.observe(...)` call site is guarded for free.
+    const raw = options.observe;
+    this.observe = raw
+      ? (event): void => {
+          try {
+            raw(event);
+          } catch {
+            /* swallow — telemetry only; a bad consumer never disrupts the room */
+          }
+        }
+      : undefined;
     this.record = options.record;
     this.persist = options.persist;
     this.gate = options.gate;

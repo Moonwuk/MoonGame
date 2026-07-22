@@ -376,6 +376,10 @@ export function parseClientMessage(raw: string): ClientMessage | null {
     return { type: 'ping.place', ping: decoded.ping };
   }
   if (decoded.type === 'ping.clear') {
+    // A MISSING pingId = "clear ALL my pings" (a legit form). A PRESENT but wrong-typed
+    // one is malformed → reject (E_BAD_MESSAGE) rather than silently escalating to the
+    // destructive clear-all — the parser is the validation boundary.
+    if (decoded.pingId !== undefined && typeof decoded.pingId !== 'string') return null;
     return typeof decoded.pingId === 'string'
       ? { type: 'ping.clear', pingId: decoded.pingId }
       : { type: 'ping.clear' };
