@@ -262,7 +262,13 @@ export { composeGameDataBundle, loadGameData, type JsonReader } from './data/loa
 // Utilities
 export { deepClone, deepFreeze } from './util/clone';
 export { MS_PER_HOUR, MS_PER_DAY } from './util/time';
-export { findHealthyStack, addUnits, sumUnitStat } from './util/stacks';
+export {
+  findHealthyStack,
+  addUnits,
+  sumUnitStat,
+  cappedUnitStat,
+  COMBAT_UNIT_CAP,
+} from './util/stacks';
 export {
   effectiveStats,
   slotUsage,
