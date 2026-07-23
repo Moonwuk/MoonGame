@@ -175,9 +175,16 @@
   реконнекта (без дублей), дроп немонотонной дельты → форс-ресинк. Фаза CP1 закрыта.
 - **G2** 🔒(G1) Skia-рендер карты (зум / скролл / culling).
 - **G3** ✅ (в `@void/client`: `applyDelta`-применение серверных diff'ов уже зашиплено; RN-вариант не нужен).
-- **G4** 🔶 Превью через `shared-core` («если атакую — что будет?»): ядровая половина ✅
-  (`previewBattle`, см. ONB-6) — уже играбельна в прототипе; 🔒(G1) остаётся только
-  client-обёртка (view-model в matchHud + показ в shell).
+- **G4** ✅ Превью через `shared-core` («если атакую — что будет?»): ядровая половина —
+  `previewBattle` (см. ONB-6), уже играбельна в прототипе. Client-обёртка —
+  `createBattlePreviewModel` в `@void/client` `matchHud.ts`: тот же fail-secure
+  `{ok:false,code}`-паттерн, что и у `createSelectionModel`/`createBattleModel`;
+  форкаст для десанта пристыкованного флота против гарнизона враждебного (data-driven
+  `sectorKinds.capturable`) мира под ним — фог структурно безопасен (пристыкованный
+  флот уже опознал свой мир, скрывать нечего). Отказы: чужой/отсутствующий флот, флот
+  не пристыкован (в пути / на трассе / уже в бою), свой/некапчурабельный мир, пустой
+  десант или гарнизон. Тесты: `matchHud.test.ts` (все гейты + одна прогоняемая через
+  реальный `previewBattle` победная сцена + JSON-сериализуемость).
 
 ## Блок H · Прототип / играбельность `[proto]`
 
@@ -1032,9 +1039,8 @@ requires[], cost, grants{ability?|passive?}}`; ветки **transhuman**/**psion
   (победитель/раунды/выжившие) с реальным кернелом без хуков на 4 матчапах + совпадение
   по знаку при хуке сектора + чистота (deepFreeze). Прото: строка «Прогноз штурма» в
   секции «Удар» панели флота (десант vs гарнизон, хедж-подпись про бонусы), RU/EN.
-  Fog-дисциплина на вызывающем: флот доккнут у мира → мир идентифицирован. Ядровая
-  половина G4 закрыта; client-обёртка (`createBattlePreviewModel` в matchHud) — при
-  доросшем shell.
+  Fog-дисциплина на вызывающем: флот доккнут у мира → мир идентифицирован. Client-обёртка
+  (`createBattlePreviewModel` в `@void/client` `matchHud.ts`) закрыта отдельно — см. G4.
 - **ONB-7** ✅ `[proto]` **Цели первой сессии.** Лёгкий сворачиваемый чеклист («шахта ✓, флот ✓,
   захват ✓, 100 очков ✓») по живому состоянию + похвала/XP на завершение (ровно раз) — чистый
   `firstGoals.ts` (`metGoals`/`mergeDone`/`goalsComplete`, 10 тестов) + оверлей `#goals`; только
@@ -1300,7 +1306,18 @@ requires[], cost, grants{ability?|passive?}}`; ветки **transhuman**/**psion
 - **SEC-5** ✅ Container scanning: `Dockerfile` (multi-stage, пин distroless-базы) +
   живой job `trivy-image` в `security.yml` (сборка образа, `trivy image` + image-SBOM).
   _(Статус выправлен аудитом доков.)_
-- **SEC-6** 🔒(F1+ запущенный сервер) DAST: ZAP baseline против `packages/server` (раскомментировать `dast-zap`).
+- **SEC-6** ✅ DAST: `dast-zap`-джоба в `security.yml` (не было закомментированной
+  заготовки под этим именем — заметка была неточной, добавлена с нуля тем же
+  паттерном пиненных Docker-образов, что у gitleaks/trivy/osv). Поднимает
+  `packages/server` in-memory (`pnpm dev:server`, без `DATABASE_URL` — auth/gate
+  дефолт-off, F1 ✅), ждёт `/health`, гоняет ZAP baseline (`ghcr.io/zaproxy/zaproxy`,
+  `--network host` — цель голый node-процесс на раннере, не контейнер) через
+  `zap-baseline.py -t http://localhost:8787`. Образ закреплён по sha256, дайджест
+  снят живым запросом к `ghcr.io/v2` (тот же метод, что у SEC-7). Информационная
+  (`continue-on-error`, ещё без триажа на реальном рантайме — как у CodeQL/TruffleHog/
+  zizmor/Scorecard при первом добавлении), станет блокирующей после первого прогона
+  и разбора находок. HTML+JSON отчёт — артефакт джобы; `report`-джоба и
+  `summarize-security.mjs` в курсе нового ключа `dast-zap`.
 - **SEC-7** ✅ _(SEC-5 ✅ — замок снят)_ Supply-chain integrity (A08): подпись
   образов `cosign` + provenance **SLSA** + проверка на деплое. Единственный
   артефакт с реальной раздачей — APK в `android.yml` (rolling GitHub Releases,
