@@ -1074,7 +1074,6 @@ export const en: Record<string, string> = {
   'Восстановление доступа': 'Account recovery',
   'Укажи почту аккаунта — пришлём ссылку для сброса пароля.':
     'Enter your account email — we will send a password-reset link.',
-  Почта: 'Email',
   'Отправить ссылку': 'Send link',
   'Новый пароль': 'New password',
   'Придумай новый пароль для входа.': 'Choose a new password to sign in.',
