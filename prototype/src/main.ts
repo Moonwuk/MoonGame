@@ -358,8 +358,11 @@ const readPref = (k: string): string | null =>
  *  degrades to the default instead of injecting markup (CWE-79 / CodeQL js/xss-through-dom).
  *  The fallback is a trusted constant, used verbatim. */
 function safeHexColor(c: string | null | undefined, fallback: string): string {
-  const m = typeof c === 'string' ? /^#([0-9a-fA-F]{6})$/.exec(c) : null;
-  return m ? `#${m[1]!.toLowerCase()}` : fallback;
+  // A validating GUARD (not a rebuild): the value is used only when it matched
+  // `#rrggbb` — a pattern that cannot contain HTML metacharacters — so it is inert
+  // in the inline `style`/attribute sinks. Anything else degrades to the trusted
+  // default. (The guard form is what taint-analysis recognizes as a sanitizer.)
+  return typeof c === 'string' && /^#[0-9a-fA-F]{6}$/.test(c) ? c : fallback;
 }
 let youColor = safeHexColor(readPref('void.colorYou'), COLOR.p1!);
 let neutralColor = safeHexColor(readPref('void.colorNeutral'), COLOR.null!);
