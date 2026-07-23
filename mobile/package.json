@@ -15,7 +15,7 @@
     "apk:player": "npm run www:player && npm run sync && npm run brand && cd android && ./gradlew assembleDebug --no-daemon"
   },
   "dependencies": {
-    "@capacitor/android": "^8.4.1",
+    "@capacitor/android": "^8.4.2",
     "@capacitor/core": "^8.4.2"
   },
   "devDependencies": {
