@@ -90,6 +90,7 @@ describe('createMultiplayerServer — native TLS (RS-5.1)', () => {
       expect(url.startsWith('wss://')).toBe(true);
       // Self-signed → rejectUnauthorized:false (the point is the encrypted handshake, not
       // a trusted CA — a real deploy uses a Let's Encrypt cert, see deploy/README.md).
+      // nosemgrep: problem-based-packs.insecure-transport.js-node.bypass-tls-verification.bypass-tls-verification -- in-test self-signed localhost cert; the assertion IS that the wss handshake completes (prod uses a real CA — deploy/README.md)
       const ws = new WebSocket(`${url}?player=p1`, { rejectUnauthorized: false });
       try {
         const welcome = nextMessage(ws);
