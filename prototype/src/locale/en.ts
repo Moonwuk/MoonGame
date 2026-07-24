@@ -377,8 +377,8 @@ export const en: Record<string, string> = {
     "Passive — never fires. Return — only after taking damage. Standard — at those you're at war with. Aggressive — at anyone except a pact/alliance.",
   'Пассивные бонусы': 'Passive bonuses',
   'Переподключение не удалось — войди заново': 'Reconnect failed — sign in again',
-  'Перерабатывающий комплекс, превращающий руду и логистику в ликвидные кредиты — {c} в час. Топливо для имперской бюрократии, верфей и наёмных эскадр.':
-    'A refining complex turning ore and logistics into liquid credits — {c} per hour. Fuel for imperial bureaucracy, shipyards and mercenary squadrons.',
+  'Перерабатывающий комплекс, превращающий руду и логистику в ликвидные кредиты — {c}¤ в час. Топливо для имперской бюрократии, верфей и наёмных эскадр.':
+    'A refining complex turning ore and logistics into liquid credits — {c}¤ per hour. Fuel for imperial bureaucracy, shipyards and mercenary squadrons.',
   Пинг: 'Ping',
   'Планетарное сооружение.': 'A planetary structure.',
   'Под фильтр никто не подходит.': 'Nobody matches the filter.',
@@ -918,12 +918,12 @@ export const en: Record<string, string> = {
   '{ic} {name}: {stock} в казне · {flow}/ч (производство минус содержание войск и зданий)':
     '{ic} {name}: {stock} in the treasury · {flow}/h (production minus army and building upkeep)',
   '⚠ ДЕФИЦИТ — здания-потребители работают на 50%': '⚠ SHORTAGE — consuming buildings run at 50%',
-  'Ярусы гидропонных оранжерей под спектральными лампами позволяют вашим подопечным питаться, ведь голод беспощаден. Выращивает {f} пищи в час. Ваши рабочие и воины едят каждый день, было бы глупо проиграть сражение из-за голодного обморока.':
-    'Tiers of hydroponic greenhouses under spectral lamps feed those in your care — hunger is merciless. Grows {f} food per hour. Your workers and soldiers eat every day; it would be foolish to lose a battle to a hungry faint.',
-  'Термоядерный реактор питает энергией ваши миры, он производит {e} энергии в час. Энергия — кровь ваших построек, ведь они работают не на волшебстве. При дефиците всё проседает до половины мощности.':
-    "A fusion reactor powers your worlds, producing {e} energy per hour. Energy is the lifeblood of your buildings — they don't run on magic. When it runs short, everything browns out to half output.",
-  'Чистые цеха литографии печатают {m} микроэлектроники в час. Прожорлива к энергии и людям, зато её продукция ведёт эскадрильи и открывает осадные доктрины. Апгрейды окупаются собственной продукцией.':
-    'Clean lithography halls print {m} microelectronics per hour. Hungry for power and people, but its output guides strike wings and unlocks siege doctrines. Upgrades pay for themselves in their own product.',
+  'Ярусы гидропонных оранжерей под спектральными лампами позволяют вашим подопечным питаться, ведь голод беспощаден. Выращивает {f}❖ в час. Ваши рабочие и воины едят каждый день, было бы глупо проиграть сражение из-за голодного обморока.':
+    'Tiers of hydroponic greenhouses under spectral lamps feed those in your care — hunger is merciless. Grows {f}❖ per hour. Your workers and soldiers eat every day; it would be foolish to lose a battle to a hungry faint.',
+  'Термоядерный реактор питает энергией ваши миры, он производит {e}↯ в час. Энергия — кровь ваших построек, ведь они работают не на волшебстве. При дефиците всё проседает до половины мощности.':
+    "A fusion reactor powers your worlds, producing {e}↯ per hour. Energy is the lifeblood of your buildings — they don't run on magic. When it runs short, everything browns out to half output.",
+  'Чистые цеха литографии печатают {m}▦ в час. Прожорлива к энергии и людям, зато её продукция ведёт эскадрильи и открывает осадные доктрины. Апгрейды окупаются собственной продукцией.':
+    'Clean lithography halls print {m}▦ per hour. Hungry for power and people, but its output guides strike wings and unlocks siege doctrines. Upgrades pay for themselves in their own product.',
   'Сборка дивизии': 'Division assembly',
   'Влияние на характеристики': 'Effect on characteristics',
   '⚔ Урон в атаке': '⚔ Attack damage',
