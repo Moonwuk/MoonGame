@@ -301,52 +301,25 @@ const COLOR: Record<string, string> = {
   p8: '#e58b4a',
   p9: '#6f9cff',
   p10: '#d8cf5a',
-  ally: '#4a8cff', // ally — blue (latent: no allied player in the skirmish yet)
-  null: '#6f8a93', // neutral — gray
+  ally: '#4a8cff', // friendly bloc (pact / alliance) — blue
+  null: '#6f8a93', // unowned territory — gray
 };
-// Distinct hues for the OTHER commanders (you are always green), assigned in a stable
-// order so each rival keeps its colour across the match (up to 9 rivals).
-const RIVAL_COLORS = [
-  COLOR.p2!,
-  COLOR.p3!,
-  COLOR.p4!,
-  COLOR.p5!,
-  COLOR.p6!,
-  COLOR.p7!,
-  COLOR.p8!,
-  COLOR.p9!,
-  COLOR.p10!,
-];
-const SEAT_IDS = Array.from({ length: 10 }, (_, i) => `p${i + 1}`);
 const VOID_COLOR = '#46606e'; // empty-space provinces — uncapturable void
-// --- side-colour preferences (client-only, localStorage) ---------------------
-// Постер «цвет = принадлежность»: свой/нейтральный цвет настраиваются, палитра
-// соперников выбирается пресетом (включая дальтоник-безопасный, Okabe–Ito-подобные
-// оттенки). Чистая косметика поверх ownerColor — механика сторон не трогается.
-const RIVAL_PALETTES: Record<string, readonly string[]> = {
-  classic: RIVAL_COLORS,
-  warm: [
-    '#ff4d3d',
-    '#ff9d2e',
-    '#ffd23d',
-    '#ff6fa0',
-    '#e8703a',
-    '#d94f6c',
-    '#ffb073',
-    '#c9522f',
-    '#ff8355',
-  ],
-  cvd: [
-    '#e69f00',
-    '#56b4e9',
-    '#f0e442',
-    '#0072b2',
-    '#d55e00',
-    '#cc79a7',
-    '#999999',
-    '#a6761d',
-    '#8da0cb',
-  ],
+// --- side-colour SCHEMES (client-only, localStorage) --------------------------
+// «Цвет = отношение»: другие командиры красятся по ТВОЕЙ стойке к ним (враг /
+// дружественный блок / мир), а не по личному цвету. `cvd` — оттенки, различимые
+// при цветослепоте (Okabe–Ito): красный враг против зелёного «тебя» — классическая
+// красно-зелёная ловушка, поэтому там вермилион + синий + серый. Свой цвет
+// (`youColor`) и ничейное пространство (`neutralColor`) настраиваются отдельно.
+interface SideScheme {
+  enemy: string; // at WAR — red
+  ally: string; // pact / alliance (friendly bloc) — blue
+  neutral: string; // at PEACE — a distinct grey, ≠ unowned void
+}
+const RELATION_SCHEMES: Record<string, SideScheme> = {
+  classic: { enemy: '#ff5a4d', ally: COLOR.ally!, neutral: '#9fb0b6' },
+  warm: { enemy: '#ff6a3a', ally: '#2fb5c9', neutral: '#a8a29a' },
+  cvd: { enemy: '#d55e00', ally: '#0072b2', neutral: '#9a9a9a' }, // Okabe–Ito, CVD-safe
 };
 const readPref = (k: string): string | null =>
   typeof localStorage !== 'undefined' ? localStorage.getItem(k) : null;
@@ -367,27 +340,38 @@ function safeHexColor(c: string | null | undefined, fallback: string): string {
 let youColor = safeHexColor(readPref('void.colorYou'), COLOR.p1!);
 let neutralColor = safeHexColor(readPref('void.colorNeutral'), COLOR.null!);
 let rivalPaletteId = readPref('void.rivalPalette') ?? 'classic';
-if (!RIVAL_PALETTES[rivalPaletteId]) rivalPaletteId = 'classic';
+if (!RELATION_SCHEMES[rivalPaletteId]) rivalPaletteId = 'classic';
 function setSideColors(you: string, neutral: string, palette: string): void {
   youColor = safeHexColor(you, COLOR.p1!);
   neutralColor = safeHexColor(neutral, COLOR.null!);
-  rivalPaletteId = RIVAL_PALETTES[palette] ? palette : 'classic';
+  rivalPaletteId = RELATION_SCHEMES[palette] ? palette : 'classic';
   if (typeof localStorage !== 'undefined') {
     localStorage.setItem('void.colorYou', youColor);
     localStorage.setItem('void.colorNeutral', neutralColor);
     localStorage.setItem('void.rivalPalette', rivalPaletteId);
   }
 }
-// Political colour is relative to the local commander: YOU are always green (or
-// your configured hue), neutral gray, each rival its own palette hue. Works for
-// solo (you = p1) and net (you may be any seat).
+// Political colour is relative to the local commander: YOU are your configured hue,
+// unowned space grey, and every other commander is coloured by your STANCE toward them
+// (enemy red / friendly blue / neutral grey — see ownerColor). Works for solo (you = p1)
+// and net (you may be any seat).
 function ownerColor(owner: string | null | undefined): string {
-  if (!owner) return neutralColor;
-  if (owner === ME) return youColor;
-  const rivals = SEAT_IDS.filter((id) => id !== ME);
-  const i = rivals.indexOf(owner);
-  const pal = RIVAL_PALETTES[rivalPaletteId] ?? RIVAL_COLORS;
-  return i >= 0 ? pal[i % pal.length]! : pal[0]!;
+  if (!owner) return neutralColor; // unowned territory (void / no-man's land)
+  if (owner === ME) return youColor; // you
+  // POLITICAL colour, relative to the local commander — mark by RELATION, not a fixed
+  // per-rival hue: war → red, pact/alliance → friendly blue, peace → a distinct
+  // neutral-player grey (lighter than empty void, so an at-peace world still reads as
+  // "owned"). Stance is public (never fogged), so the client always has the true value.
+  const scheme = RELATION_SCHEMES[rivalPaletteId] ?? RELATION_SCHEMES.classic!;
+  switch (getStance(s, ME, owner)) {
+    case 'war':
+      return scheme.enemy;
+    case 'pact':
+    case 'alliance':
+      return scheme.ally;
+    default: // peace (the war-by-default fallback maps to `war` above, not here)
+      return scheme.neutral;
+  }
 }
 // Build profile. `__PLAYER_BUILD__` is an esbuild define — REQUIRED by every bundler
 // of this file (build.mjs sets it for both artifacts, uitest.mjs pins `false`); a
