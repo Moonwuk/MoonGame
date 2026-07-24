@@ -15,17 +15,25 @@ describe('building economy — the prototype resource loop', () => {
     expect(allowedBuildings(data, { kind: 'dead_world' })).toEqual(['metal_station']);
   });
 
-  it('netIncome charges building upkeep (the start kit draws watch power)', () => {
+  it("netIncome adds the world's passive base output, net of the start-kit upkeep (ECON-7)", () => {
     const s = newGame();
+    const home = Object.values(s.planets).find((p) => p.owner === 'p1')!;
+    const type = data.planetTypes[home.planetType!]!;
+    const mult = 1 + (data.factions[s.players.p1!.faction!]?.passives?.productionBonus ?? 0);
     const flow = netIncome(s, 'p1');
-    // Home starts with radar (6/day) + orbital-AA (6/day) and no reactor → energy net < 0.
-    expect(flow.energy ?? 0).toBeLessThan(0);
-    // The seeded infantry garrison eats: food flow is negative too.
-    expect(flow.food ?? 0).toBeLessThan(0);
+    // ECON-7: a terran home passively yields energy + food, now COVERING its radar/AA
+    // watch power and the seeded garrison's rations — both net POSITIVE (were negative
+    // pre-ECON-7, when only buildings produced).
+    expect(flow.energy ?? 0).toBeGreaterThan(0);
+    expect(flow.food ?? 0).toBeGreaterThan(0);
+    // …yet the start-kit upkeep IS charged: the net sits BELOW the raw passive gross.
+    expect(flow.energy ?? 0).toBeLessThan((type.baseOutput.energy ?? 0) * mult);
+    expect(flow.food ?? 0).toBeLessThan((type.baseOutput.food ?? 0) * mult);
   });
 
   it('netIncome mirrors the brownout: an energy arrears halves the refinery line', () => {
     const s = newGame();
+    s.players.p1!.faction = 'red'; // isolate brownout from the faction production bonus (BF-35)
     const home = Object.values(s.planets).find((p) => p.owner === 'p1')!;
     home.buildings.push({ type: 'refinery', level: 1, hp: 20 });
     const full = netIncome(s, 'p1').credits ?? 0;
@@ -37,6 +45,7 @@ describe('building economy — the prototype resource loop', () => {
 
   it('netIncome (the HUD flow readout) reflects a ramping reactor past the 50% mark', () => {
     const s = newGame();
+    s.players.p1!.faction = 'red'; // isolate the ramp from the faction production bonus (BF-35)
     const home = Object.values(s.planets).find((p) => p.owner === 'p1')!;
     const totalMs = data.buildings.power_plant!.buildTimeHours * HOUR;
     const withScheduled = (at: number): GameState => ({
@@ -60,11 +69,34 @@ describe('building economy — the prototype resource loop', () => {
     expect(above).toBeCloseTo(baseline + plantEnergy * 0.75); // 75% of the plant's energy/h
   });
 
-  it('the settlement actually runs the loop: no reactor → energy stock drains to arrears', () => {
+  it('the settlement runs the loop: consumption past the passive supply drains to arrears', () => {
     let s = newGame();
+    const home = Object.values(s.planets).find((p) => p.owner === 'p1')!;
+    // ECON-7 made every world a passive faucet, so a lone home no longer starves on
+    // its start kit alone. But four fabricators draw 30 energy/day each (120/day)
+    // — far past the terran home's ~80/day passive energy — and with no power plant
+    // the stock drains and energy enters arrears (the brownout trigger).
+    for (let i = 0; i < 4; i++) home.buildings.push({ type: 'fabricator', level: 1, hp: 22 });
     for (let t = HOUR; t <= 10 * 24 * HOUR; t += 12 * HOUR) s = advance(s, t).state;
-    // Ten days of radar+AA watch power on a 90-energy stock with no plant → in arrears.
     expect(s.players.p1?.resources.energy).toBe(0);
     expect(s.players.p1?.arrears).toContain('energy');
+  });
+
+  it('netIncome applies the faction production bonus to the HUD flow (BF-35)', () => {
+    const s = newGame();
+    const p = s.players.p1!;
+    const creditsWith = (faction: string): number => {
+      p.faction = faction;
+      return netIncome(s, 'p1').credits ?? 0;
+    };
+    const plain = creditsWith('red'); // Crimson Hegemony — no production passive
+    const five = creditsWith('violet'); // Violet Ascendancy — +5% production
+    const twelve = creditsWith('blue'); // Azure Compact — +12% production
+    // Before BF-35 the HUD `+/h` ignored the faction passive → all three read identically.
+    expect(twelve).toBeGreaterThan(plain);
+    expect(five).toBeGreaterThan(plain);
+    // Upkeep is unchanged between runs, so the boost over `plain` scales linearly with the
+    // passive strength: the 12%-delta over the 5%-delta is exactly 0.12/0.05.
+    expect((twelve - plain) / (five - plain)).toBeCloseTo(0.12 / 0.05, 6);
   });
 });

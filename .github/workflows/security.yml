@@ -71,7 +71,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '22'
           cache: pnpm
@@ -161,7 +161,7 @@ jobs:
           languages: javascript-typescript
       - id: cqa
         continue-on-error: true
-        uses: github/codeql-action/analyze@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
+        uses: github/codeql-action/analyze@99df26d4f13ea111d4ec1a7dddef6063f76b97e9 # v4.37.0
         with:
           category: codeql
           output: codeql-out
@@ -407,6 +407,67 @@ jobs:
             exit 1
           fi
 
+  dast-zap:
+    name: DAST — running server (ZAP baseline)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '22'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: boot the server (in-memory, no DATABASE_URL — auth/gate default off, F1)
+        run: |
+          pnpm run dev:server > server.log 2>&1 &
+          echo $! > server.pid
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:8787/health > /dev/null 2>&1 && break
+            sleep 1
+          done
+          curl -sf http://localhost:8787/health > /dev/null || { echo "::error::server did not become healthy"; cat server.log; exit 1; }
+      - name: zap baseline
+        id: scan
+        continue-on-error: true
+        run: |
+          set +e
+          # The zaproxy image runs as a non-root `zap` user; the runner's checkout dir
+          # isn't writable by it, so ZAP would silently fail to write zap.yaml/reports
+          # (AccessDeniedException) while the job still reported success. Mount a
+          # dedicated, world-writable subdir instead of the whole repo root.
+          mkdir -p zap-wrk
+          chmod 777 zap-wrk
+          # TODO: Update to sha256 digest — run: ./.github/scripts/update-image-digests.sh
+          # ghcr.io/zaproxy/zaproxy@sha256 pin snapped live from the registry API (SEC-3).
+          # --network host: the target is the bare node process on the runner, not a
+          # container — ZAP reaches it via localhost like trivy-image reaches the socket.
+          docker run --rm --network host -v "$PWD/zap-wrk:/zap/wrk/:rw" \
+            ghcr.io/zaproxy/zaproxy@sha256:8d387b1a63e3425beef4846e39719f5af2a787753af2d8b6558c6257d7a577a2 \
+            zap-baseline.py -t http://localhost:8787 -r zap-report.html -J zap-report.json
+          rc=$?
+          set -e
+          ok=true; case $rc in 125 | 126 | 127) ok=false ;; esac
+          [ -s zap-wrk/zap-report.json ] || ok=false
+          echo "{\"key\":\"dast-zap\",\"ok\":$ok,\"exit\":$rc}" > status-dast-zap.json
+      - name: stop the server
+        if: always()
+        run: kill "$(cat server.pid)" 2>/dev/null || true
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: report-dast-zap
+          path: |
+            zap-wrk/zap-report.html
+            zap-wrk/zap-report.json
+            status-dast-zap.json
+            server.log
+          if-no-files-found: warn
+
   sbom:
     name: SBOM — files (Syft / CycloneDX)
     runs-on: ubuntu-latest
@@ -529,6 +590,7 @@ jobs:
         osv,
         trivy-fs,
         trivy-image,
+        dast-zap,
         sbom,
         zizmor,
         scorecard,

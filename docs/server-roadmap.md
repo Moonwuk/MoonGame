@@ -49,7 +49,7 @@
 **Цель:** один логический актор на матч — сериализованная обработка, изоляция матчей.
 **Подзадачи:** реестр матчей; почтовый ящик/очередь сообщений на матч; lifecycle load/idle/evict; согласовать с `MatchRoom`.
 **Готово, когда:** действия матча обрабатываются строго последовательно внутри актора; матчи независимы.
-**Сделано:** `MatchRegistry` (`InMemory` + `Lazy` с load-on-demand/idle-гибернацией/пробуждением к событию), per-room actor-mailbox сериализует committed-submit + lobby-start; боевой вход хостит N матчей через `LazyRoomRegistry` (SV-4.0 в state.md).
+**Сделано:** `RoomRegistry` (`InMemoryRoomRegistry` + `LazyRoomRegistry` с load-on-demand/idle-гибернацией/пробуждением к событию; `MatchRegistry` — отдельный read-model браузера матчей), per-room actor-mailbox сериализует committed-submit + lobby-start; боевой вход хостит N матчей через `LazyRoomRegistry` (SV-4.0 в state.md).
 
 ---
 
@@ -64,7 +64,7 @@
 ### SV-1.2 · zod-схемы на каждый тип действия `[act]` ✅ — M
 **Подзадачи:** схема валидации входа по типу действия (payload). **Бирка E1.**
 **Готово, когда:** payload каждого типа валидируется по своей схеме.
-**Сделано:** `shared-core/actions/payloadSchemas` — zod-схема на все 15 клиентских типов + `isValidActionPayload`, инжектится в гейт как `payloadValidator`; кривой payload или не-клиентский тип → `E_BAD_PAYLOAD` до редьюсера.
+**Сделано:** `shared-core/actions/payloadSchemas` — zod-схема на все **46** клиентских типов + `isValidActionPayload`, инжектится в гейт как `payloadValidator`; кривой payload или не-клиентский тип → `E_BAD_PAYLOAD` до редьюсера.
 
 ---
 

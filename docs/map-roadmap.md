@@ -125,7 +125,7 @@ terrain?, planetType?, owner?, buildings?, garrison? }` + рёбра `paths` (п
 
 ## Фаза M2 · Сектор как сущность (механика)
 
-### M2.1 · Виды секторов (`kind`) в данные `[core]` `[data]` 🔒(M0.2) — M
+### M2.1 · Виды секторов (`kind`) в данные `[core]` `[data]` 🔒(M0.2) — ✅
 **Цель:** перенести прототипный `SECTOR_TYPES` в контент+ядро. **Сделано:**
 `data/sectorKinds.json` (7 видов: planet/asteroid/nebula/empty/debris_field/
 dead_world/void_station + `capturable`/`buildable`/`orbit`) + `SectorKindDefSchema`
@@ -142,7 +142,7 @@ dead_world/void_station + `capturable`/`buildable`/`orbit`) + `SectorKindDefSche
 capturable + без гарнизона + не оспаривается → `planet.captured{via:'arrival'}`).
 Добавлен в `DEV_MODULES` (сервер) и `MODULES` (прототип, после combat); combat
 тоже уважает `capturable` (не присвоить пустоту после боя); клиентский
-`seizeSector` удалён. 5 тестов (захват/пустота/оборона/оспаривание/дефолт),
+`seizeSector` удалён. 8 тестов (захват/пустота/оборона/оспаривание/дефолт + at-war walk-in / отказ союзнику / промежуточный хоп),
 гейт зелёный, proto-server поднимается с новым набором модулей.
 **Готово, когда:** ✅ заход на нейтральный необоронённый сектор меняет владельца
 на сервере; одиночка и сеть едины.
@@ -152,7 +152,7 @@ capturable + без гарнизона + не оспаривается → `plan
 двигает границы соседей. **Сделано:** поле `Planet.size` + `size` в схеме карты
 (default 1) + проекция в загрузчике; `newGame` задаёт вес по виду (планеты —
 мелкие, поля/туманности крупнее). **Чёткие** границы **уже в коде**
-(`prototype/src/main.ts` ~2399–2467 + `clampPowerWeights` в `prototype/src/game.ts`):
+(`prototype/src/main.ts` рендер + `clampPowerWeights` в пакете `@void/client` — `territory.ts`):
 каждый сектор — залитая ячейка **взвешенной мозаики Voronoi (power-diagram)** по
 центрам+`size` (`size → weight`, полуплоскостное отсечение, `clampPowerWeights`
 против поглощения соседа, клип к границе карты); бóльший сектор занимает больше

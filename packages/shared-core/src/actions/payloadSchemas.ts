@@ -112,7 +112,10 @@ export const actionPayloadSchemas: Record<string, z.ZodType> = {
   'fleet.merge': z.object({ from: id, into: id }),
   'fleet.split': z.object({
     fleetId: id,
-    take: z.array(z.object({ unit: id, count })).min(1).max(32),
+    take: z
+      .array(z.object({ unit: id, count }))
+      .min(1)
+      .max(32),
   }),
   'fleet.engage': z.object({ fleetId: id, targetId: id }),
   // capital (hero respawn / re-fit anchor)
@@ -130,7 +133,10 @@ export const actionPayloadSchemas: Record<string, z.ZodType> = {
     slot: z.number().int().nonnegative(),
     unit: z.string().nullable(),
   }),
-  'division.rename': z.object({ template: z.number().int().nonnegative(), name: z.string().min(1) }),
+  'division.rename': z.object({
+    template: z.number().int().nonnegative(),
+    name: z.string().min(1),
+  }),
   'division.load': z.object({ divisionId: id, fleetId: id }),
   'division.unload': z.object({ divisionId: id }),
   // steward («Хранитель») — postures are data-driven; the module gates the value
@@ -146,6 +152,37 @@ export const actionPayloadSchemas: Record<string, z.ZodType> = {
   // its fuel — the gate must keep rejecting it from the wire.
   'order.auto': z.object({ fleetId: id, on: z.boolean() }),
   'order.scramble': z.object({ fleetId: id, on: z.boolean() }),
+  // BOOST-1 форс-марш: +50% speed for hull wear while in transit — client toggle.
+  'fleet.forcemarch': z.object({ fleetId: id, on: z.boolean() }),
+  // Платный мгновенный ремонт корпуса (карточка флота): цена выводится из state
+  // на сервере — клиент шлёт только намерение.
+  'fleet.instantRepair': z.object({ fleetId: id }),
+  // ECON-3: экспресс-ремонт за metal у СВОЕГО дока (shipRepair > 0) — цена
+  // тоже серверная, клиент шлёт намерение.
+  'fleet.repair': z.object({ fleetId: id }),
+  // CC-1 order chain — the client atomically sets/cancels ([]) a fleet's whole queued
+  // plan; the module re-validates against live state (known worlds, ownership).
+  // `chain.stamp` is deliberately ABSENT: it is the SERVER driver's runtime stamp
+  // (consumed head / armed wait deadline) — a client must not advance its own chain.
+  'order.chain': z.object({
+    fleetId: id,
+    steps: z
+      .array(
+        z.union([
+          z.object({ kind: z.literal('move'), to: id }),
+          z.object({ kind: z.literal('wait'), hours: z.number().positive().finite() }),
+          z.object({ kind: z.literal('assault') }),
+          z.object({ kind: z.literal('barrage'), target: id.nullable() }),
+          // fire window: focus standoff fire for N game-hours, then cease and move on
+          z.object({
+            kind: z.literal('strike'),
+            target: id.nullable(),
+            hours: z.number().positive().finite(),
+          }),
+        ]),
+      )
+      .max(8),
+  }),
 };
 
 /** True if `payload` is a valid payload for the client-submittable action `type`. A type

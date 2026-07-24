@@ -43,7 +43,7 @@
 |---|---|---|---|
 | **Desync rate** | расхождение клиент↔сервер | `hashState`: сервер кладёт хеш в `delta`, клиент сверяет со своим | **0** |
 | Action reject rate + коды | сколько и почему отклонено | сервер: `ActionReceipt {ok, code}` агрегатом | < 5%, без `E_INTERNAL` |
-| Replay fidelity | стабильность RNG/реплеев | golden-тесты (`rng.test`) + хеш прогона | green |
+| Replay fidelity | стабильность RNG/реплеев | golden-тесты (`rng.test`) + record→replay→hash в CI (`replayDeterminism.test`, бит-в-бит) | green ✅ |
 | Dedup / idempotency | повтор не применяется дважды | receipts по `action.id` (уже есть) | 100% |
 | Fog leak = 0 | сервер не шлёт скрытое | проверка: в `delta` игрока нет чужих скрытых сущностей | 0 утечек |
 
@@ -51,7 +51,7 @@
 
 | Метрика | Что показывает | Как снять | Цель |
 |---|---|---|---|
-| FPS idle / pan / zoom | плавность | headless-харнес (есть `fpsEma` + Playwright-замер) | ≥ 50 (GPU — 60) |
+| FPS idle / pan / zoom | плавность | headless-харнес (`fpsEma` + `prototype/perf.mjs`, не Playwright) | ≥ 50 (GPU — 60) |
 | Frame time p95 | микролаги | те же замеры | < 20 мс |
 | Time-to-interactive | скорость загрузки | load → первый кадр | < 2 c |
 | Bundle size | вес сборки | вывод `pnpm prototype` (сейчас ~435 KB) | следить за ростом |
@@ -164,7 +164,7 @@ avg/p95/max в сценариях **idle / pan / zoom** (реальные pointe
 прокси), не GPU. (2) ✅ клиентский перф-сэмпл: прототип раз в 30 с шлёт
 `{fps, rttMs, memMb}` (`MultiplayerClient.sendPerf`, сообщение `perf`) — сервер
 только наблюдает (`client_perf` в observe-поток, per-player rate-limit 5 с,
-значения клампятся при parse), агрегатор сводит fps avg/min + rtt avg/max в
+значения range-валидируются при parse — вне диапазона сообщение дропается / поле опускается, не клампится), агрегатор сводит fps avg/min + rtt avg/max в
 сводку плейтеста.
 **Готово, когда:** падение FPS на прототипе ловится автоматически. ✅
 *(CPU-регресс кадра — харнесом в CI; GPU-замер реального браузера — за скоупом,

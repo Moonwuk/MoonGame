@@ -6,7 +6,8 @@
 export const en: Record<string, string> = {
   // --- TT-3.1 technology tree screen --------------------------------------------
   'Ветку курирует': 'Branch curated by',
-  'Без лидера ветки — узлы с условием «учёный» закрыты': 'No branch leader — “scientist”-gated nodes stay locked',
+  'Без лидера ветки — узлы с условием «учёный» закрыты':
+    'No branch leader — “scientist”-gated nodes stay locked',
   'слоты {a}/{b}': 'slots {a}/{b}',
   ДЕНЬ: 'DAY',
   старт: 'start',
@@ -50,7 +51,8 @@ export const en: Record<string, string> = {
   'Попытка: {c}¤ · шанс ~60% · окно интела 24ч · провал сжигает плату. Разведка мира — кнопка 🕵 на карточке вражеской планеты.':
     'Attempt: {c}¤ · ~60% chance · 24h intel window · a failure burns the fee. World recon — the 🕵 button on an enemy planet card.',
   'АКТИВНЫЕ ОКНА ИНТЕЛА': 'ACTIVE INTEL WINDOWS',
-  'нет активных окон — добудьте интел операцией ниже': 'no active windows — steal intel with an operation below',
+  'нет активных окон — добудьте интел операцией ниже':
+    'no active windows — steal intel with an operation below',
   ОПЕРАЦИИ: 'OPERATIONS',
   'противников нет': 'no opponents',
   ЖУРНАЛ: 'JOURNAL',
@@ -177,6 +179,32 @@ export const en: Record<string, string> = {
   '{n} {r}/день': '{n} {r}/day',
   '{n} {r}/ч': '{n} {r}/h',
   '{n} ФЛОТОВ': '{n} FLEETS',
+  // TGT-1: target-order composer
+  Цель: 'Target',
+  '◎ тапните цель на карте — соберём приказ': '◎ tap a target on the map — compose the order',
+  '◎ цель не выбрана': '◎ no target picked',
+  ПРИКАЗ: 'ORDER',
+  'убрать шаг': 'remove step',
+  'план пуст — добавь шаги': 'plan is empty — add steps',
+  '⏱{n}ч': '⏱{n}h',
+  '⏱ +1ч': '⏱ +1h',
+  '🎯{n}ч': '🎯{n}h',
+  'Выбрать+': 'Select+',
+  'Деж. вылет': 'Scramble',
+  'голод: −25% на земле': 'starving: −25% on the ground',
+  'блэкаут: радары и ПВО −50%': 'blackout: radars and AA −50%',
+  '⚔ авто-штурм включён — флот сам штурмует вражеский мир по прибытии':
+    '⚔ auto-storm on — the fleet storms the hostile world it arrives at by itself',
+  Ускорить: 'Boost',
+  '⚡ форс-марш: +50% скорости, −5% прочности за час хода':
+    '⚡ forced march: +50% speed, −5% hull per hour underway',
+  '⊕ тапайте свои флоты — соберите группу и отдайте общий приказ':
+    '⊕ tap your fleets — build the group, then give a common order',
+  Сюда: 'Go here',
+  Огонь: 'Fire',
+  'снять приказ': 'clear the order',
+  '{n} флотов': '{n} fleets',
+  '◎ приказ поставлен — флот исполнит план сам': '◎ order set — the fleet will run the plan itself',
   'Осталось: {r}': 'Remaining: {r}',
   'В очереди — ещё не начато.': 'Queued — not started yet.',
   'По готовности пополнит гарнизон/флот планеты.':
@@ -357,8 +385,8 @@ export const en: Record<string, string> = {
   МАТЧИ: 'MATCHES',
   'Нажмите «Курс» (командная панель) и тапните цель — флот проложит маршрут и встанет. «Слить…» объединяет с другим флотом; «Разделить» отделяет корабли в новый флот.':
     'Press "Move" (command bar), then tap a destination — the fleet routes there and stops. "Merge…" combines with another fleet; "Split" peels ships into a new fleet.',
-  'Нажмите «Курс» и тапните цель — все выбранные флоты пойдут туда (проложат маршрут и встанут). «Слить» сплавляет группу в один флот (дальние сначала подлетят). Shift-рамка выделяет группу; Ctrl/⌘-клик добавляет флот.':
-    'Press "Move" and tap a destination — every selected fleet routes there and stops. "Merge" fuses the group into one fleet (distant ones fly in first). Shift-drag selects a group; Ctrl/⌘-click adds a fleet.',
+  'Нажмите «Курс» и тапните цель — все выбранные флоты пойдут туда (проложат маршрут и встанут). «Слить» сплавляет группу в один флот (дальние сначала подлетят). Shift- или Ctrl/⌘-клик по флоту добавляет его в группу; Shift-рамка по пустому месту выделяет несколько.':
+    'Press "Move" and tap a destination — every selected fleet routes there and stops. "Merge" fuses the group into one fleet (distant ones fly in first). Shift- or Ctrl/⌘-click a fleet to add it to the group; Shift-drag empty space to box-select several.',
   'Наземная армия ⇄ гарнизон': 'Ground army ⇄ garrison',
   'Наземные части': 'Ground units',
   'Наземные части обороняют ваши миры. Их можно погрузить на флот для захвата вражеских миров.':
@@ -376,7 +404,8 @@ export const en: Record<string, string> = {
   'Нет лотов на продажу': 'No sell orders',
   'Носитель (◈) несёт эскадрильи (△). Запускайте авиагруппу из панели выбранного флота кнопкой «🛩 Запустить эскадрилью».':
     'A carrier (◈) holds squadrons (△). Launch the wing from the selected fleet\'s panel with "🛩 Launch squadron".',
-  'Новый командир на борту — обучение скоро появится здесь.': 'New commander aboard — the tutorial is coming soon.',
+  'Новый командир на борту — обучение скоро появится здесь.':
+    'New commander aboard — the tutorial is coming soon.',
   'ОБЪЯВИТЬ ВОЙНУ': 'DECLARE WAR',
   'ОБЪЯВИТЬ ВОЙНУ?': 'DECLARE WAR?',
   'Это мир дружественной фракции. Вы хотите объявить войну <b>{names}</b>?':
@@ -546,6 +575,26 @@ export const en: Record<string, string> = {
   Фильтр: 'Filter',
   Флагман: 'Flagship',
   Флот: 'Fleet',
+  // Авто-имена флотов (Bytro-стиль): тип соединения по размеру
+  Звено: 'Wing',
+  Эскадрилья: 'Flight',
+  Эскадра: 'Squadron',
+  Армада: 'Armada',
+  // Карточка статистики мира (тап по имени планеты)
+  'Сводка мира': 'World summary',
+  Обозначение: 'Designation',
+  'Вид / тип / местность': 'Kind / type / terrain',
+  'Базовый выход/ч': 'Base output/h',
+  '— перекос типа мира': '— world-type lean',
+  'произв.': 'prod.',
+  'Бонусы типа': 'Type bonuses',
+  эскадрилий: 'squadrons',
+  // 🔥 режим огня артиллерии — кнопка в командном ряду + пункты меню
+  'Режим огня': 'Fire mode',
+  'не стреляет': 'holds fire',
+  'только после урона по флоту': 'only after the fleet takes damage',
+  'по тем, с кем война': 'at declared enemies',
+  'по любому, кроме пакта/союза': 'at anyone except pact/alliance',
   'Флоты на орбите': 'Fleets in orbit',
   Обновления: 'Updates',
   Фракция: 'Faction',
@@ -812,6 +861,7 @@ export const en: Record<string, string> = {
   'не удалось в архив': 'archiving failed',
   'не удалось восстановить': 'restore failed',
   'неизвестный заказ': 'unknown order',
+  'в гарнизоне не осталось': 'none left in the garrison',
   нет: 'none',
   'нет места в трюме': 'no cargo room',
   ничья: 'a stalemate',
@@ -904,7 +954,8 @@ export const en: Record<string, string> = {
   'десант возьмёт мир': 'the landing takes the world',
   'гарнизон устоит': 'the garrison holds',
   'затяжной пат': 'a drawn-out stalemate',
-  '⚠ Враг идёт к {node}: прибытие через {dur}': '⚠ An enemy is heading for {node}: arrival in {dur}',
+  '⚠ Враг идёт к {node}: прибытие через {dur}':
+    '⚠ An enemy is heading for {node}: arrival in {dur}',
   '⚠ Враг у {node}!': '⚠ An enemy at {node}!',
   'Прогноз штурма: {v} · ~{r} р. · потери {a} дес. ({pa}%) / {d} гарн. ({pd}%)':
     'Assault forecast: {v} · ~{r} rounds · losses {a} landing ({pa}%) / {d} garrison ({pd}%)',
@@ -988,6 +1039,7 @@ export const en: Record<string, string> = {
   '🛩 дежурный вылет включён — эскадрилья бьёт врага в радиусе':
     '🛩 standing patrol on — the wing strikes any enemy in range',
   '🛩 дежурный вылет — только со стоянки в узле': '🛩 standing patrol — only from a parked node',
+  '🛩 дежурный вылет — только когда флот свободен': '🛩 standing patrol — only when the fleet is free',
   '🛩 дежурный вылет: ВКЛ': '🛩 standing patrol: ON',
   '🛩 дежурный вылет: выкл': '🛩 standing patrol: off',
   '🛩 эскадрилья запущена — ведите её на цель': '🛩 squadron launched — steer it onto the target',
@@ -1019,6 +1071,41 @@ export const en: Record<string, string> = {
   'Кабинет корпорации': 'Corporation cabinet',
   'Нет матчей, ждущих приказа': 'No matches waiting on an order',
   'Новый командир': 'New Commander',
+  'Добро пожаловать, командир. Флот ждёт приказа.': 'Welcome, commander. The fleet awaits your orders.',
+  'Придумай пароль — аккаунт создастся сам': 'Choose a password — the account creates itself',
+  'Придумай позывной и пароль — так создаётся аккаунт.':
+    'Choose a callsign and password — that creates your account.',
+  'Имя командира': 'Commander name',
+  'Повтор пароля': 'Repeat password',
+  'Создать командира': 'Create commander',
+  'Восстановить доступ': 'Recover access',
+  'минимум 8 символов': 'at least 8 characters',
+  'ещё раз': 'once more',
+  'Введи имя командира': 'Enter a commander name',
+  'Пароли не совпадают': 'Passwords do not match',
+  'Восстановление доступа — скоро': 'Access recovery — coming soon',
+  'Подключение к сессии…': 'Connecting to the session…',
+  'Почта (для восстановления)': 'Email (for recovery)',
+  'Восстановление доступа': 'Account recovery',
+  'Укажи почту аккаунта — пришлём ссылку для сброса пароля.':
+    'Enter your account email — we will send a password-reset link.',
+  'Отправить ссылку': 'Send link',
+  'Новый пароль': 'New password',
+  'Придумай новый пароль для входа.': 'Choose a new password to sign in.',
+  'Сменить пароль': 'Change password',
+  'Эта почта уже занята': 'That email is already in use',
+  'Введите почту': 'Enter an email',
+  'Если такая почта есть — прислали ссылку для сброса':
+    'If that email exists, a reset link is on its way',
+  'Ссылка недействительна или устарела': 'The link is invalid or expired',
+  'Пароль изменён': 'Password changed',
+  'переподключение — приказ не отправлен, повтори через миг':
+    'reconnecting — order not sent, try again in a moment',
+  'матч заполнен — все места заняты': 'match is full — every seat is taken',
+  'вход в этот матч закрыт (окно приёма новых игроков истекло)':
+    'this match is closed to new players (the entry window has elapsed)',
+  'Позывной для аккаунта: 3–24 символа — буквы, цифры, _ или -':
+    'Account callsign: 3–24 chars — letters, digits, _ or -',
   Обновить: 'Update',
   'Обновить список': 'Refresh list',
   'Одиночная игра': 'Solo game',
@@ -1100,7 +1187,7 @@ export const en: Record<string, string> = {
   фитинг: 'fitting',
   'В арсенале нет корпусов этого класса.': 'The arsenal has no hulls of this class.',
   '⚡ Арсенал живой: докупленное в матче видно здесь сразу, но начинает работать только когда ты это ПОСТРОИШЬ — постройка и логистика, не мгновенно.':
-    "⚡ Live arsenal: anything bought during the match shows up here right away, but it only starts working once you BUILD it — construction and logistics, not instant.",
+    '⚡ Live arsenal: anything bought during the match shows up here right away, but it only starts working once you BUILD it — construction and logistics, not instant.',
   'Ходовые школы': 'Helm Schools',
   '+5% к скорости всех флотов с первой секунды матча.':
     '+5% fleet speed from the first second of a match.',
@@ -1168,7 +1255,8 @@ export const en: Record<string, string> = {
   Гарнизон: 'Garrison',
   'Численность наземных войск, обороняющих мир.': 'The ground troops defending the world.',
   'Пехота и техника на поверхности мира.': "Infantry and armour on the world's surface.",
-  'Корабли, стоящие в гарнизоне мира (не на орбите).': "Ships parked in the world's garrison (not in orbit).",
+  'Корабли, стоящие в гарнизоне мира (не на орбите).':
+    "Ships parked in the world's garrison (not in orbit).",
   'Число построек на мире.': 'The number of buildings on the world.',
   'Тап по слоту меняет род войск: ополчение → тяжёлая пехота → спецназ → танк. Танки бьют любую пехоту; спецназ — единственная пехота, опасная танкам; тяжёлая пехота держит оборону.':
     'Tap a slot to cycle the unit type: militia → heavy infantry → special forces → tank. Tanks shred any infantry; special forces are the one infantry that threatens armour; heavy infantry holds the line.',
@@ -1451,4 +1539,50 @@ export const en: Record<string, string> = {
   'КОНСТРУКТОР ДИВИЗИЙ': 'DIVISION BUILDER',
   'ХРАНИТЕЛЬ · ИИ НА СОН': 'STEWARD · AI WHILE ASLEEP',
   'Хранитель — передать ИИ на сон': 'Steward — hand to the AI while asleep',
+  // --- Bytro-карточка армии: ХП-бар, сводка, платный ремонт, кап линии огня ----
+  'Мгновенный ремонт всего корпуса за кредиты': 'Instant full-hull repair for credits',
+  Состав: 'Composition',
+  скауты: 'scouts',
+  боевые: 'combat',
+  артиллерия: 'artillery',
+  транспорты: 'transports',
+  флагман: 'flagship',
+  рой: 'swarm',
+  всего: 'total',
+  'бьют {n} юнитов': '{n} units firing',
+  'форс-марш': 'forced march',
+  'рывок отхода': 'retreat dash',
+  'по самому медленному; техи/фракция/местность — на переходе':
+    'at the slowest hull; tech/faction/terrain apply per leg',
+  Трюм: 'Cargo hold',
+  Радар: 'Radar',
+  'Сводка армии': 'Army summary',
+  '‹ Назад к карточке': '‹ Back to the card',
+  'Линия огня': 'Firing line',
+  'В залпе бьют максимум {n} юнитов — сильнейшие первыми; все сверх капа только впитывают урон.':
+    'At most {n} units fire per volley — the strongest first; everyone beyond the cap only soaks damage.',
+  'Текущая/полная прочность армии. Чинится у своего мира с верфью — или мгновенно за кредиты.':
+    'Current/full army hull. Mends over your world with a repair yard — or instantly for credits.',
+  'Аблятивный щит: принимает урон первым и бесплатно восстанавливается вне боя.':
+    'Ablative shield: takes damage first and recharges for free out of combat.',
+  // --- настройки: цвета сторон -------------------------------------------------
+  'Цвета сторон': 'Side colours',
+  'Свой цвет': 'Your colour',
+  'вы на карте и в панелях — форма несёт тип, цвет несёт сторону':
+    'you on the map and in panels — the shape carries the type, the colour carries the side',
+  Нейтральные: 'Neutrals',
+  'ничейные миры и неопознанные силы': 'unowned worlds and unidentified forces',
+  'Палитра соперников': 'Rival palette',
+  '«дальтоник» — оттенки, различимые при цветослепоте':
+    '«colourblind» — hues distinguishable with colour vision deficiency',
+  классика: 'classic',
+  тёплая: 'warm',
+  дальтоник: 'colourblind',
+  'Вернуть цвета по умолчанию': 'Reset colours to defaults',
+  // --- ECON-3: экспресс-ремонт за металл ---------------------------------------
+  'Экспресс-ремонт у своего дока за металл': 'Express repair at your own dock for metal',
+  // --- ECON-4: рыночная комиссия ------------------------------------------------
+  'к получению после комиссии {p}%: {n} ¤': 'you receive after the {p}% fee: {n} ¤',
+  'в эскроу уйдёт {n} ¤ · комиссию {p}% платит получатель кредитов':
+    'escrow: {n} ¤ · the {p}% fee is paid by whoever receives the credits',
 };

@@ -1,0 +1,245 @@
+# Закалка плейтест-контура — технический roadmap
+
+> Заказ владельца (2026-07-18): четыре кирпича инфраструктурной зрелости — **TLS+домен**,
+> **автодеплой**, **реплей-детерминизм в CI**, **fuzz/property-тесты ядра**. Этот док —
+> исполняемый план: он **операционализирует** уже спроектированные кирпичи из
+> `https-roadmap.md` (HTTPS-2.1 и остатки 1.1/4.2), `operations-roadmap.md` (подступ к
+> OPS-1.1), `core-roadmap.md` (CR-0.2-лайт), `persistence-roadmap.md` (PE-1.1 — явно
+> ОТЛОЖЕН), `secure-sdlc-roadmap.md` (SD-7.2 частично, SD-7.3 целиком) — не дублирует их,
+> а связывает в последовательность. Все факты «текущего состояния» сверены с кодом
+> (разведка 2026-07-18, файлы:строки). Формат — кирпичики: один кирпич ≈ один PR ≈ одна
+> сессия. Зоны: `[ops]`·`[proto]`·`[srv]`·`[core]`.
+
+---
+
+## 0. Текущее состояние (сверено с кодом)
+
+**TLS:** нигде не терминируется. `deploy/docker-compose.yml` выставляет голый
+`8788:8788` (HTTP+WS); `deploy/setup-proxy.sh` — nginx на порту 95367 **plain HTTP**
+(WebSocket Upgrade и `X-Forwarded-Proto` уже прописаны, HTTPS — закомментированная
+заглушка); конфиги оперируют голым IP — домена нет. При этом ядро сервера к прокси
+**почти готово**: `TRUST_PROXY` → Fastify trustProxy (`main.ts:297`), Origin-allowlist
+на WS-upgrade (`wsServer.ts:195`), cookies не используются (ломаться нечему), клиент
+уже авто-апгрейдит `ws://`→`wss://` на https-странице. Дыра: Docker-образ запускает
+`prototype/netserver.mjs`, а тот **не проводит** `allowedOrigins`/`trustProxy` в
+`createMultiplayerServer` (`netserver.ts:511-528`) — env-переменные в compose сейчас
+ничего не включают.
+
+**Деплой:** образ собирается на сервере (`build:` в compose), в registry не пушится
+нигде (CI собирает только для trivy-скана и выбрасывает). Обновление — руками по SSH,
+причём сгенерированный `update-dev.sh` **сломан для Docker**: `stop → git pull → start`
+без `--build` перезапускает старый образ. `install-ubuntu.sh` клонирует не тот репозиторий
+(`moongame.git`) и хардкодит IP владельца. Прецедент автодоставки уже есть: `android.yml`
+на каждый push в main публикует APK в rolling-prerelease.
+
+**Реплей:** ядро реплеябельно по построению (sfc32-RNG живёт в `GameState.rng`,
+`applyAction`/`advanceTo` — чистые, `hashState()` с golden-тестом уже есть,
+`emitStateHash`+desync-репорт в MatchRoom уже есть). Нет самого реплея: ни формата, ни
+рекордера, ни раннера; квитанции хранятся **без** type/payload/времени, снапшот
+перезаписывается — последовательность действий из стора не восстановить. Багхант
+2026-07-10 уже ловил реальные классы реплей-дивергенций (BF-13 JSONB-пересортировка,
+BF-22 coarse/fine-шаги) — точечными фиксами, без системного теста.
+
+**Fuzz:** fast-check не установлен. Инварианты (немутация входа, детерминизм,
+сериализуемость, непрерывность спанов) покрыты только **примерами**, не свойствами.
+Готовая «вселенная» для генератора есть: `actionPayloadSchemas` (~45 типов действий),
+`deepFreeze`, `buildStateFromMap`, фикстура `examples/skirmish.test.ts`.
+
+---
+
+## Блок A · TLS + домен `[ops]` `[proto]` `[srv]`
+
+> Реализация [HTTPS-2.1](https-roadmap.md) + остатков HTTPS-1.1/4.2. Паттерн
+> зафиксирован там же: TLS терминирует прокси, Node слушает plain на loopback.
+
+- **TLS-1 · Домен + проверка портов** `[ops]` — S · **решение владельца**.
+  Купить/назначить домен, A-запись на сервер; проверить, что 80/443 доступны снаружи.
+  ⚠️ Нестандартный порт 95367 в текущих конфигах намекает на проброс/CGNAT — если 80/443
+  закрыты у провайдера, ACME HTTP-01 не пройдёт; запасной путь: свой домен через
+  Cloudflare + cloudflared-туннель (wss уже работает по HTTPS-3.2).
+  **Готово:** `ping домен` → IP сервера; 80/443 отвечают.
+- **TLS-2 · Провести защиту в прототипный хост** `[proto]` — S · ✅ (2026-07-21).
+  `netserver.ts`: `allowedOrigins` и `trustProxy` (env `TRUST_PROXY=1`) прокинуты в
+  `createMultiplayerServer` + CSWSH-warning как в `main.ts`. Живая проверка на
+  собранном хосте с `ALLOWED_ORIGINS`: чужой Origin → 403, отсутствующий → 403,
+  разрешённый → 101.
+- **TLS-3 · Caddy в compose** `[ops]` — M · 🔒(TLS-1, TLS-2).
+  Новый `deploy/Caddyfile` (`<домен> { reverse_proxy server:8788 }` — авто-ACME и
+  WebSocket из коробки, логирование query-строки отключить — `?token=`/`?ticket=` не
+  должны течь в логи); compose: сервис caddy (80/443 + volume сертификатов), server-порт
+  → `127.0.0.1:8788:8788`, env `TRUST_PROXY=1` и `ALLOWED_ORIGINS=https://<домен>,
+  http://localhost` (⚠️ Origin Capacitor-webview проверить на живом APK ДО включения —
+  allowlist отклоняет и отсутствующий Origin, иначе APK-игроки молча получат 403).
+  `install-ubuntu.sh` не трогать (возможно, стоит на живом сервере) — чинится в ADEP-0.
+  **Готово:** `wss://<домен>/matches/proto` работает из браузера и APK.
+- **TLS-4 · Reject non-https за прокси + печать wss** `[srv]` `[proto]` — S · 🔒(TLS-3).
+  `wsServer.ts`: при `trustProxy` и `x-forwarded-proto !== 'https'` → rejectUpgrade
+  (+ тест); netserver за прокси печатает `https/wss`-URL как основной.
+  **Готово:** тест зелёный; в консоли хоста — wss-ссылка.
+- **TLS-5 · Приёмка + доки** `[ops]` — S · 🔒(TLS-3).
+  testssl/SSL Labs ≥ A, ноль mixed-content, 8788 снаружи закрыт; статусы ✅ в
+  `https-roadmap.md` (там же поправить устаревшие строки netserver), `launch-runbook.md`.
+  HTTPS-5.1 (release-APK без cleartext) — отдельный следующий кирпич после стабильного wss.
+
+⚠️ TLS ≠ авторизация: на публичном плейтесте связка с `AUTH_JWT_SECRET`+`SEAT_LOCK=1`
+(уже дефолт compose) обязательна — прописано в `https-roadmap.md`.
+
+## Блок B · Автодеплой `[ops]` `[sec]`
+
+> **Решение: GHCR-push из CI + pull-таймер на сервере.** Отсев альтернатив: ssh-action —
+> сервер за домашним NAT, пришлось бы открывать SSH в интернет с ключом в GitHub;
+> webhook — то же + новая attack-surface, а distroless-контейнер без shell не пересоберёт
+> себя; watchtower — монтирует docker.sock в сторонний привилегированный контейнер,
+> против hardening-постуры (SE-5). Pull-таймер — outbound-only (работает за NAT),
+> ~30 строк bash. GHCR вместо build-on-server — деплоится ровно тот образ, что прошёл
+> гейт и trivy-scan.
+
+- **ADEP-0 · Починить текущий update-путь** `[ops]` — S · ✅ (2026-07-21).
+  `install-ubuntu.sh`: генерируемый `update-dev.sh` теперь `pull → docker compose
+  build → restart` (пересборка при живом сервере — минимум даунтайма; раньше
+  `moongame update` перезапускал СТАРЫЙ образ); `REPO_URL` — каноничный
+  `Moonwuk/MoonGame.git` и переопределяем окружением (старый lowercase-URL работал
+  через регистронезависимость GitHub — гигиена, не поломка); IP/порты — env-переменные
+  с автоопределением INTERNAL_IP; генерируемый `server.env` — релизная постура
+  `GATE=1, SEAT_LOCK=1` (как в compose). README-тексты про «10–15 сек без
+  пересборки» заменены честными. ⚠️ На уже установленном сервере владельца новый
+  `update-dev.sh` появится после однократного ручного `git pull` + пересоздания
+  скрипта (или пере-прогона установщика) — сам себя он не обновит.
+- **ADEP-1 · CI публикует образ в GHCR** `[sec]` — M.
+  Новый `.github/workflows/deploy.yml`: push в main → build → push
+  `ghcr.io/moonwuk/nygame-server:latest` + `:<sha>`; логин через `GITHUB_TOKEN`
+  (`permissions: packages: write` — без долгоживущих секретов, в духе SD-6.2), экшены
+  SHA-пинить (SD-6.1). ⚠️ Пакет — **приватный**: образ содержит весь исходник
+  (`COPY . .`), публикация пакета = публикация кода приватного репо.
+  **Готово:** пакет в GHCR обновляется на каждый push в main.
+- **ADEP-2 · Compose переходит на `image:`** `[ops]` — S · 🔒(ADEP-1).
+  `image: ghcr.io/...:latest` в сервисе server, `build:` остаётся fallback'ом;
+  `server.env.example` — место под read-only PAT (`read:packages`).
+  **Готово:** `docker compose pull server` тянет свежий образ.
+- **ADEP-3 · Pull-таймер на сервере** `[ops]` — M · 🔒(ADEP-2).
+  `deploy/autoupdate.sh`: login → `compose pull server` → digest сменился → `up -d
+  server` → `docker image prune -f` (диск на домашнем сервере конечен); systemd
+  `moongame-update.timer` (5 мин) + выключатель `AUTODEPLOY=0` в server.env — выкатка
+  посреди вечернего матча рвёт WS (матч выживает: durable-Postgres + seat-tickets, но
+  графцфул-drain — это OPS-1.1, не здесь).
+  **Готово:** push в main → сервер обновился сам в течение ~5 минут; откат =
+  `compose pull` конкретного `:<sha>`.
+- **ADEP-4 · Доки + ручные шаги** `[ops]` — S · 🔒(ADEP-3).
+  `deploy/README.md`: секция «Автодеплой» + обязательные ручные шаги (видимость
+  GHCR-пакета, выдача PAT, ротация — прецедент pages.yml показал, что шаг вне репо
+  молча ломает конвейер); `state.md` по факту.
+
+## Блок C · Реплей-детерминизм в CI `[core]` `[srv]`
+
+> CR-0.2-лайт из `core-roadmap.md`: формат + раннер + самосогласованный CI-тест.
+> Durable-журнал действий (PE-1.1) и аудит-реплей продакшен-матчей (GI-1.3) — **отдельные
+> кирпичи после**, здесь только фундамент. Хэш и его golden уже есть (`state/hash.ts`).
+
+- **RPL-1 · Формат + чистый раннер** `[core]` — M · ✅ (2026-07-21).
+  `packages/shared-core/src/replay/replay.ts` + `replay.test.ts` (7 тестов) + экспорт
+  из `index.ts`. `ReplayLog { dataVersion; config?; initial; steps[{at, action?}] }`,
+  `runReplay → {state, hash, failures, rejected}` — ровно real-time flow
+  `advanceTo → applyAction`, partial-петля как в MatchRoom, fail-secure отказ по пину
+  версии/неупорядоченному логу. Тесты: живой прогон (почасовые тики + реактивный
+  игрок) vs реплей — бит-в-бит; JSONB-скрэмбл initial (анти-BF-13); дубли границ =
+  no-op; отказ по пину.
+  **⚠ Находка, меняющая контракт (важно для RPL-2/3):** начисление по спанам —
+  `rate × Δt`, сложение IEEE-754 неассоциативно ⇒ другое членение того же интервала
+  даёт float-пыль (~1e-13), движок и так обещает только coarse ≈ fine
+  (advanceTo.test). Поэтому **границы advance — часть лога**: рекордер обязан
+  записывать каждый advance-таргет живого пути (тики таймера — чистыми `{at}`-шагами),
+  а не идеализированный крупный таймлайн. Зафиксировано тестом «другое членение ≈
+  в пределах float-пыли» и в доке модуля.
+- **RPL-2 · Рекордер в MatchRoom** `[srv]` — S · ✅ (2026-07-21).
+  Опция `record` в `MatchRoom` (+ проброс в `createDevMatch`): каждая граница advance
+  (только когда время реально сдвинулось — лог компактный; и sync-`advance`, и чистый
+  `computeAdvance` durable-пути) и каждое УСПЕШНО применённое действие на его
+  эффективном инстанте `max(serverNow, state.time)`. Покрыты оба пути применения
+  (sync `applyAndBroadcast` + durable `commitApply`) и серверные драйверы
+  (`submitServerAction` — ИИ, Хранитель).
+- **RPL-3 · CI-тест record→replay→hash** `[srv]` — M · ✅ (2026-07-21).
+  `replayDeterminism.test.ts`: живой `MatchRoom` на ПОЛНОМ dev-стеке (27 модулей,
+  шипнутые данные), pinned-часы, 48 игровых часов тиков + действия по обоим путям
+  (sync + durable `submitServerAction`) → запись → `runReplay` → хэш **бит-в-бит**;
+  плюс JSON-round-trip всего лога (паритет гибернации/durable-лога). Самосогласован
+  (live vs его же реплей) — баланс-правки его не инвалидируют; попал в `pnpm test`
+  → ci.yml без правок workflow. (Тест «другое членение ≈ float-пыль» — в shared-core
+  `replay.test.ts`, RPL-1.)
+- **RPL-4 · Доки** `[docs]` — S · ✅ (2026-07-21). `core-roadmap.md` CR-0.2 → частично ✅,
+  `metrics-roadmap.md` KPI «хеш прогона» → green, `state.md`.
+- **RPL-5 · Durable action-log** `[srv]` — L · 🔒(RPL-3) · **отдельный кирпич, не в
+  этом заходе** = PE-1.1: append-only лог в Postgres, реплей читает из стора —
+  разблокирует GI-1.3 (аудит-реплей подозрительного матча, откат при эксплойте).
+
+## Блок D · Fuzz/property-тесты ядра `[core]`
+
+> SD-7.3 целиком + мусорная часть SD-7.2 из `secure-sdlc-roadmap.md`. ⚠️ zod v4:
+> мосты типа zod-fast-check таргетят v3 — arbitraries пишем руками (схемы простые).
+
+- **FUZZ-1 · fast-check + testkit** `[core]` — S · ✅ (2026-07-21).
+  fast-check ^4.9 в root devDeps; `testkit/arbitraries.ts`: типы действий — из ключей
+  `actionPayloadSchemas` (весь wire-каталог), валидные payload'ы руками для 6 базовых
+  типов (move/stop/assault/construct/unit.build/market.list) + «мусорный» arbitrary
+  (тип из каталога × `fc.anything()`); состояние — компактная fixture-вселенная
+  (3 мира, 2 игрока, флоты/гарнизон/шахта) с `arbSeed`-варьируемым RNG-стримом.
+- **FUZZ-2 · Property-suite applyAction** `[core]` — M · ✅ (2026-07-21).
+  `kernel/applyAction.property.test.ts`, 5 свойств поверх 6 реальных модулей:
+  (а) на `deepFreeze(state)`+`deepFreeze(data)` **никогда не бросает** — только `ok`
+  или стабильный `/^E_[A-Z_]+/` (мусор и валид, ×150); (б) frozen vs thawed вход →
+  идентичный исход (hash + events + code) — чистота и детерминизм разом; (в)
+  `hashState` переживает JSON-round-trip достижимых состояний (класс BF-13); (г)
+  `state.scheduled` остаётся `(at,seq)`-сортированным после каждой успешной апплики.
+  Риск №3 (мутация `ctx.data` модулем) под морозом НЕ вскрылся — свойство живёт в
+  полную силу. Семантические свойства — только на gate-валидных payload'ах
+  (инвариант №5 CLAUDE.md), сырой мусор проверяет «no throw + стабильный код».
+- **FUZZ-3 · Property-suite advanceTo** `[core]` — M · ✅ (2026-07-21).
+  `kernel/advanceTo.property.test.ts`, 7 свойств под рандомными таргетами и
+  ЧЛЕНЕНИЯМИ интервала: непрерывность спанов `time.advanced` на `[state.time,
+  committed]`, `time === ctx.now` при `partial !== true`; split-эквивалентность
+  **бит-в-бит по хэшу** на дискретном ядре (movement/combat/sector/market — без
+  спановых начислителей), на полном стеке — контракт RPL-1 «coarse ≈ fine»
+  (дискретный скелет бит-в-бит, ресурсы в float-пыли; глубокие кредиты уводят от
+  brownout-ножа); модуль-бомба → каждый due-бомб в `failures` (E_INTERNAL, без
+  утечки деталей, A10), часы не клинят, будущие бомбы нетронуты; чистота
+  (frozen vs thawed) и `E_TIME_BACKWARDS` на отмотку.
+- **FUZZ-4 · Property applyDelta∘diffState = id** `[core]` — S · ✅ (2026-07-21).
+  `state/delta.property.test.ts`, 5 свойств по `hashState` — третий пункт SD-7.3:
+  реконструкция на sim-достижимых парах (живой скирмиш: бой/удалённые флоты →
+  `removed`, начисление → `changed`/meta) и на синтетических кросс-seed парах
+  (add/remove/rewrite сущностей, meta, host-extension ключи → `meta`-carry и
+  `removedMeta`); дельта переживает JSON-провод и повторную доставку
+  (идемпотентность); дифф состояния с самим собой — строго пустая дельта; все
+  входы deep-frozen (скрытая мутация в diff/apply бросила бы, а не прошла тихо).
+- **FUZZ-5 · Доки** `[docs]` — S · ✅ (2026-07-21). `secure-sdlc-roadmap.md`: SD-7.3 → ✅,
+  SD-7.2 → частично ✅ (мусорная часть на редьюсере; остаток — фаззинг парсеров);
+  `state.md` §10 — сводка property/fuzz-слоя. **Блок D закрыт целиком.**
+
+Бюджет: numRuns 50–200, короткие последовательности — `pnpm run check` не должен
+распухнуть; при падении fast-check печатает seed (репро детерминирован). Найденное
+свойствами реальное (например, мутация общего `ctx.data`) — фиксить отдельным кирпичом,
+не ослаблять свойство. RNG-алгоритм не трогать — golden сторожит реплеи.
+
+---
+
+## Последовательность
+
+1. **ADEP-0** — первым: чинит сломанный сегодня update-путь, 15 минут ценности.
+2. **Блок A (TLS)** — плейтест получает `wss://домен` и рабочий Origin-allowlist.
+   Блокер TLS-1 — решение владельца (домен).
+3. **Блок B (автодеплой)** — push в main → сервер обновился сам.
+4. **Блоки C и D** — независимы от A/B и друг от друга, зона `[core]`/`[srv]` — можно
+   вести параллельной сессией в любой момент (не пересекаются с deploy-файлами).
+
+## Решения, которые нужны от владельца
+
+1. **Домен** (TLS-1): какой; и если у провайдера закрыты 80/443 — согласие на путь
+   через Cloudflare (DNS там + cloudflared, сертификат не нужен вовсе).
+2. **GHCR** (ADEP-1): подтвердить приватность пакета; выдать fine-grained PAT
+   `read:packages` для сервера (единственный долгоживущий секрет схемы, ротация — в
+   runbook).
+3. **Окно автодеплоя** (ADEP-3): обновлять сразу (5-мин таймер) или только в тихие часы.
+
+## Статус реализации
+
+_Пока не начато. Отмечать ✅ по кирпичам здесь + зеркалить в связанных роадмапах
+(https / core / secure-sdlc / metrics) и `state.md` — по правилу «код сначала, доки после»._

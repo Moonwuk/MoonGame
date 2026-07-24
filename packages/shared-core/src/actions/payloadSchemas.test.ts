@@ -51,6 +51,10 @@ const CLIENT_ACTION_TYPES = [
   'steward.holdpoint',
   'order.auto',
   'order.scramble',
+  'order.chain',
+  'fleet.forcemarch',
+  'fleet.instantRepair',
+  'fleet.repair',
 ];
 
 describe('SV-1.2 · action payload schemas', () => {
@@ -119,6 +123,23 @@ describe('SV-1.2 · action payload schemas', () => {
       ['steward.holdpoint', { planetId: 'p1', on: true }],
       ['order.auto', { fleetId: 'f1', on: true }],
       ['order.scramble', { fleetId: 'f1', on: false }],
+      ['fleet.forcemarch', { fleetId: 'f1', on: true }],
+      ['fleet.instantRepair', { fleetId: 'f1' }],
+      ['fleet.repair', { fleetId: 'f1' }],
+      ['order.chain', { fleetId: 'f1', steps: [] }], // [] = cancel the plan
+      [
+        'order.chain',
+        {
+          fleetId: 'f1',
+          steps: [
+            { kind: 'wait', hours: 2 },
+            { kind: 'move', to: 'p1' },
+            { kind: 'assault' },
+            { kind: 'barrage', target: null },
+            { kind: 'strike', target: null, hours: 3 },
+          ],
+        },
+      ],
       ['unit.build', { planetId: 'p1', unit: 'cruiser', modules: ['targeting_array'] }],
     ];
     for (const [type, payload] of valid) {
@@ -138,6 +159,17 @@ describe('SV-1.2 · action payload schemas', () => {
       ['fleet.barrage', { fleetId: 'f1', targetId: 7 }], // target neither an id nor null
       ['fleet.barrageMode', { fleetId: 'f1', mode: 'berserk' }], // not a known ROE mode
       ['fleet.retreat', {}], // missing fleetId
+      ['fleet.repair', {}], // missing fleetId
+      ['order.chain', { fleetId: 'f1' }], // missing steps
+      ['order.chain', { fleetId: 'f1', steps: [{ kind: 'warp' }] }], // unknown step kind
+      ['order.chain', { fleetId: 'f1', steps: [{ kind: 'wait', hours: 0 }] }], // no zero waits
+      ['order.chain', { fleetId: 'f1', steps: [{ kind: 'strike', target: null, hours: 0 }] }], // no zero fire windows
+      ['order.chain', { fleetId: 'f1', steps: [{ kind: 'move' }] }], // move without a target
+      [
+        'order.chain',
+        { fleetId: 'f1', steps: Array.from({ length: 9 }, () => ({ kind: 'assault' })) },
+      ], // over the 8-step cap
+      ['chain.stamp', { fleetId: 'f1', steps: [] }], // driver-only stamp must stay off the wire
       ['market.list', { resource: 'metal', amount: 0, price: 3 }], // nothing to sell
       ['market.list', { resource: 'metal', amount: 5, price: -1 }], // negative price
       ['market.list', { resource: 'metal', amount: Infinity, price: 3 }], // not finite
@@ -165,7 +197,9 @@ describe('SV-1.2 · action payload schemas', () => {
       ['espionage.spy', { target: 'p2', kind: 'pings' }], // not a stealable kind (yet)
     ];
     for (const [type, payload] of bad) {
-      expect(isValidActionPayload(type, payload), `${type}: ${JSON.stringify(payload)}`).toBe(false);
+      expect(isValidActionPayload(type, payload), `${type}: ${JSON.stringify(payload)}`).toBe(
+        false,
+      );
     }
   });
 

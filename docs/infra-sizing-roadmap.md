@@ -43,7 +43,7 @@
 | Потолок burst | 20 действий/с/игрок; 50 msg/с/сокет (pre-parse) | `ACTION_RATE_MAX_DEFAULT` в `matchRoom.ts`; `FLOOD_MAX` в `wsServer.ts` |
 | Backpressure-cap | 1 MiB на сокет, дальше drop (close 1013) | `MAX_BUFFERED_BYTES` в `matchRoom.ts` |
 | Payload-cap | 32 KB вход | `maxPayload` в `wsServer.ts` |
-| Данные игры | **~12 KB** JSON (не 40 KB — то блок-округление `du`) | `wc -c data/*.json` = 12 368 |
+| Данные игры | **~33 KB** JSON | `wc -c data/*.json` = 33 451 |
 
 **Реальный драйвер стоимости** — CPU на действие внутри одного event-loop, не число
 соединений. Стоимость масштабируется как `размер GameState × число игроков`.
@@ -95,7 +95,7 @@
 
 2. **Строгий commit-before-broadcast — ✅ (risk14).** Опция `MatchRoom.persist`: действие
    игрока идёт по async-пути (`submitActionCommitted`), сериализованному per-room
-   (`commitChain`), который **ждёт** durable-запись нового снапшота+квитанции ДО коммита
+   через актор-`mailbox` (`enqueue`), который **ждёт** durable-запись нового снапшота+квитанции ДО коммита
    состояния и рассылки дельты — пир никогда не видит непринятое стором состояние, краш
    не теряет заакченное действие. Провал записи → ничего не коммитится, транзиентный
    reject (без квитанции) → ретрай доезжает. Догон мира (`computeAdvance`) считается
@@ -111,10 +111,10 @@
    `netserver.ts` (PA-4.1) будят комнату к ближайшему событию и зовут `tick()`; cap на
    переполнение `setTimeout` (~24.8 сут → 1 ч в прото-сервере / `MAX_DELAY` в F8). НЕ
    грубый cron: при `timeScale>1` события наступают быстрее реального времени
-   (`matchRoom.ts:528-529`).
+   (`matchRoom.ts:1036-1037`).
 
 4. **Overflow-клин — ✅ исправлено (отказоустойчивость).** Раньше при переполнении
-   `MAX_ADVANCE_STEPS=100_000` (`kernel.ts:47`) `advanceTo` возвращал `{ok:false,
+   `MAX_ADVANCE_STEPS=100_000` (`kernel.ts:34`) `advanceTo` возвращал `{ok:false,
    E_ADVANCE_OVERFLOW}` и **выбрасывал** уже посчитанные 100k событий → комната навсегда
    застревала (каждый ретрай повторял тот же провал). Теперь:
    - **Ядро — частичный прогресс.** `advanceTo` при переполнении отдаёт `{ok:true,
@@ -127,7 +127,7 @@
    - **Драйвер — backoff.** `tick()` возвращает `progressed`; и `clockDriver.ts`, и
      `netserver.ts` после `STALL_LIMIT=3` непрогрессирующих тиков уходят в idle
      (не busy-loop) + `onStall`-алерт. Новое действие оживляет драйвер (reschedule
-     сбрасывает счётчик). `E_EVENT_OVERFLOW` (одиночный шаг >10k, `kernel.ts:327`) —
+     сбрасывает счётчик). `E_EVENT_OVERFLOW` (одиночный шаг >10k, `kernel.ts:339`) —
      как и было, dead-letter внутри цикла, не клинит.
    Тесты: `advanceTo.test.ts` (partial-yield + catch-up), `matchRoom-overflow.test.ts`
    (no-wedge/stall/driver-backoff).
@@ -137,8 +137,8 @@
 CPU одной комнаты на одном ядре → потом единственный процесс/Postgres. Порядок швов,
 уже заложенных в код/доки:
 
-1. **Per-action O(игроков)** внутри одного event-loop (`matchRoom.ts:600-617`). Шов:
-   **SV-3.1** (кэш `visibleState` на комнату) режет дублирующую проекцию на пира.
+1. **Per-action O(игроков)** внутри одного event-loop (per-player fog-проекция в broadcast).
+   Шов: **SV-3.1** (кэш `visibleView` на комнату) режет дублирующую проекцию на пира.
 2. **Единственный процесс** (1 комната/процесс) — **снято (SV-0.2)**: `MatchRegistry`
    роутит N изолированных матчей/процесс, `LazyRoomRegistry` грузит по запросу,
    гибернирует простаивающие в стор (live-память ∝ активным матчам, risk13) **и будит

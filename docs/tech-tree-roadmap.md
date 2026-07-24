@@ -20,8 +20,8 @@
 на игроке; снапшот при старте.
 
 **✅ Уже добавлено (в коде):**
-- **4 ветки** (`branch`): `ground` · `space` · `squadron` · `missile` — вкладки UI = ветки.
-  ✅ уже в коде: `schemas.ts` (`branch` enum, default `space`), `data/technologies.json` (узлы несут ветку).
+- **5 веток** (`branch`): `ground` · `space` · `squadron` · `missile` · `command` — вкладки UI = ветки.
+  ✅ уже в коде: `schemas.ts` (`branch` enum из 5 значений, default `space`), `data/technologies.json` (узлы несут ветку).
 - **День-гейт** (`dayGate`): технология **доступна к исследованию только с дня N** сессии
   (мировое время, timeScale-масштаб) — пейсинг эпох, нельзя зарашить всё в начале.
   ✅ уже в коде: `schemas.ts` (`dayGate`), `technology.ts` (гейт → `E_TOO_EARLY`).
@@ -39,13 +39,13 @@
 ## Статус реализации (что уже в коде, PR #66)
 
 **✅ Зашиплено** (`technology`-модуль / `schemas.ts` / `index.ts`):
-- **TT-0.1 ветки** — `branch` (`ground`|`space`|`squadron`|`missile`, default `space`); 5 техно размечены (fort → `ground`, прочие → `space`).
+- **TT-0.1 ветки** — `branch` (`ground`|`space`|`squadron`|`missile`|`command`, default `space`); 19 нод размечены по всем 5 веткам.
 - **TT-0.2 день-гейт** — `dayGate`; проверка по мировому клоку: `state.time − (startedAt ?? 0) ≥ dayGate·MS_PER_DAY` — совпадает с «Day N» матч-браузера (`matchRegistry`); добавлен якорь `GameState.startedAt`.
 - **TT-0.3 условия** — курируемый каталог `TechnologyConditionSchema` (`z.discriminatedUnion`): `own_sectors`/`has_building`/`controls_planet_type`/`has_unit` (count-порог `min`, default 1) + `has_scientist {branch?, minLevel?}` (учёный) — **балансируется чистыми данными**. Новый тип = 1 вариант схемы + 1 `case` (пропуск `case` = ошибка компиляции через `never`-guard).
 - **TT-1.1 правило доступности** — чистая **`technologyLock(def, state, playerId, data)`** = prereqs → день-гейт → условия; отдаёт первый непройденный гейт стабильным кодом (`E_PREREQUISITE`/`E_TOO_EARLY`/`E_CONDITIONS_UNMET`) или `null`. Экспортирована для будущего UI/action-слоя («что доступно и почему нет»).
 - **TT-1.2** — уже работал (reuse отложенного завершения).
 - **TT-1.3 слоты** — `active` стал списком (запись на слот); **2 базовых → до 3** через хук `research.slots` (клампится к [2,3]); одинаковое техно не занимает два слота; миграция legacy single-object `active`.
-- **TT-4 учёный** — `ScientistDef`-каталог (`data/scientists.json`) + `Player.scientist {id, level}` (снапшот при сборке через слот-ассайнмент; `E_UNKNOWN_SCIENTIST` fail-secure на старте; приватен в тумане). **TT-4.3 +слот**: `scientist`-модуль → хук `research.slots`. **TT-4.1/4.2 фокус+капстоун**: data-driven условие `has_scientist {branch?, minLevel?}` (качественный доступ, **НЕ % скорости**); `+слот` — INSTEAD-of-фокус opportunity-cost (полимат — branchless).
+- **TT-4 учёный** — `ScientistDef`-каталог (`data/scientists.json`) + `Player.scientists[]` — совет из 0–2 лидеров (снапшот при сборке через слот-ассайнмент; `E_UNKNOWN_SCIENTIST` fail-secure на старте; приватен в тумане). **TT-4.3 +слот**: `scientist`-модуль → хук `research.slots`. **TT-4.1/4.2 фокус+капстоун**: data-driven условие `has_scientist {branch?, minLevel?}` (качественный доступ, **НЕ % скорости**); `+слот` — INSTEAD-of-фокус opportunity-cost (полимат — branchless).
 
 **✅ Контент-пас эпох + TT-3.1 UI (2026-07-17):** дерево выросло с 6 до **19 видимых нод**
 (все 5 веток живые, у squadron/missile/ground/space появились капстоуны с
@@ -65,17 +65,17 @@
 **Подзадачи:** поле `branch` (`ground`|`space`|`squadron`|`missile`) на `TechnologyDef`; разложить
 `technologies.json` по 4 веткам; вкладки UI маппятся на `branch`. Default-ветка для совместимости.
 **Готово, когда:** каждое техно имеет ветку; дерево группируется по 4 вкладкам; zod.
-**✅ уже в коде:** `schemas.ts` (`branch` enum, default `space` для back-compat), `data/technologies.json`
-(узлы несут ветку, есть `ground`), тест `technology.test.ts:196` (парсинг + дефолт ветки).
+**✅ уже в коде:** `schemas.ts` (`branch` enum из 5 значений вкл. `command`, default `space`), `data/technologies.json`
+(19 узлов по 5 веткам), тест `technology.test.ts:248` (парсинг + дефолт ветки).
 
 ### TT-0.2 · День-гейт `dayGate` `[data][core]` ✅ — S
 **Подзадачи:** поле `dayGate` (день сессии, с которого техно доступно; 0 = с начала); сравнение с
 **прошедшим мировым временем** (`state.time`, timeScale уже в часах). Детерминированно.
 **Готово, когда:** техно с `dayGate=N` недоступно до дня N и доступно после; тест.
 **✅ уже в коде:** `schemas.ts` (`dayGate`, default 0), `technology.ts` (сравнение `state.time` со
-`startedAt` → `E_TOO_EARLY`), тест `technology.test.ts:166`.
-⚠️ **Механизм готов, контента ещё нет:** ни одна шипнутая нода в `data/technologies.json` не задаёт
-ненулевой `dayGate` (тест использует фикстуру `blockade` с `dayGate=2`) — числа проставит балансировка.
+`startedAt` → `E_TOO_EARLY`), тест `technology.test.ts:218`.
+✅ **Контент проставлен:** 15 из 19 нод в `data/technologies.json` несут ненулевой `dayGate`
+(значения `2/3/5/8/12/15`) — согласуется с контент-пасом эпох (строки 28, 50).
 
 ### TT-0.3 · Условия `conditions[]` `[data][core]` 🔒(—) — M
 **Подзадачи:** `conditions[]` — **курируемый каталог** типов (готовые блоки, не конструктор —

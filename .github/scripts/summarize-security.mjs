@@ -29,6 +29,7 @@ const EXPECTED = [
   { key: 'osv', name: 'OSV-Scanner — SCA (osv.dev)' },
   { key: 'trivy-fs', name: 'Trivy fs — vuln/secret/IaC' },
   { key: 'trivy-image', name: 'Trivy image — базовая ОС образа' },
+  { key: 'dast-zap', name: 'OWASP ZAP — DAST (baseline против запущенного сервера)' },
   { key: 'zizmor', name: 'zizmor — безопасность workflow' },
   { key: 'scorecard', name: 'OpenSSF Scorecard — постура', mainOnly: true },
   { key: 'sbom', name: 'Syft — SBOM (CycloneDX)' },

@@ -31,9 +31,10 @@
 
 - ✅ **CC-4** — дежурный вылет: `scrambleOrder` + драйвер кадра `drivePatrols` — авто-удар по
   опознанной враждебной цели в зоне видимости + радиуса, топливо/перезарядка (single-player).
-- ✅ **CC-server** — цепочка приказов повышена в авторитетное durable-состояние (`state.orders`,
-  `orderQueueModule`) и ведётся сервером (`serverQueueActions` + `runServerQueues` в netserver),
-  так что цепочки идут офлайн в MP.
+- ✂️ **CC-server** — цепочка приказов (`state.orders`/`orderQueueModule`/`serverQueueActions`/
+  `runServerQueues`) **вырезана в REL-1**, в игре её нет. Офлайн-серверная автоматика осталась
+  как **стоячие приказы**: `standingOrdersModule` + драйвер `runServerStanding` в netserver
+  (авто-шторм/дежурный вылет через `serverAutoAssaultActions`/`serverPatrolActions`).
 
 Дальше по фазам ниже: SQ-1.3 (ремонтные дроны), SQ-2.2 (политика восстановления), SQ-4.2
 (рендер зоны патруля), Фазы 5–7 (постройка/крепость, модули/оружие, десантная эскадрилья).

@@ -145,9 +145,16 @@ function fleetNode(state: GameState, fleet: Fleet): PlanetId | null {
   return fleetNodeAt(state, fleet, state.time);
 }
 
+/** ECON-2 «блэкаут»: unpaid energy (the economy module's `arrears` marker) halves
+ *  the owner's sensors and AA until the bill is coverable again. One constant for
+ *  both surfaces (radar reach here, AA damage in orbital.ts) — a single balance knob. */
+export const BLACKOUT_MULT = 0.5;
+
 /** Viewer-wide radar-reach multiplier: ×(1 + Σ completed-tech `radarRangeBonus`
  *  + faction passive `radarRangeBonus`) — how technologies and factions extend
- *  every radar the player fields (A2). Data-driven; no data → ×1. */
+ *  every radar the player fields (A2). Data-driven; no data → ×1. An owner in
+ *  energy `arrears` runs at `BLACKOUT_MULT` on top (ECON-2): unpaid grids dim
+ *  every screen the player fields — deterministic state read, replays intact. */
 function radarMultiplier(state: GameState, viewerId: PlayerId, data: GameData): number {
   const player = state.players[viewerId];
   if (!player) return 1;
@@ -155,7 +162,8 @@ function radarMultiplier(state: GameState, viewerId: PlayerId, data: GameData): 
   for (const id of player.technologies?.completed ?? []) {
     bonus += data.technologies[id]?.effects.radarRangeBonus ?? 0;
   }
-  return Math.max(0, 1 + bonus); // a (mis)configured negative pile-up darkens, never inverts
+  const mult = Math.max(0, 1 + bonus); // a (mis)configured negative pile-up darkens, never inverts
+  return player.arrears?.includes('energy') ? mult * BLACKOUT_MULT : mult;
 }
 
 interface Coverage {
@@ -352,10 +360,10 @@ function project(
     }
   }
   // Order chains and standing orders (host extensions like the prototype's `orders` /
-  // `autoAssault` / `patrols`) are future intent — exactly what `scheduled` is stripped
-  // for below. Keep only the entries of the viewer's OWN fleets; a map left empty is
-  // removed (same delta hygiene as offers).
-  for (const key of ['orders', 'autoAssault', 'patrols'] as const) {
+  // `autoAssault` / `patrols` / `forcedMarch`) are future intent — exactly what
+  // `scheduled` is stripped for below. Keep only the entries of the viewer's OWN
+  // fleets; a map left empty is removed (same delta hygiene as offers).
+  for (const key of ['orders', 'autoAssault', 'patrols', 'forcedMarch'] as const) {
     const host = view as unknown as Record<string, Record<string, unknown> | undefined>;
     const map = host[key];
     if (!map) continue;
