@@ -627,6 +627,7 @@ let tgtHits: Array<{ target: string; fleetIds: string[]; x: number; y: number }>
 let pickMode = false;
 let cmdMore = false; // ☰ — the second row of the command bar (extras live there)
 let fireMenu = false; // 🔥 — режим огня артиллерии: поповер-меню над командным рядом
+let helpMenu = false; // ? — легенда команд флота: поповер-описание над командным рядом
 let merging = false; // "Merge" armed → next tap on a friendly fleet picks the anchor
 // Fleets ordered to merge but not yet co-located: each flies to its anchor and the
 // fusion fires once they share a docked sector (see resolvePendingMerges()).
@@ -1036,6 +1037,24 @@ function setDevSpeedControl(v: boolean): void {
   } catch {
     /* private-mode / storage-full: keep the in-memory value, just don't persist */
   }
+}
+// Admin gate (STUB). The prototype has no account/identity system yet, so real "admin
+// rights" don't exist — this placeholder decides whether the admin-only developer
+// tools (the «Для разработчиков» block in Settings) are shown. Until server-side
+// identity + roles land it grants admin to the dev client, and to anyone who opts in
+// per-device (`?admin=1` in the URL or localStorage 'void.admin'='1'); the shipped
+// player build stays admin-less. When accounts arrive, replace the body with a read of
+// the authenticated account's admin role — the call sites don't change.
+function isAdmin(): boolean {
+  try {
+    if (typeof location !== 'undefined' && new URLSearchParams(location.search).has('admin'))
+      return true;
+    if (typeof localStorage !== 'undefined' && localStorage.getItem('void.admin') === '1')
+      return true;
+  } catch {
+    /* storage/URL unavailable — fall through to the build default */
+  }
+  return !__PLAYER_BUILD__;
 }
 // The compact-mode CSS is gated on the PC media query — JS-side string shortening
 // (ping button, conveyor idle line, upgrade buttons) must follow the same gate, or
@@ -7343,6 +7362,41 @@ function cmdBtn(cmd: string, icon: string, label: string, cls: string, disabled:
   return `<button data-cmd="${cmd}" class="${cls}" title="${esc(label)}" aria-label="${esc(label)}" ${disabled ? 'disabled' : ''}><span class="ci">${icon}</span><span class="cl">${esc(label)}</span></button>`;
 }
 
+/** The ? legend: what every fleet-command button does, in one place. A read-only
+ *  popover (rows are plain divs — a tap outside/on ? closes it), so a player learns
+ *  the bar without hunting for tooltips. Icons/wording mirror the buttons above and
+ *  their on-issue `note()` lines, split into the base row and the ☰ «Ещё» extras. */
+function fleetHelpPopHtml(): string {
+  const rows: Array<{ head: string } | { icon: string; name: string; desc: string }> = [
+    { icon: '⤳', name: t('Курс'), desc: t('выберите планету — флот пойдёт к ней по звёздным трассам') },
+    { icon: '■', name: t('Стоп'), desc: t('отменить текущее движение флота') },
+    { icon: '⚔', name: t('Штурм'), desc: t('лететь к чужому миру и высадить десант при подходе') },
+    { icon: '◎', name: t('Цель'), desc: t('тап по карте — собрать приказ: ждать · курс · штурм · обстрел') },
+    { icon: '🎯', name: t('Обстрел'), desc: t('сосредоточить огонь артиллерии по вражескому флоту с дистанции') },
+    { icon: '🔥', name: t('Режим огня'), desc: t('когда артиллерия стреляет сама: пассив · ответ · станд · агрес') },
+    { icon: '⛬', name: t('Слить'), desc: t('объединить выбранные флоты в один') },
+    { icon: '⊟', name: t('Разделить'), desc: t('отделить часть кораблей пришвартованного флота в новый') },
+    { icon: '☰', name: t('Ещё'), desc: t('дополнительные приказы (ниже)') },
+    { head: t('Ещё ☰') },
+    { icon: '⊕', name: t('Выбрать+'), desc: t('добавлять флоты в группу по одному тапу') },
+    { icon: '⚡', name: t('Ускорить'), desc: t('форс-марш: +50% скорости ценой −5% прочности за час хода') },
+    { icon: '⚔', name: t('Авто-штурм'), desc: t('флот сам штурмует вражеский мир по прибытии') },
+    { icon: '🛩', name: t('Деж. вылет'), desc: t('эскадрилья автоматически бьёт врага в радиусе') },
+  ];
+  return (
+    `<div class="cmdpop cmdhelp">` +
+    `<div class="hphead">${t('УПРАВЛЕНИЕ ФЛОТОМ')}</div>` +
+    rows
+      .map((r) =>
+        'head' in r
+          ? `<div class="hpsec">${esc(r.head)}</div>`
+          : `<div class="hrow"><span class="hi">${r.icon}</span><span class="ht"><b>${esc(r.name)}</b><span>${esc(r.desc)}</span></span></div>`,
+      )
+      .join('') +
+    `</div>`
+  );
+}
+
 /** Horizontal fleet command bar — Move (arm) / Stop / Attack / orbit change —
  *  acting on the current fleet selection, buttons enabled by context. */
 function renderCmdBar() {
@@ -7355,6 +7409,7 @@ function renderCmdBar() {
     if (targetAim) targetAim = false;
     if (merging) merging = false;
     fireMenu = false; // пустое выделение — 🔥-меню не должно всплыть при новом выборе
+    helpMenu = false; // и справка-легенда гаснет вместе с баром
     cmdbar.classList.remove('show');
     lastCmdHtml = '';
     return;
@@ -7443,6 +7498,9 @@ function renderCmdBar() {
             )
           : '')
       : '') +
+    // ? — справка: описание всех кнопок управления флотом (легенда над баром).
+    cmdBtn('help', '?', t('Справка'), helpMenu ? 'on' : '', false) +
+    (helpMenu ? fleetHelpPopHtml() : '') +
     // 🔥 поповер над баром: четыре режима с подписью-правилом; ● — текущий.
     (fireMenu && artFleets.length > 0
       ? `<div class="cmdpop">` +
@@ -7851,6 +7909,7 @@ cmdbar.addEventListener('click', (ev) => {
   if (cmd !== 'merge') merging = false; // any other command disarms merge-targeting
   if (cmd !== 'barrage') barrageAim = false; // any other command disarms barrage-targeting
   if (cmd !== 'firemode' && cmd !== 'fmset') fireMenu = false; // другой приказ закрывает 🔥-меню
+  if (cmd !== 'help') helpMenu = false; // любой приказ закрывает поповер-справку
   if (cmd !== 'attack') assaultAim = false; // any other command disarms assault-targeting
   if (cmd !== 'target') targetAim = false; // any other command disarms order-targeting
   // A real order leaves «Выбрать+» (the group stays selected and takes it);
@@ -7902,6 +7961,9 @@ cmdbar.addEventListener('click', (ev) => {
     if (targetAim) note(t('◎ тапните цель на карте — соберём приказ'));
   } else if (cmd === 'more') {
     cmdMore = !cmdMore; // ☰ — show/hide the extras row
+  } else if (cmd === 'help') {
+    helpMenu = !helpMenu; // ? — открыть/закрыть легенду команд флота
+    aiming = false;
   } else if (cmd === 'firemode') {
     fireMenu = !fireMenu; // 🔥 — открыть/закрыть меню выбора режима огня
     aiming = false;
@@ -10538,9 +10600,12 @@ function renderSettings(): void {
     `<div class="set-lbl">${t('Звёздный фон')}<span class="set-sub">${t('дрейфующие туманности и звёзды на фоне — выключите для плоского фона')}</span></div>` +
     `<div class="set-ctl"><label class="set-switch"><input id="set-starfield" type="checkbox"${starfield ? ' checked' : ''} aria-label="${t('Звёздный фон')}"><span class="sw-track"></span><span class="sw-knob"></span></label><span id="set-starfield-val" class="set-val">${starfield ? t('вкл') : t('выкл')}</span></div>` +
     `</div>` +
-    // Developer section (PC only) — tools a normal player doesn't need.
-    (pcUi()
-      ? `<div class="pc-sec">${t('Для разработчиков')}</div>` +
+    // Developer section — admin-only tools a normal player never sees. The gate is the
+    // `isAdmin()` stub: today it's the dev client (or an explicit per-device opt-in),
+    // and it becomes a real account-role check once identity lands — the block simply
+    // starts appearing for admins then, unchanged.
+    (isAdmin()
+      ? `<div class="pc-sec">${t('Для разработчиков')}<span class="pc-adm">${t('только админ')}</span></div>` +
         `<div class="set-row">` +
         `<div class="set-lbl">${t('Управление скоростью')}<span class="set-sub">${t('панель времени в матче — пауза и множители ускорения (1× — реальное время)')}</span></div>` +
         `<div class="set-ctl"><label class="set-switch"><input id="set-devspeed" type="checkbox"${devSpeedControl ? ' checked' : ''} aria-label="${t('Управление скоростью')}"><span class="sw-track"></span><span class="sw-knob"></span></label><span id="set-devspeed-val" class="set-val">${devSpeedControl ? t('вкл') : t('выкл')}</span></div>` +

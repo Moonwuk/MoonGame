@@ -169,6 +169,16 @@ body.sheet-open #speedbar{bottom:calc(34vh + 12px);}
   padding:7px 10px;text-align:left;}
 #cmdbar .cmdpop button b{font-size:11px;letter-spacing:.5px;white-space:nowrap;}
 #cmdbar .cmdpop button span{font-size:9px;color:var(--dim);letter-spacing:.3px;text-transform:none;}
+/* ? справка: read-only легенда команд флота — строки-описания, не кнопки */
+#cmdbar .cmdhelp{min-width:266px;max-width:330px;max-height:min(62vh,440px);overflow-y:auto;}
+#cmdbar .cmdhelp .hphead{font-size:9px;letter-spacing:1.5px;color:var(--cyan-dim);padding:0 2px 6px;}
+#cmdbar .cmdhelp .hpsec{font-size:8px;letter-spacing:2px;text-transform:uppercase;color:var(--cyan-dim);
+  margin:4px 2px 2px;padding-top:6px;border-top:1px solid var(--line);}
+#cmdbar .cmdhelp .hrow{display:flex;align-items:flex-start;gap:8px;padding:5px 2px;}
+#cmdbar .cmdhelp .hrow .hi{font-size:15px;line-height:1.25;width:20px;text-align:center;flex:0 0 auto;}
+#cmdbar .cmdhelp .hrow .ht{display:flex;flex-direction:column;gap:1px;text-align:left;min-width:0;}
+#cmdbar .cmdhelp .hrow .ht b{font-size:11px;letter-spacing:.4px;color:var(--cyan);}
+#cmdbar .cmdhelp .hrow .ht span{font-size:9px;color:var(--dim);letter-spacing:.2px;line-height:1.35;text-transform:none;}
 /* panel is glued to the bottom edge — lift the fleet command bar above it (mobile overrides below) */
 body.sheet-open #cmdbar{bottom:calc(34vh + 12px);}
 
@@ -365,6 +375,7 @@ body.sheet-open #cmdbar{bottom:calc(34vh + 12px);}
 .pc-head .pc-tag{font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:var(--cyan-dim);border:1px solid var(--line);padding:2px 6px;border-radius:2px;}
 .pc-stats{display:flex;flex-direction:column;gap:3px;margin-bottom:10px;}
 .pc-sec{font-size:9px;letter-spacing:2px;text-transform:uppercase;color:var(--cyan-dim);margin:4px 0 6px;}
+.pc-sec .pc-adm{margin-left:8px;padding:1px 5px;border:1px solid #7a5a22;border-radius:2px;color:var(--amber,#e0a84a);letter-spacing:1px;}
 .pc-row{display:flex;justify-content:space-between;gap:10px;font-size:12px;padding:3px 0;border-bottom:1px solid rgba(14,59,64,.4);}
 .pc-row .pc-k{color:var(--dim);}
 .pc-row .pc-v{color:var(--ink);font-weight:700;font-variant-numeric:tabular-nums;text-align:right;}
