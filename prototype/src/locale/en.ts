@@ -1585,10 +1585,7 @@ export const en: Record<string, string> = {
   'к получению после комиссии {p}%: {n} ¤': 'you receive after the {p}% fee: {n} ¤',
   'в эскроу уйдёт {n} ¤ · комиссию {p}% платит получатель кредитов':
     'escrow: {n} ¤ · the {p}% fee is paid by whoever receives the credits',
-  // --- ? fleet-command legend (help popover) ------------------------------------
-  // ('Справка' already has an entry above — reused as the ? button label.)
-  'УПРАВЛЕНИЕ ФЛОТОМ': 'FLEET CONTROLS',
-  'Ещё ☰': 'More ☰',
+  // --- fleet-command hover tooltips (what each command button does) -------------
   'выберите планету — флот пойдёт к ней по звёздным трассам':
     'pick a planet — the fleet routes to it along the star lanes',
   'отменить текущее движение флота': "cancel the fleet's current movement",
@@ -1603,7 +1600,7 @@ export const en: Record<string, string> = {
   'объединить выбранные флоты в один': 'merge the selected fleets into one',
   'отделить часть кораблей пришвартованного флота в новый':
     'peel some ships off a docked fleet into a new one',
-  'дополнительные приказы (ниже)': 'extra orders (below)',
+  'дополнительные приказы': 'extra orders',
   'добавлять флоты в группу по одному тапу': 'add fleets to the group one tap at a time',
   'форс-марш: +50% скорости ценой −5% прочности за час хода':
     'forced march: +50% speed at the cost of −5% hull per hour under way',

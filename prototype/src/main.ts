@@ -627,7 +627,6 @@ let tgtHits: Array<{ target: string; fleetIds: string[]; x: number; y: number }>
 let pickMode = false;
 let cmdMore = false; // ☰ — the second row of the command bar (extras live there)
 let fireMenu = false; // 🔥 — режим огня артиллерии: поповер-меню над командным рядом
-let helpMenu = false; // ? — легенда команд флота: поповер-описание над командным рядом
 let merging = false; // "Merge" armed → next tap on a friendly fleet picks the anchor
 // Fleets ordered to merge but not yet co-located: each flies to its anchor and the
 // fusion fires once they share a docked sector (see resolvePendingMerges()).
@@ -1419,6 +1418,17 @@ function afford(bag: Record<string, number> | undefined): boolean {
 }
 function unitIcon(unit: string): string {
   return UNIT_ICON[unit] ?? (isGround(unit) ? '◆' : '▲');
+}
+/** Ship/unit icon for MENUS (build menu, garrison composition, codex, constructor,
+ *  split, asset lists…): the current poster silhouette (`unitGlyphs` — «силуэт = что,
+ *  цвет = чей») for ships, so every menu speaks the same shape language as the map
+ *  markers and the fleet card; ground units keep the text glyph (the silhouette family
+ *  is space-only). `px` fits the SVG box to the icon slot; `color` is the side tint
+ *  (defaults to your side — menus are about your own roster). */
+function unitIconHtml(unit: string, px = 22, color: string = youColor): string {
+  const def = data.units[unit];
+  if (def && def.domain !== 'ground') return unitGlyphSvg(def, { color, px });
+  return unitIcon(unit);
 }
 // Path2D-кэш силуэтов постера для канвы — панель берёт те же пути через SVG,
 // так что карта и карточка не могут разъехаться по форме.
@@ -5134,7 +5144,7 @@ function unitRows(stacks: Array<{ unit: string; count: number }>): string {
   return stacks
     .map(
       (st) =>
-        `<div class="asset-row" data-desc="u:${esc(st.unit)}"><span class="bicon">${unitIcon(st.unit)}</span><b>${st.count}× ${displayUnit(st.unit)}</b><span class="dim">${isGround(st.unit) ? t('земля') : t('космос')}</span></div>`,
+        `<div class="asset-row" data-desc="u:${esc(st.unit)}"><span class="bicon">${unitIconHtml(st.unit, 18)}</span><b>${st.count}× ${displayUnit(st.unit)}</b><span class="dim">${isGround(st.unit) ? t('земля') : t('космос')}</span></div>`,
     )
     .join('');
 }
@@ -6430,7 +6440,7 @@ function codexHtml(kind: string, id: string): string {
   if (tags) rows.push(cxRow(t('Класс'), tags));
   const dos = unitDossier(id);
   return (
-    `<div class="cx-head"><span class="cx-ic">${unitIcon(id)}</span><b>${esc(dos?.name ?? displayUnit(id))}</b><span class="cx-tag">${def.domain === 'ground' ? t('наземный юнит') : t('корабль')}</span></div>` +
+    `<div class="cx-head"><span class="cx-ic">${unitIconHtml(id, 24)}</span><b>${esc(dos?.name ?? displayUnit(id))}</b><span class="cx-tag">${def.domain === 'ground' ? t('наземный юнит') : t('корабль')}</span></div>` +
     `<div class="cx-stats">${rows.join('')}</div><div class="cx-desc">${dos?.body ?? ''}</div>`
   );
 }
@@ -7020,7 +7030,7 @@ function buildingLocked(planetId: string, id: string): 'built' | 'queued' | null
 }
 function codexTile(kind: 'b' | 'u', id: string, label: string, orderable = false, lockedFor?: string): string {
   if (!(kind === 'b' ? data.buildings[id] : data.units[id])) return '';
-  const icon = kind === 'b' ? (BUILD_ICON[id] ?? '▣') : unitIcon(id);
+  const icon = kind === 'b' ? (BUILD_ICON[id] ?? '▣') : unitIconHtml(id);
   const name = kind === 'b' ? buildingName(id) : (unitDossier(id)?.name ?? displayUnit(id));
   if (lockedFor) {
     // Committed already — a dim, non-ordering tile. Keeps data-desc (hover dossier),
@@ -7072,7 +7082,7 @@ function codexBuildBtn(kind: string, id: string): string {
     return `<button class="cx-build" data-build="building:${id}">▣ ${t('Построить здесь')} · ${cost(data.buildings[id]?.cost)}</button>`;
   }
   if (kind === 'u' && data.units[id]) {
-    return `<button class="cx-build" data-build="unit:${id}">${unitIcon(id)} ${t('Построить здесь')} · ${cost(data.units[id]?.cost)}</button>`;
+    return `<button class="cx-build" data-build="unit:${id}">${unitIconHtml(id, 16)} ${t('Построить здесь')} · ${cost(data.units[id]?.cost)}</button>`;
   }
   return '';
 }
@@ -7097,7 +7107,7 @@ function codexEntryLabel(e: CodexEntry): string {
 }
 function codexEntryIcon(e: CodexEntry): string {
   const id = e.key.slice(2);
-  if (e.category === 'unit') return unitIcon(id);
+  if (e.category === 'unit') return unitIconHtml(id, 20);
   if (e.category === 'building') return BUILD_ICON[id] ?? '▣';
   return '?';
 }
@@ -7358,43 +7368,20 @@ function updatePanelLive(): void {
   }
 }
 
-function cmdBtn(cmd: string, icon: string, label: string, cls: string, disabled: boolean): string {
-  return `<button data-cmd="${cmd}" class="${cls}" title="${esc(label)}" aria-label="${esc(label)}" ${disabled ? 'disabled' : ''}><span class="ci">${icon}</span><span class="cl">${esc(label)}</span></button>`;
-}
-
-/** The ? legend: what every fleet-command button does, in one place. A read-only
- *  popover (rows are plain divs — a tap outside/on ? closes it), so a player learns
- *  the bar without hunting for tooltips. Icons/wording mirror the buttons above and
- *  their on-issue `note()` lines, split into the base row and the ☰ «Ещё» extras. */
-function fleetHelpPopHtml(): string {
-  const rows: Array<{ head: string } | { icon: string; name: string; desc: string }> = [
-    { icon: '⤳', name: t('Курс'), desc: t('выберите планету — флот пойдёт к ней по звёздным трассам') },
-    { icon: '■', name: t('Стоп'), desc: t('отменить текущее движение флота') },
-    { icon: '⚔', name: t('Штурм'), desc: t('лететь к чужому миру и высадить десант при подходе') },
-    { icon: '◎', name: t('Цель'), desc: t('тап по карте — собрать приказ: ждать · курс · штурм · обстрел') },
-    { icon: '🎯', name: t('Обстрел'), desc: t('сосредоточить огонь артиллерии по вражескому флоту с дистанции') },
-    { icon: '🔥', name: t('Режим огня'), desc: t('когда артиллерия стреляет сама: пассив · ответ · станд · агрес') },
-    { icon: '⛬', name: t('Слить'), desc: t('объединить выбранные флоты в один') },
-    { icon: '⊟', name: t('Разделить'), desc: t('отделить часть кораблей пришвартованного флота в новый') },
-    { icon: '☰', name: t('Ещё'), desc: t('дополнительные приказы (ниже)') },
-    { head: t('Ещё ☰') },
-    { icon: '⊕', name: t('Выбрать+'), desc: t('добавлять флоты в группу по одному тапу') },
-    { icon: '⚡', name: t('Ускорить'), desc: t('форс-марш: +50% скорости ценой −5% прочности за час хода') },
-    { icon: '⚔', name: t('Авто-штурм'), desc: t('флот сам штурмует вражеский мир по прибытии') },
-    { icon: '🛩', name: t('Деж. вылет'), desc: t('эскадрилья автоматически бьёт врага в радиусе') },
-  ];
-  return (
-    `<div class="cmdpop cmdhelp">` +
-    `<div class="hphead">${t('УПРАВЛЕНИЕ ФЛОТОМ')}</div>` +
-    rows
-      .map((r) =>
-        'head' in r
-          ? `<div class="hpsec">${esc(r.head)}</div>`
-          : `<div class="hrow"><span class="hi">${r.icon}</span><span class="ht"><b>${esc(r.name)}</b><span>${esc(r.desc)}</span></span></div>`,
-      )
-      .join('') +
-    `</div>`
-  );
+// A fleet-command button. `desc` (optional) is the hover tooltip — a one-line
+// description of what the command does; without it the tooltip is just the label.
+// The visible caption stays the short label; aria-label carries label + desc so the
+// screen-reader hears the same explanation a mouse user reads on hover.
+function cmdBtn(
+  cmd: string,
+  icon: string,
+  label: string,
+  cls: string,
+  disabled: boolean,
+  desc?: string,
+): string {
+  const tip = desc ? `${label} — ${desc}` : label;
+  return `<button data-cmd="${cmd}" class="${cls}" title="${esc(tip)}" aria-label="${esc(tip)}" ${disabled ? 'disabled' : ''}><span class="ci">${icon}</span><span class="cl">${esc(label)}</span></button>`;
 }
 
 /** Horizontal fleet command bar — Move (arm) / Stop / Attack / orbit change —
@@ -7409,7 +7396,6 @@ function renderCmdBar() {
     if (targetAim) targetAim = false;
     if (merging) merging = false;
     fireMenu = false; // пустое выделение — 🔥-меню не должно всплыть при новом выборе
-    helpMenu = false; // и справка-легенда гаснет вместе с баром
     cmdbar.classList.remove('show');
     lastCmdHtml = '';
     return;
@@ -7454,24 +7440,27 @@ function renderCmdBar() {
   const anyArtillery = fleets.some(fleetHasArtillery);
   const html =
     `<span class="cmdlabel">${ids.length > 1 ? t('{n} ФЛОТОВ', { n: ids.length }) : t('ФЛОТ')}</span>` +
-    cmdBtn('move', '⤳', t('Курс'), aiming ? 'on' : '', false) +
-    cmdBtn('stop', '■', t('Стоп'), 'danger', !anyMoving) +
-    cmdBtn('attack', '⚔', t('Штурм'), assaultAim ? 'on' : '', !canAssault) +
-    cmdBtn('target', '◎', t('Цель'), targetAim ? 'on' : '', false) +
-    (anyArtillery ? cmdBtn('barrage', '🎯', t('Обстрел'), barrageAim ? 'on' : '', false) : '') +
-    (artFleets.length > 0 ? cmdBtn('firemode', '🔥', fmLabel, fireMenu ? 'on' : '', false) : '') +
+    cmdBtn('move', '⤳', t('Курс'), aiming ? 'on' : '', false, t('выберите планету — флот пойдёт к ней по звёздным трассам')) +
+    cmdBtn('stop', '■', t('Стоп'), 'danger', !anyMoving, t('отменить текущее движение флота')) +
+    cmdBtn('attack', '⚔', t('Штурм'), assaultAim ? 'on' : '', !canAssault, t('лететь к чужому миру и высадить десант при подходе')) +
+    cmdBtn('target', '◎', t('Цель'), targetAim ? 'on' : '', false, t('тап по карте — собрать приказ: ждать · курс · штурм · обстрел')) +
+    (anyArtillery ? cmdBtn('barrage', '🎯', t('Обстрел'), barrageAim ? 'on' : '', false, t('сосредоточить огонь артиллерии по вражескому флоту с дистанции')) : '') +
+    (artFleets.length > 0 ? cmdBtn('firemode', '🔥', fmLabel, fireMenu ? 'on' : '', false, t('когда артиллерия стреляет сама: пассив · ответ · станд · агрес')) : '') +
     cmdBtn(
       'merge',
       '⛬',
       ids.length > 1 ? t('Слить') : t('Слить…'),
       merging ? 'on' : '',
       !canMerge,
+      t('объединить выбранные флоты в один'),
     ) +
-    cmdBtn('split', '⊟', t('Разделить'), splitState ? 'on' : '', !canSplit) +
+    cmdBtn('split', '⊟', t('Разделить'), splitState ? 'on' : '', !canSplit, t('отделить часть кораблей пришвартованного флота в новый')) +
     // ☰ — the extras row (hamburger, NOT «...» — референс не копируем дословно):
     // «Выбрать+» и будущие Ускорить/Задержка живут здесь, базовый ряд не пухнет.
-    cmdBtn('more', '☰', t('Ещё'), cmdMore ? 'on' : '', false) +
-    (cmdMore || pickMode ? cmdBtn('pick', '⊕', t('Выбрать+'), pickMode ? 'on' : '', false) : '') +
+    cmdBtn('more', '☰', t('Ещё'), cmdMore ? 'on' : '', false, t('дополнительные приказы')) +
+    (cmdMore || pickMode
+      ? cmdBtn('pick', '⊕', t('Выбрать+'), pickMode ? 'on' : '', false, t('добавлять флоты в группу по одному тапу'))
+      : '') +
     (cmdMore
       ? cmdBtn(
           'boost',
@@ -7479,6 +7468,7 @@ function renderCmdBar() {
           t('Ускорить'),
           ids.length > 0 && ids.every((id) => marchFlagged(id)) ? 'on' : '',
           ids.length === 0,
+          t('форс-марш: +50% скорости ценой −5% прочности за час хода'),
         ) +
         // SO-UI: standing orders live here now — the bottom sheet keeps only info.
         cmdBtn(
@@ -7487,6 +7477,7 @@ function renderCmdBar() {
           t('Авто-штурм'),
           ids.length > 0 && ids.every((id) => isAutoAssault(id)) ? 'on' : '',
           ids.length === 0,
+          t('флот сам штурмует вражеский мир по прибытии'),
         ) +
         (fleets.some(fleetHasSquadron)
           ? cmdBtn(
@@ -7495,12 +7486,10 @@ function renderCmdBar() {
               t('Деж. вылет'),
               fleets.filter(fleetHasSquadron).every((fl) => patrolOf(fl.id)) ? 'on' : '',
               false,
+              t('эскадрилья автоматически бьёт врага в радиусе'),
             )
           : '')
       : '') +
-    // ? — справка: описание всех кнопок управления флотом (легенда над баром).
-    cmdBtn('help', '?', t('Справка'), helpMenu ? 'on' : '', false) +
-    (helpMenu ? fleetHelpPopHtml() : '') +
     // 🔥 поповер над баром: четыре режима с подписью-правилом; ● — текущий.
     (fireMenu && artFleets.length > 0
       ? `<div class="cmdpop">` +
@@ -7547,7 +7536,7 @@ function renderSplitDialog() {
     splitState.take[unit] = tk;
     takeTotal += tk;
     rows += `<div class="srow">
-      <span class="sname"><span class="bicon">${unitIcon(unit)}</span>${esc(displayUnit(unit))}</span>
+      <span class="sname"><span class="bicon">${unitIconHtml(unit, 18)}</span>${esc(displayUnit(unit))}</span>
       <b class="scur">${have - tk}</b>
       <span class="sbtns">
         <button data-sx="dec" data-unit="${esc(unit)}" data-n="1" ${tk <= 0 ? 'disabled' : ''}>−1</button>
@@ -7909,7 +7898,6 @@ cmdbar.addEventListener('click', (ev) => {
   if (cmd !== 'merge') merging = false; // any other command disarms merge-targeting
   if (cmd !== 'barrage') barrageAim = false; // any other command disarms barrage-targeting
   if (cmd !== 'firemode' && cmd !== 'fmset') fireMenu = false; // другой приказ закрывает 🔥-меню
-  if (cmd !== 'help') helpMenu = false; // любой приказ закрывает поповер-справку
   if (cmd !== 'attack') assaultAim = false; // any other command disarms assault-targeting
   if (cmd !== 'target') targetAim = false; // any other command disarms order-targeting
   // A real order leaves «Выбрать+» (the group stays selected and takes it);
@@ -7961,9 +7949,6 @@ cmdbar.addEventListener('click', (ev) => {
     if (targetAim) note(t('◎ тапните цель на карте — соберём приказ'));
   } else if (cmd === 'more') {
     cmdMore = !cmdMore; // ☰ — show/hide the extras row
-  } else if (cmd === 'help') {
-    helpMenu = !helpMenu; // ? — открыть/закрыть легенду команд флота
-    aiming = false;
   } else if (cmd === 'firemode') {
     fireMenu = !fireMenu; // 🔥 — открыть/закрыть меню выбора режима огня
     aiming = false;
@@ -9569,12 +9554,12 @@ function conLoadoutPane(hullList: string[]): string {
   const hulls = ownedHulls
     .map(
       (h) =>
-        `<button class="cn-hbtn${h === conHull ? ' on' : ''}" data-cnhull="${h}">${UNIT_ICON[h] ?? '▲'} ${esc(displayUnit(h))}</button>`,
+        `<button class="cn-hbtn${h === conHull ? ' on' : ''}" data-cnhull="${h}">${unitIconHtml(h, 18)} ${esc(displayUnit(h))}</button>`,
     )
     .join('');
   const freeTypes = [...new Set(m.slots.filter((sl) => !sl.moduleId).map((sl) => sl.type))];
   const hullCard =
-    `<div class="cn-hull"><div class="cn-hic">${UNIT_ICON[conHull] ?? '▲'}</div><div><div class="cn-hn">${esc(displayUnit(conHull))}</div>` +
+    `<div class="cn-hull"><div class="cn-hic">${unitIconHtml(conHull, 40)}</div><div><div class="cn-hn">${esc(displayUnit(conHull))}</div>` +
     `<div class="cn-hm">${t('{n} слота под модули (по размеру корпуса)', { n: String(m.slots.length) })}</div></div></div>`;
   const bays = m.slots
     .map((sl) => {

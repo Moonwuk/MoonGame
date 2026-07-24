@@ -169,16 +169,6 @@ body.sheet-open #speedbar{bottom:calc(34vh + 12px);}
   padding:7px 10px;text-align:left;}
 #cmdbar .cmdpop button b{font-size:11px;letter-spacing:.5px;white-space:nowrap;}
 #cmdbar .cmdpop button span{font-size:9px;color:var(--dim);letter-spacing:.3px;text-transform:none;}
-/* ? справка: read-only легенда команд флота — строки-описания, не кнопки */
-#cmdbar .cmdhelp{min-width:266px;max-width:330px;max-height:min(62vh,440px);overflow-y:auto;}
-#cmdbar .cmdhelp .hphead{font-size:9px;letter-spacing:1.5px;color:var(--cyan-dim);padding:0 2px 6px;}
-#cmdbar .cmdhelp .hpsec{font-size:8px;letter-spacing:2px;text-transform:uppercase;color:var(--cyan-dim);
-  margin:4px 2px 2px;padding-top:6px;border-top:1px solid var(--line);}
-#cmdbar .cmdhelp .hrow{display:flex;align-items:flex-start;gap:8px;padding:5px 2px;}
-#cmdbar .cmdhelp .hrow .hi{font-size:15px;line-height:1.25;width:20px;text-align:center;flex:0 0 auto;}
-#cmdbar .cmdhelp .hrow .ht{display:flex;flex-direction:column;gap:1px;text-align:left;min-width:0;}
-#cmdbar .cmdhelp .hrow .ht b{font-size:11px;letter-spacing:.4px;color:var(--cyan);}
-#cmdbar .cmdhelp .hrow .ht span{font-size:9px;color:var(--dim);letter-spacing:.2px;line-height:1.35;text-transform:none;}
 /* panel is glued to the bottom edge — lift the fleet command bar above it (mobile overrides below) */
 body.sheet-open #cmdbar{bottom:calc(34vh + 12px);}
 
@@ -197,6 +187,10 @@ body.sheet-open #cmdbar{bottom:calc(34vh + 12px);}
 .ptile .pt-c{font-size:9px;color:var(--dim);letter-spacing:.3px;white-space:nowrap;}
 /* Bytro-карточка: SVG-силуэт в тайле + мини-бар корпуса стека */
 .ptile .pt-ic .uglyph{display:block;}
+/* Силуэт-глиф корабля, встроенный в текстовые/inline-слоты меню (кнопки корпусов,
+   строки состава, шапка досье, «построить здесь») — центрируем по строке. */
+.uglyph{vertical-align:middle;}
+.bicon .uglyph,.cx-ic .uglyph,.cn-hic .uglyph,.ch-ic .uglyph{display:block;}
 .ptile .pt-hp{width:36px;height:3px;background:rgba(255,255,255,.12);border-radius:2px;overflow:hidden;}
 .ptile .pt-hp i{display:block;height:100%;background:#3ad17a;}
 .ptile .pt-hp.low i{background:#ff5a4d;}
