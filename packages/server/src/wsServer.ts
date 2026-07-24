@@ -49,6 +49,14 @@ export interface MultiplayerServerOptions {
    *  on its owner's next join. Requires `accountStore`; meaningless under `auth`
    *  (the join token is already the identity there). */
   seatLock?: boolean;
+  /** Entry window (SES-2.3): may a NEW player still claim a free seat in this match?
+   *  Called ONLY on a nick-login that would take a seat the nick does not already hold
+   *  (a first-time claim); a RECONNECT — a nick whose seat exists (`accountStore.seatOf`)
+   *  — is never gated, so a seated player always gets back in. Returns false ⇒ the
+   *  upgrade is refused (403) BEFORE any seat is assigned, so a rejected newcomer never
+   *  consumes a chair. Absent ⇒ no window (every join allowed). The direct `?player=`
+   *  dev handshake carries no nick and is not gated. */
+  admitNewSeat?: (matchId: string) => boolean | Promise<boolean>;
   /** Origin allowlist (CSWSH defense, F-06). When set, an upgrade whose `Origin` header is
    *  not in the list is rejected (403) before any work. Absent ⇒ no Origin check (dev).
    *  Should ship WITH `auth`: a token gates identity, the Origin check gates which sites
@@ -220,6 +228,10 @@ export function createMultiplayerServer(
           return;
         }
         let playerId: string;
+        // LARS-1: the JWT's accountId, when present, so the room can key a live
+        // ArsenalStore read to this seat. Only the auth handshake ever carries one —
+        // the dev/nick paths have no account.
+        let accountId: string | undefined;
         // Plaintext seat ticket minted THIS join (seat lock) — delivered once in
         // `welcome.seatTicket`; the server keeps only the hash.
         let mintedTicket: string | undefined;
@@ -242,6 +254,7 @@ export function createMultiplayerServer(
             return;
           }
           playerId = verified.claim.playerId;
+          accountId = verified.claim.accountId;
         } else if (options.seatLock) {
           // Seat lock (REL-5): nick+ticket is the SOLE identity on this path — the
           // direct `?player=` handshake would bypass the lock, so it is refused
@@ -250,6 +263,16 @@ export function createMultiplayerServer(
           if (!nick || !accountStore) {
             rejectUpgrade(socket, 401);
             return;
+          }
+          // Entry window (SES-2.3): a nick that does NOT already hold a seat is a
+          // first-time claim — refuse it once the window has closed, BEFORE resolveSeat
+          // assigns (so a rejected newcomer never binds/burns a chair). A returning
+          // seat-holder skips this and reconnects as always.
+          if (options.admitNewSeat && !(await accountStore.seatOf(room.id, nick))) {
+            if (!(await options.admitNewSeat(room.id))) {
+              rejectUpgrade(socket, 403);
+              return;
+            }
           }
           const seats = Object.keys(room.state.players) as PlayerId[];
           const seat = await accountStore.resolveSeat(room.id, nick, seats);
@@ -286,6 +309,14 @@ export function createMultiplayerServer(
           playerId = url.searchParams.get('player') ?? '';
           const nick = url.searchParams.get('nick');
           if (!playerId && nick && accountStore) {
+            // Entry window (SES-2.3), same gate as the seat-lock path: a first-time nick
+            // is refused once the window closed; a returning seat-holder is not.
+            if (options.admitNewSeat && !(await accountStore.seatOf(room.id, nick))) {
+              if (!(await options.admitNewSeat(room.id))) {
+                rejectUpgrade(socket, 403);
+                return;
+              }
+            }
             const seats = Object.keys(room.state.players) as PlayerId[];
             const seat = await accountStore.resolveSeat(room.id, nick, seats);
             if (!seat) {
@@ -304,7 +335,7 @@ export function createMultiplayerServer(
         // envelope's session binding, SV-1.1-live-A). A reconnect mints a fresh one.
         const sessionId = randomUUID();
         wss.handleUpgrade(request, socket, head, (ws) => {
-          wss.emit('connection', ws, request, playerId, room, sessionId, mintedTicket);
+          wss.emit('connection', ws, request, playerId, room, sessionId, mintedTicket, accountId);
         });
       } catch {
         rejectUpgrade(socket, 500);
@@ -338,6 +369,7 @@ export function createMultiplayerServer(
       room: MatchRoom,
       sessionId: string,
       mintedTicket?: string,
+      accountId?: string,
     ) => {
       sockets.add(ws);
       alive.set(ws, true);
@@ -345,7 +377,15 @@ export function createMultiplayerServer(
       // Only retain when the peer actually joined — addPeer rejects (and closes the socket)
       // for an unknown player or a duplicate on a single-seat slot, and a spurious retain
       // would disarm a legitimate hibernation countdown, starving eviction under reconnects.
-      if (room.addPeer(playerId, ws, sessionId, mintedTicket ? { seatTicket: mintedTicket } : undefined)) {
+      if (
+        room.addPeer(
+          playerId,
+          ws,
+          sessionId,
+          mintedTicket ? { seatTicket: mintedTicket } : undefined,
+          accountId,
+        )
+      ) {
         registry.retain?.(room.id); // keep the match resident while this socket is connected
       }
       ws.on('message', (data) => {

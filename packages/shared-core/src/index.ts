@@ -34,6 +34,7 @@ export {
   type ActiveResearch,
   type PlayerTechnologyState,
   type StewardState,
+  type StewardLogEntry,
   type ResourceBag,
   type PlayerId,
   type PlanetId,
@@ -49,6 +50,7 @@ export {
   type MatchEndReason,
   type MatchScore,
   type MatchState,
+  type PlayerArsenal,
   type PlayerReward,
   type DiplomaticStance,
   type IntelGrant,
@@ -275,6 +277,7 @@ export { captureOnArrivalModule } from './modules/captureOnArrival';
 export { sectorModule } from './modules/sector';
 export { planetTypeModule } from './modules/planetType';
 export { constructionModule } from './modules/construction';
+export { arsenalSyncModule } from './modules/arsenalSync';
 export { stationModule } from './modules/station';
 export { technologyModule, technologyLock } from './modules/technology';
 export { scientistModule } from './modules/scientist';
@@ -290,6 +293,8 @@ export {
   stewardActive,
   STEWARD_POSTURES,
   STEWARD_LOSS_LIMIT,
+  MAX_STEWARD_LOG,
+  MAX_STEWARD_HOLD_POINTS,
   type StewardPosture,
 } from './modules/steward';
 export { effectsModule, type EffectImpl, type EffectOccurrence } from './modules/effects';

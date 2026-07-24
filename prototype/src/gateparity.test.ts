@@ -36,6 +36,7 @@ import {
   designateCapital,
   delegateSteward,
   recallSteward,
+  setHoldPoint,
   orderAuto,
   orderScramble,
   patrolStamp,
@@ -88,6 +89,8 @@ const CLIENT_ACTIONS: Action[] = [
   designateCapital(P, 'C1R1'),
   delegateSteward(P, 123456789),
   recallSteward(P),
+  setHoldPoint(P, 'C1R1', true),
+  setHoldPoint(P, 'C1R1', false),
   orderAuto(P, 'f1', true),
   orderScramble(P, 'f1', false),
   castHeroAbility(P, 'hero:p1:1', 'scan', 'B2'),
@@ -105,6 +108,12 @@ describe('gate parity (REL-2) — the schemas cover every prototype intent', () 
   it('patrol.stamp stays server-only — the gate must refuse it from the wire', () => {
     const stamp = patrolStamp(P, 'f1', freshSortie(3), 42);
     expect(isValidActionPayload(stamp.type, stamp.payload)).toBe(false);
+  });
+
+  it('steward.report stays server-only — a client must not forge the SITREP (ST-2.4)', () => {
+    expect(
+      isValidActionPayload('steward.report', { entries: [{ at: 0, kind: 'hold', node: 'A' }] }),
+    ).toBe(false);
   });
 
   it('the removed order-chain types are not client-submittable', () => {

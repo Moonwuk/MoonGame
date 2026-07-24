@@ -30,6 +30,7 @@ import {
   sectorModule,
   planetTypeModule,
   constructionModule,
+  arsenalSyncModule,
   armyModule,
   victoryModule,
   technologyModule,
@@ -38,6 +39,15 @@ import {
   diplomacyModule,
   stewardActive,
   STEWARD_POSTURES,
+  STEWARD_LOSS_LIMIT,
+  MAX_STEWARD_HOLD_POINTS,
+  scanNodeThreats,
+  previewBattle,
+  hullPool,
+  journeyDestination,
+  planRoute,
+  routeDistance,
+  estimateTravelHours,
   getStance,
   clearOffers,
   setStance,
@@ -57,6 +67,7 @@ import {
   type Fleet,
   type UnitStack,
   type Player,
+  type StewardLogEntry,
   type Action,
   type Context,
   type DomainEvent,
@@ -65,7 +76,7 @@ import {
 } from '../../packages/shared-core/src/index';
 import { canAfford, payCost } from '../../packages/shared-core/src/util/treasury';
 import { provinceScore } from '../../packages/shared-core/src/state/sectorKind';
-import { sumUnitStat } from '../../packages/shared-core/src/util/stacks';
+import { sumUnitStat, findHealthyStack } from '../../packages/shared-core/src/util/stacks';
 import { garrisonUnderAssault, requireOwnedIdleFleet } from '../../packages/shared-core/src/util/fleet';
 import type { HandlerContext } from '../../packages/shared-core/src/kernel/module';
 import {
@@ -166,6 +177,7 @@ export const data: GameData = parseGameData({
       tier: 2,
       cost: { credits: 260, metal: 220, microelectronics: 40 },
       researchTimeHours: 10,
+      dayGate: 3,
       prerequisites: ['orbital_logistics'],
       effects: { combatDamageBonus: 0.08 },
     },
@@ -176,6 +188,7 @@ export const data: GameData = parseGameData({
       tier: 2,
       cost: { credits: 180, metal: 240 },
       researchTimeHours: 8,
+      dayGate: 3,
       prerequisites: ['industrial_automation'],
     },
     microelectronics_fabrication: {
@@ -185,8 +198,155 @@ export const data: GameData = parseGameData({
       tier: 2,
       cost: { credits: 220, metal: 180 },
       researchTimeHours: 10,
+      dayGate: 2,
       prerequisites: ['industrial_automation'],
       effects: { productionBonus: 0.05 },
+    },
+    // --- эпохи (TT-3.1 контент): новые узлы всех пяти веток. Философия прототипа
+    // сохранена — только аддитивные эффекты, доступный контент не запирается.
+    // dayGate ЖЁСТКИЙ (ядро: E_TOO_EARLY); в UI подпись «День N» = dayGate+1 —
+    // счёт статус-бара (день 1 — первый). Капстоуны веток гейтит учёный ветки
+    // (has_scientist — качественный доступ, не % скорости).
+    deep_survey: {
+      name: 'Deep-Space Survey',
+      description: 'Сети дальних сенсоров: +15% к радиусу радаров.',
+      branch: 'space',
+      tier: 2,
+      cost: { credits: 200, metal: 140 },
+      researchTimeHours: 8,
+      dayGate: 2,
+      prerequisites: ['industrial_automation'],
+      effects: { radarRangeBonus: 0.15 },
+    },
+    void_armadas: {
+      name: 'Void Armadas',
+      description: 'Доктрина больших соединений: +6% к урону и скорости флотов. Требует 5 своих секторов.',
+      branch: 'space',
+      tier: 3,
+      cost: { credits: 420, metal: 300, microelectronics: 60 },
+      researchTimeHours: 16,
+      dayGate: 8,
+      prerequisites: ['siege_doctrine'],
+      conditions: [{ type: 'own_sectors', min: 5 }],
+      effects: { combatDamageBonus: 0.06, fleetSpeedBonus: 0.06 },
+    },
+    combined_arms: {
+      name: 'Combined Arms',
+      description: 'Общевойсковой бой: слаженность пехоты и брони. +5% к урону.',
+      branch: 'ground',
+      tier: 1,
+      cost: { credits: 140, metal: 100 },
+      researchTimeHours: 5,
+      effects: { combatDamageBonus: 0.05 },
+    },
+    garrison_networks: {
+      name: 'Garrison Networks',
+      description: 'Гарнизонные сети: тыл сам себя снабжает. +5% к производству.',
+      branch: 'ground',
+      tier: 2,
+      cost: { credits: 240, metal: 200 },
+      researchTimeHours: 10,
+      dayGate: 5,
+      prerequisites: ['combined_arms'],
+      effects: { productionBonus: 0.05 },
+    },
+    planetary_bastions: {
+      name: 'Planetary Bastions',
+      description: 'Планетарные бастионы: оборонная промышленность полного цикла. +8% к урону. Капстоун Маршала.',
+      branch: 'ground',
+      tier: 3,
+      cost: { credits: 480, metal: 360, microelectronics: 40 },
+      researchTimeHours: 18,
+      dayGate: 12,
+      prerequisites: ['fortified_infrastructure'],
+      conditions: [{ type: 'has_scientist', branch: 'ground' }],
+      effects: { combatDamageBonus: 0.08 },
+    },
+    flight_decks: {
+      name: 'Flight Decks',
+      description: 'Полётные палубы: быстрый цикл вылетов. +6% к скорости флотов.',
+      branch: 'squadron',
+      tier: 1,
+      cost: { credits: 160, metal: 120 },
+      researchTimeHours: 6,
+      dayGate: 2,
+      effects: { fleetSpeedBonus: 0.06 },
+    },
+    strike_vectors: {
+      name: 'Strike Vectors',
+      description: 'Ударные векторы: расчёт заходов эскадрилий. +8% к урону.',
+      branch: 'squadron',
+      tier: 2,
+      cost: { credits: 280, metal: 220, microelectronics: 30 },
+      researchTimeHours: 12,
+      dayGate: 5,
+      prerequisites: ['flight_decks'],
+      effects: { combatDamageBonus: 0.08 },
+    },
+    ace_programs: {
+      name: 'Ace Programs',
+      description: 'Программа асов: элитные экипажи. +6% к урону и скорости флотов. Капстоун Комэска.',
+      branch: 'squadron',
+      tier: 3,
+      cost: { credits: 500, metal: 380, microelectronics: 60 },
+      researchTimeHours: 20,
+      dayGate: 12,
+      prerequisites: ['strike_vectors'],
+      conditions: [{ type: 'has_scientist', branch: 'squadron' }],
+      effects: { combatDamageBonus: 0.06, fleetSpeedBonus: 0.06 },
+    },
+    guidance_arrays: {
+      name: 'Guidance Arrays',
+      description: 'Массивы наведения: телеметрия дальнего рубежа. +10% к радиусу радаров.',
+      branch: 'missile',
+      tier: 1,
+      cost: { credits: 150, metal: 110 },
+      researchTimeHours: 6,
+      dayGate: 2,
+      effects: { radarRangeBonus: 0.1 },
+    },
+    warhead_miniaturization: {
+      name: 'Warhead Miniaturization',
+      description: 'Миниатюризация БЧ: плотнее залп на тот же тоннаж. +6% к урону.',
+      branch: 'missile',
+      tier: 2,
+      cost: { credits: 260, metal: 240, microelectronics: 30 },
+      researchTimeHours: 12,
+      dayGate: 5,
+      prerequisites: ['guidance_arrays'],
+      effects: { combatDamageBonus: 0.06 },
+    },
+    saturation_barrage: {
+      name: 'Saturation Barrage',
+      description: 'Насыщающий залп: перегрузка любой ПРО. +10% к урону. Капстоун Ракетчика.',
+      branch: 'missile',
+      tier: 3,
+      cost: { credits: 520, metal: 400, microelectronics: 80 },
+      researchTimeHours: 20,
+      dayGate: 12,
+      prerequisites: ['warhead_miniaturization'],
+      conditions: [{ type: 'has_scientist', branch: 'missile' }],
+      effects: { combatDamageBonus: 0.1 },
+    },
+    signal_corps: {
+      name: 'Signal Corps',
+      description: 'Войска связи: единая картина боя. +8% к радиусу радаров.',
+      branch: 'command',
+      tier: 1,
+      cost: { credits: 130, metal: 90 },
+      researchTimeHours: 4,
+      effects: { radarRangeBonus: 0.08 },
+    },
+    logistics_command: {
+      name: 'Logistics Command',
+      description: 'Штаб логистики: конвои по расписанию. +5% к производству и скорости флотов.',
+      branch: 'command',
+      tier: 2,
+      cost: { credits: 300, metal: 220 },
+      researchTimeHours: 12,
+      dayGate: 5,
+      prerequisites: ['signal_corps'],
+      effects: { productionBonus: 0.05, fleetSpeedBonus: 0.05 },
     },
     // «Хранитель» — the automation pillar. Strong, so it's gated behind choosing the
     // command scientist (Куратор) AND a mid-session day-gate (day 15). Unlocks the
@@ -194,7 +354,7 @@ export const data: GameData = parseGameData({
     ai_stewardship: {
       name: 'Steward Protocol',
       description:
-        'Автоматизация командования: доверенному ИИ можно передать место, пока вы офлайн (спите) — он держит оборону и возвращает управление к сроку. Сильная — потому открывается выбором учёного-Куратора и лишь к середине сессии (день 15).',
+        'Автоматизация командования: доверенному ИИ можно передать место, пока вы офлайн (спите) — он держит оборону и возвращает управление к сроку. Сильная — потому открывается выбором учёного-Куратора и лишь к середине сессии (день 16).',
       branch: 'command',
       tier: 3,
       cost: { credits: 400, metal: 260 },
@@ -245,7 +405,7 @@ export const data: GameData = parseGameData({
       faction: 'blue',
       stats: { attack: 5, defense: 4, speed: 64, hp: 12, cargoCapacity: 1 },
       signature: 1, // quiet recon hull
-      radarRange: 210, // projects fleet radar — read by both the core fog and the prototype view
+      radarRange: 105, // projects fleet radar — read by both the core fog and the prototype view (плейтест 2026-07-18: −50%)
       cost: { metal: 20 },
       buildTimeHours: 1,
       upkeep: { credits: 1 },
@@ -552,6 +712,18 @@ export const data: GameData = parseGameData({
       ],
     },
     barracks: { name: 'Barracks', cost: { metal: 70 }, buildTimeHours: 3, hp: 25, scoreValue: 2 },
+    // spaceport — the yard a space-domain hull needs to be laid down at all
+    // (construction.ts `hasShipyard`/`enablesShipConstruction`); every homeworld
+    // starts with one (see `newGame`) so turn-1 fleet-building always works.
+    spaceport: {
+      name: 'Spaceport',
+      cost: { metal: 200, credits: 80 },
+      buildTimeHours: 5,
+      hp: 25,
+      shipRepair: 0.05,
+      enablesShipConstruction: true,
+      scoreValue: 4,
+    },
     // radar array — projects a detection radius (in jumps) that grows with its
     // level; enemy fleets inside it show up as coarse signatures (not identified).
     radar: {
@@ -1855,6 +2027,10 @@ export function newGame(setup: SetupConfig = DEFAULT_SETUP): GameState {
       { type: 'radar', level: 1, hp: hpOfLevel('radar', 1) },
       // Anti-ship defence is a building now: an orbital-AA emplacement over the homeworld.
       { type: 'orbital_aa', level: 1, hp: hpOfLevel('orbital_aa', 1) },
+      // A starting yard — space-domain hulls need a standing shipyard/spaceport to
+      // build at all (enablesShipConstruction); without one, turn-1 fleet-building
+      // would be impossible.
+      { type: 'spaceport', level: 1, hp: hpOfLevel('spaceport', 1) },
     ];
     // Ground defence is what holds a world against capture (an AA battery bleeds a fleet
     // but can't stop a landing — only ground troops do). Seed a starting infantry garrison
@@ -3064,6 +3240,7 @@ export const MODULES: GameModule[] = [
   interceptModule, // schedules lane-crossing meetings (resolved by combat)
   captureOnArrivalModule, // walk-in capture now a kernel rule (was client-side seizeSector)
   constructionModule,
+  arsenalSyncModule, // LARS-1: server-driver refresh of live build-catalog ownership (bypasses gate)
   technologyModule, // session research: branch/day-gated techs → effect bonuses + content unlocks
   stewardModule, // «Хранитель»: delegate the seat to the AI while you sleep (gated by the Steward tech)
   armyModule,
@@ -3208,8 +3385,10 @@ export const engageFleet = (playerId: string, fleetId: string, targetId: string)
 /** Begin researching a session technology (one active at a time — technologyModule). */
 export const researchTech = (playerId: string, technology: string) =>
   act(playerId, 'technology.research', { technology });
-/** «Хранитель»: hand this seat to the AI until game-time `until`, running `posture`
- *  (v1: 'defend'). Rejected (E_STEWARD_LOCKED) until the Steward tech is researched. */
+/** «Хранитель»: hand this seat to the AI until game-time `until`, running `posture` —
+ *  'defend' («Оборона», the safe default) or 'active_defend' («Активная оборона»,
+ *  ST-3.3: + forecast-gated counterstrike and squadron fire-watch on own soil).
+ *  Rejected (E_STEWARD_LOCKED) until the Steward tech is researched. */
 export const delegateSteward = (
   playerId: string,
   until: number,
@@ -3217,8 +3396,12 @@ export const delegateSteward = (
 ) => act(playerId, 'steward.delegate', { posture, until });
 /** Take the seat back early (a safe no-op if nothing was delegated). */
 export const recallSteward = (playerId: string) => act(playerId, 'steward.recall', {});
+/** Mark (or unmark) an OWN world as a hold point (ST-2.1) — a standing order the
+ *  Steward honors under any posture: never auto-evacuated, reinforced under threat. */
+export const setHoldPoint = (playerId: string, planetId: string, on: boolean) =>
+  act(playerId, 'steward.holdpoint', { planetId, on });
 // Re-export the Steward reads so the netserver + UI import them from the `./game` façade.
-export { stewardActive, STEWARD_POSTURES };
+export { stewardActive, STEWARD_POSTURES, MAX_STEWARD_HOLD_POINTS };
 /** Declare war on (or otherwise re-stance) another commander. */
 export const declareWar = (playerId: string, target: string, stance: DiplomaticStance = 'war') =>
   act(playerId, 'diplomacy.declare', { target, stance });
@@ -3584,6 +3767,417 @@ export function canTraverse(state: GameState, mover: string, owner: string | nul
 
 // --- AI ----------------------------------------------------------------------
 
+/** A garrison unit the evacuation can actually lift: the same gate `army.load`
+ *  enforces (ground cargo only, fixed emplacements stay). */
+const liftable = (unit: string): boolean => {
+  const def = data.units[unit];
+  return !!def && def.domain === 'ground' && !def.traits.includes('immobile');
+};
+
+/** Anti-shuttle cooldown (ST-3.4), game-hours: after the Steward evacuates X→Y,
+ *  the REVERSE trip Y→X is off the haven list for this long — an enemy poking
+ *  two nodes alternately must not make the wing челночить between them forever
+ *  (each leg it defends nothing and a lane camper can catch it in the open).
+ *  With no other haven the wing STANDS instead — a fight beats eternal transit. */
+const EVAC_RETURN_COOLDOWN_H = 12;
+
+/**
+ * One guard-duty tick of the Steward for a delegated seat (posture «Оборона»,
+ * ST-3.2 / steward-roadmap §ST-3): for every owned world a VISIBLE hostile
+ * bears on, forecast the stand (`previewBattle`: every bearing force strikes,
+ * the node's whole defense — docked fleets + garrison — answers). Forecast own
+ * losses at/over `STEWARD_LOSS_LIMIT` mean the fight is a bad trade, so the
+ * wing is pulled out to the nearest SAFE own world: self-moving fleets fly out
+ * (lifting what garrison fits their holds on the way), and for the rest the
+ * nearest idle transport with a free hold is summoned — only if it can arrive
+ * with a tick to spare BEFORE the threat lands, because `army.load` locks the
+ * moment the assault starts (`E_UNDER_ASSAULT`). Evacuation is loss-avoidance:
+ * the autopilot saves what it cannot profitably defend, it never fights better
+ * than the player would. Pure builder like `aiOrders`: returns actions only.
+ * The forecast is the base model (no `combat.damage` hooks) over one combined
+ * engagement — a retreat heuristic, not an oracle (ONB-6 semantics).
+ */
+export function stewardGuardOrders(
+  state: GameState,
+  ai: string,
+  posture: StewardPosture = 'defend',
+): Action[] {
+  const out: Action[] = [];
+  const c = ctx(state.time);
+  // SITREP (ST-2.4): every decision below is journaled and stamped as ONE
+  // trailing `steward.report` — the morning report the sleeping owner reads.
+  const report: StewardLogEntry[] = [];
+  const frac = (x: number): number => Math.round(x * 1000) / 1000;
+  // Repeat-prone facts (hold/stranded re-derive every 2h tick) are stamped once
+  // per EPISODE: skipped while the node's latest journal line already says the
+  // same thing. The journal lives in state, so the check survives the stateless
+  // re-tick; any different entry for the node reopens the episode.
+  const lastLogged = (node: string): string | undefined => {
+    const log = state.players[ai]?.stewardLog;
+    if (!log) return undefined;
+    for (let i = log.length - 1; i >= 0; i--) {
+      if (log[i]!.node === node) return log[i]!.kind;
+    }
+    return undefined;
+  };
+  const noteOnce = (entry: StewardLogEntry): void => {
+    if (entry.node !== undefined && lastLogged(entry.node) === entry.kind) return;
+    report.push(entry);
+  };
+  const identified = identifiedNodes(state, ai, data);
+  const mine = Object.values(state.planets).filter((p) => p.owner === ai);
+  // Threat scans are per-node; cache them — the haven search re-reads them.
+  const threatCache = new Map<string, ReturnType<typeof scanNodeThreats>>();
+  const threatsOf = (node: string): ReturnType<typeof scanNodeThreats> => {
+    let t = threatCache.get(node);
+    if (t === undefined) {
+      t = scanNodeThreats(state, node, ai, c, identified);
+      threatCache.set(node, t);
+    }
+    return t;
+  };
+  // Hold points (ST-2.1): player-designated standing anchors — never evacuated,
+  // reinforced instead; their docked wings are not poached for other errands.
+  const holdPoints = new Set(state.players[ai]?.stewardHoldPoints ?? []);
+  // A fleet gets ONE task per tick (evacuate or ferry) — never two nodes' errands.
+  const tasked = new Set<string>();
+  const idleOwn = (f: Fleet): boolean =>
+    f.owner === ai && f.location != null && !f.movement && !f.battleId && !tasked.has(f.id);
+  // fleetCargoFree, not a local re-count: the hold is shared with carried DIVISIONS
+  // too — a transport already ferrying a formation must not be over-filled.
+  const freeHold = (f: Fleet): number => fleetCargoFree(state, f);
+
+  for (const p of mine) {
+    const threats = threatsOf(p.id);
+    if (threats.length === 0) continue;
+    const docked = Object.values(state.fleets).filter((f) => idleOwn(f) && f.location === p.id);
+    const defenders: UnitStack[] = [...docked.flatMap((f) => f.units), ...p.garrison];
+    if (!defenders.some((s) => s.count > 0)) continue; // nothing here to save
+    const attackers: UnitStack[] = threats.flatMap((t) => {
+      const f = state.fleets[t.fleetId];
+      return f ? [...f.units, ...(f.landing ?? [])] : [];
+    });
+    const stand = previewBattle(attackers, defenders, data);
+    // A stand the forecast says we WIN is held regardless of its price: fleeing a
+    // won fight gifts the world to a cheap feint (three scouts «push» a cruiser
+    // off an empty rock and walk in). The loss limit judges only losing/pyrrhic
+    // stands — the wing bails when it would be wiped or ground down for nothing.
+    const holds =
+      stand.outcome === 'defender' || stand.defender.damageFraction < STEWARD_LOSS_LIMIT;
+    if (holds) {
+      // Counterstrike (ST-3.3, «Активная оборона» only): war-stance intruders
+      // PARKED at our node that auto-engage didn't already lock (war declared
+      // after they docked; a resolved battle's leftovers). The combat module
+      // AUTO-re-engages a battle's victor into the NEXT parked hostile, so the
+      // gate must price the WHOLE ladder, not the first rung: the wing has to
+      // clear EVERY parked intruder, chained in scan order, with CUMULATIVE
+      // hull losses under the limit — else a cheap first fight would drag the
+      // damaged wing into one its forecast declined («держим, но не
+      // кровоточим»). One engager, one order — the victor chain does the rest;
+      // the fight happens where the wing stands: own territory only.
+      const holdEntry: StewardLogEntry = {
+        at: state.time,
+        kind: 'hold',
+        node: p.id,
+        fraction: frac(stand.defender.damageFraction),
+      };
+      if (posture !== 'active_defend') {
+        noteOnce(holdEntry);
+        continue;
+      }
+      const ladder: Fleet[] = [];
+      for (const t of threats) {
+        if (t.kind !== 'present') continue;
+        const tf = state.fleets[t.fleetId];
+        if (tf && !tf.battleId) ladder.push(tf);
+      }
+      if (ladder.length === 0) {
+        noteOnce(holdEntry);
+        continue;
+      }
+      const byStrength = [...docked].sort(
+        (a, b) =>
+          hullPool(b.units, data) - hullPool(a.units, data) ||
+          (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+      );
+      let engaged = false;
+      for (const f of byStrength) {
+        if (tasked.has(f.id)) continue;
+        let wing = f.units;
+        let clears = true;
+        for (const tf of ladder) {
+          const rung = previewBattle(wing, tf.units, data);
+          if (rung.outcome !== 'attacker') {
+            clears = false;
+            break;
+          }
+          wing = rung.attacker.survivors; // carry the hull damage into the next rung
+        }
+        const before = hullPool(f.units, data);
+        if (!clears || before <= 0) continue;
+        const ladderFraction = 1 - hullPool(wing, data) / before;
+        if (ladderFraction >= STEWARD_LOSS_LIMIT) continue;
+        out.push(engageFleet(ai, f.id, ladder[0]!.id));
+        tasked.add(f.id);
+        engaged = true;
+        report.push({
+          at: state.time,
+          kind: 'strike',
+          node: p.id,
+          fleetId: f.id,
+          count: ladder.length,
+          fraction: frac(ladderFraction),
+        });
+        break;
+      }
+      if (!engaged) noteOnce(holdEntry);
+      continue;
+    }
+    const earliest = threats[0]!.eta;
+    // Hold point (ST-2.1): a player-designated anchor is NEVER auto-evacuated —
+    // the standing order outranks the loss forecast. The Steward instead tries
+    // to FLIP the forecast: summon ONE idle wing that (a) arrives with a tick
+    // (2h) to spare before the earliest threat lands and (b) turns the combined
+    // stand into a hold. Piecemeal feeding is refused — help that arrives late
+    // or still loses would only widen the defeat; the wing then stands as
+    // ordered, and the journal's bad fraction tells the owner the price.
+    if (holdPoints.has(p.id)) {
+      // Help already flying in (last tick's relief or the owner's own order) —
+      // nothing to add; the episode is already journaled.
+      const inboundHelp = Object.values(state.fleets).some(
+        (f) => f.owner === ai && f.movement != null && journeyDestination(f.movement) === p.id,
+      );
+      if (!inboundHelp) {
+        let relief: Fleet | null = null;
+        let reliefEta = Infinity;
+        let reliefFraction = 0;
+        for (const f of Object.values(state.fleets)) {
+          if (!idleOwn(f) || f.location === p.id) continue;
+          if (!f.units.some((s) => s.count > 0)) continue;
+          // Same no-poach rule as the ferry: a wing on another threatened node
+          // (or another anchor) is needed where it stands.
+          if (threatsOf(f.location!).length > 0 || holdPoints.has(f.location!)) continue;
+          const hours = estimateTravelHours(state, data, f.location!, p.id, f);
+          if (hours === null) continue;
+          const arrives = state.time + hoursToMs(c, hours);
+          if (arrives + hoursToMs(c, 2) > earliest) continue; // too late to matter
+          const together = previewBattle(attackers, [...defenders, ...f.units], data);
+          const flips =
+            together.outcome === 'defender' ||
+            together.defender.damageFraction < STEWARD_LOSS_LIMIT;
+          if (!flips) continue;
+          if (arrives < reliefEta) {
+            reliefEta = arrives;
+            relief = f;
+            reliefFraction = together.defender.damageFraction;
+          }
+        }
+        if (relief) {
+          out.push(moveFleet(ai, relief.id, p.id));
+          tasked.add(relief.id);
+          report.push({
+            at: state.time,
+            kind: 'reinforce',
+            node: p.id,
+            fleetId: relief.id,
+            fraction: frac(reliefFraction),
+          });
+        } else {
+          noteOnce({
+            at: state.time,
+            kind: 'hold',
+            node: p.id,
+            fraction: frac(stand.defender.damageFraction),
+          });
+        }
+      }
+      continue; // a hold point never falls through to evacuation
+    }
+    // Bad trade — evacuate to the nearest reachable own world nothing bears on.
+    // Anti-shuttle hysteresis (ST-3.4): a candidate we RECENTLY fled FROM into
+    // this very node is the shuttle's return leg — journaled evacuations
+    // (state-resident, so the check survives the stateless re-tick) block it
+    // for EVAC_RETURN_COOLDOWN_H game-hours.
+    const returnBlocked = (candidate: string): boolean => {
+      const log = state.players[ai]?.stewardLog;
+      if (!log) return false;
+      const horizon = hoursToMs(c, EVAC_RETURN_COOLDOWN_H);
+      for (let i = log.length - 1; i >= 0; i--) {
+        const e = log[i]!;
+        if (e.kind !== 'evac' || e.node !== candidate || e.to !== p.id) continue;
+        if (state.time - e.at < horizon) return true;
+      }
+      return false;
+    };
+    let haven: string | null = null;
+    let havenDist = Infinity;
+    for (const q of mine) {
+      if (q.id === p.id || threatsOf(q.id).length > 0 || returnBlocked(q.id)) continue;
+      const route = planRoute(state, p.id, q.id);
+      if (!route) continue;
+      const dist = routeDistance(state, p.id, route);
+      if (dist < havenDist) {
+        havenDist = dist;
+        haven = q.id;
+      }
+    }
+    if (haven === null) {
+      // Nowhere safer — a FORCED stand; the bad fraction in the entry tells the
+      // owner why the wing stayed put.
+      noteOnce({
+        at: state.time,
+        kind: 'hold',
+        node: p.id,
+        fraction: frac(stand.defender.damageFraction),
+      });
+      continue;
+    }
+    const assaulted = garrisonUnderAssault(state, p.id);
+    // What the garrison still holds after the loads planned below (state is
+    // read-only). Counted EXACTLY as `army.load` will resolve it — via
+    // findHealthyStack: only a full-health, default-loadout stack embarks.
+    // Battle-worn troops cannot be lifted (they hold the line; hospitals mend
+    // them) — planning them would bounce off E_NO_ARMY and, worse, mark the
+    // garrison as handled so no ferry would come for anyone.
+    const left = new Map<string, number>();
+    for (const s of p.garrison) {
+      if (s.count <= 0 || !liftable(s.unit) || left.has(s.unit)) continue;
+      const healthy = findHealthyStack(p.garrison, s.unit);
+      if (healthy) left.set(s.unit, healthy.count);
+    }
+    // Docked fleets fly out — lifting what garrison fits their holds first
+    // (load and move stack in one tick: actions apply in order while docked).
+    for (const f of docked) {
+      if (!assaulted) {
+        let free = freeHold(f);
+        for (const [unit, have] of left) {
+          if (free <= 0 || have <= 0) continue;
+          const size = data.units[unit]?.stats.cargoSize ?? 0;
+          const n = size > 0 ? Math.min(have, Math.floor(free / size)) : have;
+          if (n <= 0) continue;
+          out.push(loadArmy(ai, f.id, unit, n));
+          left.set(unit, have - n);
+          free -= n * size;
+        }
+      }
+      // A standing patrol flies out with its carrier: stand it down first (the
+      // sortie is stashed, BF-26) so no stale patrol record points at this node.
+      if ((state as DivState).patrols?.[f.id]) out.push(orderScramble(ai, f.id, false));
+      out.push(moveFleet(ai, f.id, haven));
+      tasked.add(f.id);
+    }
+    if (docked.length > 0) {
+      report.push({
+        at: state.time,
+        kind: 'evac',
+        node: p.id,
+        to: haven,
+        count: docked.length,
+        fraction: frac(stand.defender.damageFraction),
+      });
+    }
+    // Garrison still stranded → summon the nearest idle transport with a free
+    // hold, but only when it beats the threat with one AI tick (2h) to spare —
+    // a transport that would arrive into the assault is not sent at all.
+    const stranded = [...left.values()].some((n) => n > 0);
+    const inboundAlready = Object.values(state.fleets).some(
+      (f) => f.owner === ai && f.movement != null && journeyDestination(f.movement) === p.id,
+    );
+    if (stranded && !inboundAlready && !assaulted) {
+      let ferry: Fleet | null = null;
+      let ferryEta = Infinity;
+      for (const f of Object.values(state.fleets)) {
+        if (!idleOwn(f) || f.location === p.id || freeHold(f) <= 0) continue;
+        // Never poach a transport off ANOTHER threatened node (its own evac
+        // branch tasks it) or off a hold point (the anchor keeps its wing).
+        if (threatsOf(f.location!).length > 0 || holdPoints.has(f.location!)) continue;
+        const hours = estimateTravelHours(state, data, f.location!, p.id, f);
+        if (hours === null) continue;
+        const arrives = state.time + hoursToMs(c, hours);
+        if (arrives + hoursToMs(c, 2) > earliest) continue; // too late to load — don't feed it in
+        if (arrives < ferryEta) {
+          ferryEta = arrives;
+          ferry = f;
+        }
+      }
+      if (ferry) {
+        out.push(moveFleet(ai, ferry.id, p.id));
+        tasked.add(ferry.id);
+        report.push({ at: state.time, kind: 'ferry', node: p.id, fleetId: ferry.id });
+      } else {
+        // Liftable troops remain, no help is coming this tick — the owner should
+        // wake up to «гарнизон не спасти», not to silence. Once per episode.
+        noteOnce({
+          at: state.time,
+          kind: 'stranded',
+          node: p.id,
+          fraction: frac(stand.defender.damageFraction),
+        });
+      }
+    }
+  }
+  // Fire-watch (ST-3.3, «Активная оборона» only): stand a CC-4 reactive patrol on
+  // every wing docked at an OWN world that isn't patrolling yet — the дежурный
+  // вылет then answers raiders inside its radius on its own cadence (including
+  // the mid-lane standoff campers `fleet.engage` can't reach). Never on foreign
+  // soil; a wing the evac branch just tasked is not re-ordered.
+  if (posture === 'active_defend') {
+    const patrols = (state as DivState).patrols;
+    for (const f of Object.values(state.fleets)) {
+      if (!idleOwn(f) || !fleetHasSquadron(f) || patrols?.[f.id]) continue;
+      if (state.planets[f.location!]?.owner !== ai) continue;
+      out.push(orderScramble(ai, f.id, true));
+      report.push({ at: state.time, kind: 'watch', node: f.location!, fleetId: f.id });
+    }
+  }
+  // The SITREP stamp rides LAST: it narrates the orders above. Applied through
+  // the same kernel path (steward.report — server-driver-only, gate refuses it
+  // from the wire), so the journal lands in state and survives the night.
+  if (report.length > 0) out.push(act(ai, 'steward.report', { entries: report }));
+  return out;
+}
+
+/** The two server-side AIs that can play a seat, kept explicitly DISTINCT
+ *  (SES-2.2). `steward` — «Хранитель»: the player's OWN autopilot, a defensive
+ *  posture they turned on to cover their sleep; it runs on their chosen posture
+ *  even while they are connected-but-idle, and its live delegation OUTRANKS the
+ *  abandon grace. `substitute` — «заместитель»: the full expansion bot that takes
+ *  over an ABANDONED chair, only after the player has been gone past the
+ *  real-time grace window, and it is reclaimed the instant they return. `none` —
+ *  no AI drives the seat this tick (a present player commands it, or an absent
+ *  one is still inside their reconnect grace). */
+export type SeatAiKind = 'steward' | 'substitute' | 'none';
+
+/** What drives a seat this tick + the posture to hand `aiOrders`. */
+export interface SeatAiDecision {
+  kind: SeatAiKind;
+  posture: StewardPosture | 'expand' | null; // null ⇔ kind === 'none'
+}
+
+/** Decide which server AI (if any) plays ONE seat this tick — SES-2.2. Pure:
+ *  reads only the three facts the host tracks, no time source of its own.
+ *  `hasHuman` — a live peer holds the chair; `posture` — the seat's active
+ *  Steward delegation (`stewardActive`), null if none; `graceExpired` — the
+ *  player has been absent PAST the real-time abandon window (wall-clock, the host
+ *  compares `Date.now()`; always true for a chair that never opened a window).
+ *  The precedence encodes the owner's intent: a delegation they set beats the
+ *  automatic takeover, and a present human beats the idle bot. */
+export function seatAiDecision(
+  hasHuman: boolean,
+  posture: StewardPosture | null,
+  graceExpired: boolean,
+): SeatAiDecision {
+  // A live Steward delegation is the player's OWN autopilot: it plays regardless
+  // of connection and never waits on the abandon grace (they asked for it).
+  if (posture) return { kind: 'steward', posture };
+  // No delegation → a present human commands their own chair.
+  if (hasHuman) return { kind: 'none', posture: null };
+  // Empty chair: wait out the grace (a drop / restart blip / a few days away)
+  // before the substitute bot seizes it — reclaimed the moment they return.
+  if (!graceExpired) return { kind: 'none', posture: null };
+  return { kind: 'substitute', posture: 'expand' };
+}
+
 /** One decision tick's orders for an AI-driven seat, evaluated against `state`.
  *  Read-only: it builds and returns the actions; the caller applies them — the
  *  client to its local sim, the server through the authoritative room. Drives
@@ -3595,6 +4189,14 @@ export function aiOrders(
 ): Action[] {
   const out: Action[] = [];
   if (!state.players[ai]) return out; // seat not in play / eliminated
+  // The defensive family: both Steward postures HOLD (no expansion, no war
+  // declarations); «Активная оборона» merely adds the counterstrike/fire-watch
+  // inside the guard-duty tick below.
+  const defensive = posture === 'defend' || posture === 'active_defend';
+  // Steward guard duty (ST-3.2/3.3): a delegated defensive seat watches its worlds,
+  // evacuates a wing the forecast says it would lose ≥ STEWARD_LOSS_LIMIT of, and —
+  // under «Активная оборона» — counterstrikes what it beats cheaply on own soil.
+  if (defensive) out.push(...stewardGuardOrders(state, ai, posture as StewardPosture));
   const isShipUnit = (u: string): boolean => !data.units[u]?.traits.includes('ground');
   const capturable = (p: Planet): boolean => SECTOR_TYPES[p.kind ?? '']?.capturable ?? false;
   const d = (a: { x: number; y: number }, b: { x: number; y: number }): number =>
@@ -3617,7 +4219,7 @@ export function aiOrders(
     Object.values(state.planets).find((p) => p.owner === ai);
   const shipCount = (f: Fleet): number =>
     f.units.reduce((n, s) => n + (isShipUnit(s.unit) ? s.count : 0), 0);
-  const expandFleets: Fleet[] = posture === 'defend' ? [] : Object.values(state.fleets);
+  const expandFleets: Fleet[] = defensive ? [] : Object.values(state.fleets);
   // Consolidate BEFORE moving (self-play M4): two idle fleets sharing a location fuse
   // into one — without this, battle remnants and rally leftovers accumulate into a
   // hundreds-strong swarm of one-ship fleets that grinds the whole sim (and feeds
@@ -3686,7 +4288,7 @@ export function aiOrders(
   // provinces swing back. A bot that IS ahead stays quiet — it wins by holding.
   // Declared only from a clean 'peace' stance: pacts/alliances are never betrayed,
   // and favour-driven war (botDiplomacyModule) keeps working on top unchanged.
-  if (posture !== 'defend') {
+  if (!defensive) {
     const scoreOf = (who: string): number =>
       Object.values(state.planets).reduce(
         (s, p) => (p.owner === who ? s + provinceScore(data, p) : s),

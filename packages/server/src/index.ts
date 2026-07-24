@@ -38,6 +38,12 @@ export {
 } from './matchApi';
 export { MatchKeeper, type MatchKeeperOptions } from './matchFactory';
 export { pickAvaMap } from './avaMapPool';
+export {
+  arsenalSnapshotOf,
+  grantStarterArsenal,
+  validateStarterArsenal,
+  type StarterArsenalTemplate,
+} from './arsenal';
 export { MetricsAggregator, type MetricsSummary, type SeriesStat } from './metrics';
 export { InMemoryEphemeralStore, type EphemeralStore } from './ephemeral';
 export {
@@ -55,6 +61,7 @@ export {
   type VerifyKey,
 } from './auth';
 export { registerAuthApi, type AuthApiDeps } from './authApi';
+export { configFromEnv, type ServerConfig } from './serverConfig';
 export { hashPassword, verifyPassword, type ScryptParams } from './password';
 export type {
   ClientActionMessage,

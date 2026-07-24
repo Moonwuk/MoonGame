@@ -1,4 +1,4 @@
-import type { GameState, PlayerId } from '@void/shared-core';
+import type { ArsenalItem, GameState, PlayerId } from '@void/shared-core';
 
 /** A durable snapshot of a match — enough to resume it byte-for-byte after a
  *  server restart. `state` is the JSON-serializable `GameState` (the core invariant
@@ -137,7 +137,9 @@ export interface CorpAuditEntry {
     | 'disband'
     | 'influence'
     | 'ready'
-    | 'medal';
+    | 'medal'
+    | 'rent'
+    | 'rent_return';
   /** Subject account id, when the action has one. */
   target?: string;
   /** Extra context, e.g. the new role for `role`. */
@@ -442,5 +444,102 @@ export interface StoredReceipt {
 export interface ReceiptStore {
   loadAll(matchId: string): Promise<StoredReceipt[]>;
   save(matchId: string, receipt: StoredReceipt): Promise<void>;
+  close?(): Promise<void>;
+}
+
+/** One owned arsenal row (ARS-2): the shared `ArsenalItem` contract (ARS-1,
+ *  `shared-core/data/arsenalSchema.ts`) plus its owner. */
+export interface OwnedArsenalItem extends ArsenalItem {
+  accountId: string;
+}
+
+/** Persistence for the personal arsenal (ARS-2, `arsenal-roadmap.md`) — what an
+ *  account owns BETWEEN sessions. Deliberately dumb like the other stores: policy
+ *  (starter set, trade rules, snapshots) lives above; the store guards only the
+ *  invariants that need storage-level atomicity:
+ *   - `grant` is idempotent by `itemId` (first write wins — a replayed grant, e.g.
+ *     a re-registration or a retried drop batch, can never duplicate an item);
+ *   - `transfer`/`consume` are owner-guarded conditional writes — two racing buyers
+ *     of one instance cannot both win (double-sell impossible), and a SOULBOUND
+ *     item never transfers (anti-RMT, GDD §4.4 — enforced structurally, not just
+ *     by the trade service). */
+export interface ArsenalStore {
+  /** Insert the item unless its `itemId` already exists (idempotent, first wins). */
+  grant(item: OwnedArsenalItem): Promise<void>;
+  get(itemId: string): Promise<OwnedArsenalItem | null>;
+  /** The account's items, sorted (kind, defId, itemId) for determinism. */
+  listOf(accountId: string): Promise<ArsenalItem[]>;
+  /** Atomic ownership move: succeeds only while `from` CURRENTLY owns the item and
+   *  it is not soulbound. A lost race / wrong owner / soulbound changes nothing. */
+  transfer(
+    itemId: string,
+    from: string,
+    to: string,
+  ): Promise<{ ok: true } | { ok: false; code: 'E_NOT_OWNER' | 'E_SOULBOUND' }>;
+  /** Atomic removal (craft input / burn): only the current owner's item goes;
+   *  false = not owned (nothing changed). */
+  consume(itemId: string, accountId: string): Promise<boolean>;
+  /** Atomic wear: decrements an INSTANCE's `durability` by `by` (clamped at 0). A
+   *  no-op returning the item's current (unchanged) durability for a blueprint (no
+   *  durability field — ARS-0.1) or an item with none set. `null` only if the item
+   *  doesn't exist. The corp-rental return sink (ARS-6) is the first caller; any
+   *  future repair/wear mechanic shares this one guarded write. */
+  wear(itemId: string, by: number): Promise<{ durability?: number } | null>;
+  close?(): Promise<void>;
+}
+
+/** One active corp-warehouse rental (ARS-6): a corp-owned item (`corp_arsenal` —
+ *  literally the same `ArsenalStore`, keyed by `corpId` as the "owner") lent to a
+ *  ROSTERED fighter for exactly one war. Ownership never moves (no `transfer`) —
+ *  this row is the only record that it's currently in someone's hands; the item
+ *  reverts to the corp automatically once the row closes (war end). */
+export interface CorpRent {
+  itemId: string;
+  corpId: string;
+  matchupId: string;
+  accountId: string;
+  rentedAt: number;
+}
+
+/** Persistence for corp-arsenal rentals (ARS-6). Deliberately dumb like the other
+ *  stores: RBAC (head/officer), roster membership and the ARS-3 snapshot merge live
+ *  in the service; the store guards the two invariants that need storage-level
+ *  atomicity — an item is on rent to AT MOST ONE war at a time, and a war's return
+ *  sweep closes each rental EXACTLY ONCE (the same exactly-once contract as
+ *  `AvaChallengeStore.endMatchup` — the caller must not apply the durability sink
+ *  twice on a replayed match-end). */
+export interface CorpRentStore {
+  /** Atomic: creates the row only if this item has no currently-active rental
+   *  anywhere (including other matchups) — false = already on rent, nothing
+   *  changed. */
+  rent(entry: CorpRent): Promise<boolean>;
+  /** Every still-active rental for a matchup (war-end return-all sweep reads this). */
+  activeForMatchup(matchupId: string): Promise<CorpRent[]>;
+  /** This account's active rentals for a matchup (the ARS-3 snapshot merge point). */
+  activeForAccount(matchupId: string, accountId: string): Promise<CorpRent[]>;
+  /** Atomic active→closed transition for one (matchupId, itemId). False = it was NOT
+   *  active (already closed, or never rented) — nothing changed, so the caller must
+   *  not apply the durability sink. */
+  closeRent(matchupId: string, itemId: string): Promise<boolean>;
+  close?(): Promise<void>;
+}
+
+/** Persistence for the F2P drop loop (ARS-4): the per-account pity counter (drop
+ *  guaranteed within K dry matches — no black streaks) and the salvage-shard balance
+ *  (the EC-2.2 craft input). Like the other stores, policy (roll chances, tables)
+ *  lives above; the store guards the invariants that need storage-level atomicity:
+ *   - `claim` is the exactly-once gate per (match, account) — a replayed match end
+ *     can never roll (or bump pity for) the same account twice;
+ *   - `addShards` is an atomic increment (concurrent battle credits both land). */
+export interface DropStore {
+  /** First-writer-wins marker for one account's roll in one match: true = this call
+   *  claimed it (proceed to roll), false = already claimed (a replay — do nothing). */
+  claim(matchId: string, accountId: string): Promise<boolean>;
+  /** The account's current dry streak (matches since the last drop). 0 when unknown. */
+  pityOf(accountId: string): Promise<number>;
+  setPity(accountId: string, value: number): Promise<void>;
+  /** Credit salvage shards — `delta` must be positive (earning only). */
+  addShards(accountId: string, delta: number): Promise<void>;
+  shardsOf(accountId: string): Promise<number>;
   close?(): Promise<void>;
 }

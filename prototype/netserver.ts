@@ -24,14 +24,19 @@ import {
   MemoryAccountStore,
   MemoryMatchStore,
   MemoryReceiptStore,
+  MemoryUserStore,
   PostgresAccountStore,
   PostgresMatchStore,
   PostgresReceiptStore,
+  PostgresUserStore,
   migrate,
+  registerAuthApi,
+  configFromEnv,
   type AccountStore,
   type MatchStore,
   type ReceiptStore,
   type RoomObservation,
+  type UserStore,
 } from '../packages/server/src/index';
 import {
   newGame,
@@ -41,6 +46,7 @@ import {
   parseNetworkMatchMode,
   SCORE_LIMIT,
   aiOrders,
+  seatAiDecision,
   stewardActive,
   HOUR,
   serverAutoAssaultActions,
@@ -69,12 +75,29 @@ function worthLogging(ev: RoomObservation): boolean {
   }
   return true;
 }
-// BF-17: the AI stand-in must not seize a seat the MOMENT it looks empty. `humans`
-// is in-memory — after a server restart it is empty for everyone, and a mobile
-// network blip drops a live player for seconds — so every "empty" seat gets a grace
-// window (per-seat wall-clock deadline) before the expand-AI starts commanding it.
-// Steward delegation bypasses the grace: handing the seat over was the player's call.
-const AI_GRACE_MS = Number(process.env.AI_GRACE_MS ?? 10 * 60 * 1000);
+// The «заместитель» (substitute) AI must not seize a chair the moment it looks
+// empty. `humans` is in-memory — after a restart it is empty for everyone — and a
+// player is legitimately away for hours or days in a real-time game that runs for
+// weeks. So an empty chair gets a REAL-TIME grace window (per-seat wall-clock
+// deadline) before the expansion bot takes over; the owner reclaims it the instant
+// they reconnect. SES-2.2: the default is 3 real days — being offline overnight (or
+// for a couple of days) leaves your empire holding its own (garrisons defend,
+// standing orders run, and the Steward covers your sleep if you delegated it), not
+// handed to a bot. A Steward delegation bypasses the grace entirely: turning the
+// seat over to your OWN autopilot was your call, not an abandonment (SES-2.2 keeps
+// the two AIs distinct — see `seatAiDecision`). Wall-clock, independent of
+// TIME_SCALE: the ×24 first session still measures absence in real days.
+const AI_GRACE_MS = Number(process.env.AI_GRACE_MS ?? 3 * 24 * 60 * 60 * 1000);
+
+// Entry window (SES-2.3): how long, in REAL time from a session's creation, a NEW
+// player may still claim a free seat. After it closes the session runs to its end
+// with whoever is in it — a latecomer can't parachute into a game already days deep
+// (Iron Order model). A player who ALREADY holds a seat reconnects at any time; this
+// gates only first-time claims. Default 4 real days; env-configurable. Measured off
+// the world clock (`state.time / TIME_SCALE`, see MatchRegistry.entryOpen) so it
+// survives a restart and honours the session's time scale — on the ×24 first session
+// 4 real days is 96 game-days, i.e. effectively the whole match.
+const ENTRY_WINDOW_MS = Number(process.env.ENTRY_WINDOW_MS ?? 4 * 24 * 60 * 60 * 1000);
 
 const host = process.env.HOST ?? '127.0.0.1';
 const port = Number(process.env.PORT ?? 8788);
@@ -134,17 +157,30 @@ let pool: InstanceType<typeof Pool> | null = null;
 let matchStore: MatchStore;
 let accountStore: AccountStore;
 let receiptStore: ReceiptStore;
+let userStore: UserStore;
 if (DATABASE_URL) {
   pool = new Pool({ connectionString: DATABASE_URL });
   await migrate(pool);
   matchStore = new PostgresMatchStore(pool);
   accountStore = new PostgresAccountStore(pool);
   receiptStore = new PostgresReceiptStore(pool);
+  userStore = new PostgresUserStore(pool);
 } else {
   matchStore = new MemoryMatchStore();
   accountStore = new MemoryAccountStore();
   receiptStore = new MemoryReceiptStore();
+  userStore = new MemoryUserStore();
 }
+
+// Accounts on the PLAYABLE path (SES-2.5): with AUTH_JWT_SECRET set, the full account
+// contour switches on — POST /auth/register + /auth/login (scrypt, uniform-401,
+// per-IP limits) hand out a session JWT; GET /matches/:id/join exchanges it for a
+// short-lived join token; the WS handshake then requires `?token=` and the nick/ticket
+// dev handshakes are REFUSED (the token is the sole identity — same shape as the
+// production entry). Unset ⇒ the nick+ticket flow stays (LAN playtests, zero setup).
+// One env, both worlds; the client self-configures via GET /auth/status.
+const authCfg = configFromEnv(process.env);
+const AUTH = authCfg.auth !== undefined;
 // The prototype host defaults to a ten-chair FFA. `TEAMS=5v5` keeps all ten chairs and
 // seeds two allied flanks; `TEAMS=2v2` preserves the smaller four-chair playtest. Every
 // chair is claimable by a human, while the server AI stands in after the reconnect grace.
@@ -159,11 +195,11 @@ const matchIds = Array.from({ length: MATCHES }, (_, i) => (i === 0 ? 'proto' : 
 
 // Shared wakeup-driver tuning (one instance of these per hosted match below).
 const MAX_TIMER_MS = 60 * 60_000; // 1h cap (setTimeout overflow + clock-drift safety)
-// While a STARTED match has connected players, tick at least this often even if the
+// While a match has connected players, tick at least this often even if the
 // schedule is momentarily empty — otherwise the world only advances when someone issues
 // an order (submitAction), so the published clock/economy/in-flight fleets freeze
 // on-screen between actions. newGame() starts with NO scheduled events, so without this
-// the very first thing players see after Start is a frozen "Day 1 00:00".
+// the very first thing players see after joining is a frozen "Day 1 00:00".
 const HEARTBEAT_MS = 1_000;
 const WAKE_STALL_LIMIT = 3; // consecutive due-but-non-progressing wakes → back off
 
@@ -221,12 +257,13 @@ async function createHostedMatch(id: string): Promise<HostedMatch> {
         ...(ev.code ? { code: ev.code } : {}),
       });
     }
-    // Persist after anything that changes the world or the lobby (debounced below),
-    // and re-arm the offline wakeup: an action may schedule or consume events, and a
-    // lobby Start releases the frozen clock — both move the next-event time.
+    // Persist after anything that changes the world (debounced below), and re-arm
+    // the offline wakeup: an action may schedule or consume events — both move the
+    // next-event time. ('lobby' kept for transport parity; auto-started sessions
+    // never emit it — SES-2.1.)
     if (ev.kind === 'action' || ev.kind === 'lobby' || ev.kind === 'end') scheduleSave();
-    // Re-arm on room events: an action may (un)schedule events, a lobby Start releases
-    // the clock, and a join/leave starts/stops the live-player heartbeat below. A genuine
+    // Re-arm on room events: an action may (un)schedule events, and a join/leave
+    // starts/stops the live-player heartbeat below. A genuine
     // external event also gives the stall guard a fresh chance (the situation may have
     // changed). `advance_overflow` is EXCLUDED: a stalled catch-up emits it from inside
     // `room.tick()` itself, so resetting/re-arming on it would defeat the wake-stall
@@ -246,16 +283,20 @@ async function createHostedMatch(id: string): Promise<HostedMatch> {
     }
   };
 
-  // Lobby gate: the world clock starts at 0 ("Day 1") and stays frozen until the host
-  // presses Start. On restore mid-match we skip the lobby and resume the running game.
+  // No lobby (SES-2.1, Iron Order model): the session's world clock runs from the
+  // moment the session is CREATED, 24/7 — a player always joins a live world (the
+  // feed shows which game day it is). There is no host and no Start press to wait
+  // for; empty chairs defend themselves until claimed (and the stand-in AI takes
+  // an abandoned one after the real-days grace, SES-2.2).
   const room = new MatchRoom({
     id,
     initialState,
     kernel,
     data,
     now: () => Date.now(),
-    manualStart: true, // lobby: clock frozen until the host (first in) presses Start
-    initiallyStarted: !!restoredSnap, // restored snapshot → resume into the game, skip lobby
+    // Born running: the clock anchors at the initial game time (fresh world: Day 1
+    // now; restored snapshot: its saved instant) and TIME_SCALE applies from here.
+    initiallyStarted: true,
     singlePeerPerPlayer: true, // one live connection per chair — no two people command one empire
     emitStateHash: true, // attach hashState(view) so the client overlay can flag desync
     observe, // M0: log every room event to JSONL + count for the on-exit summary
@@ -358,17 +399,17 @@ async function createHostedMatch(id: string): Promise<HostedMatch> {
     if (now - aiLastAt < 2 * HOUR) return;
     aiLastAt = now;
     for (const seat of Object.keys(room.state.players)) {
-      // «Хранитель»: a delegated seat is played by the AI on its posture (defend) even while
-      // its owner is connected but asleep; an unclaimed/empty seat gets the full expansion AI.
+      // The two server AIs are decided by ONE pure rule (SES-2.2, `seatAiDecision`):
+      // «Хранитель» plays a delegated seat on its posture even while the owner is
+      // connected-but-idle; the «заместитель» (expand bot) takes an ABANDONED seat,
+      // but only once its real-time grace has lapsed. A present human with no
+      // delegation commands their own chair (kind 'none').
       const posture = stewardActive(room.state, seat, now);
-      if (humans.has(seat) && !posture) continue; // a human is actively commanding this seat
-      // Grace window (BF-17): an empty seat without an explicit delegation waits for
-      // its human to come back (drop / server restart) before the AI takes the wheel.
-      if (!humans.has(seat) && !posture) {
-        const eligibleAt = aiEligibleAt.get(seat);
-        if (eligibleAt !== undefined && Date.now() < eligibleAt) continue;
-      }
-      for (const action of aiOrders(room.state, seat, posture ?? 'expand')) {
+      const eligibleAt = aiEligibleAt.get(seat);
+      const graceExpired = eligibleAt === undefined || Date.now() >= eligibleAt;
+      const decision = seatAiDecision(humans.has(seat), posture, graceExpired);
+      if (decision.kind === 'none') continue;
+      for (const action of aiOrders(room.state, seat, decision.posture!)) {
         await room.submitServerAction(seat, action);
       }
     }
@@ -463,6 +504,8 @@ for (const h of hosted) {
     rules: { timeScale: TIME_SCALE },
     createdAt: Date.now(),
     startedAt: h.room.state.time,
+    entryWindowMs: ENTRY_WINDOW_MS, // SES-2.3: a NEW player may claim a free seat only
+    // within this real-time window from the session's creation (see AI note below).
   });
 }
 const server = createMultiplayerServer({
@@ -472,11 +515,69 @@ const server = createMultiplayerServer({
   indexHtml,
   accountStore, // `?nick=` WS login resolves its seat here
   seatLock: SEAT_LOCK, // REL-5: nick+ticket identity; `?player=` refused when on
+  // Accounts (SES-2.5): with AUTH on, the WS handshake requires a verified join token
+  // (`?token=`) and ignores nick/ticket entirely — the token is minted by the join
+  // route below, AFTER the session + entry-window checks passed.
+  ...(AUTH ? { auth: authCfg.auth } : {}),
+  // Entry window (SES-2.3): the transport refuses a FIRST-time nick once the session's
+  // window has closed (a returning seat-holder always reconnects). Same window the
+  // browser feed uses to keep a closed session out of «Доступные». (In AUTH mode the
+  // claim happens in the join ROUTE below — this transport gate covers the nick path.)
+  admitNewSeat: (matchId) => registry.entryOpen(matchId),
   // The match-browser read-model + archive intents (GET /matches, POST …/archive),
   // plus the dev client at `/dev` when the player build owns `/` (same no-store
   // headers as `/` — a stale dev client is as confusing as a stale player one).
   httpRoutes: (app) => {
     registerBrowserApi(app, registry);
+    // The client self-configures: accounts mode shows the password field + goes
+    // через register/login+join-token; nick mode keeps the old handshake.
+    app.get('/auth/status', async () => ({ enabled: AUTH }));
+    if (AUTH) {
+      // Register/login (SE-1.x contour, shared with the production entry): scrypt
+      // hashes, uniform-401 + decoy timing, per-IP rate limit — hands out the
+      // session JWT the join route below authenticates.
+      registerAuthApi(app, { users: userStore, signSession: authCfg.signSession! });
+      // Exchange a session for a seat + short-lived join token (SES-2.5). The seat
+      // belongs to the SESSION's login (nobody joins as somebody else); the entry
+      // window (SES-2.3) gates a FIRST-time claim exactly like the nick path — the
+      // non-assigning seatOf runs BEFORE resolveSeat, so a refused newcomer never
+      // burns a chair; a seated login reconnects at any time.
+      app.get('/matches/:id/join', async (request, reply) => {
+        const header = request.headers.authorization;
+        const bearer =
+          typeof header === 'string' && header.startsWith('Bearer ')
+            ? header.slice('Bearer '.length).trim()
+            : null;
+        const who = bearer ? await authCfg.verifySession!(bearer) : null;
+        if (!who?.ok) {
+          void reply.code(401);
+          return { error: 'E_AUTH' as const };
+        }
+        const { id } = request.params as { id: string };
+        const room = registry.get(id);
+        if (!room) {
+          void reply.code(404);
+          return { error: 'E_NO_MATCH' as const };
+        }
+        const login = who.claim.login;
+        const held = await accountStore.seatOf(id, login);
+        if (!held && !registry.entryOpen(id)) {
+          void reply.code(403);
+          return { error: 'E_ENTRY_CLOSED' as const };
+        }
+        const seat = held
+          ? { playerId: held }
+          : await accountStore.resolveSeat(id, login, Object.keys(room.state.players));
+        if (!seat) {
+          void reply.code(409);
+          return { error: 'E_MATCH_FULL' as const };
+        }
+        return {
+          playerId: seat.playerId,
+          token: await authCfg.signToken!(id, seat.playerId, who.claim.accountId),
+        };
+      });
+    }
     if (playerHtml !== undefined && devHtml !== undefined) {
       app.get('/dev', async (_request, reply) => {
         void reply.header('content-type', 'text/html; charset=utf-8');
@@ -530,13 +631,17 @@ const lines = [
   GATE
     ? '  gate   : ON — only validated action.v1 envelopes (clients auto-detect via welcome.gated)'
     : '  gate   : off — bare actions accepted (set GATE=1 for the release posture)',
-  SEAT_LOCK
-    ? '  seats  : LOCKED — a nick’s first join mints a ticket its client must present to reconnect'
-    : '  seats  : open — any nick takes any free seat (set SEAT_LOCK=1 for the release posture)',
+  AUTH
+    ? '  auth   : ACCOUNTS — POST /auth/register|login → session JWT; GET /matches/<id>/join → join token (nick/ticket handshakes refused)'
+    : SEAT_LOCK
+      ? '  seats  : LOCKED — a nick’s first join mints a ticket its client must present to reconnect'
+      : '  seats  : open — any nick takes any free seat (set SEAT_LOCK=1 for the release posture)',
   TIME_SCALE > 1
     ? `  time   : ×${TIME_SCALE} fast-forward (1 real min ≈ ${(TIME_SCALE / 60).toFixed(1)} game-hours) — playtest mode`
     : '  time   : ×1 real-time (set TIME_SCALE=100 to fast-forward a playtest)',
   `  matches: ${MATCHES} session${MATCHES > 1 ? 's' : ''} in this process (${matchIds.join(', ')}) — set MATCHES=N for more; all listed in the in-game browser`,
+  `  ai     : substitute bot takes an abandoned chair after ${(AI_GRACE_MS / 3_600_000).toFixed(1)}h offline (real time; set AI_GRACE_MS); a delegated Steward runs instantly`,
+  `  join   : a NEW player may claim a free seat for ${(ENTRY_WINDOW_MS / 86_400_000).toFixed(1)} real days from a session's creation (set ENTRY_WINDOW_MS); a seated player reconnects any time`,
   NETWORK_MODE === '2v2'
     ? '  mode   : 2v2 team battle — 4 claimable chairs each; empty chairs are AI-driven'
     : NETWORK_MODE === '5v5'

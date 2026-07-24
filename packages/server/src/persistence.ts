@@ -1,35 +1,44 @@
 import type { MatchRoom } from './matchRoom';
 import {
   MemoryAccountStore,
+  MemoryArsenalStore,
   MemoryAvaChallengeStore,
   MemoryAvaFeedStore,
   MemoryAvaResultStore,
   MemoryAvaRosterStore,
   MemoryAvaSessionStore,
+  MemoryCorpRentStore,
   MemoryCorpStore,
+  MemoryDropStore,
   MemoryMatchStore,
   MemoryMedalStore,
   MemoryReceiptStore,
   MemoryUserStore,
   PostgresAccountStore,
+  PostgresArsenalStore,
   PostgresAvaChallengeStore,
   PostgresAvaFeedStore,
   PostgresAvaResultStore,
   PostgresAvaRosterStore,
   PostgresAvaSessionStore,
+  PostgresCorpRentStore,
   PostgresCorpStore,
+  PostgresDropStore,
   PostgresMatchStore,
   PostgresMedalStore,
   PostgresReceiptStore,
   PostgresUserStore,
   migrate,
   type AccountStore,
+  type ArsenalStore,
   type AvaChallengeStore,
   type AvaFeedStore,
   type AvaResultStore,
   type AvaRosterStore,
   type AvaSessionStore,
+  type CorpRentStore,
   type CorpStore,
+  type DropStore,
   type MatchSnapshot,
   type MatchStore,
   type MedalStore,
@@ -68,6 +77,15 @@ export interface Stores {
   sessionStore: AvaSessionStore;
   /** Earned medals (MED-1) — permanent per-account achievement record. */
   medalStore: MedalStore;
+  /** Personal arsenal (ARS-2) — hulls/modules/fittings an account owns between
+   *  sessions; snapshots (ARS-3) and the live build gate (LARS-1) read it. */
+  arsenalStore: ArsenalStore;
+  /** Corp-arsenal rentals (ARS-6) — which corp-owned item is on loan to whom, for
+   *  which war; ownership itself never leaves `arsenalStore` (a corp-owned item is
+   *  just a row keyed by the corp's id). */
+  corpRentStore: CorpRentStore;
+  /** Drop loop (ARS-4) — per-account pity + salvage shards + exactly-once roll claims. */
+  dropStore: DropStore;
   /** Which backend is active — for the boot log ('memory' loses state on restart). */
   kind: 'memory' | 'postgres';
   close(): Promise<void>;
@@ -88,6 +106,9 @@ export async function createStores(env: NodeJS.ProcessEnv = process.env): Promis
       feedStore: new MemoryAvaFeedStore(),
       sessionStore: new MemoryAvaSessionStore(),
       medalStore: new MemoryMedalStore(),
+      arsenalStore: new MemoryArsenalStore(),
+      corpRentStore: new MemoryCorpRentStore(),
+      dropStore: new MemoryDropStore(),
       kind: 'memory',
       close: () => Promise.resolve(),
     };
@@ -109,6 +130,9 @@ export async function createStores(env: NodeJS.ProcessEnv = process.env): Promis
     feedStore: new PostgresAvaFeedStore(pool),
     sessionStore: new PostgresAvaSessionStore(pool),
     medalStore: new PostgresMedalStore(pool),
+    arsenalStore: new PostgresArsenalStore(pool),
+    corpRentStore: new PostgresCorpRentStore(pool),
+    dropStore: new PostgresDropStore(pool),
     kind: 'postgres',
     close: () => pool.end(),
   };

@@ -102,8 +102,9 @@ MATCHES=3 pnpm host          # three independent sessions in ONE process
 
 `MATCHES=N` (default 1, up to 16) hosts N sessions side by side — ids `proto`,
 `proto-2`, … Every one appears in the in-game match browser («Доступные»), players
-pick a row; each session has its own lobby (first joiner is its host), its own
-empty-seat AI and its own durable snapshot, so a restart resumes them all. The
+pick a row; each session runs from the moment it is created (SES-2.1, Iron Order
+model — no lobby, no host, no Start press: a join lands in a live world), with its
+own empty-seat AI and its own durable snapshot, so a restart resumes them all. The
 mode/`TIME_SCALE` apply to every session alike.
 
 Unsupported `TEAMS` values fail at startup. A durable saved match keeps its
@@ -116,8 +117,8 @@ expecting a new mode.
 2. **You** open the `localhost` URL and enter a callsign.
 3. Up to nine **friends** on the same Wi-Fi open `http://<LAN-IP>:8788/` and enter
    different callsigns.
-4. The first player is lobby host and presses **Start** when the roster is ready.
-   (If a friend can't reach it, allow port 8788 through
+4. Everyone lands straight in the running world — the session clock started when
+   the server created it. (If a friend can't reach it, allow port 8788 through
    the host's firewall.)
 
 ### Path B — same Wi-Fi, via the APK
@@ -224,13 +225,14 @@ first failing step:
    overlay now auto-upgrades to `wss://`, but a stale saved value can linger:
    `localStorage.removeItem('void.server')` then reload.
 
-### Lobby — the host decides when to start
+### Sessions run from creation — no lobby (SES-2.1)
 
-However you connect, the world starts **paused** ("⏳ Waiting for … to join"): the
-first player becomes lobby host. The roster shows every configured chair and who is
-connected; the host presses **Start** when enough players have joined. The clock then
-runs and does not re-freeze when somebody disconnects. Empty/offline chairs are driven
-by server AI after their reconnect grace window.
+The Iron Order model: a session's world clock starts when the server CREATES the
+session and never freezes — there is no lobby, no host role and no Start press.
+However you connect, you land in the live world (the match browser shows which
+game day each session is on). Empty/offline chairs are driven by server AI after
+their reconnect grace window; a claimed chair goes back to its player the moment
+they return.
 
 ### Net-mode scope (first MP test)
 
@@ -287,10 +289,25 @@ seats N players — each gets a homeworld (spread around the neutral `nexus`) an
    it, memory-only state is lost — expected for a throwaway dev run).
 5. Bad / oversized messages are rejected (`E_BAD_MESSAGE` / `E_PAYLOAD_TOO_LARGE`), not crashing.
 
+### Accounts on the playable path (SES-2.5)
+
+With `AUTH_JWT_SECRET` set, the prototype host runs the FULL account flow — the same
+SE-1.x contour as the production entry: `POST /auth/register` / `/auth/login` (scrypt
+hashes, uniform 401 + decoy timing, per-IP rate limit) hand out a session JWT (days);
+`GET /matches/:id/join` (Bearer) exchanges it for a short-lived join token (15 min);
+the WS handshake then requires `?token=` and REFUSES the nick/ticket dev handshakes.
+The seat belongs to the session's login (nobody joins as somebody else), a rejoin
+returns the same seat, and the entry window (SES-2.3) gates a first-time login's claim
+in the join route (403 `E_ENTRY_CLOSED`) with the same non-assigning `seatOf` check.
+The bundled client self-configures via `GET /auth/status`: it shows the password field,
+logs in (or auto-registers a fresh login — registration IS the first login), stores
+only the session JWT per server, and re-fetches a fresh join token on every reconnect.
+Unset ⇒ the zero-setup nick+ticket flow below stays as-is.
+
 **Known constraints before this is "real" multiplayer** (see limitations below): auth and the
 action gate are opt-in (env-switched, default off for dev), the client does not yet send
-`action.v1` envelopes, identity is nick-based (no OIDC), and the scheduler is single-process
-(pg-boss v2 is the multi-process step).
+`action.v1` envelopes on the production entry, identity is login+password (no OIDC), and the
+scheduler is single-process (pg-boss v2 is the multi-process step).
 
 ## Protocol
 
@@ -300,7 +317,7 @@ Client → server:
 { type: 'action', action: Action }            // bare action (refused by a gated room)
 { type: 'action.v1', envelope }               // gated envelope (requires GATE=1)
 { type: 'ping', clientTime?: number }
-{ type: 'start' }                             // host-only: begin a manual-start lobby
+{ type: 'start' }                             // manual-start rooms only (unused: sessions auto-start, SES-2.1)
 { type: 'ping.place', ping: PingDraft }       // tactical ally ping
 { type: 'ping.clear', pingId?: string }
 ```
@@ -319,7 +336,9 @@ Server → client:
 ```
 
 `welcome`/`state`/`delta` additionally carry the fog extras (`signatures`, `remembered`), the
-lobby fields (`waiting?`, `lobby?`) and an optional desync `hash` (see `protocol.ts`).
+lobby fields (`waiting?`, `lobby?` — only from rooms configured with a lobby gate; the
+auto-started sessions of both hosts never send them) and an optional desync `hash`
+(see `protocol.ts`).
 
 Broadcasts are entity-level deltas (changed entities per collection + removed ids + changed top-level fields), **diffed per player against their own `visibleState` baseline** — hidden worlds/fleets are physically never sent.
 

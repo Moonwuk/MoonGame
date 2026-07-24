@@ -106,6 +106,39 @@ export interface Player {
    *  server-side driver reads it via `stewardActive`; it auto-expires on the clock
    *  crossing `until` (stewardModule). Absent = the player commands the seat. */
   steward?: StewardState;
+  /** The Steward's decision journal (SITREP, ST-2.4): what the AI did on this seat's
+   *  last watch, stamped by the server driver via `steward.report` and kept AFTER the
+   *  delegation lapses — the sleeping player's client is offline, so the morning
+   *  report must live in state, not in a client log. Bounded FIFO; a new delegation
+   *  starts a fresh journal. Owner-private (stripped from rivals' views, like the
+   *  treasury — both the journal and the autopilot status itself read as «спит»). */
+  stewardLog?: StewardLogEntry[];
+  /** Hold points (ST-2.1, guard): OWN worlds the player ORDERED held — a standing
+   *  order (the CC-4 family), honored by the Steward under any posture: a hold
+   *  point is never auto-evacuated; a threatened one is REINFORCED instead. Set
+   *  via `steward.holdpoint` (client-submittable, capped at
+   *  `MAX_STEWARD_HOLD_POINTS`). Owner-private — a rival reading your anchors is
+   *  targeting intel. Absent = no points. */
+  stewardHoldPoints?: PlanetId[];
+  /** Arsenal snapshot (ARS-3): the catalog ids this seat OWNS and may build with —
+   *  taken from the account's `ArsenalStore` when the session is assembled (AvA:
+   *  at roster lock, GDD §2 «консервация»). While present, `unit.build` requires
+   *  the hull and every module to be listed (`E_NOT_OWNED`) and `hero.fit` the
+   *  fitting; ABSENT = no restriction (regular/dev matches — graceful degradation).
+   *  Owner-private like the treasury (stripped from other players' views). LARS-1
+   *  will complement this with the live server-side ownership read (LARS-0.2). */
+  arsenal?: PlayerArsenal;
+}
+
+/** The build-permission snapshot of a seat (see `Player.arsenal`): unique, sorted
+ *  catalog ids per kind — the shape both the core gate and the UI filter read. */
+export interface PlayerArsenal {
+  /** Buildable hulls → `data.units` ids. */
+  hulls: string[];
+  /** Installable ship modules → `data.modules` ids. */
+  modules: string[];
+  /** Installable hero fittings → `data.heroFittings` ids. */
+  fittings: string[];
 }
 
 /** A live Steward delegation on a player (see `Player.steward`). */
@@ -114,6 +147,26 @@ export interface StewardState {
   posture: string;
   /** Game-time (ms) the delegation lapses at — control returns to the player then. */
   until: number;
+}
+
+/** One recorded Steward decision (see `Player.stewardLog`): a compact, JSON-safe fact
+ *  the driver stamps; the client renders it localized. `kind` is the driver's
+ *  vocabulary (evac / ferry / strike / watch / hold / stranded — extensible), the
+ *  optional fields carry only what that kind needs. */
+export interface StewardLogEntry {
+  /** Game-time (ms) of the decision. */
+  at: number;
+  kind: string;
+  /** Node (planet id) the decision concerns. */
+  node?: string;
+  /** Fleet the decision tasked. */
+  fleetId?: string;
+  /** Destination node (evacuation target etc.). */
+  to?: string;
+  /** A relevant count (fleets moved, units lifted, ...). */
+  count?: number;
+  /** Forecast hull-loss fraction (0..1) the decision keyed off. */
+  fraction?: number;
 }
 
 /** The player's chosen research leaders (0–2). Reads the current `scientists` council and

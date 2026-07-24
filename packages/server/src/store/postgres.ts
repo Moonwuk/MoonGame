@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import type { Pool } from 'pg';
-import type { PlayerId } from '@void/shared-core';
+import type { ArsenalItem, PlayerId } from '@void/shared-core';
 import type {
   AccountStore,
+  ArsenalStore,
   AvaChallenge,
   AvaChallengeStatus,
   AvaChallengeStore,
@@ -18,13 +19,17 @@ import type {
   CorpAuditEntry,
   CorpMembership,
   CorpRecord,
+  CorpRent,
+  CorpRentStore,
   CorpRole,
   CorpStore,
   CorpSummary,
+  DropStore,
   MatchSnapshot,
   MatchStore,
   Medal,
   MedalStore,
+  OwnedArsenalItem,
   ReceiptStore,
   SeatAssignment,
   StoredReceipt,
@@ -223,6 +228,50 @@ export async function migrate(pool: Pool): Promise<void> {
       PRIMARY KEY (account_id, medal_id)
     );
     CREATE INDEX IF NOT EXISTS medals_account_idx ON medals (account_id, at DESC);
+
+    -- Personal arsenal (ARS-2): what an account owns between sessions. item_id PK is
+    -- the idempotent-grant invariant (first write wins); transfer/consume are
+    -- owner-guarded conditional writes (double-sell impossible, soulbound never moves).
+    CREATE TABLE IF NOT EXISTS arsenal (
+      item_id     text PRIMARY KEY,
+      account_id  text NOT NULL,
+      kind        text NOT NULL,
+      form        text NOT NULL,
+      def_id      text NOT NULL,
+      grade       integer,
+      soulbound   boolean NOT NULL,
+      durability  integer,
+      origin      text NOT NULL,
+      acquired_at bigint NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS arsenal_account_idx ON arsenal (account_id);
+
+    -- Corp-arsenal rentals (ARS-6): a corp-owned item (a row in the arsenal table
+    -- with account_id = the corp's id) lent to a rostered fighter for one war. item_id PK
+    -- is the "one war at a time" invariant; DELETE-on-return is the exactly-once
+    -- close (a replayed match-end deletes nothing the second time).
+    CREATE TABLE IF NOT EXISTS corp_arsenal_rent (
+      item_id     text PRIMARY KEY,
+      corp_id     text NOT NULL,
+      matchup_id  text NOT NULL,
+      account_id  text NOT NULL,
+      rented_at   bigint NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS corp_arsenal_rent_matchup_idx ON corp_arsenal_rent (matchup_id);
+
+    -- Drop loop (ARS-4): the (match, account) claim PK is the exactly-once roll gate
+    -- (a replayed match end inserts nothing → no second roll, no double pity bump);
+    -- drop_meta holds the pity counter and the salvage-shard balance per account.
+    CREATE TABLE IF NOT EXISTS drop_claims (
+      match_id    text NOT NULL,
+      account_id  text NOT NULL,
+      PRIMARY KEY (match_id, account_id)
+    );
+    CREATE TABLE IF NOT EXISTS drop_meta (
+      account_id  text PRIMARY KEY,
+      pity        integer NOT NULL DEFAULT 0,
+      shards      integer NOT NULL DEFAULT 0
+    );
   `);
 }
 
@@ -1244,7 +1293,7 @@ export class PostgresAvaSessionStore implements AvaSessionStore {
   }
 
   async byMatch(matchId: string): Promise<AvaSession | null> {
-    const r = await this.pool.query<SessionRow>(
+    const r = await this.pool.query<SessionRow>( // nosemgrep: no-sql-string-interpolation -- SESSION_COLS is a fixed column-list constant, not user input
       `SELECT ${SESSION_COLS} FROM ava_sessions WHERE match_id = $1`,
       [matchId],
     );
@@ -1252,7 +1301,7 @@ export class PostgresAvaSessionStore implements AvaSessionStore {
   }
 
   async byMatchup(matchupId: string): Promise<AvaSession | null> {
-    const r = await this.pool.query<SessionRow>(
+    const r = await this.pool.query<SessionRow>( // nosemgrep: no-sql-string-interpolation -- SESSION_COLS is a fixed column-list constant, not user input
       `SELECT ${SESSION_COLS} FROM ava_sessions WHERE matchup_id = $1`,
       [matchupId],
     );
@@ -1260,7 +1309,7 @@ export class PostgresAvaSessionStore implements AvaSessionStore {
   }
 
   async dueWar(now: number): Promise<AvaSession[]> {
-    const r = await this.pool.query<SessionRow>(
+    const r = await this.pool.query<SessionRow>( // nosemgrep: no-sql-string-interpolation -- SESSION_COLS is a fixed column-list constant, not user input
       `SELECT ${SESSION_COLS} FROM ava_sessions
        WHERE war_at IS NOT NULL AND war_at <= $1 AND war_declared_at IS NULL
        ORDER BY war_at, match_id`,
@@ -1278,5 +1327,235 @@ export class PostgresAvaSessionStore implements AvaSessionStore {
       [matchId, at],
     );
     return (r.rowCount ?? 0) > 0;
+  }
+}
+
+interface ArsenalRow {
+  item_id: string;
+  account_id: string;
+  kind: string;
+  form: string;
+  def_id: string;
+  grade: number | null;
+  soulbound: boolean;
+  durability: number | null;
+  origin: string;
+  acquired_at: string;
+}
+
+function ownedItemOf(row: ArsenalRow): OwnedArsenalItem {
+  return {
+    itemId: row.item_id,
+    accountId: row.account_id,
+    kind: row.kind as ArsenalItem['kind'],
+    form: row.form as ArsenalItem['form'],
+    defId: row.def_id,
+    ...(row.grade === null ? {} : { grade: row.grade }),
+    soulbound: row.soulbound,
+    ...(row.durability === null ? {} : { durability: row.durability }),
+    origin: row.origin as ArsenalItem['origin'],
+    acquiredAt: Number(row.acquired_at),
+  };
+}
+
+const ARSENAL_COLS =
+  'item_id, account_id, kind, form, def_id, grade, soulbound, durability, origin, acquired_at';
+
+interface CorpRentRow {
+  item_id: string;
+  corp_id: string;
+  matchup_id: string;
+  account_id: string;
+  rented_at: string;
+}
+
+function corpRentOf(row: CorpRentRow): CorpRent {
+  return {
+    itemId: row.item_id,
+    corpId: row.corp_id,
+    matchupId: row.matchup_id,
+    accountId: row.account_id,
+    rentedAt: Number(row.rented_at),
+  };
+}
+
+/** Postgres arsenal store (ARS-2). The PK makes `grant` idempotent (ON CONFLICT DO
+ *  NOTHING — first write wins); transfer/consume are owner-guarded conditional writes,
+ *  so a double-sell race and a soulbound move are impossible at the storage level. */
+export class PostgresArsenalStore implements ArsenalStore {
+  constructor(private readonly pool: Pool) {}
+
+  async grant(item: OwnedArsenalItem): Promise<void> {
+    await this.pool.query( // nosemgrep: no-sql-string-interpolation -- ARSENAL_COLS is a fixed column-list constant, not user input
+      `INSERT INTO arsenal (${ARSENAL_COLS})
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       ON CONFLICT (item_id) DO NOTHING`,
+      [
+        item.itemId,
+        item.accountId,
+        item.kind,
+        item.form,
+        item.defId,
+        item.grade ?? null,
+        item.soulbound,
+        item.durability ?? null,
+        item.origin,
+        item.acquiredAt,
+      ],
+    );
+  }
+
+  async get(itemId: string): Promise<OwnedArsenalItem | null> {
+    const r = await this.pool.query<ArsenalRow>( // nosemgrep: no-sql-string-interpolation -- ARSENAL_COLS is a fixed column-list constant, not user input
+      `SELECT ${ARSENAL_COLS} FROM arsenal WHERE item_id = $1`,
+      [itemId],
+    );
+    return r.rows[0] ? ownedItemOf(r.rows[0]) : null;
+  }
+
+  async listOf(accountId: string): Promise<ArsenalItem[]> {
+    const r = await this.pool.query<ArsenalRow>( // nosemgrep: no-sql-string-interpolation -- ARSENAL_COLS is a fixed column-list constant, not user input
+      `SELECT ${ARSENAL_COLS} FROM arsenal WHERE account_id = $1
+       ORDER BY kind, def_id, item_id`,
+      [accountId],
+    );
+    return r.rows.map((row) => {
+      const { accountId: _owner, ...item } = ownedItemOf(row);
+      return item;
+    });
+  }
+
+  async transfer(
+    itemId: string,
+    from: string,
+    to: string,
+  ): Promise<{ ok: true } | { ok: false; code: 'E_NOT_OWNER' | 'E_SOULBOUND' }> {
+    // The conditional UPDATE is the invariant: only the current owner's, non-soulbound
+    // item moves — atomically, so two racing buyers cannot both win.
+    const r = await this.pool.query(
+      `UPDATE arsenal SET account_id = $3
+       WHERE item_id = $1 AND account_id = $2 AND NOT soulbound`,
+      [itemId, from, to],
+    );
+    if ((r.rowCount ?? 0) > 0) return { ok: true };
+    // Post-hoc classification only (the guard above already held the invariant).
+    const row = await this.get(itemId);
+    return row && row.accountId === from && row.soulbound
+      ? { ok: false, code: 'E_SOULBOUND' }
+      : { ok: false, code: 'E_NOT_OWNER' };
+  }
+
+  async consume(itemId: string, accountId: string): Promise<boolean> {
+    const r = await this.pool.query(
+      `DELETE FROM arsenal WHERE item_id = $1 AND account_id = $2`,
+      [itemId, accountId],
+    );
+    return (r.rowCount ?? 0) > 0;
+  }
+
+  async wear(itemId: string, by: number): Promise<{ durability?: number } | null> {
+    // Only an INSTANCE (durability IS NOT NULL) actually wears — a blueprint's row
+    // stays NULL and the UPDATE simply changes nothing for it (still 1 row touched
+    // if it exists, so we read the value back either way to report it honestly).
+    const r = await this.pool.query<{ durability: number | null }>(
+      `UPDATE arsenal SET durability = GREATEST(0, durability - $2)
+       WHERE item_id = $1 AND durability IS NOT NULL
+       RETURNING durability`,
+      [itemId, by],
+    );
+    if (r.rows[0]) return { durability: r.rows[0].durability ?? undefined };
+    const row = await this.get(itemId);
+    if (!row) return null;
+    return { durability: undefined }; // exists, but a blueprint — nothing to wear
+  }
+}
+
+export class PostgresCorpRentStore implements CorpRentStore {
+  constructor(private readonly pool: Pool) {}
+
+  async rent(entry: CorpRent): Promise<boolean> {
+    const r = await this.pool.query(
+      `INSERT INTO corp_arsenal_rent (item_id, corp_id, matchup_id, account_id, rented_at)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (item_id) DO NOTHING`,
+      [entry.itemId, entry.corpId, entry.matchupId, entry.accountId, entry.rentedAt],
+    );
+    return (r.rowCount ?? 0) > 0;
+  }
+
+  async activeForMatchup(matchupId: string): Promise<CorpRent[]> {
+    const r = await this.pool.query<CorpRentRow>(
+      `SELECT item_id, corp_id, matchup_id, account_id, rented_at
+       FROM corp_arsenal_rent WHERE matchup_id = $1 ORDER BY item_id`,
+      [matchupId],
+    );
+    return r.rows.map(corpRentOf);
+  }
+
+  async activeForAccount(matchupId: string, accountId: string): Promise<CorpRent[]> {
+    const r = await this.pool.query<CorpRentRow>(
+      `SELECT item_id, corp_id, matchup_id, account_id, rented_at
+       FROM corp_arsenal_rent WHERE matchup_id = $1 AND account_id = $2 ORDER BY item_id`,
+      [matchupId, accountId],
+    );
+    return r.rows.map(corpRentOf);
+  }
+
+  async closeRent(matchupId: string, itemId: string): Promise<boolean> {
+    // Exactly-once: the DELETE only ever removes the row once — a replayed
+    // match-end's second attempt finds nothing and changes nothing.
+    const r = await this.pool.query(
+      `DELETE FROM corp_arsenal_rent WHERE matchup_id = $1 AND item_id = $2`,
+      [matchupId, itemId],
+    );
+    return (r.rowCount ?? 0) > 0;
+  }
+}
+
+export class PostgresDropStore implements DropStore {
+  constructor(private readonly pool: Pool) {}
+
+  async claim(matchId: string, accountId: string): Promise<boolean> {
+    // ON CONFLICT DO NOTHING + rowCount IS the exactly-once gate: only the first
+    // inserter of the (match, account) pair proceeds to roll.
+    const r = await this.pool.query(
+      `INSERT INTO drop_claims (match_id, account_id) VALUES ($1, $2)
+       ON CONFLICT DO NOTHING`,
+      [matchId, accountId],
+    );
+    return (r.rowCount ?? 0) > 0;
+  }
+
+  async pityOf(accountId: string): Promise<number> {
+    const r = await this.pool.query<{ pity: number }>(
+      `SELECT pity FROM drop_meta WHERE account_id = $1`,
+      [accountId],
+    );
+    return r.rows[0]?.pity ?? 0;
+  }
+
+  async setPity(accountId: string, value: number): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO drop_meta (account_id, pity) VALUES ($1, $2)
+       ON CONFLICT (account_id) DO UPDATE SET pity = $2`,
+      [accountId, value],
+    );
+  }
+
+  async addShards(accountId: string, delta: number): Promise<void> {
+    // Atomic increment — two concurrent battle credits both land.
+    await this.pool.query(
+      `INSERT INTO drop_meta (account_id, shards) VALUES ($1, $2)
+       ON CONFLICT (account_id) DO UPDATE SET shards = drop_meta.shards + $2`,
+      [accountId, delta],
+    );
+  }
+
+  async shardsOf(accountId: string): Promise<number> {
+    const r = await this.pool.query<{ shards: number }>(
+      `SELECT shards FROM drop_meta WHERE account_id = $1`,
+      [accountId],
+    );
+    return r.rows[0]?.shards ?? 0;
   }
 }

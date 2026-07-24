@@ -1,6 +1,6 @@
 import type { GameData } from '../data/schemas';
 import type { GameModule } from '../kernel/module';
-import type { GameState, Player, PlayerId } from '../state/gameState';
+import type { GameState, Player, PlayerId, StewardLogEntry } from '../state/gameState';
 
 /**
  * Steward — "hand the seat to the AI while I sleep" (the automation pillar for a 24/7
@@ -15,11 +15,15 @@ import type { GameState, Player, PlayerId } from '../state/gameState';
  * core. Pure state + time: same (state, action, ctx) → same result.
  */
 
-/** Delegation postures the Steward can follow. v1 ships one — `defend` («Оборона»): hold,
- *  reinforce, repel, drain the build queue; no offensives, no diplomacy. Expansion /
- *  offensive postures unlock up the tech tree (later). Data-driven behaviour lives in the
- *  driver; this set just gates what a `steward.delegate` action may request. */
-export const STEWARD_POSTURES = ['defend'] as const;
+/** Delegation postures the Steward can follow. `defend` («Оборона»): hold, reinforce,
+ *  repel, drain the build queue, evacuate a doomed wing (ST-3.2); no offensives, no
+ *  diplomacy. `active_defend` («Активная оборона», ST-3.3): everything `defend` does,
+ *  plus a forecast-gated counterstrike — the wing engages a visible war-stance intruder
+ *  AT ITS OWN node when the strike forecast wins under `STEWARD_LOSS_LIMIT`, and stands
+ *  squadron patrols (CC-4) as a fire-watch; it still never leaves own territory.
+ *  Expansion / offensive postures unlock up the tech tree (later). Data-driven behaviour
+ *  lives in the driver; this set just gates what a `steward.delegate` action may request. */
+export const STEWARD_POSTURES = ['defend', 'active_defend'] as const;
 export type StewardPosture = (typeof STEWARD_POSTURES)[number];
 
 /** Acceptable forecast loss share for a delegated seat's combat decisions (ST-3):
@@ -28,6 +32,39 @@ export type StewardPosture = (typeof STEWARD_POSTURES)[number];
  *  at/above it the Steward disengages or evacuates. One shared number so the HUD
  *  and the driver can never disagree about what «потери приемлемы» means. */
 export const STEWARD_LOSS_LIMIT = 0.35;
+
+/** SITREP journal cap (ST-2.4): the decision log is a bounded FIFO — a whole night
+ *  of 2-hour ticks fits with room to spare, and state stays small (JSONB). */
+export const MAX_STEWARD_LOG = 50;
+
+/** Hold-point cap (ST-2.1): 1–2 anchors per the roadmap — guarding is a focused
+ *  order, not a blanket «держать всё» (that would make the autopilot too strong). */
+export const MAX_STEWARD_HOLD_POINTS = 2;
+
+/** Sanitize one driver-stamped journal entry: required `at`/`kind`, then ONLY the
+ *  known optional scalars are copied onto a FRESH object — nothing else from the
+ *  payload can ride into JSONB state (fail-secure; same trust shape as
+ *  `patrol.stamp`). Returns null on any violation — the report is then rejected
+ *  whole, never applied partially. */
+function cleanEntry(raw: unknown): StewardLogEntry | null {
+  const e = raw as Partial<StewardLogEntry> | null;
+  if (typeof e?.at !== 'number' || !Number.isFinite(e.at)) return null;
+  if (typeof e.kind !== 'string' || e.kind.length === 0 || e.kind.length > 32) return null;
+  const entry: StewardLogEntry = { at: e.at, kind: e.kind };
+  for (const k of ['node', 'fleetId', 'to'] as const) {
+    const v = e[k];
+    if (v === undefined) continue;
+    if (typeof v !== 'string' || v.length === 0 || v.length > 64) return null;
+    entry[k] = v;
+  }
+  for (const k of ['count', 'fraction'] as const) {
+    const v = e[k];
+    if (v === undefined) continue;
+    if (typeof v !== 'number' || !Number.isFinite(v)) return null;
+    entry[k] = v;
+  }
+  return entry;
+}
 
 function isPosture(v: unknown): v is StewardPosture {
   return typeof v === 'string' && (STEWARD_POSTURES as readonly string[]).includes(v);
@@ -49,6 +86,22 @@ function stewardUnlocked(player: Player, data: GameData): boolean {
     if (data.technologies[id]?.unlocks.abilities.includes(STEWARD_ABILITY)) return true;
   }
   return false;
+}
+
+/** Drop `planetId` from every player's hold points once it is no longer theirs
+ *  (capture / annihilation). Without this a lost anchor would consume one of the
+ *  two cap slots forever: the planet panel manages anchors on OWN worlds only,
+ *  so the owner would have no way left to unmark it (ST-2.1 review). */
+function pruneHoldPoints(state: GameState, planetId: string): void {
+  for (const playerId of Object.keys(state.players).sort()) {
+    const player = state.players[playerId]!;
+    const points = player.stewardHoldPoints;
+    if (!points?.includes(planetId)) continue;
+    if (state.planets[planetId]?.owner === playerId) continue; // still theirs — keep it
+    const rest = points.filter((id) => id !== planetId);
+    if (rest.length > 0) player.stewardHoldPoints = rest;
+    else delete player.stewardHoldPoints;
+  }
 }
 
 /** The posture the Steward is running for `playerId` at `now`, or null if the seat is not
@@ -80,11 +133,67 @@ export const stewardModule: GameModule = {
         return h.reject('E_BAD_UNTIL');
       }
       player.steward = { posture: payload.posture, until: payload.until };
+      // A new watch starts a fresh journal — the previous SITREP was the player's
+      // to read between delegations; two watches must not interleave (ST-2.4).
+      delete player.stewardLog;
       h.emit('steward.delegated', {
         playerId: action.playerId,
         posture: payload.posture,
         until: payload.until,
       });
+    });
+
+    // Hold point (ST-2.1): the player marks an OWN world «держать» — a standing
+    // order the Steward honors under any posture (never auto-evacuated,
+    // reinforced under threat). Client-submittable; gated on the same Steward
+    // tech as delegation (the whole guard pillar is one unlock).
+    api.onAction('steward.holdpoint', (action, h) => {
+      const player = h.state.players[action.playerId];
+      if (!player) return h.reject('E_NO_PLAYER');
+      if (!stewardUnlocked(player, h.ctx.data)) return h.reject('E_STEWARD_LOCKED');
+      const payload = action.payload as { planetId?: unknown; on?: unknown };
+      if (typeof payload.planetId !== 'string' || typeof payload.on !== 'boolean') {
+        return h.reject('E_BAD_PAYLOAD');
+      }
+      const points = player.stewardHoldPoints ?? [];
+      if (!payload.on) {
+        if (!points.includes(payload.planetId)) return; // clearing a non-point: safe no-op
+        const rest = points.filter((id) => id !== payload.planetId);
+        if (rest.length > 0) player.stewardHoldPoints = rest;
+        else delete player.stewardHoldPoints;
+        h.emit('steward.holdpoint', { playerId: action.playerId, planetId: payload.planetId, on: false });
+        return;
+      }
+      const planet = h.state.planets[payload.planetId];
+      if (!planet) return h.reject('E_NO_PLANET');
+      if (planet.owner !== action.playerId) return h.reject('E_FORBIDDEN'); // anchor OWN worlds only
+      if (points.includes(payload.planetId)) return; // already held: safe no-op
+      if (points.length >= MAX_STEWARD_HOLD_POINTS) return h.reject('E_LIMIT');
+      player.stewardHoldPoints = [...points, payload.planetId];
+      h.emit('steward.holdpoint', { playerId: action.playerId, planetId: payload.planetId, on: true });
+    });
+
+    // SITREP stamp (ST-2.4): the SERVER DRIVER records the decisions it just made
+    // for a delegated seat. Deliberately ABSENT from the client payload schemas
+    // (the gate refuses it from the wire, like `patrol.stamp`) — a client writing
+    // its own journal would forge the morning report. Kept AFTER expiry: the
+    // sleeping player's client is offline, so the report must live in state.
+    api.onAction('steward.report', (action, h) => {
+      const player = h.state.players[action.playerId];
+      if (!player) return h.reject('E_NO_PLAYER');
+      if (!player.steward) return h.reject('E_NOT_DELEGATED'); // only a live watch reports
+      const entries = (action.payload as { entries?: unknown })?.entries;
+      if (!Array.isArray(entries) || entries.length === 0 || entries.length > MAX_STEWARD_LOG) {
+        return h.reject('E_BAD_PAYLOAD');
+      }
+      const clean: StewardLogEntry[] = [];
+      for (const raw of entries) {
+        const entry = cleanEntry(raw);
+        if (entry === null) return h.reject('E_BAD_PAYLOAD'); // reject whole, apply nothing
+        clean.push(entry);
+      }
+      player.stewardLog = [...(player.stewardLog ?? []), ...clean].slice(-MAX_STEWARD_LOG);
+      h.emit('steward.reported', { playerId: action.playerId, count: clean.length });
     });
 
     // Take the seat back early. A no-op (still ok) if nothing was delegated.
@@ -95,6 +204,15 @@ export const stewardModule: GameModule = {
         h.emit('steward.recalled', { playerId: action.playerId });
       }
     });
+
+    // Hold points follow ownership: any path that takes a world away (arrival
+    // capture, battle outcome, ground assault, annihilation) frees its anchor slot.
+    for (const lost of ['planet.captured', 'planet.destroyed'] as const) {
+      api.on(lost, (event, h) => {
+        const planetId = (event.payload as { planetId?: unknown }).planetId;
+        if (typeof planetId === 'string') pruneHoldPoints(h.state, planetId);
+      });
+    }
 
     // Auto-expire: when the world clock crosses a steward's `until`, hand control back and
     // announce it (a notification / the "morning report" reads `steward.expired`).
